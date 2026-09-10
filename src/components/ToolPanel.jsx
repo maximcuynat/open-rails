@@ -7,72 +7,81 @@ export default function ToolPanel() {
     { 
       id: 'select', 
       label: 'Select',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M7 7h.01M17 7h.01M7 17h.01M17 17h.01"/>
-        <rect x="7" y="7" width="10" height="10" rx="1"/>
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
+        <rect x="5" y="5" width="14" height="14" rx="2"/>
+        <circle cx="12" cy="12" r="2"/>
+        <path d="M12 5v2M12 17v2M5 12h2M17 12h2"/>
       </svg>
     },
     { 
       id: 'rail-straight', 
       label: 'Straight Rail',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
         <line x1="4" y1="12" x2="20" y2="12"/>
+        <line x1="7" y1="10" x2="7" y2="14"/>
+        <line x1="10" y1="10" x2="10" y2="14"/>
+        <line x1="13" y1="10" x2="13" y2="14"/>
+        <line x1="16" y1="10" x2="16" y2="14"/>
+        <line x1="19" y1="10" x2="19" y2="14"/>
+      </svg>
+    },
+    { 
+      id: 'rail-curve', 
+      label: 'Curve Rail',
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
+        <path d="M4 12c0-4 4-8 8-8s8 4 8 8" />
         <line x1="8" y1="10" x2="8" y2="14"/>
         <line x1="12" y1="10" x2="12" y2="14"/>
         <line x1="16" y1="10" x2="16" y2="14"/>
       </svg>
     },
     { 
-      id: 'rail-curve', 
-      label: 'Curve Rail',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M12 4c-4 0-8 4-8 8s4 8 8 8 8-4 8-8-4-8-8-8z"/>
-      </svg>
-    },
-    { 
       id: 'switch', 
       label: 'Switch',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <line x1="4" y1="12" x2="12" y2="12"/>
-        <polyline points="12,4 20,12 12,20"/>
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
+        <line x1="4" y1="12" x2="10" y2="12"/>
+        <line x1="14" y1="12" x2="20" y2="12"/>
+        <path d="M10 12 L14 8 L14 16 Z"/>
       </svg>
     },
     { 
       id: 'rail-cross', 
       label: 'Crossing',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
         <line x1="4" y1="12" x2="20" y2="12"/>
         <line x1="12" y1="4" x2="12" y2="20"/>
-        <circle cx="12" cy="12" r="2"/>
+        <circle cx="12" cy="12" r="3"/>
       </svg>
     },
     { 
       id: 'train', 
       label: 'Train',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="4" y="10" width="16" height="6" rx="1"/>
-        <circle cx="8" cy="16" r="1.5"/>
-        <circle cx="16" cy="16" r="1.5"/>
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
+        <rect x="3" y="10" width="18" height="7" rx="2"/>
+        <circle cx="7" cy="16" r="1.5"/>
+        <circle cx="17" cy="16" r="1.5"/>
+        <path d="M7 10V8a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>
+        <line x1="12" y1="7" x2="12" y2="5"/>
       </svg>
     },
     { 
       id: 'delete', 
       label: 'Delete',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="3,6 5,6 21,6"/>
-        <path d="M19,6 L17,6 L16,8 L18,8 L18,19 L6,19 L6,8 L8,8 L9,6 L7,6"/>
-        <line x1="10" y1="11" x2="10" y2="17"/>
-        <line x1="14" y1="11" x2="14" y2="17"/>
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
       </svg>
     },
     { 
       id: 'rotate', 
       label: 'Rotate',
-      icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      icon: <svg viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2">
         <path d="M16 4h4v4"/>
         <path d="M16 20h4v-4"/>
         <path d="M4 16l-2-2 2-2"/>
         <path d="M20 16l2-2-2-2"/>
+        <path d="M12 12L16 8M16 16L12 12"/>
       </svg>
     },
   ];

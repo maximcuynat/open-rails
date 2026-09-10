@@ -110,8 +110,6 @@
 .tool-button svg {
   width: 24px;
   height: 24px;
-  color: #000000;
-  stroke: #000000;
 }
 
 .tool-button.active {
@@ -119,7 +117,6 @@
 }
 
 .tool-button.active svg {
-  color: #FFFFFF;
   stroke: #FFFFFF;
 }
 
