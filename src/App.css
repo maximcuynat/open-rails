@@ -103,15 +103,24 @@
   box-shadow: 0 0 0 2px #000000;
 }
 
-.tool-button i {
-  font-size: 24px;
-  line-height: 1;
+.tool-button {
   color: #000000;
-  text-shadow: 0 0 2px #000000;
 }
 
-.tool-button.active i {
+.tool-button svg {
+  width: 24px;
+  height: 24px;
+  color: #000000;
+  stroke: #000000;
+}
+
+.tool-button.active {
   color: #FFFFFF;
+}
+
+.tool-button.active svg {
+  color: #FFFFFF;
+  stroke: #FFFFFF;
 }
 
 .tool-button:focus {

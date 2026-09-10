@@ -4,8 +4,6 @@
   box-sizing: border-box;
 }
 
-@import url("/node_modules/bootstrap-icons/font/bootstrap-icons.css");
-
 :root {
   /* Typographie ferroviaire */
   font-family: 'Roboto Mono', monospace;
@@ -25,8 +23,4 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* Force all Bootstrap Icons to be black */
-.bi {
-  color: #000000 !important;
-  font-weight: normal !important;
-}
+
