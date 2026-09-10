@@ -26,6 +26,109 @@ import { CURVE_PROFILES, arcToVia } from '../core/profiles'
 
 type Tool = 'select' | 'place' | 'curve'
 
+/** Render a snap indicator at a world point — a small cross + circle. */
+function renderSnapIndicator(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  pos: Point,
+): void {
+  const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+  const sx = (pos.x - cam.x) * cam.scale + vw / 2
+  const sy = (pos.y - cam.y) * cam.scale + vh / 2
+
+  ctx.save()
+  ctx.strokeStyle = accent
+  ctx.fillStyle = accent
+  ctx.globalAlpha = 0.8
+
+  // Cross
+  ctx.lineWidth = 1.5
+  const r = 8
+  ctx.beginPath()
+  ctx.moveTo(sx - r, sy)
+  ctx.lineTo(sx + r, sy)
+  ctx.moveTo(sx, sy - r)
+  ctx.lineTo(sx, sy + r)
+  ctx.stroke()
+
+  // Ring
+  ctx.globalAlpha = 0.4
+  ctx.beginPath()
+  ctx.arc(sx, sy, 5, 0, Math.PI * 2)
+  ctx.stroke()
+
+  ctx.restore()
+}
+
+/** Render a straight rail preview from a start node to the cursor. */
+function renderPlacePreview(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  start: Point,
+  cursor: Point,
+): void {
+  const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+  const ink = getComputedStyle(ctx.canvas).getPropertyValue('--ink').trim() || '#1a1a1a'
+  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#8a7a6a'
+  const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
+  const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
+  const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
+
+  ctx.save()
+
+  // Start node marker
+  ctx.fillStyle = accent
+  ctx.globalAlpha = 0.6
+  ctx.beginPath()
+  ctx.arc(w2sX(start.x), w2sY(start.y), 6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = paper
+  ctx.beginPath()
+  ctx.arc(w2sX(start.x), w2sY(start.y), 3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
+
+  // Rail preview
+  if (cam.scale < SIMPLIFY_THRESHOLD) {
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2
+    ctx.setLineDash([8, 4])
+    ctx.beginPath()
+    ctx.moveTo(w2sX(start.x), w2sY(start.y))
+    ctx.lineTo(w2sX(cursor.x), w2sY(cursor.y))
+    ctx.stroke()
+    ctx.setLineDash([])
+  } else {
+    // Render detailed rail but semi-transparent
+    ctx.globalAlpha = 0.7
+    renderDetailedRail(ctx, cam, start, cursor, vw, vh, false, ink, accent, sleeperColor)
+    ctx.globalAlpha = 1
+  }
+
+  // Length label near cursor
+  const len = Math.hypot(cursor.x - start.x, cursor.y - start.y)
+  const labelText = `L: ${len.toFixed(1)}m`
+  ctx.font = '600 11px Archivo, system-ui, sans-serif'
+  const labelW = ctx.measureText(labelText).width
+  const lx = w2sX(cursor.x) + 14
+  const ly = w2sY(cursor.y) - 10
+
+  ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+  ctx.beginPath()
+  ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
+  ctx.fill()
+  ctx.fillStyle = paper
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText(labelText, lx, ly - 4)
+
+  ctx.restore()
+}
+
 interface CurvePreviewData {
   start: Point
   cursor: Point
@@ -128,6 +231,7 @@ export function EditorCanvas() {
   const panningRef = useRef(false)
   const movedRef = useRef(false)
   const cursorWorldRef = useRef<Point>({ x: 0, y: 0 })
+  const snappedCursorRef = useRef<Point>({ x: 0, y: 0 })
   // Curve tool: 2-click placement with predefined profiles
   // phase 0 = idle, phase 1 = have start, previewing curve to cursor
   const curveStateRef = useRef<{ phase: 0 | 1; startId: string | null }>({
@@ -152,6 +256,19 @@ export function EditorCanvas() {
     renderGrid(ctx, cam, rect.width, rect.height)
     renderNetwork(ctx, cam, rect.width, rect.height, netRef.current, selRef.current)
 
+    // Snap indicator (Place and Curve tools, when snap is on)
+    if (snapRef.current && (toolRef.current === 'place' || toolRef.current === 'curve')) {
+      renderSnapIndicator(ctx, cam, rect.width, rect.height, snappedCursorRef.current)
+    }
+
+    // Place tool preview: rail from last node to snapped cursor
+    if (toolRef.current === 'place' && lastNodeIdRef.current) {
+      const startNode = netRef.current.nodes.get(lastNodeIdRef.current)
+      if (startNode) {
+        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, snappedCursorRef.current)
+      }
+    }
+
     // Curve preview
     const cs = curveStateRef.current
     if (cs.phase === 1 && cs.startId) {
@@ -160,7 +277,7 @@ export function EditorCanvas() {
         const profile = CURVE_PROFILES[curveProfileIdxRef.current]
         renderCurvePreview(ctx, cam, rect.width, rect.height, {
           start: startNode.pos,
-          cursor: cursorWorldRef.current,
+          cursor: snappedCursorRef.current,
           radius: profile.radius,
           side: curveSideRef.current,
         })
@@ -331,13 +448,17 @@ export function EditorCanvas() {
     }
 
     const onMove = (e: PointerEvent) => {
-      // Track cursor for curve preview
+      // Track cursor for previews
       const world = getWorldPos(e.clientX, e.clientY)
       cursorWorldRef.current = world
+      const spacing = snapRef.current ? getSnapSpacing() : 0
+      snappedCursorRef.current = snapToGrid(world, spacing)
 
       if (!panningRef.current) {
-        // Redraw for curve preview if in curve mode
-        if (toolRef.current === 'curve' && curveStateRef.current.phase > 0) {
+        // Redraw for preview if in place or curve mode
+        if (toolRef.current === 'place' && lastNodeIdRef.current) {
+          draw()
+        } else if (toolRef.current === 'curve' && curveStateRef.current.phase > 0) {
           draw()
         }
         return
