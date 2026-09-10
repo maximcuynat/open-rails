@@ -117,7 +117,7 @@ export default function TopBar() {
           <circle cx="16" cy="16" r="14"/>
           <path d="M8 16h16M16 8v16"/>
         </svg>
-        <span>Rail Editor</span>
+        <span>Open Rails</span>
       </div>
       
       <nav className="menu-bar">
