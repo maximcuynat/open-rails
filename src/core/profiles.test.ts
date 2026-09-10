@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { CURVE_RADII, CURVE_PROFILES, snapRadius, radiusFromSagitta, arcToVia } from './profiles'
+import {
+  CURVE_RADII,
+  CURVE_PROFILES,
+  snapRadius,
+  radiusFromSagitta,
+  arcToVia,
+  snapStraightLength,
+  radiusToAngle,
+  computeCurvePiece,
+  computeStraightPiece,
+} from './profiles'
 
 describe('CURVE_RADII', () => {
   it('is ordered from tightest to widest', () => {
@@ -98,5 +108,83 @@ describe('arcToVia', () => {
     // Should not crash, via should be offset but clamped
     expect(via.x).toBeCloseTo(250)
     expect(via.y).toBeGreaterThan(0)
+  })
+})
+
+describe('radiusToAngle', () => {
+  it('returns 22.5 for standard radii', () => {
+    expect(radiusToAngle(430)).toBe(22.5)
+    expect(radiusToAngle(550)).toBe(22.5)
+    expect(radiusToAngle(790)).toBe(22.5)
+  })
+
+  it('returns 10 for R867', () => {
+    expect(radiusToAngle(867)).toBe(10)
+  })
+})
+
+describe('snapStraightLength', () => {
+  it('snaps to closest standard length', () => {
+    expect(snapStraightLength(62)).toBe(60)
+    expect(snapStraightLength(100)).toBe(94)
+    expect(snapStraightLength(120)).toBe(123)
+    expect(snapStraightLength(250)).toBe(246)
+  })
+
+  it('returns exact value when on standard', () => {
+    expect(snapStraightLength(246)).toBe(246)
+    expect(snapStraightLength(369)).toBe(369)
+  })
+})
+
+describe('computeStraightPiece', () => {
+  it('computes end point along direction', () => {
+    const end = computeStraightPiece({ x: 0, y: 0 }, { x: 1, y: 0 }, 246)
+    expect(end).toEqual({ x: 246, y: 0 })
+  })
+
+  it('works with diagonal direction', () => {
+    const end = computeStraightPiece({ x: 0, y: 0 }, { x: 0.6, y: 0.8 }, 100)
+    expect(end.x).toBeCloseTo(60)
+    expect(end.y).toBeCloseTo(80)
+  })
+})
+
+describe('computeCurvePiece', () => {
+  it('produces correct chord for R550 at 22.5 degrees', () => {
+    const start = { x: 0, y: 0 }
+    const tangent = { x: 1, y: 0 }
+    const { end, angle } = computeCurvePiece(start, tangent, 550, 1)
+    expect(angle).toBe(22.5)
+    // Chord = 2 * 550 * sin(11.25°) ≈ 214.6 mm
+    const chordLen = Math.hypot(end.x - start.x, end.y - start.y)
+    expect(chordLen).toBeCloseTo(2 * 550 * Math.sin((22.5 * Math.PI / 180) / 2), 0)
+  })
+
+  it('produces correct chord for R867 at 10 degrees', () => {
+    const start = { x: 0, y: 0 }
+    const tangent = { x: 1, y: 0 }
+    const { end, angle } = computeCurvePiece(start, tangent, 867, 1)
+    expect(angle).toBe(10)
+    const chordLen = Math.hypot(end.x - start.x, end.y - start.y)
+    expect(chordLen).toBeCloseTo(2 * 867 * Math.sin((10 * Math.PI / 180) / 2), 0)
+  })
+
+  it('side -1 curves in opposite direction', () => {
+    const start = { x: 0, y: 0 }
+    const tangent = { x: 1, y: 0 }
+    const right = computeCurvePiece(start, tangent, 550, 1)
+    const left = computeCurvePiece(start, tangent, 550, -1)
+    expect(right.end.y).toBeGreaterThan(0)
+    expect(left.end.y).toBeLessThan(0)
+  })
+
+  it('via is valid (not at midpoint for curves)', () => {
+    const start = { x: 0, y: 0 }
+    const tangent = { x: 1, y: 0 }
+    const { via, end } = computeCurvePiece(start, tangent, 550, 1)
+    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+    const viaDist = Math.hypot(via.x - mid.x, via.y - mid.y)
+    expect(viaDist).toBeGreaterThan(1)
   })
 })

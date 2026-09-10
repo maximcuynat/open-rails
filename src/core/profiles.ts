@@ -31,6 +31,74 @@ export const STRAIGHT_LENGTHS: number[] = [
 /** Standard curve segment angles in degrees. */
 export const CURVE_ANGLES: number[] = [22.5, 10]
 
+/** Map radius to its standard angle (867mm uses 10°, all others 22.5°). */
+export function radiusToAngle(radius: number): number {
+  return radius === 867 ? 10 : 22.5
+}
+
+/** Snap a raw length to the closest standard straight piece. */
+export function snapStraightLength(rawLength: number): number {
+  let best = STRAIGHT_LENGTHS[0]
+  let bestDiff = Math.abs(rawLength - best)
+  for (const len of STRAIGHT_LENGTHS) {
+    const diff = Math.abs(rawLength - len)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = len
+    }
+  }
+  return best
+}
+
+/** Compute the end point of a standard curve piece.
+ *  Given a start point, incoming tangent direction, radius, and side (left/right),
+ *  the curve turns by the standard angle for that radius.
+ *  Returns the end point and the via control point for the Bezier. */
+export function computeCurvePiece(
+  start: { x: number; y: number },
+  tangent: { x: number; y: number },
+  radius: number,
+  side: 1 | -1,
+): { end: { x: number; y: number }; via: { x: number; y: number }; angle: number } {
+  const angle = radiusToAngle(radius)
+  const angleRad = (angle * Math.PI) / 180
+
+  // The chord length for an arc of radius R and angle θ: C = 2R sin(θ/2)
+  const chord = 2 * radius * Math.sin(angleRad / 2)
+
+  // Direction from start to end: tangent rotated by ±θ/2
+  const halfAngle = angleRad / 2
+  const cosH = Math.cos(halfAngle * side)
+  const sinH = Math.sin(halfAngle * side)
+  const chordDir = {
+    x: tangent.x * cosH - tangent.y * sinH,
+    y: tangent.x * sinH + tangent.y * cosH,
+  }
+
+  const end = {
+    x: start.x + chordDir.x * chord,
+    y: start.y + chordDir.y * chord,
+  }
+
+  // Via using arcToVia
+  const via = arcToVia(start, end, radius, side)
+
+  return { end, via, angle }
+}
+
+/** Compute the end point of a standard straight piece.
+ *  Given a start point, direction, and the snapped length. */
+export function computeStraightPiece(
+  start: { x: number; y: number },
+  direction: { x: number; y: number },
+  length: number,
+): { x: number; y: number } {
+  return {
+    x: start.x + direction.x * length,
+    y: start.y + direction.y * length,
+  }
+}
+
 export interface CurveProfile {
   radius: number
   label: string

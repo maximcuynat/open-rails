@@ -32,6 +32,9 @@
 | Rendu courbes simplifié (quadraticCurveTo) | Fait |
 | Hit-test sur courbes | Fait |
 | Preview courbe en temps réel | Fait |
+| Refonte UI (TopBar, ToolBar, SidePanel, StatusBar, MiniMap) | Fait |
+| Export JSON / SVG / PNG | Fait |
+| Toggle thème manuel (light/dark/auto) | Fait |
 
 ---
 
@@ -224,15 +227,36 @@ et de la position d'arrivée. Prêt pour les aiguillages.
 
 **Objectif :** interface complète, utilisable sur desktop et mobile.
 
-- [ ] Barre d'outils latérale ou supérieure :
-  - [ ] Sélection, Nœud, Droit, Courbe, Aiguillage, Supprimer
-  - [ ] Indicateur visuel de l'outil actif
-  - [ ] Tooltips avec raccourci clavier
-- [ ] Panel latéral (desktop) :
-  - [ ] Propriétés de la sélection (type, position, longueur, angle)
-  - [ ] Métriques du réseau (nb nœuds, nb segments, longueur totale)
-  - [ ] Liste des calques (si implémenté)
-- [ ] Mini-map en bas à gauche (vue d'ensemble du réseau)
+### Itération 1 — Refonte de l'interface d'édition ✅
+
+- [x] **Layout structuré** : TopBar + ToolBar(latérale) + Canvas + SidePanel + StatusBar
+      via CSS grid. L'état partagé (tool, snap, selection, network, camera)
+      remonte dans un store léger (`EditorStore`, ref + subscribe pattern).
+- [x] **Canvas extrait** : `EditorCanvas.tsx` → `Canvas.tsx` (rendu + events),
+      logique core/render préservée à l'identique.
+- [x] **TopBar** : nom de projet éditable, indicateur "modifié" (dirty), menus
+      déroulants (File / Edit / View / Help), toggle thème light/dark/auto
+      (override `prefers-color-scheme` via `data-theme`).
+- [x] **ToolBar verticale** (gauche) : icônes SVG inline + tooltips avec
+      raccourci. Groupes : Select / Place+Curve / Pan / toggles (snap, grid).
+      Outil actif en surbrillance accent.
+- [x] **SidePanel contextuel** (droite) : switch auto selon la sélection —
+      NetworkPanel (métriques), NodePanel (X/Y éditables, segments connectés),
+      SegmentPanel (type, longueur, rayon, deflection, via, endpoints cliquables).
+- [x] **StatusBar** : outil actif + phase, snap/grid cliquables, zoom cliquable
+      (reset Ctrl+0), position curseur (world coords).
+- [x] **CanvasOverlay** : hint text contextuel en bas-centre + badge de phase
+      Curve (1/2, 2/2).
+- [x] **MiniMap** (toggle View) : vue d'ensemble en bas-gauche, rectangle
+      viewport, clic pour naviguer.
+- [x] **Export** : JSON (format versionné), SVG (rails uniquement), PNG (canvas).
+- [x] **Raccourcis étendus** : N, C, V, G, Del, Esc conservés + H (pan),
+      F (fit-to-view), Ctrl+0 (reset zoom).
+- [x] **Fit-to-view** : `F` ou menu View → cadre tout le réseau.
+- [x] Responsive : panel droit caché sous 720px.
+
+### Reste à faire (futur)
+
 - [ ] Raccourcis clavier configurables (comme orbit-lab `keymap.ts`)
 - [ ] Support mobile / touch :
   - [ ] Pinch-to-zoom (deux doigts)
@@ -241,7 +265,7 @@ et de la position d'arrivée. Prêt pour les aiguillages.
   - [ ] Barre d'outils adaptée (bottom dock ou radial menu)
 - [ ] Tests : `keymap.test.ts`
 
-**Livrable :** interface desktop + mobile complète.
+**Livrable :** interface desktop professionnelle (style Figma/Illustrator).
 
 ---
 
