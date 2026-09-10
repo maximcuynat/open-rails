@@ -1,21 +1,11 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html, body, #root {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
 .app-container {
   width: 100%;
   height: 100vh;
   position: relative;
   background: #ffffff;
   overflow: hidden;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .canvas-main {
@@ -23,100 +13,55 @@ html, body, #root {
   height: 100%;
   display: block;
   background: #f8f9fa;
-  cursor: grab;
-  touch-action: none;
-  transition: cursor 0.15s ease;
+  border-radius: 5px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-.canvas-main:active {
-  cursor: grabbing;
-}
-
-.control-panel {
+.grid-select-container {
   position: fixed;
   top: 20px;
-  left: 20px;
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  padding: 12px;
+  right: 20px;
   z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  border-radius: 5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.grid-select {
+.grid-select-container select {
   padding: 6px 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #ffffff;
+  border: 1px solid #000;
+  border-radius: 5px;
+  background: #fff;
+  color: #000;
   font-size: 0.9rem;
   cursor: pointer;
-  width: 120px;
-}
-
-.grid-select:focus {
-  outline: none;
-  border-color: #3366ff;
-  box-shadow: 0 0 0 2px rgba(51, 102, 255, 0.2);
-}
-
-.nav-buttons {
-  display: flex;
-  gap: 6px;
-}
-
-.nav-arrows {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.arrow-row {
-  display: flex;
-  gap: 6px;
-}
-
-.nav-btn {
-  width: 36px;
-  height: 36px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #ffffff;
-  cursor: pointer;
-  font-size: 1.2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 100px;
   transition: all 0.2s ease;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23000' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-.nav-btn:hover {
-  background: #f0f4ff;
-  border-color: #3366ff;
+.grid-select-container select:focus {
+  outline: none;
+  border-color: #000;
+  box-shadow: 0 0 0 2px #000, 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 5px;
 }
 
-.nav-btn:active {
-  background: #e6efff;
+.grid-select-container select:hover {
+  border-color: #333;
+  border-radius: 5px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
-.nav-btn.arrow {
-  font-size: 1rem;
-}
-
-.drag-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.drag-overlay.dragging {
-  cursor: grabbing;
+.grid-select-container select option {
+  background: #fff;
+  color: #000;
+  padding: 4px 8px;
+  border-radius: 5px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
