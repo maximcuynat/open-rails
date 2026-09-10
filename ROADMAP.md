@@ -15,6 +15,15 @@
 | Barre d'échelle adaptative | Fait |
 | HUD (zoom + position caméra) | Fait |
 | Thèmes light/dark | Fait |
+| Modèle de données (Point, Node, Segment, Network) | Fait |
+| Placement de nœuds avec snap grille | Fait |
+| Rendu rails détaillés (double file + traverses) | Fait |
+| Rendu simplifié (trait unique) quand dézoomé | Fait |
+| Sélection nœuds et segments | Fait |
+| Suppression (Delete/Backspace) | Fait |
+| Barre d'outils (Place, Select, Snap) | Fait |
+| Raccourcis clavier (N, V, G, Esc, Del) | Fait |
+| Tests unitaires (18 tests) | Fait |
 
 ---
 
@@ -32,27 +41,29 @@
 
 ---
 
-## Phase 1 — Modèle de données et placement de base
+## Phase 1 — Modèle de données et placement de base ✅
 
 **Objectif :** pouvoir dessiner une ligne brisée à la souris, snapée sur la grille.
 
-- [ ] Définir les types du domaine dans `src/core/types.ts` :
+- [x] Définir les types du domaine dans `src/core/types.ts` :
   - `Point` (x, y)
   - `Node` (id, position: Point)
   - `Segment` (id, from: NodeId, to: NodeId, type: 'straight')
   - `Network` (nodes: Map<NodeId, Node>, segments: Segment[])
-- [ ] Stockage de l'état du réseau (React state ou ref + subscribe)
-- [ ] Outil **placer un nœud** :
-  - [ ] Clic gauche ajoute un nœud snapé sur la grille
-  - [ ] Clic successif relie automatiquement le nœud précédent au nouveau
-  - [ ] Échap ou clic droit termine la chaîne en cours
-- [ ] Snap sur la grille (toggle on/off, touche `G`)
-- [ ] Rendu des nœuds (cercle ou carré) par-dessus la grille
-- [ ] Rendu des segments (ligne épaisse)
-- [ ] Hit-test basique : clic sur un nœud ou segment
-- [ ] Sélection simple : clic sur élément → sélectionné (surbrillance)
-- [ ] Suppression : touche `Delete` / `Backspace` sur la sélection
-- [ ] Tests unitaires : `types.test.ts`, `network.test.ts` (ajout/suppression)
+- [x] Stockage de l'état du réseau (React ref + redraw à la demande)
+- [x] Outil **placer un nœud** :
+  - [x] Clic gauche ajoute un nœud snapé sur la grille
+  - [x] Clic successif relie automatiquement le nœud précédent au nouveau
+  - [x] Échap ou clic droit termine la chaîne en cours
+- [x] Snap sur la grille (toggle on/off, touche `G`)
+- [x] Rendu des nœuds (cercle avec anneau) par-dessus la grille
+- [x] Rendu des segments — deux niveaux de détail :
+  - [x] Zoomé : deux files de rail (écartement standard 1.435 m) + traverses + ballast
+  - [x] Dézoomé (scale < 8) : trait simple pour optimiser
+- [x] Hit-test basique : clic sur un nœud ou segment
+- [x] Sélection simple : clic sur élément → sélectionné (surbrillance accent)
+- [x] Suppression : touche `Delete` / `Backspace` sur la sélection
+- [x] Tests unitaires : `network.test.ts` (18 tests — ajout, suppression, snap, hit-test)
 
 **Livrable :** on peut dessiner une ligne brisée snapée, sélectionner et supprimer.
 
