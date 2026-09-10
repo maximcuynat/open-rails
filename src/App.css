@@ -1,83 +1,242 @@
 /* ===================================================================
-   TRAIN SWITCH GAME - DESIGN INSPIRÉ CITIES: SKYLINES
+   RAIL EDITOR - PROFESSIONAL INTERFACE
+   Inspired by OSRD, XTrkCAD, RailModeller Pro
    ===================================================================
-   Subject: Éditeur de réseaux ferrés
-   Audience: Modélistes ferroviaires
-   Job: Canvas interactif pour dessiner rails/aiguillages
    
-   Tokens:
-   - Rails: #121212
-   - Ballast: #F5F5F5
-   - Signal Rouge: #D32F2F
-   - Panel BG: rgba(30, 30, 30, 0.95)
-   - Button Hover: #2A2A2A
-   - Button Active: #FFFFFF
+   Structure:
+   - TopBar (menu bar at top)
+   - Toolbar (tools on left)
+   - CanvasArea (main workspace)
+   - SidePanels (right side panels)
+   - StatusBar (bottom bar)
    
-   Signature: Barre d'outils style Cities: Skylines
+   Design: Clean, professional, black & white with railway theme
    =================================================================== */
 
+/* Reset and Base Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: 'Roboto Mono', monospace;
+}
+
+/* ===================================================================
+   LAYOUT - Main Container
+   =================================================================== */
 .app-container {
   width: 100%;
   height: 100vh;
   position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "topbar topbar topbar"
+    "toolbar canvas panels"
+    "statusbar statusbar statusbar";
   background: #FFFFFF;
   overflow: hidden;
 }
 
-/* --- CANVAS --- */
-.canvas-main {
-  width: 100%;
-  height: 100%;
-  display: block;
+/* ===================================================================
+   1. TOP BAR (Menu)
+   =================================================================== */
+.top-bar {
+  grid-area: topbar;
+  position: relative;
+  height: 48px;
   background: #F5F5F5;
-}
-
-/* --- SÉLECTEUR --- */
-.grid-select-container {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 1000;
-}
-
-.grid-select-container select {
-  padding: 8px 16px;
-  border: 1px solid #000000;
-  border-radius: 8px;
-  background: #FFFFFF;
-  color: #000000;
-  font-size: 1rem;
-  font-family: 'Roboto Mono', monospace;
-  cursor: pointer;
-  width: 96px;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000000' d='M8 11L1 4h14z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-  padding-right: 32px;
-}
-
-.grid-select-container select:focus {
-  outline: none;
-  border-color: #000000;
-  box-shadow: 0 0 0 2px #000000;
-}
-
-/* --- TOOL PANEL (Black & White) --- */
-.tool-panel {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 64px;
-  background: #000000;
+  border-bottom: 1px solid #000000;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 16px;
+  padding: 0 16px;
   z-index: 1000;
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #000000;
+  margin-right: 32px;
+  white-space: nowrap;
+}
+
+.menu-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.menu-dropdown {
+  position: relative;
+}
+
+.menu-button {
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  color: #000000;
+  font-size: 14px;
+  font-family: 'Roboto Mono', monospace;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.menu-button:hover,
+.menu-button.active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.menu-button.active {
+  border-bottom: 2px solid #000000;
+}
+
+.menu-dropdown-content {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 180px;
+  background: #FFFFFF;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 8px 0;
+  z-index: 1000;
+}
+
+.menu-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 16px;
+  color: #000000;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.menu-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.menu-item-submenu {
+  position: relative;
+}
+
+.menu-item-submenu:hover .submenu {
+  display: block;
+}
+
+.submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  min-width: 180px;
+  background: #FFFFFF;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 8px 0;
+  z-index: 1000;
+}
+
+.menu-divider {
+  height: 1px;
+  background: #000000;
+  margin: 4px 16px;
+  opacity: 0.2;
+}
+
+.menu-shortcut {
+  color: #666666;
+  font-size: 11px;
+  margin-left: 24px;
+}
+
+.menu-toggle {
+  width: 12px;
+  height: 12px;
+  border: 1px solid #000000;
+  border-radius: 2px;
+  background: #FFFFFF;
+  position: relative;
+}
+
+.menu-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: #000000;
+}
+
+/* ===================================================================
+   2. TOOLBAR (Left Side)
+   =================================================================== */
+.toolbar {
+  grid-area: toolbar;
+  width: 80px;
+  background: #F5F5F5;
+  border-right: 1px solid #000000;
+  display: flex;
+  flex-direction: column;
+  z-index: 900;
+}
+
+.toolbar-tabs {
+  display: flex;
+  padding: 8px;
+  gap: 4px;
+  border-bottom: 1px solid #000000;
+  flex-wrap: wrap;
+}
+
+.toolbar-tab {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #000000;
+  font-size: 12px;
+  font-family: 'Roboto Mono', monospace;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.toolbar-tab:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.toolbar-tab.active {
+  background: #FFFFFF;
+  border-color: #000000;
+}
+
+.toolbar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.tool-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .tool-button {
@@ -92,6 +251,7 @@
   justify-content: center;
   transition: all 0.2s ease;
   font-family: 'Roboto Mono', monospace;
+  position: relative;
 }
 
 .tool-button:hover {
@@ -103,77 +263,427 @@
   box-shadow: 0 0 0 2px #000000;
 }
 
-.tool-button {
-  color: #000000;
+.tool-button.active svg {
+  stroke: #FFFFFF;
 }
 
 .tool-button svg {
   width: 24px;
   height: 24px;
-}
-
-.tool-button.active {
-  color: #FFFFFF;
-}
-
-.tool-button.active svg {
-  stroke: #FFFFFF;
+  stroke: #000000;
 }
 
 .tool-button:focus {
   outline: none;
 }
 
-.tool-item {
-  position: relative;
+/* ===================================================================
+   3. CANVAS AREA (Center)
+   =================================================================== */
+.canvas-main {
+  grid-area: canvas;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #FFFFFF;
+  cursor: grab;
 }
 
-.tool-button i {
-  font-size: 24px;
-  line-height: 1;
-  color: #000000;
+.canvas-main:active {
+  cursor: grabbing;
 }
 
-.tool-button.active i {
-  color: #000000;
-}
-
-.tool-item {
-  position: relative;
+/* ===================================================================
+   4. SIDE PANELS (Right Side)
+   =================================================================== */
+.side-panels {
+  grid-area: panels;
+  width: 280px;
+  background: #F5F5F5;
+  border-left: 1px solid #000000;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  z-index: 900;
 }
 
-.tool-label {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #FFFFFF;
-  color: #000000;
+.panel-tabs {
+  display: flex;
+  padding: 8px;
+  gap: 4px;
+  border-bottom: 1px solid #000000;
+  flex-wrap: wrap;
+}
+
+.panel-tab {
   padding: 6px 12px;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 4px;
-  font-size: 14px;
-  font-family: 'Roboto Mono', monospace;
-  font-weight: 500;
+  color: #000000;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
   white-space: nowrap;
+}
+
+.panel-tab:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.panel-tab.active {
+  background: #FFFFFF;
+  border-color: #000000;
+}
+
+.panel-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #000000;
+}
+
+.panel:last-child {
+  border-bottom: none;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #000000;
+}
+
+.panel-header h3 {
+  font-size: 14px;
+  font-weight: bold;
+  color: #000000;
+}
+
+.panel-button {
+  padding: 4px 8px;
+  background: #FFFFFF;
   border: 1px solid #000000;
-  pointer-events: none;
-  margin-top: 8px;
-  z-index: 100;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  transition: opacity 0.2s ease, visibility 0.2s ease;
-  opacity: 0;
-  visibility: hidden;
+  border-radius: 3px;
+  color: #000000;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease;
 }
 
-.tool-item:hover .tool-label {
-  opacity: 1;
-  visibility: visible;
+.panel-button:hover {
+  background: #F0F0F0;
 }
 
-.tool-button.active + .tool-label {
-  opacity: 1;
-  visibility: visible;
+.panel-content {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.panel-empty {
+  color: #666666;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* Properties Panel */
+.property-group {
+  margin-bottom: 16px;
+}
+
+.property-group h4 {
+  font-size: 13px;
+  font-weight: bold;
+  color: #000000;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #000000;
+}
+
+.property {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.property label {
+  color: #333333;
+  font-weight: 500;
+}
+
+.property span {
+  color: #000000;
+}
+
+.property-input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid #000000;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: 'Roboto Mono', monospace;
+}
+
+.property-input[type="color"] {
+  height: 28px;
+  padding: 2px;
+  width: 48px;
+}
+
+/* Layers Panel */
+.layer-list {
+  list-style: none;
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #000000;
+  margin-bottom: 4px;
+}
+
+.layer-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.layer-visibility {
+  cursor: pointer;
+}
+
+.layer-name {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.layer-name:focus {
+  outline: none;
+  border-color: #000000;
+}
+
+.layer-lock {
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  transition: transform 0.2s ease;
+}
+
+.layer-lock:hover {
+  transform: scale(1.2);
+}
+
+.layer-lock.locked {
+  opacity: 0.7;
+}
+
+.layer-delete {
+  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #CC0000;
+  font-size: 18px;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.layer-delete:hover {
+  color: #FF0000;
+}
+
+/* Library Panel */
+.library-category {
+  margin-bottom: 16px;
+}
+
+.library-category h4 {
+  font-size: 13px;
+  font-weight: bold;
+  color: #000000;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #000000;
+}
+
+.library-list {
+  list-style: none;
+}
+
+.library-item {
+  padding: 6px 12px;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.library-item:hover {
+  background: #FFFFFF;
+}
+
+/* Simulation Panel */
+.simulation-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.sim-button {
+  padding: 4px 8px;
+  background: #FFFFFF;
+  border: 1px solid #000000;
+  border-radius: 3px;
+  color: #000000;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.sim-button:hover {
+  background: #F0F0F0;
+}
+
+.train-list {
+  list-style: none;
+  margin: 8px 0;
+}
+
+.train-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px solid #000000;
+  margin-bottom: 4px;
+}
+
+.train-item:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.sim-stats {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #000000;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+/* ===================================================================
+   5. STATUS BAR (Bottom)
+   =================================================================== */
+.status-bar {
+  grid-area: statusbar;
+  height: 32px;
+  background: #F5F5F5;
+  border-top: 1px solid #000000;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 24px;
+  font-size: 13px;
+  z-index: 1000;
+  overflow-x: auto;
+}
+
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.status-label {
+  color: #666666;
+  font-weight: 500;
+}
+
+.status-value {
+  color: #000000;
+  font-weight: bold;
+}
+
+.status-messages {
+  flex: 1;
+  justify-content: center;
+}
+
+.status-message {
+  color: #000000;
+  font-weight: bold;
+}
+
+.status-shortcuts {
+  justify-content: flex-end;
+}
+
+/* ===================================================================
+   RESPONSIVE ADJUSTMENTS
+   =================================================================== */
+@media (max-width: 1200px) {
+  .side-panels {
+    width: 200px;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-container {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-areas:
+      "topbar"
+      "toolbar"
+      "canvas"
+      "statusbar";
+  }
+  
+  .toolbar {
+    width: 100%;
+    flex-direction: row;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid #000000;
+  }
+  
+  .toolbar-content {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  
+  .side-panels {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid #000000;
+    max-height: 120px;
+  }
+  
+  .panel-container {
+    flex-direction: row;
+    overflow-x: auto;
+  }
 }

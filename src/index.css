@@ -4,19 +4,6 @@
   box-sizing: border-box;
 }
 
-:root {
-  /* Typographie ferroviaire */
-  font-family: 'Roboto Mono', monospace;
-  
-  /* Palette ferroviaire */
-  --color-rail: #121212;
-  --color-ballast: #F5F5F5;
-  --color-signal-red: #D32F2F;
-  --color-signal-green: #388E3C;
-  --color-metal: #424242;
-  --color-white: #FFFFFF;
-}
-
 html, body, #root {
   width: 100%;
   height: 100%;
