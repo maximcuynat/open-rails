@@ -109,7 +109,41 @@
   outline: none;
 }
 
+.tool-item {
+  position: relative;
+}
+
 .tool-button i {
   font-size: 24px;
   line-height: 1;
+}
+
+.tool-label {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 30, 30, 0.95);
+  color: #FFFFFF;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Roboto Mono', monospace;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  margin-bottom: 8px;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.tool-item:hover .tool-label {
+  opacity: 1;
+  visibility: visible;
+}
+
+.tool-button.active + .tool-label {
+  opacity: 1;
+  visibility: visible;
 }

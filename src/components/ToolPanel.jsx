@@ -17,14 +17,15 @@ export default function ToolPanel() {
   return (
     <div className="tool-panel">
       {tools.map((tool) => (
-        <button
-          key={tool.id}
-          className={`tool-button ${activeTool === tool.id ? 'active' : ''}`}
-          onClick={() => setActiveTool(tool.id)}
-          title={tool.label}
-        >
-          <i className={`bi ${tool.icon}`} />
-        </button>
+        <div key={tool.id} className="tool-item">
+          <button
+            className={`tool-button ${activeTool === tool.id ? 'active' : ''}`}
+            onClick={() => setActiveTool(tool.id)}
+          >
+            <i className={`bi ${tool.icon}`} />
+          </button>
+          <span className="tool-label">{tool.label}</span>
+        </div>
       ))}
     </div>
   );
