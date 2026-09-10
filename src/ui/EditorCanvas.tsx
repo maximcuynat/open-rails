@@ -4,6 +4,7 @@ import { renderGrid, renderNetwork, renderScaleBar } from '../render/renderer'
 import {
   addNode,
   addSegment,
+  addCurveSegment,
   createNetwork,
   hitNode,
   hitSegment,
@@ -11,10 +12,79 @@ import {
   removeSegment,
   snapToGrid,
 } from '../core/network'
-import type { Network, Selection } from '../core/types'
+import type { Network, Point, Selection } from '../core/types'
 import { pickSpacing } from '../render/renderer'
 
-type Tool = 'select' | 'place'
+type Tool = 'select' | 'place' | 'curve'
+
+interface CurvePreviewData {
+  phase: 0 | 1 | 2
+  start: Point | null
+  via: Point | null
+  cursor: Point
+}
+
+function renderCurvePreview(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  data: CurvePreviewData,
+): void {
+  const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+  const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
+  const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
+
+  ctx.save()
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 2
+  ctx.setLineDash([6, 4])
+
+  if (data.phase === 1 && data.start) {
+    // Preview: straight from start to cursor (will become curve once via is set)
+    ctx.beginPath()
+    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
+    ctx.lineTo(w2sX(data.cursor.x), w2sY(data.cursor.y))
+    ctx.stroke()
+  } else if (data.phase === 2 && data.start && data.via) {
+    // Preview: quadratic Bezier from start via control to cursor
+    ctx.beginPath()
+    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
+    ctx.quadraticCurveTo(w2sX(data.via.x), w2sY(data.via.y), w2sX(data.cursor.x), w2sY(data.cursor.y))
+    ctx.stroke()
+
+    // Draw via control point marker
+    ctx.setLineDash([])
+    ctx.fillStyle = accent
+    ctx.globalAlpha = 0.5
+    ctx.beginPath()
+    ctx.arc(w2sX(data.via.x), w2sY(data.via.y), 5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+
+    // Line from start to via (construction line)
+    ctx.setLineDash([3, 3])
+    ctx.globalAlpha = 0.3
+    ctx.beginPath()
+    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
+    ctx.lineTo(w2sX(data.via.x), w2sY(data.via.y))
+    ctx.stroke()
+    ctx.globalAlpha = 1
+  }
+
+  // Draw start marker
+  if (data.start && data.phase >= 1) {
+    ctx.setLineDash([])
+    ctx.fillStyle = accent
+    ctx.globalAlpha = 0.5
+    ctx.beginPath()
+    ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+  }
+
+  ctx.restore()
+}
 
 export function EditorCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -26,6 +96,13 @@ export function EditorCanvas() {
   const toolRef = useRef<Tool>('place')
   const panningRef = useRef(false)
   const movedRef = useRef(false)
+  const cursorWorldRef = useRef<Point>({ x: 0, y: 0 })
+  // Curve tool state: 0 = waiting for start, 1 = have start, placing via, 2 = have via, placing end
+  const curveStateRef = useRef<{ phase: 0 | 1 | 2; startId: string | null; via: Point | null }>({
+    phase: 0,
+    startId: null,
+    via: null,
+  })
 
   const [hud, setHud] = useState('')
   const [tool, setTool] = useState<Tool>('place')
@@ -41,6 +118,19 @@ export function EditorCanvas() {
     const rect = canvas.getBoundingClientRect()
     renderGrid(ctx, cam, rect.width, rect.height)
     renderNetwork(ctx, cam, rect.width, rect.height, netRef.current, selRef.current)
+
+    // Curve preview
+    const cs = curveStateRef.current
+    const startNode = cs.startId ? netRef.current.nodes.get(cs.startId) : null
+    if (cs.phase > 0) {
+      renderCurvePreview(ctx, cam, rect.width, rect.height, {
+        phase: cs.phase,
+        start: startNode ? startNode.pos : null,
+        via: cs.via,
+        cursor: cursorWorldRef.current,
+      })
+    }
+
     renderScaleBar(ctx, cam, rect.width, rect.height)
     setHud(`${cam.scale.toFixed(2)}x  (${cam.x.toFixed(0)}, ${cam.y.toFixed(0)})`)
   }, [])
@@ -91,18 +181,54 @@ export function EditorCanvas() {
 
     const onDown = (e: PointerEvent) => {
       if (e.button === 2) {
-        // Right click: end placement chain or context menu
+        // Right click: cancel placement chain or curve
         lastNodeIdRef.current = null
+        if (toolRef.current === 'curve') {
+          curveStateRef.current = { phase: 0, startId: null, via: null }
+          redraw()
+        }
         return
       }
 
-      if (e.button === 1 || (e.button === 0 && (e.shiftKey || toolRef.current === 'select'))) {
-        // Middle click or shift+click or select tool: pan
+      if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+        // Middle click or shift+click: pan
         panningRef.current = true
         lastX = e.clientX
         lastY = e.clientY
         movedRef.current = false
         canvas.setPointerCapture(e.pointerId)
+        return
+      }
+
+      if (e.button === 0 && toolRef.current === 'curve') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const spacing = getSnapSpacing()
+        const snapped = snapToGrid(world, spacing)
+        const hitTol = 1.5 / camRef.current.scale
+        const cs = curveStateRef.current
+
+        if (cs.phase === 0) {
+          // Phase 0: place/select start node
+          const existing = hitNode(netRef.current, snapped, hitTol)
+          const startId = existing ?? addNode(netRef.current, snapped).id
+          curveStateRef.current = { phase: 1, startId, via: null }
+          selRef.current = { nodes: new Set([startId]), segments: new Set() }
+          redraw()
+        } else if (cs.phase === 1) {
+          // Phase 1: set via control point
+          curveStateRef.current = { phase: 2, startId: cs.startId, via: snapped }
+          redraw()
+        } else if (cs.phase === 2) {
+          // Phase 2: place/select end node, create curve segment
+          const existing = hitNode(netRef.current, snapped, hitTol)
+          const endId = existing ?? addNode(netRef.current, snapped).id
+          if (cs.startId && cs.via && cs.startId !== endId) {
+            addCurveSegment(netRef.current, cs.startId, endId, cs.via)
+          }
+          curveStateRef.current = { phase: 0, startId: null, via: null }
+          selRef.current = { nodes: new Set(), segments: new Set() }
+          redraw()
+        }
         return
       }
 
@@ -163,7 +289,18 @@ export function EditorCanvas() {
     }
 
     const onMove = (e: PointerEvent) => {
-      if (!panningRef.current) return
+      // Track cursor for curve preview
+      const world = getWorldPos(e.clientX, e.clientY)
+      cursorWorldRef.current = world
+
+      if (!panningRef.current) {
+        // Redraw for curve preview if in curve mode
+        if (toolRef.current === 'curve' && curveStateRef.current.phase > 0) {
+          draw()
+        }
+        return
+      }
+
       const cam = camRef.current
       const dx = e.clientX - lastX
       const dy = e.clientY - lastY
@@ -237,6 +374,10 @@ export function EditorCanvas() {
       } else if (e.key === 'n' || e.key === 'N') {
         setTool('place')
         toolRef.current = 'place'
+      } else if (e.key === 'c' || e.key === 'C') {
+        setTool('curve')
+        toolRef.current = 'curve'
+        curveStateRef.current = { phase: 0, startId: null, via: null }
       } else if (e.key === 'g' || e.key === 'G') {
         snapRef.current = !snapRef.current
         setSnap(snapRef.current)
@@ -250,6 +391,7 @@ export function EditorCanvas() {
     setTool(t)
     toolRef.current = t
     if (t === 'select') lastNodeIdRef.current = null
+    if (t !== 'curve') curveStateRef.current = { phase: 0, startId: null, via: null }
   }
 
   return (
@@ -262,6 +404,13 @@ export function EditorCanvas() {
           title="Place nodes (N)"
         >
           Place
+        </button>
+        <button
+          className={tool === 'curve' ? 'active' : ''}
+          onClick={() => switchTool('curve')}
+          title="Curve tool (C)"
+        >
+          Curve
         </button>
         <button
           className={tool === 'select' ? 'active' : ''}

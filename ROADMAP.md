@@ -21,9 +21,14 @@
 | Rendu simplifié (trait unique) quand dézoomé | Fait |
 | Sélection nœuds et segments | Fait |
 | Suppression (Delete/Backspace) | Fait |
-| Barre d'outils (Place, Select, Snap) | Fait |
-| Raccourcis clavier (N, V, G, Esc, Del) | Fait |
-| Tests unitaires (18 tests) | Fait |
+| Barre d'outils (Place, Curve, Select, Snap) | Fait |
+| Raccourcis clavier (N, C, V, G, Esc, Del) | Fait |
+| Tests unitaires (32 tests) | Fait |
+| Courbes Bezier quadratique (3 clics: start → via → end) | Fait |
+| Rendu courbes détaillé (double rail + traverses + ballast) | Fait |
+| Rendu courbes simplifié (quadraticCurveTo) | Fait |
+| Hit-test sur courbes | Fait |
+| Preview courbe en temps réel | Fait |
 
 ---
 
@@ -69,23 +74,26 @@
 
 ---
 
-## Phase 2 — Courbes et types de rails
+## Phase 2 — Courbes et types de rails ✅
 
 **Objectif :** tracer des rails droits et courbes, les mélanger.
 
-- [ ] Type `Segment` étendu : `type: 'straight' | 'curve'`
-- [ ] Rail courbe — arc de cercle :
-  - [ ] Défini par 3 points (start, via, end) ou start + angle + rayon
-  - [ ] Discrétisation en segments pour le rendu
-- [ ] Rail courbe — spline Catmull-Rom :
+- [x] Type `Segment` étendu : `kind: 'straight' | 'curve'` avec `via?: Point`
+- [x] Rail courbe — Bezier quadratique :
+  - [x] Défini par 3 points (start, via, end)
+  - [x] Discrétisation en segments pour le rendu (`discretizeCurve`)
+  - [x] Normale calculée à chaque point pour offset des deux files de rail
+- [ ] Rail courbe — spline Catmull-Rom (deferred — pas critique pour l'instant) :
   - [ ] Tracé fluide passant par N points de contrôle
   - [ ] Conversion en points discrétisés
-- [ ] Outil **courbe** dans la barre d'outils :
-  - [ ] Mode arc (3 clics)
-  - [ ] Mode spline (clics successifs, double-clic pour terminer)
-- [ ] Hit-testing sur les courbes (distance point-à-courbe)
-- [ ] Rendu des points de contrôle en mode édition (surbrillance)
-- [ ] Tests : `curve.test.ts` (génération de points, hit-test)
+- [x] Outil **courbe** dans la barre d'outils :
+  - [x] Mode 3 clics : start → via (point de contrôle) → end
+  - [x] Preview en temps réel (ligne pointillée + Bezier + marqueurs)
+  - [x] Clic droit ou Échap annule la courbe en cours
+- [x] Hit-testing sur les courbes (`distToCurve`, discrétisée)
+- [x] Rendu détaillé des courbes : double rail + traverses orientées + ballast
+- [x] Rendu simplifié : `quadraticCurveTo` natif du canvas
+- [x] Tests : `curve.test.ts` (14 tests — Bezier, tangente, normale, discrétisation, longueur, hit-test)
 
 **Livrable :** rails droits et courbes, mélange libre.
 

@@ -1,4 +1,5 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
+import { distToCurve } from './curve'
 
 let idCounter = 0
 
@@ -22,6 +23,21 @@ export function addSegment(net: Network, from: NodeId, to: NodeId): Segment | nu
   if (from === to) return null
   if (!net.nodes.has(from) || !net.nodes.has(to)) return null
   const seg: Segment = { id: generateId('s'), from, to, kind: 'straight' }
+  net.segments.set(seg.id, seg)
+  net.adjacency.get(from)!.push(seg.id)
+  net.adjacency.get(to)!.push(seg.id)
+  return seg
+}
+
+export function addCurveSegment(
+  net: Network,
+  from: NodeId,
+  to: NodeId,
+  via: Point,
+): Segment | null {
+  if (from === to) return null
+  if (!net.nodes.has(from) || !net.nodes.has(to)) return null
+  const seg: Segment = { id: generateId('s'), from, to, kind: 'curve', via: { ...via } }
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
@@ -110,7 +126,10 @@ export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId
     const a = net.nodes.get(seg.from)
     const b = net.nodes.get(seg.to)
     if (!a || !b) continue
-    const d = distToSegment(pos, a.pos, b.pos)
+    const d =
+      seg.kind === 'curve' && seg.via
+        ? distToCurve(pos, a.pos, seg.via, b.pos)
+        : distToSegment(pos, a.pos, b.pos)
     if (d < bestD) {
       bestD = d
       best = seg.id

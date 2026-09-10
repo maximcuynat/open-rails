@@ -1,5 +1,6 @@
 import type { Camera } from './camera'
-import type { Network, Selection } from '../core/types'
+import type { Network, Point, Selection } from '../core/types'
+import { bezierNormal, bezierPoint, curveLength, curveSamples, discretizeCurve } from '../core/curve'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -130,23 +131,32 @@ export function renderNetwork(
     const b = net.nodes.get(seg.to)
     if (!a || !b) continue
 
-    const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
-    const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
-    const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
-    const by = (b.pos.y - cam.y) * cam.scale + vh / 2
-
     const selected = selection.segments.has(seg.id)
 
     if (simplified) {
-      // Single line mode — fast
+      const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
+      const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
+      const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
+      const by = (b.pos.y - cam.y) * cam.scale + vh / 2
+
       ctx.strokeStyle = selected ? accent : ink
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(ax, ay)
-      ctx.lineTo(bx, by)
+      if (seg.kind === 'curve' && seg.via) {
+        const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+        const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+        ctx.quadraticCurveTo(vx, vy, bx, by)
+      } else {
+        ctx.lineTo(bx, by)
+      }
       ctx.stroke()
     } else {
-      renderDetailedRail(ctx, cam, a.pos, b.pos, vw, vh, selected, ink, accent, sleeperColor)
+      if (seg.kind === 'curve' && seg.via) {
+        renderDetailedCurve(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, ink, accent, sleeperColor)
+      } else {
+        renderDetailedRail(ctx, cam, a.pos, b.pos, vw, vh, selected, ink, accent, sleeperColor)
+      }
     }
   }
 
@@ -258,6 +268,129 @@ function renderDetailedRail(
     ctx.lineTo(r1bx, r1by)
     ctx.moveTo(r2ax, r2ay)
     ctx.lineTo(r2bx, r2by)
+    ctx.stroke()
+    ctx.globalAlpha = 1
+  }
+}
+
+function w2s(p: Point, cam: Camera, vw: number, vh: number): [number, number] {
+  return [(p.x - cam.x) * cam.scale + vw / 2, (p.y - cam.y) * cam.scale + vh / 2]
+}
+
+function renderDetailedCurve(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  p0: Point,
+  via: Point,
+  p2: Point,
+  vw: number,
+  vh: number,
+  selected: boolean,
+  ink: string,
+  accent: string,
+  sleeperColor: string,
+): void {
+  const s = cam.scale
+  const samples = curveSamples(p0, via, p2, s)
+  const pts = discretizeCurve(p0, via, p2, samples)
+  const len = curveLength(p0, via, p2, samples)
+
+  const hg = GAUGE / 2
+  const railPx = Math.max(1, RAIL_WIDTH * s)
+  const railColor = selected ? accent : ink
+
+  // Compute offset rail points
+  const leftRail: [number, number][] = []
+  const rightRail: [number, number][] = []
+
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples
+    const n = bezierNormal(t, p0, via, p2)
+    const cx = pts[i].x + n.x * hg
+    const cy = pts[i].y + n.y * hg
+    const dx = pts[i].x - n.x * hg
+    const dy = pts[i].y - n.y * hg
+    leftRail.push(w2s({ x: cx, y: cy }, cam, vw, vh))
+    rightRail.push(w2s({ x: dx, y: dy }, cam, vw, vh))
+  }
+
+  // --- Sleepers + ballast ---
+  const sleeperLen = SLEEPER_LENGTH * s
+  const sleeperW = Math.max(2, SLEEPER_WIDTH * s)
+  const totalSleepers = Math.max(1, Math.floor(len / SLEEPER_SPACING))
+  const stepT = 1 / totalSleepers
+
+  // Ballast
+  ctx.fillStyle = selected ? 'rgba(37, 99, 235, 0.08)' : 'rgba(0,0,0,0.03)'
+  ctx.beginPath()
+  for (let i = 0; i <= samples; i++) {
+    const [sx, sy] = leftRail[i]
+    if (i === 0) ctx.moveTo(sx, sy)
+    else ctx.lineTo(sx, sy)
+  }
+  for (let i = samples; i >= 0; i--) {
+    const [sx, sy] = rightRail[i]
+    ctx.lineTo(sx, sy)
+  }
+  ctx.closePath()
+  ctx.fill()
+
+  // Sleepers
+  ctx.fillStyle = sleeperColor
+  for (let i = 0; i <= totalSleepers; i++) {
+    const t = i * stepT
+    const pt = bezierPoint(t, p0, via, p2)
+    const n = bezierNormal(t, p0, via, p2)
+    const [sx, sy] = w2s(pt, cam, vw, vh)
+    const angle = Math.atan2(n.y, n.x) + Math.PI / 2
+
+    ctx.save()
+    ctx.translate(sx, sy)
+    ctx.rotate(angle)
+    ctx.fillRect(-sleeperW / 2, -sleeperLen / 2, sleeperW, sleeperLen)
+    ctx.restore()
+  }
+
+  // --- Two rails ---
+  ctx.strokeStyle = railColor
+  ctx.lineWidth = railPx
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  ctx.beginPath()
+  for (let i = 0; i <= samples; i++) {
+    const [sx, sy] = leftRail[i]
+    if (i === 0) ctx.moveTo(sx, sy)
+    else ctx.lineTo(sx, sy)
+  }
+  ctx.stroke()
+
+  ctx.beginPath()
+  for (let i = 0; i <= samples; i++) {
+    const [sx, sy] = rightRail[i]
+    if (i === 0) ctx.moveTo(sx, sy)
+    else ctx.lineTo(sx, sy)
+  }
+  ctx.stroke()
+
+  // Highlight overlay if selected
+  if (selected) {
+    ctx.strokeStyle = accent
+    ctx.globalAlpha = 0.3
+    ctx.lineWidth = railPx + 4
+    ctx.beginPath()
+    for (let i = 0; i <= samples; i++) {
+      const [sx, sy] = leftRail[i]
+      if (i === 0) ctx.moveTo(sx, sy)
+      else ctx.lineTo(sx, sy)
+    }
+    ctx.stroke()
+    ctx.beginPath()
+    for (let i = 0; i <= samples; i++) {
+      const [sx, sy] = rightRail[i]
+      if (i === 0) ctx.moveTo(sx, sy)
+      else ctx.lineTo(sx, sy)
+    }
     ctx.stroke()
     ctx.globalAlpha = 1
   }
