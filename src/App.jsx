@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import './App.css';
 
 const DOT_RADIUS = 2;
 
@@ -81,7 +82,7 @@ function App() {
         className="canvas-main"
       />
       
-      <div className="glass-panel">
+      <div className="control-panel">
         <div className="panel-header">
           <i className="bi bi-train-front"></i>
           <span>Train Switch Game</span>
