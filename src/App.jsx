@@ -41,7 +41,6 @@ function App() {
     const handleMouseDown = (e) => {
       setIsDragging(true);
       setLastPos({ x: e.clientX, y: e.clientY });
-      canvas.style.cursor = 'grabbing';
     };
 
     const handleMouseMove = (e) => {
@@ -50,35 +49,24 @@ function App() {
         const dy = e.clientY - lastPos.y;
         setPanOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
         setLastPos({ x: e.clientX, y: e.clientY });
-        drawGrid();
       }
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
-      canvas.style.cursor = 'grab';
-    };
-
-    const handleMouseLeave = () => {
-      if (isDragging) {
-        setIsDragging(false);
-        canvas.style.cursor = 'grab';
-      }
     };
 
     window.addEventListener('resize', handleResize);
-    canvas.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
-    canvas.addEventListener('mouseleave', handleMouseLeave);
     handleResize();
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      canvas.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
-      canvas.removeEventListener('mouseleave', handleMouseLeave);
     };
   }, [gridSize, showGrid, panOffset, isDragging, lastPos]);
 
@@ -87,44 +75,59 @@ function App() {
   };
 
   return (
-    <div className="d-flex flex-column vh-100">
-      <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div className="container-fluid">
-          <span className="navbar-brand">
-            <i className="bi bi-train-front me-2"></i>
-            Train Switch Game
-          </span>
-          <div className="d-flex">
-            <div className="me-3">
-              <label htmlFor="gridSize" className="form-label text-white me-2">Grid Size</label>
+    <div className="app-container">
+      <canvas
+        ref={canvasRef}
+        className="canvas-main"
+      />
+      
+      <div className="glass-panel">
+        <div className="panel-header">
+          <i className="bi bi-train-front"></i>
+          <span>Train Switch Game</span>
+        </div>
+        
+        <div className="panel-body">
+          <div className="control-group">
+            <label className="control-label">
+              <i className="bi bi-grid-3x3-gap"></i>
+              Grid Size
+            </label>
+            <div className="slider-container">
               <input
                 type="range"
-                className="form-range"
                 min="10"
                 max="100"
                 step="5"
                 value={gridSize}
                 onChange={(e) => setGridSize(Number(e.target.value))}
-                id="gridSize"
+                className="slider"
               />
-              <span className="text-white ms-2">{gridSize}px</span>
+              <span className="value">{gridSize}px</span>
             </div>
+          </div>
+          
+          <div className="control-group">
+            <label className="control-label">
+              <i className="bi bi-eye"></i>
+              Show Grid
+            </label>
             <button
-              className={`btn ${showGrid ? 'btn-outline-light' : 'btn-outline-secondary'} me-2`}
+              className={`toggle-btn ${showGrid ? 'active' : ''}`}
               onClick={() => setShowGrid(!showGrid)}
             >
               <i className={`bi ${showGrid ? 'bi-grid-fill' : 'bi-grid'}`}></i>
             </button>
-            <button className="btn btn-outline-light" onClick={resetView}>
-              <i className="bi bi-arrow-clockwise"></i>
-            </button>
           </div>
+          
+          <button className="reset-btn" onClick={resetView}>
+            <i className="bi bi-arrow-clockwise"></i>
+            Reset View
+          </button>
         </div>
-      </nav>
-      <canvas
-        ref={canvasRef}
-        style={{ backgroundColor: '#fff', display: 'block', cursor: 'grab', flex: 1 }}
-      />
+      </div>
+      
+      <div className={`drag-overlay ${isDragging ? 'dragging' : ''}`}></div>
     </div>
   );
 }

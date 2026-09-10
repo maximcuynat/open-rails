@@ -10,6 +10,262 @@ html, body, #root {
   overflow: hidden;
 }
 
-canvas {
+/* Liquid Glass Design */
+.app-container {
+  width: 100%;
+  height: 100vh;
+  position: relative;
+  background: linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%);
+  overflow: hidden;
+}
+
+.canvas-main {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #ffffff;
+  cursor: grab;
   touch-action: none;
+}
+
+.canvas-main:active {
+  cursor: grabbing;
+}
+
+/* Glass Panel - Modern Liquid Glass */
+.glass-panel {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  width: 320px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  padding: 24px;
+  color: #1a1a2e;
+  z-index: 1000;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: slideUp 0.5s ease-out;
+}
+
+.glass-panel:hover {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  transform: translateY(-4px);
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+  color: #1a1a2e;
+}
+
+.panel-header i {
+  font-size: 1.6rem;
+  color: #4a6bff;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Control Groups */
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.control-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #4a4a6a;
+}
+
+.control-label i {
+  color: #4a6bff;
+}
+
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.3);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4a6bff 0%, #6a4aff 100%);
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(74, 107, 255, 0.4);
+  transition: transform 0.2s ease;
+}
+
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.slider::-webkit-slider-thumb:active {
+  transform: scale(1.3);
+}
+
+.slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4a6bff 0%, #6a4aff 100%);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 4px 12px rgba(74, 107, 255, 0.4);
+}
+
+.value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #4a6bff;
+  background: rgba(255, 255, 255, 0.3);
+  padding: 4px 10px;
+  border-radius: 8px;
+  min-width: 50px;
+  text-align: center;
+}
+
+/* Toggle Button */
+.toggle-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  border: 2px solid rgba(74, 107, 255, 0.3);
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  color: #4a6bff;
+}
+
+.toggle-btn:hover {
+  border-color: rgba(74, 107, 255, 0.6);
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+.toggle-btn.active {
+  background: linear-gradient(135deg, #4a6bff 0%, #6a4aff 100%);
+  border-color: transparent;
+  color: white;
+  box-shadow: 0 4px 16px rgba(74, 107, 255, 0.4);
+}
+
+.toggle-btn i {
+  font-size: 1.2rem;
+}
+
+/* Reset Button */
+.reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 14px;
+  border: 2px solid rgba(74, 107, 255, 0.3);
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  color: #4a6bff;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.reset-btn:hover {
+  border-color: rgba(74, 107, 255, 0.6);
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(74, 107, 255, 0.2);
+}
+
+.reset-btn i {
+  font-size: 1.1rem;
+}
+
+/* Drag Overlay */
+.drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.drag-overlay.dragging {
+  cursor: grabbing;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .glass-panel {
+    width: calc(100% - 40px);
+    left: 20px;
+    right: 20px;
+    bottom: 10px;
+    padding: 16px;
+  }
+  
+  .panel-header {
+    font-size: 1.2rem;
+  }
+  
+  .slider-container {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .value {
+    align-self: flex-start;
+  }
+}
+
+/* Smooth cursor transition for canvas */
+canvas {
+  transition: cursor 0.15s ease;
 }
