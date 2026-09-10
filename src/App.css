@@ -32,8 +32,8 @@
   height: 100vh;
   position: relative;
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(64px, 80px) 1fr minmax(200px, 320px);
+  grid-template-rows: 40px 1fr 32px;
   grid-template-areas:
     "topbar topbar topbar"
     "toolbar canvas panels"
@@ -48,13 +48,14 @@
 .top-bar {
   grid-area: topbar;
   position: relative;
-  height: 48px;
+  height: 40px;
   background: #F5F5F5;
   border-bottom: 1px solid #000000;
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 8px;
   z-index: 1000;
+  overflow: hidden;
 }
 
 .logo {
@@ -78,15 +79,16 @@
 }
 
 .menu-button {
-  padding: 8px 16px;
+  padding: 6px 12px;
   background: transparent;
   border: none;
   color: #000000;
-  font-size: 14px;
+  font-size: 12px;
   font-family: 'Roboto Mono', monospace;
   cursor: pointer;
   border-radius: 4px;
   transition: background 0.2s ease;
+  white-space: nowrap;
 }
 
 .menu-button:hover,
@@ -186,33 +188,38 @@
    =================================================================== */
 .toolbar {
   grid-area: toolbar;
-  width: 80px;
   background: #F5F5F5;
   border-right: 1px solid #000000;
   display: flex;
   flex-direction: column;
   z-index: 900;
+  min-width: 64px;
+  max-width: 80px;
+  overflow: hidden;
 }
 
 .toolbar-tabs {
   display: flex;
-  padding: 8px;
-  gap: 4px;
+  padding: 4px;
+  gap: 2px;
   border-bottom: 1px solid #000000;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .toolbar-tab {
-  padding: 4px 8px;
+  padding: 2px 6px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
   color: #000000;
-  font-size: 12px;
+  font-size: 11px;
   font-family: 'Roboto Mono', monospace;
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .toolbar-tab:hover {
@@ -231,6 +238,7 @@
   padding: 8px;
   gap: 8px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .tool-tab {
@@ -240,8 +248,8 @@
 }
 
 .tool-button {
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   border: 1px solid #000000;
   border-radius: 4px;
   background: #FFFFFF;
@@ -252,6 +260,7 @@
   transition: all 0.2s ease;
   font-family: 'Roboto Mono', monospace;
   position: relative;
+  flex-shrink: 0;
 }
 
 .tool-button:hover {
@@ -268,8 +277,8 @@
 }
 
 .tool-button svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   stroke: #000000;
 }
 
@@ -298,12 +307,14 @@
    =================================================================== */
 .side-panels {
   grid-area: panels;
-  width: 280px;
   background: #F5F5F5;
   border-left: 1px solid #000000;
   display: flex;
   flex-direction: column;
   z-index: 900;
+  min-width: 200px;
+  max-width: 320px;
+  overflow: hidden;
 }
 
 .panel-tabs {
@@ -340,6 +351,7 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .panel {
