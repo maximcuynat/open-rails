@@ -42,16 +42,16 @@
 
 .grid-select-container select {
   padding: 8px 16px;
-  border: 1px solid #424242;
+  border: 1px solid #000000;
   border-radius: 8px;
   background: #FFFFFF;
-  color: #121212;
+  color: #000000;
   font-size: 1rem;
   font-family: 'Roboto Mono', monospace;
   cursor: pointer;
   width: 96px;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23121212' d='M8 11L1 4h14z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23000000' d='M8 11L1 4h14z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   padding-right: 32px;
@@ -59,18 +59,18 @@
 
 .grid-select-container select:focus {
   outline: none;
-  border-color: #121212;
-  box-shadow: 0 0 0 2px #D32F2F;
+  border-color: #000000;
+  box-shadow: 0 0 0 2px #000000;
 }
 
-/* --- TOOL PANEL (Style Cities: Skylines) --- */
+/* --- TOOL PANEL (Black & White) --- */
 .tool-panel {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   height: 64px;
-  background: rgba(30, 30, 30, 0.95);
+  background: #000000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,10 +83,9 @@
 .tool-button {
   width: 48px;
   height: 48px;
-  border: none;
+  border: 1px solid #000000;
   border-radius: 4px;
-  background: transparent;
-  color: #FFFFFF;
+  background: #FFFFFF;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -96,13 +95,16 @@
 }
 
 .tool-button:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: #F0F0F0;
 }
 
 .tool-button.active {
-  background: #FFFFFF;
-  color: #121212;
-  box-shadow: 0 0 0 2px #D32F2F;
+  background: #000000;
+  box-shadow: 0 0 0 2px #000000;
+}
+
+.tool-button.active i {
+  color: #FFFFFF;
 }
 
 .tool-button:focus {
@@ -116,6 +118,11 @@
 .tool-button i {
   font-size: 24px;
   line-height: 1;
+  color: #000000;
+}
+
+.tool-button.active i {
+  color: #000000;
 }
 
 .tool-label {
@@ -123,7 +130,7 @@
   bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(30, 30, 30, 0.95);
+  background: #000000;
   color: #FFFFFF;
   padding: 4px 8px;
   border-radius: 4px;
@@ -135,7 +142,7 @@
   transition: opacity 0.2s ease, visibility 0.2s ease;
   margin-bottom: 8px;
   z-index: 100;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border: 1px solid #000000;
 }
 
 .tool-item:hover .tool-label {
