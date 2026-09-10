@@ -4,7 +4,7 @@
   box-sizing: border-box;
 }
 
-@import "~bootstrap-icons/font/bootstrap-icons.css";
+@import url("/node_modules/bootstrap-icons/font/bootstrap-icons.css");
 
 :root {
   /* Typographie ferroviaire */
@@ -27,5 +27,6 @@ html, body, #root {
 
 /* Force all Bootstrap Icons to be black */
 .bi {
-  color: #000000;
+  color: #000000 !important;
+  font-weight: normal !important;
 }
