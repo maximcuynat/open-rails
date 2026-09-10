@@ -2,6 +2,7 @@ import { useState } from 'react';
 import './App.css';
 import CanvasGrid from './components/CanvasGrid';
 import GridSelector from './components/GridSelector';
+import BottomDrawer from './components/BottomDrawer';
 
 function App() {
   const [gridSize, setGridSize] = useState(35);
@@ -23,6 +24,7 @@ function App() {
         value={gridSize}
         onChange={setGridSize}
       />
+      <BottomDrawer />
     </div>
   );
 }
