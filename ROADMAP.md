@@ -23,11 +23,10 @@
 | Suppression (Delete/Backspace) | Fait |
 | Barre d'outils (Place, Curve, Select, Snap) | Fait |
 | Raccourcis clavier (N, C, V, G, Esc, Del) | Fait |
-| Tests unitaires (55 tests) | Fait |
-| Profils de courbe prédéfinis (R150-R2000) | Fait |
-| Placement 2-clics avec profils | Fait |
-| Chaining (enchaînement de segments) | Fait |
-| Cycle de profils ([ / ]) + flip de sens (Tab) | Fait |
+| Tests unitaires (72 tests) | Fait |
+| Continuité G1 (tangente entre segments) | Fait |
+| Courbes dynamiques (rayon calculé, pas fixe) | Fait |
+| Tangente sortante de chaque segment | Fait |
 | Courbes Bezier quadratique (3 clics: start → via → end) | Fait |
 | Rendu courbes détaillé (double rail + traverses + ballast) | Fait |
 | Rendu courbes simplifié (quadraticCurveTo) | Fait |
@@ -78,9 +77,9 @@
 
 ---
 
-## Phase 2 — Courbes et types de rails ✅ (itération 2 en cours)
+## Phase 2 — Courbes et types de rails ✅ (itération 4 en cours)
 
-**Objectif :** tracer des rails droits et courbes, les mélanger.
+**Objectif :** tracer des rails droits et courbes, les mélanger, avec continuité G1.
 
 ### Itération 1 — base fonctionnelle ✅
 
@@ -115,6 +114,35 @@
 - [x] **Mesures en direct** : label avec profil + longueur près du curseur
 - [x] Tests : `profiles.test.ts` (14 tests — radii, snap, sagitta, arcToVia)
 - [x] 55 tests au total
+
+### Itération 4 — continuité G1 (tangente) + courbes dynamiques ✅
+
+- [x] **Recherche** : continuité G1 entre segments Bezier, courbes de transition
+      (clothoid/Euler spiral), tangente sortante de chaque segment
+- [x] **Module tangent.ts** :
+  - `bezierStartTangent` / `bezierEndTangent` : tangente normalisée aux extrémités
+  - `segmentTangentAt` : tangente sortante d'un segment (droit ou courbe) à un nœud
+  - `outgoingTangent` : récupère la tangente du segment précédent à un nœud
+  - `viaFromTangent` : calcule le via à partir de la tangente entrante (G1)
+  - `viaFromTwoTangents` : résout le via avec tangentes aux deux extrémités (Cramer)
+- [x] **Courbes dynamiques** : plus de rayon fixe ni de profils prédéfinis. Le via
+      est calculé à partir de la direction du rail précédent et la position du
+      curseur. Petit virage ou grande courbe selon où on place l'arrivée.
+- [x] **Continuité G1 automatique** : chaque segment commence dans la même
+      direction que la fin du segment précédent. Les rails s'enchaînent sans angle.
+- [x] **Détection droit vs courbe** : si le via est sur la corde (delta < 1%),
+      segment droit. Sinon courbe.
+- [x] **Preview en direct** avec G1 : le preview montre la courbe qui suit la
+      direction du rail précédent, mise à jour en temps réel
+- [x] **Label dynamique** : affiche `Straight` ou `R{rayon}` (rayon calculé)
+- [x] Suppression des profils prédéfinis de l'UI ( `[` / `]` / `Tab` retirés)
+- [x] Tests : `tangent.test.ts` (17 tests — tangentes, viaFromTangent,
+      viaFromTwoTangents, segmentTangentAt, outgoingTangent)
+- [x] 72 tests au total
+
+**Livrable :** les rails s'enchaînent avec continuité tangente (G1). Les courbes
+sont dynamiques — pas de rayon fixe, tout dépend de l'orientation précédente
+et de la position d'arrivée. Prêt pour les aiguillages.
 
 ---
 

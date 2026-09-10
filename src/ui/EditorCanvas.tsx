@@ -22,7 +22,7 @@ import {
 } from '../core/network'
 import type { Network, Point, Selection } from '../core/types'
 import { curveLength, minCurveRadius } from '../core/curve'
-import { CURVE_PROFILES, arcToVia } from '../core/profiles'
+import { outgoingTangent, viaFromTangent } from '../core/tangent'
 
 type Tool = 'select' | 'place' | 'curve'
 
@@ -132,15 +132,26 @@ function renderPlacePreview(
 interface CurvePreviewData {
   start: Point
   cursor: Point
-  radius: number
-  side: 1 | -1
+  incomingTangent: Point | null
 }
 
-/** Compute the via point and determine if the curve is valid. */
-function computeCurveVia(data: CurvePreviewData): { via: Point; valid: boolean } {
-  const via = arcToVia(data.start, data.cursor, data.radius, data.side)
-  const rMin = minCurveRadius(data.start, via, data.cursor)
-  return { via, valid: data.radius === Infinity || rMin >= data.radius * 0.9 }
+/** Compute the via point using G1 continuity from the previous segment.
+ *  If there's an incoming tangent, the curve starts in that direction.
+ *  If not (first segment), the via is the midpoint (straight). */
+function computeCurveVia(data: CurvePreviewData): { via: Point; isStraight: boolean } {
+  if (!data.incomingTangent) {
+    // No previous segment — free direction, straight line
+    return {
+      via: { x: (data.start.x + data.cursor.x) / 2, y: (data.start.y + data.cursor.y) / 2 },
+      isStraight: true,
+    }
+  }
+  const via = viaFromTangent(data.start, data.cursor, data.incomingTangent)
+  // Check if the curve is essentially straight (via on the chord)
+  const mid = { x: (data.start.x + data.cursor.x) / 2, y: (data.start.y + data.cursor.y) / 2 }
+  const viaDist = Math.hypot(via.x - mid.x, via.y - mid.y)
+  const chordLen = Math.hypot(data.cursor.x - data.start.x, data.cursor.y - data.start.y)
+  return { via, isStraight: viaDist < chordLen * 0.01 }
 }
 
 function renderCurvePreview(
@@ -171,11 +182,12 @@ function renderCurvePreview(
   ctx.fill()
   ctx.globalAlpha = 1
 
-  const { via, valid } = computeCurveVia(data)
+  const { via, isStraight } = computeCurveVia(data)
   const len = curveLength(data.start, via, data.cursor)
-  const profileLabel = data.radius === Infinity ? 'Straight' : `R${data.radius}`
+  const rMin = minCurveRadius(data.start, via, data.cursor)
+  const profileLabel = isStraight ? 'Straight' : `R${rMin === Infinity ? '∞' : rMin.toFixed(0)}`
 
-  if (data.radius === Infinity) {
+  if (isStraight) {
     // Straight rail preview
     if (cam.scale < SIMPLIFY_THRESHOLD) {
       ctx.strokeStyle = accent
@@ -188,9 +200,9 @@ function renderCurvePreview(
       renderDetailedRail(ctx, cam, data.start, data.cursor, vw, vh, false, ink, accent, sleeperColor)
     }
   } else {
-    // Curved rail preview
+    // Curved rail preview — dynamic via from G1 continuity
     if (cam.scale < SIMPLIFY_THRESHOLD) {
-      ctx.strokeStyle = valid ? accent : '#e8590c'
+      ctx.strokeStyle = accent
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
@@ -238,8 +250,6 @@ export function EditorCanvas() {
     phase: 0,
     startId: null,
   })
-  const curveProfileIdxRef = useRef(0) // index into CURVE_PROFILES
-  const curveSideRef = useRef<1 | -1>(1)
 
   const [hud, setHud] = useState('')
   const [tool, setTool] = useState<Tool>('place')
@@ -274,12 +284,11 @@ export function EditorCanvas() {
     if (cs.phase === 1 && cs.startId) {
       const startNode = netRef.current.nodes.get(cs.startId)
       if (startNode) {
-        const profile = CURVE_PROFILES[curveProfileIdxRef.current]
+        const incoming = outgoingTangent(netRef.current, cs.startId)
         renderCurvePreview(ctx, cam, rect.width, rect.height, {
           start: startNode.pos,
           cursor: snappedCursorRef.current,
-          radius: profile.radius,
-          side: curveSideRef.current,
+          incomingTangent: incoming,
         })
       }
     }
@@ -374,12 +383,22 @@ export function EditorCanvas() {
           if (cs.startId && cs.startId !== endId) {
             const startNode = netRef.current.nodes.get(cs.startId)
             if (startNode) {
-              const radius = CURVE_PROFILES[curveProfileIdxRef.current].radius
-              if (radius === Infinity) {
-                addSegment(netRef.current, cs.startId, endId)
+              const incoming = outgoingTangent(netRef.current, cs.startId)
+              if (incoming) {
+                // G1 continuity: curve follows previous segment's direction
+                const via = viaFromTangent(startNode.pos, snapped, incoming)
+                // Check if essentially straight
+                const mid = { x: (startNode.pos.x + snapped.x) / 2, y: (startNode.pos.y + snapped.y) / 2 }
+                const viaDist = Math.hypot(via.x - mid.x, via.y - mid.y)
+                const chordLen = Math.hypot(snapped.x - startNode.pos.x, snapped.y - startNode.pos.y)
+                if (viaDist < chordLen * 0.01) {
+                  addSegment(netRef.current, cs.startId, endId)
+                } else {
+                  addCurveSegment(netRef.current, cs.startId, endId, via)
+                }
               } else {
-                const via = arcToVia(startNode.pos, snapped, radius, curveSideRef.current)
-                addCurveSegment(netRef.current, cs.startId, endId, via)
+                // No previous segment — straight line
+                addSegment(netRef.current, cs.startId, endId)
               }
             }
           }
@@ -541,19 +560,6 @@ export function EditorCanvas() {
         setTool('curve')
         toolRef.current = 'curve'
         curveStateRef.current = { phase: 0, startId: null }
-      } else if (e.key === '[') {
-        // Previous curve profile
-        curveProfileIdxRef.current = Math.max(0, curveProfileIdxRef.current - 1)
-        redraw()
-      } else if (e.key === ']') {
-        // Next curve profile
-        curveProfileIdxRef.current = Math.min(CURVE_PROFILES.length - 1, curveProfileIdxRef.current + 1)
-        redraw()
-      } else if (e.key === 'Tab') {
-        // Flip curve side
-        e.preventDefault()
-        curveSideRef.current = curveSideRef.current === 1 ? -1 : 1
-        redraw()
       } else if (e.key === 'g' || e.key === 'G') {
         snapRef.current = !snapRef.current
         setSnap(snapRef.current)
@@ -570,8 +576,6 @@ export function EditorCanvas() {
     if (t !== 'curve') curveStateRef.current = { phase: 0, startId: null }
   }
 
-  const currentProfileLabel = CURVE_PROFILES[curveProfileIdxRef.current]?.label ?? 'R150'
-
   return (
     <div className="canvas-wrap">
       <canvas ref={canvasRef} className={`tool-${tool}`} />
@@ -586,18 +590,10 @@ export function EditorCanvas() {
         <button
           className={tool === 'curve' ? 'active' : ''}
           onClick={() => switchTool('curve')}
-          title="Curve tool (C) — [ ] to cycle profiles, Tab to flip side"
+          title="Curve tool (C) — curves follow previous rail direction"
         >
           Curve
         </button>
-        {tool === 'curve' && (
-          <span className="profile-label" title="Current profile ([ / ] to cycle, Tab to flip)">
-            {currentProfileLabel}
-            {CURVE_PROFILES[curveProfileIdxRef.current]?.radius !== Infinity && (
-              <span className="side-indicator">{curveSideRef.current === 1 ? '↗' : '↘'}</span>
-            )}
-          </span>
-        )}
         <button
           className={tool === 'select' ? 'active' : ''}
           onClick={() => switchTool('select')}
