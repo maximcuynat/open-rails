@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createCamera, clampScale, screenToWorld, type Camera } from '../render/camera'
-import { renderGrid, renderNetwork, renderScaleBar } from '../render/renderer'
+import {
+  renderGrid,
+  renderNetwork,
+  renderScaleBar,
+  renderDetailedCurve,
+  pickSpacing,
+  SIMPLIFY_THRESHOLD,
+  MIN_RADIUS,
+} from '../render/renderer'
 import {
   addNode,
   addSegment,
@@ -13,7 +21,7 @@ import {
   snapToGrid,
 } from '../core/network'
 import type { Network, Point, Selection } from '../core/types'
-import { pickSpacing } from '../render/renderer'
+import { clampVia, curveLength, minCurveRadius } from '../core/curve'
 
 type Tool = 'select' | 'place' | 'curve'
 
@@ -32,55 +40,110 @@ function renderCurvePreview(
   data: CurvePreviewData,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+  const ink = getComputedStyle(ctx.canvas).getPropertyValue('--ink').trim() || '#1a1a1a'
+  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#8a7a6a'
+  const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
   const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
+  const warning = '#e8590c'
 
   ctx.save()
-  ctx.strokeStyle = accent
-  ctx.lineWidth = 2
-  ctx.setLineDash([6, 4])
+
+  // Draw start node marker
+  if (data.start && data.phase >= 1) {
+    ctx.fillStyle = accent
+    ctx.globalAlpha = 0.6
+    ctx.beginPath()
+    ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 6, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = paper
+    ctx.beginPath()
+    ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+  }
 
   if (data.phase === 1 && data.start) {
-    // Preview: straight from start to cursor (will become curve once via is set)
+    // Phase 1: straight preview from start to cursor (snapped)
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 2
+    ctx.setLineDash([6, 4])
     ctx.beginPath()
     ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
     ctx.lineTo(w2sX(data.cursor.x), w2sY(data.cursor.y))
     ctx.stroke()
-  } else if (data.phase === 2 && data.start && data.via) {
-    // Preview: quadratic Bezier from start via control to cursor
-    ctx.beginPath()
-    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
-    ctx.quadraticCurveTo(w2sX(data.via.x), w2sY(data.via.y), w2sX(data.cursor.x), w2sY(data.cursor.y))
-    ctx.stroke()
-
-    // Draw via control point marker
     ctx.setLineDash([])
+  } else if (data.phase === 2 && data.start && data.via) {
+    // Phase 2: full rail preview with constraints
+    const viaClamped = clampVia(data.start, data.via, data.cursor, MIN_RADIUS)
+    const rMin = minCurveRadius(data.start, viaClamped, data.cursor)
+    const len = curveLength(data.start, viaClamped, data.cursor)
+    const violates = rMin < MIN_RADIUS
+
+    // Render the actual rail (detail or simplified depending on zoom)
+    if (cam.scale < SIMPLIFY_THRESHOLD) {
+      // Simplified: just a line, colored by violation
+      ctx.strokeStyle = violates ? warning : accent
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
+      ctx.quadraticCurveTo(w2sX(viaClamped.x), w2sY(viaClamped.y), w2sX(data.cursor.x), w2sY(data.cursor.y))
+      ctx.stroke()
+    } else {
+      // Detailed rail rendering with warning color if violating
+      renderDetailedCurve(
+        ctx, cam, data.start, viaClamped, data.cursor, vw, vh,
+        false, // not selected
+        violates ? warning : ink,
+        accent,
+        sleeperColor,
+      )
+    }
+
+    // Draw via control point marker (actual via, not clamped)
     ctx.fillStyle = accent
-    ctx.globalAlpha = 0.5
+    ctx.globalAlpha = 0.4
     ctx.beginPath()
     ctx.arc(w2sX(data.via.x), w2sY(data.via.y), 5, 0, Math.PI * 2)
     ctx.fill()
     ctx.globalAlpha = 1
 
-    // Line from start to via (construction line)
+    // Construction line from start to via (dashed)
     ctx.setLineDash([3, 3])
+    ctx.strokeStyle = accent
     ctx.globalAlpha = 0.3
     ctx.beginPath()
     ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
     ctx.lineTo(w2sX(data.via.x), w2sY(data.via.y))
     ctx.stroke()
     ctx.globalAlpha = 1
-  }
-
-  // Draw start marker
-  if (data.start && data.phase >= 1) {
     ctx.setLineDash([])
-    ctx.fillStyle = accent
-    ctx.globalAlpha = 0.5
+
+    // If via was clamped, show the clamped position too
+    if (viaClamped.x !== data.via.x || viaClamped.y !== data.via.y) {
+      ctx.fillStyle = warning
+      ctx.globalAlpha = 0.5
+      ctx.beginPath()
+      ctx.arc(w2sX(viaClamped.x), w2sY(viaClamped.y), 4, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = 1
+    }
+
+    // Measurements label near cursor
+    const labelText = `R${rMin === Infinity ? '∞' : ': ' + rMin.toFixed(0)}m  L: ${len.toFixed(1)}m`
+    ctx.font = '600 11px Archivo, system-ui, sans-serif'
+    const labelW = ctx.measureText(labelText).width
+    const lx = w2sX(data.cursor.x) + 14
+    const ly = w2sY(data.cursor.y) - 10
+
+    ctx.fillStyle = violates ? 'rgba(232, 89, 12, 0.9)' : 'rgba(37, 99, 235, 0.85)'
     ctx.beginPath()
-    ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 5, 0, Math.PI * 2)
+    ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
     ctx.fill()
-    ctx.globalAlpha = 1
+    ctx.fillStyle = paper
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillText(labelText, lx, ly - 4)
   }
 
   ctx.restore()
@@ -219,11 +282,15 @@ export function EditorCanvas() {
           curveStateRef.current = { phase: 2, startId: cs.startId, via: snapped }
           redraw()
         } else if (cs.phase === 2) {
-          // Phase 2: place/select end node, create curve segment
+          // Phase 2: place/select end node, create curve segment (with clamped via)
           const existing = hitNode(netRef.current, snapped, hitTol)
           const endId = existing ?? addNode(netRef.current, snapped).id
           if (cs.startId && cs.via && cs.startId !== endId) {
-            addCurveSegment(netRef.current, cs.startId, endId, cs.via)
+            const startNode = netRef.current.nodes.get(cs.startId)
+            if (startNode) {
+              const viaClamped = clampVia(startNode.pos, cs.via, snapped, MIN_RADIUS)
+              addCurveSegment(netRef.current, cs.startId, endId, viaClamped)
+            }
           }
           curveStateRef.current = { phase: 0, startId: null, via: null }
           selRef.current = { nodes: new Set(), segments: new Set() }

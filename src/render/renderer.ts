@@ -98,18 +98,21 @@ export function renderGrid(
 // --- Rail rendering ---
 
 /** Standard gauge in world units: 1 unit = 1 meter, gauge = 1.435 m. */
-const GAUGE = 1.435
+export const GAUGE = 1.435
 /** Sleeper spacing in world units (~60 cm). */
-const SLEEPER_SPACING = 0.6
+export const SLEEPER_SPACING = 0.6
 /** Sleeper length (extends past the rails). */
-const SLEEPER_LENGTH = GAUGE + 0.5
+export const SLEEPER_LENGTH = GAUGE + 0.5
 /** Sleeper width in world units. */
-const SLEEPER_WIDTH = 0.25
+export const SLEEPER_WIDTH = 0.25
 /** Rail head width in world units. */
-const RAIL_WIDTH = 0.07
+export const RAIL_WIDTH = 0.07
 
 /** Below this scale (px/world), render as a single simplified line. */
-const SIMPLIFY_THRESHOLD = 8
+export const SIMPLIFY_THRESHOLD = 8
+
+/** Minimum curve radius in meters (standard mainline). */
+export const MIN_RADIUS = 150
 
 export function renderNetwork(
   ctx: CanvasRenderingContext2D,
@@ -277,7 +280,7 @@ function w2s(p: Point, cam: Camera, vw: number, vh: number): [number, number] {
   return [(p.x - cam.x) * cam.scale + vw / 2, (p.y - cam.y) * cam.scale + vh / 2]
 }
 
-function renderDetailedCurve(
+export function renderDetailedCurve(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   p0: Point,

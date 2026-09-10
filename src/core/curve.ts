@@ -9,12 +9,76 @@ export function bezierPoint(t: number, p0: Point, p1: Point, p2: Point): Point {
   }
 }
 
-/** Tangent vector (not normalized) on a quadratic Bezier at parameter t. */
-export function bezierTangent(t: number, p0: Point, p1: Point, p2: Point): Point {
+/** First derivative of a quadratic Bezier at parameter t. */
+export function bezierDerivative1(t: number, p0: Point, p1: Point, p2: Point): Point {
   const u = 1 - t
   return {
     x: 2 * u * (p1.x - p0.x) + 2 * t * (p2.x - p1.x),
     y: 2 * u * (p1.y - p0.y) + 2 * t * (p2.y - p1.y),
+  }
+}
+
+/** Second derivative of a quadratic Bezier (constant, independent of t). */
+export function bezierDerivative2(p0: Point, p1: Point, p2: Point): Point {
+  return {
+    x: 2 * (p2.x - 2 * p1.x + p0.x),
+    y: 2 * (p2.y - 2 * p1.y + p0.y),
+  }
+}
+
+/** Tangent vector (not normalized) on a quadratic Bezier at parameter t. */
+export function bezierTangent(t: number, p0: Point, p1: Point, p2: Point): Point {
+  return bezierDerivative1(t, p0, p1, p2)
+}
+
+/** Radius of curvature at parameter t. Returns Infinity for straight segments. */
+export function curveRadiusAt(t: number, p0: Point, p1: Point, p2: Point): number {
+  const d1 = bezierDerivative1(t, p0, p1, p2)
+  const d2 = bezierDerivative2(p0, p1, p2)
+  const cross = d1.x * d2.y - d1.y * d2.x
+  if (Math.abs(cross) < 1e-12) return Infinity
+  const speed = Math.hypot(d1.x, d1.y)
+  return speed * speed * speed / Math.abs(cross)
+}
+
+/** Minimum radius of curvature along the Bezier (sampling). */
+export function minCurveRadius(p0: Point, p1: Point, p2: Point, samples = 64): number {
+  let min = Infinity
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples
+    const r = curveRadiusAt(t, p0, p1, p2)
+    if (r < min) min = r
+  }
+  return min
+}
+
+/** Clamp the via point so the curve respects a minimum radius.
+ *  Moves via toward the chord midpoint until minRadius is satisfied. */
+export function clampVia(p0: Point, via: Point, p2: Point, minRadius: number): Point {
+  const mid = { x: (p0.x + p2.x) / 2, y: (p0.y + p2.y) / 2 }
+  let current = { ...via }
+  let r = minCurveRadius(p0, current, p2, 32)
+  if (r >= minRadius) return current
+
+  // Binary search: lerp via toward midpoint by factor f
+  let lo = 0
+  let hi = 1
+  for (let iter = 0; iter < 40; iter++) {
+    const f = (lo + hi) / 2
+    current = {
+      x: via.x + (mid.x - via.x) * f,
+      y: via.y + (mid.y - via.y) * f,
+    }
+    r = minCurveRadius(p0, current, p2, 32)
+    if (r >= minRadius) {
+      hi = f
+    } else {
+      lo = f
+    }
+  }
+  return {
+    x: via.x + (mid.x - via.x) * hi,
+    y: via.y + (mid.y - via.y) * hi,
   }
 }
 

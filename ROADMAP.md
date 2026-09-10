@@ -23,7 +23,11 @@
 | Suppression (Delete/Backspace) | Fait |
 | Barre d'outils (Place, Curve, Select, Snap) | Fait |
 | Raccourcis clavier (N, C, V, G, Esc, Del) | Fait |
-| Tests unitaires (32 tests) | Fait |
+| Tests unitaires (41 tests) | Fait |
+| Preview rail en direct (courbes) | Fait |
+| Contraintes de courbure (rayon min 150m) | Fait |
+| Clamping du point via | Fait |
+| Mesures en direct (longueur, rayon) | Fait |
 | Courbes Bezier quadratique (3 clics: start → via → end) | Fait |
 | Rendu courbes détaillé (double rail + traverses + ballast) | Fait |
 | Rendu courbes simplifié (quadraticCurveTo) | Fait |
@@ -74,28 +78,50 @@
 
 ---
 
-## Phase 2 — Courbes et types de rails ✅
+## Phase 2 — Courbes et types de rails ✅ (itération 2 en cours)
 
 **Objectif :** tracer des rails droits et courbes, les mélanger.
+
+### Itération 1 — base fonctionnelle ✅
 
 - [x] Type `Segment` étendu : `kind: 'straight' | 'curve'` avec `via?: Point`
 - [x] Rail courbe — Bezier quadratique :
   - [x] Défini par 3 points (start, via, end)
   - [x] Discrétisation en segments pour le rendu (`discretizeCurve`)
   - [x] Normale calculée à chaque point pour offset des deux files de rail
-- [ ] Rail courbe — spline Catmull-Rom (deferred — pas critique pour l'instant) :
-  - [ ] Tracé fluide passant par N points de contrôle
-  - [ ] Conversion en points discrétisés
 - [x] Outil **courbe** dans la barre d'outils :
   - [x] Mode 3 clics : start → via (point de contrôle) → end
-  - [x] Preview en temps réel (ligne pointillée + Bezier + marqueurs)
+  - [x] Preview pointillés + marqueurs
   - [x] Clic droit ou Échap annule la courbe en cours
 - [x] Hit-testing sur les courbes (`distToCurve`, discrétisée)
 - [x] Rendu détaillé des courbes : double rail + traverses orientées + ballast
 - [x] Rendu simplifié : `quadraticCurveTo` natif du canvas
-- [x] Tests : `curve.test.ts` (14 tests — Bezier, tangente, normale, discrétisation, longueur, hit-test)
+- [x] Tests : `curve.test.ts` (14 tests)
 
-**Livrable :** rails droits et courbes, mélange libre.
+### Itération 2 — preview rail en direct + contraintes ✅
+
+- [x] **Preview rail en direct** : pendant le placement de la courbe, affichage
+      du vrai rendu du rail (double file + traverses) en temps réel.
+- [x] **Contraintes de courbure** :
+  - [x] Calcul du rayon de courbure minimum le long de la Bezier (formule
+        analytique : R = |B'|³ / |B' × B''|)
+  - [x] Rayon minimum configurable (défaut : 150 m)
+  - [x] Feedback visuel : la courbe vire au rouge/orange si rayon sous le seuil
+  - [x] Affichage du rayon et de la longueur près du curseur
+- [x] **Contrôle du point via** :
+  - [x] `clampVia` : le point de contrôle est rapproché du milieu de la corde
+        (binary search) pour respecter le rayon minimum
+  - [x] Le via clampé est sauvegardé dans le segment final
+  - [x] Position d'origine du via affichée en semi-transparent + position clampée
+        en orange si différentes
+- [x] **Mesures en direct** :
+  - [x] Longueur de la courbe pendant le placement
+  - [x] Rayon de courbure minimum
+- [x] Tests : `curve.test.ts` (23 tests — Bezier, tangente, normale,
+      discrétisation, longueur, hit-test, rayon, clamping)
+
+**Livrable :** on trace une courbe avec rendu rail live, et on voit si elle
+respecte les contraintes physique avant de valider.
 
 ---
 

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { bezierPoint, bezierTangent, bezierNormal, discretizeCurve, curveLength, distToCurve } from './curve'
+import {
+  bezierPoint,
+  bezierTangent,
+  bezierNormal,
+  discretizeCurve,
+  curveLength,
+  distToCurve,
+  curveRadiusAt,
+  minCurveRadius,
+  clampVia,
+} from './curve'
 
 describe('bezierPoint', () => {
   it('returns p0 at t=0', () => {
@@ -93,5 +103,81 @@ describe('distToCurve', () => {
   it('returns 0 at an endpoint', () => {
     const d = distToCurve({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 5, y: 10 }, { x: 10, y: 0 }, 64)
     expect(d).toBeLessThan(0.01)
+  })
+})
+
+describe('curveRadiusAt', () => {
+  it('returns Infinity for a straight line', () => {
+    const r = curveRadiusAt(0.5, { x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 })
+    expect(r).toBe(Infinity)
+  })
+
+  it('returns a finite positive radius for a curved path', () => {
+    const r = curveRadiusAt(0.5, { x: 0, y: 0 }, { x: 5, y: 10 }, { x: 10, y: 0 })
+    expect(r).toBeLessThan(Infinity)
+    expect(r).toBeGreaterThan(0)
+  })
+
+  it('radius is smaller for tighter curves', () => {
+    const gentle = curveRadiusAt(0.5, { x: 0, y: 0 }, { x: 5, y: 5 }, { x: 10, y: 0 })
+    const tight = curveRadiusAt(0.5, { x: 0, y: 0 }, { x: 5, y: 20 }, { x: 10, y: 0 })
+    expect(tight).toBeLessThan(gentle)
+  })
+})
+
+describe('minCurveRadius', () => {
+  it('returns Infinity for a straight line', () => {
+    const r = minCurveRadius({ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 10, y: 0 })
+    expect(r).toBe(Infinity)
+  })
+
+  it('returns a finite value for a curved path', () => {
+    const r = minCurveRadius({ x: 0, y: 0 }, { x: 5, y: 10 }, { x: 10, y: 0 })
+    expect(r).toBeLessThan(Infinity)
+    expect(r).toBeGreaterThan(0)
+  })
+
+  it('is smaller for tighter curves', () => {
+    const gentle = minCurveRadius({ x: 0, y: 0 }, { x: 5, y: 5 }, { x: 10, y: 0 })
+    const tight = minCurveRadius({ x: 0, y: 0 }, { x: 5, y: 20 }, { x: 10, y: 0 })
+    expect(tight).toBeLessThan(gentle)
+  })
+})
+
+describe('clampVia', () => {
+  it('returns the original via when radius is already acceptable', () => {
+    const p0 = { x: 0, y: 0 }
+    const via = { x: 5, y: 1 }
+    const p2 = { x: 10, y: 0 }
+    const minR = minCurveRadius(p0, via, p2)
+    const clamped = clampVia(p0, via, p2, minR * 0.9)
+    expect(clamped.x).toBeCloseTo(via.x)
+    expect(clamped.y).toBeCloseTo(via.y)
+  })
+
+  it('pulls via toward midpoint to increase radius', () => {
+    const p0 = { x: 0, y: 0 }
+    const via = { x: 5, y: 50 }
+    const p2 = { x: 10, y: 0 }
+    const minR = 100
+    const clamped = clampVia(p0, via, p2, minR)
+    const newR = minCurveRadius(p0, clamped, p2)
+    expect(newR).toBeGreaterThanOrEqual(minR * 0.95)
+    // Clamped via should be closer to midpoint than original
+    const mid = { x: 5, y: 0 }
+    const origDist = Math.hypot(via.x - mid.x, via.y - mid.y)
+    const clampedDist = Math.hypot(clamped.x - mid.x, clamped.y - mid.y)
+    expect(clampedDist).toBeLessThan(origDist)
+  })
+
+  it('returns midpoint when minRadius cannot be satisfied (degenerate)', () => {
+    const p0 = { x: 0, y: 0 }
+    const via = { x: 5, y: 100 }
+    const p2 = { x: 10, y: 0 }
+    const minR = 1e15
+    const clamped = clampVia(p0, via, p2, minR)
+    // Should be at or very near midpoint (straight line)
+    expect(clamped.x).toBeCloseTo(5, 0)
+    expect(clamped.y).toBeCloseTo(0, 0)
   })
 })
