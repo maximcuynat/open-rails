@@ -11,21 +11,27 @@ describe('CURVE_RADII', () => {
   it('includes Infinity (straight) as last', () => {
     expect(CURVE_RADII[CURVE_RADII.length - 1]).toBe(Infinity)
   })
+
+  it('includes HO standard radii', () => {
+    expect(CURVE_RADII).toContain(430)
+    expect(CURVE_RADII).toContain(550)
+    expect(CURVE_RADII).toContain(867)
+  })
 })
 
 describe('CURVE_PROFILES', () => {
   it('has labels matching radii', () => {
-    expect(CURVE_PROFILES[0].label).toBe('R150')
+    expect(CURVE_PROFILES[0].label).toBe('R430')
     expect(CURVE_PROFILES[CURVE_PROFILES.length - 1].label).toBe('Straight')
   })
 })
 
 describe('snapRadius', () => {
   it('snaps to closest predefined radius', () => {
-    expect(snapRadius(160)).toBe(150)
-    expect(snapRadius(180)).toBe(200)
-    expect(snapRadius(260)).toBe(250)
-    expect(snapRadius(900)).toBe(800)
+    expect(snapRadius(440)).toBe(430)
+    expect(snapRadius(470)).toBe(490)
+    expect(snapRadius(560)).toBe(550)
+    expect(snapRadius(800)).toBe(790)
   })
 
   it('returns Infinity for very large values', () => {

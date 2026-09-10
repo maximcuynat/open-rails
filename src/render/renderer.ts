@@ -95,24 +95,24 @@ export function renderGrid(
   ctx.restore()
 }
 
-// --- Rail rendering ---
+// --- Rail rendering (HO scale, world units = model mm) ---
 
-/** Standard gauge in world units: 1 unit = 1 meter, gauge = 1.435 m. */
-export const GAUGE = 1.435
-/** Sleeper spacing in world units (~60 cm). */
-export const SLEEPER_SPACING = 0.6
-/** Sleeper length (extends past the rails). */
-export const SLEEPER_LENGTH = GAUGE + 0.5
-/** Sleeper width in world units. */
-export const SLEEPER_WIDTH = 0.25
-/** Rail head width in world units. */
-export const RAIL_WIDTH = 0.07
+/** HO gauge: 16.5 mm (NEM 010 / NMRA S-1.2) */
+export const GAUGE = 16.5
+/** Sleeper spacing in HO (~25 mm) */
+export const SLEEPER_SPACING = 25
+/** Sleeper length (gauge + 5.5 mm) */
+export const SLEEPER_LENGTH = 22
+/** Sleeper width in HO (~2.5 mm) */
+export const SLEEPER_WIDTH = 2.5
+/** Rail head width (Code 83 ≈ 1.0 mm) */
+export const RAIL_WIDTH = 1.0
 
-/** Below this scale (px/world), render as a single simplified line. */
-export const SIMPLIFY_THRESHOLD = 8
+/** Below this scale (px/mm), render as a single simplified line. */
+export const SIMPLIFY_THRESHOLD = 2
 
-/** Minimum curve radius in meters (standard mainline). */
-export const MIN_RADIUS = 150
+/** Minimum curve radius for HO (380 mm, 15 inches) */
+export const MIN_RADIUS = 380
 
 export function renderNetwork(
   ctx: CanvasRenderingContext2D,

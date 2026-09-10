@@ -237,7 +237,7 @@ function renderCurvePreview(
 
 export function EditorCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const camRef = useRef<Camera>(createCamera())
+  const camRef = useRef<Camera>(createCamera(0, 0, 3))
   const netRef = useRef<Network>(createNetwork())
   const selRef = useRef<Selection>({ nodes: new Set(), segments: new Set() })
   const lastNodeIdRef = useRef<string | null>(null)

@@ -1,18 +1,35 @@
-/** Standard curve radius profiles in meters.
- *  Ordered from tightest to widest. These are the predefined radii
- *  that the curve tool will snap to when placing a curved rail. */
+/** Kato Unitrack HO standard curve radii in model mm.
+ *  Ordered from tightest to widest.
+ *  All Kato curves are 22.5° segments (except 2-290 at 10°).
+ *  4 pieces = quarter circle, 16 pieces = full circle. */
 export const CURVE_RADII: number[] = [
-  150,
-  200,
-  250,
-  300,
-  500,
-  800,
-  1000,
-  1500,
-  2000,
+  430,  // 2-260
+  490,  // 2-270
+  550,  // 2-210
+  610,  // 2-220
+  670,  // 2-230
+  730,  // 2-240
+  790,  // 2-250
+  867,  // 2-290 (10° segments)
   Infinity, // straight
 ]
+
+/** Standard Kato Unitrack HO straight lengths in mm. */
+export const STRAIGHT_LENGTHS: number[] = [
+  60,   // 2-105
+  94,   // 2-111
+  109,  // 2-170 (with buffer)
+  114,  // 2-120
+  123,  // 2-140
+  149,  // 2-193
+  174,  // 2-130
+  227,  // 2-160
+  246,  // 2-150 / 2-151 (feeder)
+  369,  // 2-180
+]
+
+/** Standard curve segment angles in degrees. */
+export const CURVE_ANGLES: number[] = [22.5, 10]
 
 export interface CurveProfile {
   radius: number
