@@ -4,6 +4,8 @@
   box-sizing: border-box;
 }
 
+@import "bootstrap-icons/font/bootstrap-icons.css";
+
 :root {
   /* Typographie ferroviaire */
   font-family: 'Roboto Mono', monospace;
