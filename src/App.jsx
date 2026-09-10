@@ -6,7 +6,6 @@ const DOT_RADIUS = 2;
 function App() {
   const canvasRef = useRef(null);
   const [gridSize, setGridSize] = useState(35);
-  const [showGrid, setShowGrid] = useState(true);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
@@ -19,16 +18,14 @@ function App() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
 
-      if (showGrid) {
-        const startX = panOffset.x % gridSize;
-        const startY = panOffset.y % gridSize;
+      const startX = panOffset.x % gridSize;
+      const startY = panOffset.y % gridSize;
 
-        for (let x = startX; x < canvas.width; x += gridSize) {
-          for (let y = startY; y < canvas.height; y += gridSize) {
-            ctx.beginPath();
-            ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
-          }
+      for (let x = startX; x < canvas.width; x += gridSize) {
+        for (let y = startY; y < canvas.height; y += gridSize) {
+          ctx.beginPath();
+          ctx.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
     };
@@ -69,11 +66,9 @@ function App() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [gridSize, showGrid, panOffset, isDragging, lastPos]);
+  }, [gridSize, panOffset, isDragging, lastPos]);
 
-  const resetView = () => {
-    setPanOffset({ x: 0, y: 0 });
-  };
+  const gridSizes = [10, 15, 20, 25, 30, 35, 40, 45, 50];
 
   return (
     <div className="app-container">
@@ -83,49 +78,15 @@ function App() {
       />
       
       <div className="control-panel">
-        <div className="panel-header">
-          <i className="bi bi-train-front"></i>
-          <span>Train Switch Game</span>
-        </div>
-        
-        <div className="panel-body">
-          <div className="control-group">
-            <label className="control-label">
-              <i className="bi bi-grid-3x3-gap"></i>
-              Grid Size
-            </label>
-            <div className="slider-container">
-              <input
-                type="range"
-                min="10"
-                max="100"
-                step="5"
-                value={gridSize}
-                onChange={(e) => setGridSize(Number(e.target.value))}
-                className="slider"
-              />
-              <span className="value">{gridSize}px</span>
-            </div>
-          </div>
-          
-          <div className="control-group">
-            <label className="control-label">
-              <i className="bi bi-eye"></i>
-              Show Grid
-            </label>
-            <button
-              className={`toggle-btn ${showGrid ? 'active' : ''}`}
-              onClick={() => setShowGrid(!showGrid)}
-            >
-              <i className={`bi ${showGrid ? 'bi-grid-fill' : 'bi-grid'}`}></i>
-            </button>
-          </div>
-          
-          <button className="reset-btn" onClick={resetView}>
-            <i className="bi bi-arrow-clockwise"></i>
-            Reset View
-          </button>
-        </div>
+        <select
+          value={gridSize}
+          onChange={(e) => setGridSize(Number(e.target.value))}
+          className="grid-select"
+        >
+          {gridSizes.map(size => (
+            <option key={size} value={size}>{size}px</option>
+          ))}
+        </select>
       </div>
       
       <div className={`drag-overlay ${isDragging ? 'dragging' : ''}`}></div>
