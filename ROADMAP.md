@@ -23,11 +23,11 @@
 | Suppression (Delete/Backspace) | Fait |
 | Barre d'outils (Place, Curve, Select, Snap) | Fait |
 | Raccourcis clavier (N, C, V, G, Esc, Del) | Fait |
-| Tests unitaires (41 tests) | Fait |
-| Preview rail en direct (courbes) | Fait |
-| Contraintes de courbure (rayon min 150m) | Fait |
-| Clamping du point via | Fait |
-| Mesures en direct (longueur, rayon) | Fait |
+| Tests unitaires (55 tests) | Fait |
+| Profils de courbe prédéfinis (R150-R2000) | Fait |
+| Placement 2-clics avec profils | Fait |
+| Chaining (enchaînement de segments) | Fait |
+| Cycle de profils ([ / ]) + flip de sens (Tab) | Fait |
 | Courbes Bezier quadratique (3 clics: start → via → end) | Fait |
 | Rendu courbes détaillé (double rail + traverses + ballast) | Fait |
 | Rendu courbes simplifié (quadraticCurveTo) | Fait |
@@ -98,30 +98,23 @@
 - [x] Rendu simplifié : `quadraticCurveTo` natif du canvas
 - [x] Tests : `curve.test.ts` (14 tests)
 
-### Itération 2 — preview rail en direct + contraintes ✅
+### Itération 3 — placement 2-clics avec profils prédéfinis ✅
 
-- [x] **Preview rail en direct** : pendant le placement de la courbe, affichage
-      du vrai rendu du rail (double file + traverses) en temps réel.
-- [x] **Contraintes de courbure** :
-  - [x] Calcul du rayon de courbure minimum le long de la Bezier (formule
-        analytique : R = |B'|³ / |B' × B''|)
-  - [x] Rayon minimum configurable (défaut : 150 m)
-  - [x] Feedback visuel : la courbe vire au rouge/orange si rayon sous le seuil
-  - [x] Affichage du rayon et de la longueur près du curseur
-- [x] **Contrôle du point via** :
-  - [x] `clampVia` : le point de contrôle est rapproché du milieu de la corde
-        (binary search) pour respecter le rayon minimum
-  - [x] Le via clampé est sauvegardé dans le segment final
-  - [x] Position d'origine du via affichée en semi-transparent + position clampée
-        en orange si différentes
-- [x] **Mesures en direct** :
-  - [x] Longueur de la courbe pendant le placement
-  - [x] Rayon de courbure minimum
-- [x] Tests : `curve.test.ts` (23 tests — Bezier, tangente, normale,
-      discrétisation, longueur, hit-test, rayon, clamping)
-
-**Livrable :** on trace une courbe avec rendu rail live, et on voit si elle
-respecte les contraintes physique avant de valider.
+- [x] **Placement simplifié** : 2 clics au lieu de 3 (start → preview → end)
+- [x] **Profils de courbe prédéfinis** : R150, R200, R250, R300, R500, R800,
+      R1000, R1500, R2000, Straight (10 profils)
+- [x] **`arcToVia`** : calcule le point de contrôle Bezier à partir du rayon et
+      du sens, pas besoin de placer manuellement le via
+- [x] **Preview rail en direct** : pendant le déplacement de la souris, le rail
+      se dessine avec le profil sélectionné (double file + traverses si zoomé)
+- [x] **Chaining** : après placement, le nœud de fin devient le start du segment
+      suivant — on enchaîne les courbes sans reclicker
+- [x] **Cycle des profils** : touches `[` / `]` pour changer le rayon
+- [x] **Flip de sens** : touche `Tab` pour inverser la direction de la courbe
+- [x] **Profil courant affiché** dans la barre d'outils avec indicateur de sens
+- [x] **Mesures en direct** : label avec profil + longueur près du curseur
+- [x] Tests : `profiles.test.ts` (14 tests — radii, snap, sagitta, arcToVia)
+- [x] 55 tests au total
 
 ---
 

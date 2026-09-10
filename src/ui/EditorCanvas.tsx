@@ -5,9 +5,9 @@ import {
   renderNetwork,
   renderScaleBar,
   renderDetailedCurve,
+  renderDetailedRail,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
-  MIN_RADIUS,
 } from '../render/renderer'
 import {
   addNode,
@@ -21,15 +21,23 @@ import {
   snapToGrid,
 } from '../core/network'
 import type { Network, Point, Selection } from '../core/types'
-import { clampVia, curveLength, minCurveRadius } from '../core/curve'
+import { curveLength, minCurveRadius } from '../core/curve'
+import { CURVE_PROFILES, arcToVia } from '../core/profiles'
 
 type Tool = 'select' | 'place' | 'curve'
 
 interface CurvePreviewData {
-  phase: 0 | 1 | 2
-  start: Point | null
-  via: Point | null
+  start: Point
   cursor: Point
+  radius: number
+  side: 1 | -1
+}
+
+/** Compute the via point and determine if the curve is valid. */
+function computeCurveVia(data: CurvePreviewData): { via: Point; valid: boolean } {
+  const via = arcToVia(data.start, data.cursor, data.radius, data.side)
+  const rMin = minCurveRadius(data.start, via, data.cursor)
+  return { via, valid: data.radius === Infinity || rMin >= data.radius * 0.9 }
 }
 
 function renderCurvePreview(
@@ -45,106 +53,66 @@ function renderCurvePreview(
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
   const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
-  const warning = '#e8590c'
 
   ctx.save()
 
-  // Draw start node marker
-  if (data.start && data.phase >= 1) {
-    ctx.fillStyle = accent
-    ctx.globalAlpha = 0.6
-    ctx.beginPath()
-    ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 6, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = paper
-    ctx.beginPath()
-    ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 3, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalAlpha = 1
-  }
+  // Start node marker
+  ctx.fillStyle = accent
+  ctx.globalAlpha = 0.6
+  ctx.beginPath()
+  ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = paper
+  ctx.beginPath()
+  ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
 
-  if (data.phase === 1 && data.start) {
-    // Phase 1: straight preview from start to cursor (snapped)
-    ctx.strokeStyle = accent
-    ctx.lineWidth = 2
-    ctx.setLineDash([6, 4])
-    ctx.beginPath()
-    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
-    ctx.lineTo(w2sX(data.cursor.x), w2sY(data.cursor.y))
-    ctx.stroke()
-    ctx.setLineDash([])
-  } else if (data.phase === 2 && data.start && data.via) {
-    // Phase 2: full rail preview with constraints
-    const viaClamped = clampVia(data.start, data.via, data.cursor, MIN_RADIUS)
-    const rMin = minCurveRadius(data.start, viaClamped, data.cursor)
-    const len = curveLength(data.start, viaClamped, data.cursor)
-    const violates = rMin < MIN_RADIUS
+  const { via, valid } = computeCurveVia(data)
+  const len = curveLength(data.start, via, data.cursor)
+  const profileLabel = data.radius === Infinity ? 'Straight' : `R${data.radius}`
 
-    // Render the actual rail (detail or simplified depending on zoom)
+  if (data.radius === Infinity) {
+    // Straight rail preview
     if (cam.scale < SIMPLIFY_THRESHOLD) {
-      // Simplified: just a line, colored by violation
-      ctx.strokeStyle = violates ? warning : accent
+      ctx.strokeStyle = accent
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
-      ctx.quadraticCurveTo(w2sX(viaClamped.x), w2sY(viaClamped.y), w2sX(data.cursor.x), w2sY(data.cursor.y))
+      ctx.lineTo(w2sX(data.cursor.x), w2sY(data.cursor.y))
       ctx.stroke()
     } else {
-      // Detailed rail rendering with warning color if violating
-      renderDetailedCurve(
-        ctx, cam, data.start, viaClamped, data.cursor, vw, vh,
-        false, // not selected
-        violates ? warning : ink,
-        accent,
-        sleeperColor,
-      )
+      renderDetailedRail(ctx, cam, data.start, data.cursor, vw, vh, false, ink, accent, sleeperColor)
     }
-
-    // Draw via control point marker (actual via, not clamped)
-    ctx.fillStyle = accent
-    ctx.globalAlpha = 0.4
-    ctx.beginPath()
-    ctx.arc(w2sX(data.via.x), w2sY(data.via.y), 5, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalAlpha = 1
-
-    // Construction line from start to via (dashed)
-    ctx.setLineDash([3, 3])
-    ctx.strokeStyle = accent
-    ctx.globalAlpha = 0.3
-    ctx.beginPath()
-    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
-    ctx.lineTo(w2sX(data.via.x), w2sY(data.via.y))
-    ctx.stroke()
-    ctx.globalAlpha = 1
-    ctx.setLineDash([])
-
-    // If via was clamped, show the clamped position too
-    if (viaClamped.x !== data.via.x || viaClamped.y !== data.via.y) {
-      ctx.fillStyle = warning
-      ctx.globalAlpha = 0.5
+  } else {
+    // Curved rail preview
+    if (cam.scale < SIMPLIFY_THRESHOLD) {
+      ctx.strokeStyle = valid ? accent : '#e8590c'
+      ctx.lineWidth = 2
       ctx.beginPath()
-      ctx.arc(w2sX(viaClamped.x), w2sY(viaClamped.y), 4, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.globalAlpha = 1
+      ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
+      ctx.quadraticCurveTo(w2sX(via.x), w2sY(via.y), w2sX(data.cursor.x), w2sY(data.cursor.y))
+      ctx.stroke()
+    } else {
+      renderDetailedCurve(ctx, cam, data.start, via, data.cursor, vw, vh, false, ink, accent, sleeperColor)
     }
-
-    // Measurements label near cursor
-    const labelText = `R${rMin === Infinity ? '∞' : ': ' + rMin.toFixed(0)}m  L: ${len.toFixed(1)}m`
-    ctx.font = '600 11px Archivo, system-ui, sans-serif'
-    const labelW = ctx.measureText(labelText).width
-    const lx = w2sX(data.cursor.x) + 14
-    const ly = w2sY(data.cursor.y) - 10
-
-    ctx.fillStyle = violates ? 'rgba(232, 89, 12, 0.9)' : 'rgba(37, 99, 235, 0.85)'
-    ctx.beginPath()
-    ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
-    ctx.fill()
-    ctx.fillStyle = paper
-    ctx.textBaseline = 'middle'
-    ctx.textAlign = 'left'
-    ctx.fillText(labelText, lx, ly - 4)
   }
+
+  // Measurements label near cursor
+  const labelText = `${profileLabel}  L: ${len.toFixed(1)}m`
+  ctx.font = '600 11px Archivo, system-ui, sans-serif'
+  const labelW = ctx.measureText(labelText).width
+  const lx = w2sX(data.cursor.x) + 14
+  const ly = w2sY(data.cursor.y) - 10
+
+  ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+  ctx.beginPath()
+  ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
+  ctx.fill()
+  ctx.fillStyle = paper
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'left'
+  ctx.fillText(labelText, lx, ly - 4)
 
   ctx.restore()
 }
@@ -160,12 +128,14 @@ export function EditorCanvas() {
   const panningRef = useRef(false)
   const movedRef = useRef(false)
   const cursorWorldRef = useRef<Point>({ x: 0, y: 0 })
-  // Curve tool state: 0 = waiting for start, 1 = have start, placing via, 2 = have via, placing end
-  const curveStateRef = useRef<{ phase: 0 | 1 | 2; startId: string | null; via: Point | null }>({
+  // Curve tool: 2-click placement with predefined profiles
+  // phase 0 = idle, phase 1 = have start, previewing curve to cursor
+  const curveStateRef = useRef<{ phase: 0 | 1; startId: string | null }>({
     phase: 0,
     startId: null,
-    via: null,
   })
+  const curveProfileIdxRef = useRef(0) // index into CURVE_PROFILES
+  const curveSideRef = useRef<1 | -1>(1)
 
   const [hud, setHud] = useState('')
   const [tool, setTool] = useState<Tool>('place')
@@ -184,14 +154,17 @@ export function EditorCanvas() {
 
     // Curve preview
     const cs = curveStateRef.current
-    const startNode = cs.startId ? netRef.current.nodes.get(cs.startId) : null
-    if (cs.phase > 0) {
-      renderCurvePreview(ctx, cam, rect.width, rect.height, {
-        phase: cs.phase,
-        start: startNode ? startNode.pos : null,
-        via: cs.via,
-        cursor: cursorWorldRef.current,
-      })
+    if (cs.phase === 1 && cs.startId) {
+      const startNode = netRef.current.nodes.get(cs.startId)
+      if (startNode) {
+        const profile = CURVE_PROFILES[curveProfileIdxRef.current]
+        renderCurvePreview(ctx, cam, rect.width, rect.height, {
+          start: startNode.pos,
+          cursor: cursorWorldRef.current,
+          radius: profile.radius,
+          side: curveSideRef.current,
+        })
+      }
     }
 
     renderScaleBar(ctx, cam, rect.width, rect.height)
@@ -246,8 +219,8 @@ export function EditorCanvas() {
       if (e.button === 2) {
         // Right click: cancel placement chain or curve
         lastNodeIdRef.current = null
-        if (toolRef.current === 'curve') {
-          curveStateRef.current = { phase: 0, startId: null, via: null }
+        if (toolRef.current === 'curve' && curveStateRef.current.phase === 1) {
+          curveStateRef.current = { phase: 0, startId: null }
           redraw()
         }
         return
@@ -271,29 +244,31 @@ export function EditorCanvas() {
         const cs = curveStateRef.current
 
         if (cs.phase === 0) {
-          // Phase 0: place/select start node
+          // Click 1: place/select start node
           const existing = hitNode(netRef.current, snapped, hitTol)
           const startId = existing ?? addNode(netRef.current, snapped).id
-          curveStateRef.current = { phase: 1, startId, via: null }
+          curveStateRef.current = { phase: 1, startId }
           selRef.current = { nodes: new Set([startId]), segments: new Set() }
           redraw()
         } else if (cs.phase === 1) {
-          // Phase 1: set via control point
-          curveStateRef.current = { phase: 2, startId: cs.startId, via: snapped }
-          redraw()
-        } else if (cs.phase === 2) {
-          // Phase 2: place/select end node, create curve segment (with clamped via)
+          // Click 2: place/select end node, create curve/straight segment
           const existing = hitNode(netRef.current, snapped, hitTol)
           const endId = existing ?? addNode(netRef.current, snapped).id
-          if (cs.startId && cs.via && cs.startId !== endId) {
+          if (cs.startId && cs.startId !== endId) {
             const startNode = netRef.current.nodes.get(cs.startId)
             if (startNode) {
-              const viaClamped = clampVia(startNode.pos, cs.via, snapped, MIN_RADIUS)
-              addCurveSegment(netRef.current, cs.startId, endId, viaClamped)
+              const radius = CURVE_PROFILES[curveProfileIdxRef.current].radius
+              if (radius === Infinity) {
+                addSegment(netRef.current, cs.startId, endId)
+              } else {
+                const via = arcToVia(startNode.pos, snapped, radius, curveSideRef.current)
+                addCurveSegment(netRef.current, cs.startId, endId, via)
+              }
             }
           }
-          curveStateRef.current = { phase: 0, startId: null, via: null }
-          selRef.current = { nodes: new Set(), segments: new Set() }
+          // Chain: keep the end node as the new start for the next segment
+          curveStateRef.current = { phase: 1, startId: endId }
+          selRef.current = { nodes: new Set([endId]), segments: new Set() }
           redraw()
         }
         return
@@ -444,7 +419,20 @@ export function EditorCanvas() {
       } else if (e.key === 'c' || e.key === 'C') {
         setTool('curve')
         toolRef.current = 'curve'
-        curveStateRef.current = { phase: 0, startId: null, via: null }
+        curveStateRef.current = { phase: 0, startId: null }
+      } else if (e.key === '[') {
+        // Previous curve profile
+        curveProfileIdxRef.current = Math.max(0, curveProfileIdxRef.current - 1)
+        redraw()
+      } else if (e.key === ']') {
+        // Next curve profile
+        curveProfileIdxRef.current = Math.min(CURVE_PROFILES.length - 1, curveProfileIdxRef.current + 1)
+        redraw()
+      } else if (e.key === 'Tab') {
+        // Flip curve side
+        e.preventDefault()
+        curveSideRef.current = curveSideRef.current === 1 ? -1 : 1
+        redraw()
       } else if (e.key === 'g' || e.key === 'G') {
         snapRef.current = !snapRef.current
         setSnap(snapRef.current)
@@ -458,8 +446,10 @@ export function EditorCanvas() {
     setTool(t)
     toolRef.current = t
     if (t === 'select') lastNodeIdRef.current = null
-    if (t !== 'curve') curveStateRef.current = { phase: 0, startId: null, via: null }
+    if (t !== 'curve') curveStateRef.current = { phase: 0, startId: null }
   }
+
+  const currentProfileLabel = CURVE_PROFILES[curveProfileIdxRef.current]?.label ?? 'R150'
 
   return (
     <div className="canvas-wrap">
@@ -475,10 +465,18 @@ export function EditorCanvas() {
         <button
           className={tool === 'curve' ? 'active' : ''}
           onClick={() => switchTool('curve')}
-          title="Curve tool (C)"
+          title="Curve tool (C) — [ ] to cycle profiles, Tab to flip side"
         >
           Curve
         </button>
+        {tool === 'curve' && (
+          <span className="profile-label" title="Current profile ([ / ] to cycle, Tab to flip)">
+            {currentProfileLabel}
+            {CURVE_PROFILES[curveProfileIdxRef.current]?.radius !== Infinity && (
+              <span className="side-indicator">{curveSideRef.current === 1 ? '↗' : '↘'}</span>
+            )}
+          </span>
+        )}
         <button
           className={tool === 'select' ? 'active' : ''}
           onClick={() => switchTool('select')}

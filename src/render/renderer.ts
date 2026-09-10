@@ -188,7 +188,7 @@ export function renderNetwork(
   }
 }
 
-function renderDetailedRail(
+export function renderDetailedRail(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   a: { x: number; y: number },

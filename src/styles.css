@@ -123,3 +123,21 @@ body {
   background: var(--accent);
   color: var(--paper);
 }
+
+.profile-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(128, 128, 128, 0.12);
+  padding: 6px 8px;
+  border-radius: 6px;
+  user-select: none;
+}
+
+.side-indicator {
+  font-size: 14px;
+  opacity: 0.7;
+}
