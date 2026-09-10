@@ -21,8 +21,8 @@ import {
   snapToGrid,
 } from '../core/network'
 import type { Network, Point, Selection } from '../core/types'
-import { curveLength, minCurveRadius } from '../core/curve'
-import { outgoingTangent, viaFromTangent } from '../core/tangent'
+import { curveLength } from '../core/curve'
+import { outgoingTangent, viaFromArc, arcRadius, arcDeflectionDeg } from '../core/tangent'
 
 type Tool = 'select' | 'place' | 'curve'
 
@@ -135,23 +135,19 @@ interface CurvePreviewData {
   incomingTangent: Point | null
 }
 
-/** Compute the via point using G1 continuity from the previous segment.
- *  If there's an incoming tangent, the curve starts in that direction.
+/** Compute the via point using circular arc geometry from the previous segment.
+ *  If there's an incoming tangent, the curve is a circular arc with G1 continuity.
  *  If not (first segment), the via is the midpoint (straight). */
 function computeCurveVia(data: CurvePreviewData): { via: Point; isStraight: boolean } {
   if (!data.incomingTangent) {
-    // No previous segment — free direction, straight line
     return {
       via: { x: (data.start.x + data.cursor.x) / 2, y: (data.start.y + data.cursor.y) / 2 },
       isStraight: true,
     }
   }
-  const via = viaFromTangent(data.start, data.cursor, data.incomingTangent)
-  // Check if the curve is essentially straight (via on the chord)
-  const mid = { x: (data.start.x + data.cursor.x) / 2, y: (data.start.y + data.cursor.y) / 2 }
-  const viaDist = Math.hypot(via.x - mid.x, via.y - mid.y)
-  const chordLen = Math.hypot(data.cursor.x - data.start.x, data.cursor.y - data.start.y)
-  return { via, isStraight: viaDist < chordLen * 0.01 }
+  const via = viaFromArc(data.start, data.cursor, data.incomingTangent)
+  const deflection = arcDeflectionDeg(data.start, data.cursor, data.incomingTangent)
+  return { via, isStraight: deflection < 0.5 }
 }
 
 function renderCurvePreview(
@@ -184,8 +180,15 @@ function renderCurvePreview(
 
   const { via, isStraight } = computeCurveVia(data)
   const len = curveLength(data.start, via, data.cursor)
-  const rMin = minCurveRadius(data.start, via, data.cursor)
-  const profileLabel = isStraight ? 'Straight' : `R${rMin === Infinity ? '∞' : rMin.toFixed(0)}`
+  const deflection = data.incomingTangent
+    ? arcDeflectionDeg(data.start, data.cursor, data.incomingTangent)
+    : 0
+  const radius = data.incomingTangent
+    ? arcRadius(data.start, data.cursor, data.incomingTangent)
+    : Infinity
+  const profileLabel = isStraight
+    ? 'Straight'
+    : `R${radius === Infinity ? '∞' : radius.toFixed(0)}m ${deflection.toFixed(0)}°`
 
   if (isStraight) {
     // Straight rail preview
@@ -385,15 +388,12 @@ export function EditorCanvas() {
             if (startNode) {
               const incoming = outgoingTangent(netRef.current, cs.startId)
               if (incoming) {
-                // G1 continuity: curve follows previous segment's direction
-                const via = viaFromTangent(startNode.pos, snapped, incoming)
-                // Check if essentially straight
-                const mid = { x: (startNode.pos.x + snapped.x) / 2, y: (startNode.pos.y + snapped.y) / 2 }
-                const viaDist = Math.hypot(via.x - mid.x, via.y - mid.y)
-                const chordLen = Math.hypot(snapped.x - startNode.pos.x, snapped.y - startNode.pos.y)
-                if (viaDist < chordLen * 0.01) {
+                // G1 continuity: circular arc follows previous segment's direction
+                const deflection = arcDeflectionDeg(startNode.pos, snapped, incoming)
+                if (deflection < 0.5) {
                   addSegment(netRef.current, cs.startId, endId)
                 } else {
+                  const via = viaFromArc(startNode.pos, snapped, incoming)
                   addCurveSegment(netRef.current, cs.startId, endId, via)
                 }
               } else {

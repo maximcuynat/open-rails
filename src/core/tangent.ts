@@ -78,70 +78,107 @@ export function outgoingTangent(
   return null
 }
 
-/** Compute a via point for a curve that starts at `start` with a given
- *  incoming tangent direction, and ends at `end`.
+/** Compute a via point for a quadratic Bezier that approximates a circular arc.
  *
- *  G1 continuity: the tangent at the start of the Bezier must match
- *  the incoming direction. For a quadratic Bezier B(t) with control
- *  points P0, P1, P2:
- *    B'(0) = 2(P1 - P0)  →  P1 = P0 + k * dir  (for some k > 0)
- *    B'(1) = 2(P2 - P1)  →  P1 = P2 - m * dir2 (end tangent is free)
+ *  Given a start point, an incoming tangent direction, and an end point,
+ *  this computes the Bezier control point by finding the circular arc that:
+ *  1. Starts at `start` with tangent `incomingDir`
+ *  2. Passes through `end`
  *
- *  We place P1 along the incoming tangent direction from P0.
- *  The distance k determines how "flat" or "sharp" the curve is.
- *  We compute k so that the curve passes through the midpoint region
- *  between start and end, projected onto the tangent line.
+ *  The arc's deflection angle can be anything (not just 90°), determined
+ *  by where the user places the end point relative to the tangent direction.
  *
- *  This gives a DYNAMIC curve: small k = tight turn, large k = gentle curve.
- *  The user controls the geometry by where they place the end point.
+ *  Math:
+ *  - The tangent-chord angle α = angle between incomingDir and chord (start→end)
+ *  - For a circular arc, the tangent at the end makes the same angle α with
+ *    the chord, but on the opposite side.
+ *  - The Bezier control point P1 is at the intersection of:
+ *      Line 1: start + t * incomingDir (tangent at start)
+ *      Line 2: end + s * endTangentDir (tangent at end)
+ *  - endTangentDir = chordDir rotated by -α
+ *  - Radius R = chord / (2 * sin(α))
+ *  - Deflection angle = 2α
  */
-export function viaFromTangent(
+export function viaFromArc(
   start: Point,
   end: Point,
   incomingDir: Point,
 ): Point {
-  // Project the chord midpoint onto the tangent line from start.
-  // The via should be placed along the tangent direction, at a distance
-  // that makes the curve naturally connect start to end.
-  //
-  // For a quadratic Bezier: P1 = P0 + k * dir
-  // The curve at t=0.5 is: 0.25*P0 + 0.5*P1 + 0.25*P2
-  // We want this to be roughly at the midpoint of start->end, offset
-  // perpendicular by the natural sagitta.
-  //
-  // Simpler approach: P1 is the intersection of:
-  //   Line 1: start + k * incomingDir  (tangent line from start)
-  //   Line 2: end + m * (end - via_guess)  (but we don't know end tangent)
-  //
-  // Instead, use: P1 is the projection of the chord midpoint onto the
-  // tangent line from start, scaled by 2 (because B(0.5) = 0.25*P0 + 0.5*P1 + 0.25*P2,
-  // so P1 = 2*midpoint - 0.5*P0 - 0.5*P2 = 2*midpoint - midpoint = midpoint... no)
-  //
-  // Actually: B(0.5) = 0.25*P0 + 0.5*P1 + 0.25*P2
-  // If we want B(0.5) = midpoint(P0,P2) = (P0+P2)/2:
-  //   (P0+P2)/2 = 0.25*P0 + 0.5*P1 + 0.25*P2
-  //   0.5*P0 + 0.5*P2 = 0.25*P0 + 0.5*P1 + 0.25*P2
-  //   0.25*P0 + 0.25*P2 = 0.5*P1
-  //   P1 = (P0 + P2) / 2  ← midpoint, but this gives straight line!
-  //
-  // So we can't force B(0.5) to the chord midpoint. Instead:
-  // Place P1 along the tangent line from start. The distance k is chosen
-  // as the projection of (end - start) onto the tangent direction.
-  // This ensures the curve starts in the right direction and reaches end.
+  const chord = { x: end.x - start.x, y: end.y - start.y }
+  const chordLen = Math.hypot(chord.x, chord.y)
+  if (chordLen < 1e-6) return { ...start }
 
-  const dx = end.x - start.x
-  const dy = end.y - start.y
-  // Project chord onto tangent direction
-  const k = dx * incomingDir.x + dy * incomingDir.y
+  const chordDir = { x: chord.x / chordLen, y: chord.y / chordLen }
 
-  // The via is at start + k * dir, but we scale by 2 because
-  // the control point has twice the influence (B'(0) = 2(P1-P0))
-  // k can be negative if end is behind the tangent direction,
-  // which means the curve doubles back.
-  return {
-    x: start.x + k * incomingDir.x,
-    y: start.y + k * incomingDir.y,
+  // Tangent-chord angle α (signed)
+  const cos_α = incomingDir.x * chordDir.x + incomingDir.y * chordDir.y
+  const sin_α = incomingDir.x * chordDir.y - incomingDir.y * chordDir.x
+  const α = Math.atan2(sin_α, cos_α)
+
+  if (Math.abs(α) < 1e-4) {
+    // Nearly straight — via = midpoint
+    return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
   }
+
+  // End tangent: chordDir rotated by +α (same direction as the tangent-chord angle).
+  // For a circular arc: start tangent angle = θ, chord angle = θ + α,
+  // end tangent angle = θ + 2α. So endTangent = chordDir rotated by α.
+  const cos_a = Math.cos(α)
+  const sin_a = Math.sin(α)
+  const endTangentDir = {
+    x: chordDir.x * cos_a - chordDir.y * sin_a,
+    y: chordDir.x * sin_a + chordDir.y * cos_a,
+  }
+
+  // Solve: start + t * incomingDir = end + s * endTangentDir
+  // t * in - s * out = chord
+  // Cramer's rule: | in.x  -out.x | | t |   | chord.x |
+  //                | in.y  -out.y | | s | = | chord.y |
+  const det = incomingDir.x * (-endTangentDir.y) - incomingDir.y * (-endTangentDir.x)
+
+  if (Math.abs(det) < 1e-10) {
+    // Tangents parallel — straight line
+    return { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+  }
+
+  const t = (chord.x * (-endTangentDir.y) - chord.y * (-endTangentDir.x)) / det
+
+  return {
+    x: start.x + t * incomingDir.x,
+    y: start.y + t * incomingDir.y,
+  }
+}
+
+/** Compute the radius of the circular arc from start, end, and incoming tangent. */
+export function arcRadius(start: Point, end: Point, incomingDir: Point): number {
+  const chord = { x: end.x - start.x, y: end.y - start.y }
+  const chordLen = Math.hypot(chord.x, chord.y)
+  if (chordLen < 1e-6) return Infinity
+
+  const chordDir = { x: chord.x / chordLen, y: chord.y / chordLen }
+  const cos_α = incomingDir.x * chordDir.x + incomingDir.y * chordDir.y
+  const sin_α = incomingDir.x * chordDir.y - incomingDir.y * chordDir.x
+  const α = Math.atan2(sin_α, cos_α)
+
+  if (Math.abs(α) < 1e-4) return Infinity
+
+  // R = chord / (2 * sin(α))
+  return chordLen / (2 * Math.sin(α))
+}
+
+/** Compute the deflection angle (total turn) of the arc in degrees. */
+export function arcDeflectionDeg(start: Point, end: Point, incomingDir: Point): number {
+  const chord = { x: end.x - start.x, y: end.y - start.y }
+  const chordLen = Math.hypot(chord.x, chord.y)
+  if (chordLen < 1e-6) return 0
+
+  const chordDir = { x: chord.x / chordLen, y: chord.y / chordLen }
+  const cos_α = incomingDir.x * chordDir.x + incomingDir.y * chordDir.y
+  const sin_α = incomingDir.x * chordDir.y - incomingDir.y * chordDir.x
+  const α = Math.atan2(sin_α, cos_α)
+
+  // Total deflection = 2 * α, in degrees
+  return Math.abs(2 * α * 180 / Math.PI)
 }
 
 /** Compute a via point for a curve with G1 continuity at BOTH ends.
@@ -176,8 +213,8 @@ export function viaFromTwoTangents(
   const det = incomingDir.x * outgoingDir.y - incomingDir.y * outgoingDir.x
 
   if (Math.abs(det) < 1e-10) {
-    // Tangents are parallel — can't satisfy both. Fall back to start tangent only.
-    return viaFromTangent(start, end, incomingDir)
+    // Tangents are parallel — can't satisfy both. Fall back to arc from start.
+    return viaFromArc(start, end, incomingDir)
   }
 
   const k = (rx * outgoingDir.y - ry * outgoingDir.x) / det

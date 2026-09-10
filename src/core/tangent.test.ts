@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   bezierStartTangent,
   bezierEndTangent,
-  viaFromTangent,
+  viaFromArc,
   viaFromTwoTangents,
   outgoingTangent,
   segmentTangentAt,
+  arcRadius,
+  arcDeflectionDeg,
 } from './tangent'
 import { addNode, addSegment, addCurveSegment, createNetwork } from './network'
 
@@ -38,36 +40,105 @@ describe('bezierEndTangent', () => {
   })
 })
 
-describe('viaFromTangent', () => {
-  it('places via along the tangent direction', () => {
+describe('viaFromArc', () => {
+  it('returns midpoint for straight line (end on tangent)', () => {
     const start = { x: 0, y: 0 }
     const end = { x: 10, y: 0 }
     const dir = { x: 1, y: 0 }
-    const via = viaFromTangent(start, end, dir)
-    // Chord projection = 10, so via = start + 10 * (1,0) = (10, 0)
-    expect(via.x).toBeCloseTo(10)
-    expect(via.y).toBeCloseTo(0)
-  })
-
-  it('produces a curved via when end is off the tangent line', () => {
-    const start = { x: 0, y: 0 }
-    const end = { x: 5, y: 5 }
-    const dir = { x: 1, y: 0 }
-    const via = viaFromTangent(start, end, dir)
-    // k = 5*1 + 5*0 = 5, via = (5, 0)
+    const via = viaFromArc(start, end, dir)
     expect(via.x).toBeCloseTo(5)
     expect(via.y).toBeCloseTo(0)
-    // The curve should bend: via is at (5,0) but end is at (5,5)
   })
 
-  it('handles end behind the tangent (k negative)', () => {
+  it('produces a small-angle curve when end slightly off tangent', () => {
     const start = { x: 0, y: 0 }
-    const end = { x: -10, y: 0 }
+    const end = { x: 100, y: 10 }
     const dir = { x: 1, y: 0 }
-    const via = viaFromTangent(start, end, dir)
-    // k = -10, via = (-10, 0) — curve doubles back
-    expect(via.x).toBeCloseTo(-10)
-    expect(via.y).toBeCloseTo(0)
+    const via = viaFromArc(start, end, dir)
+    // For a circular arc, the via is along the tangent line (y≈0)
+    // The via should be far along the tangent for a gentle curve
+    expect(via.x).toBeGreaterThan(0)
+    // Via y should be close to 0 (along the tangent line)
+    expect(Math.abs(via.y)).toBeLessThan(1)
+  })
+
+  it('produces a 90° curve when end at 45° from tangent (quarter circle)', () => {
+    const start = { x: 0, y: 0 }
+    const end = { x: 10, y: 10 }
+    const dir = { x: 1, y: 0 }
+    const via = viaFromArc(start, end, dir)
+    // tangent at 0°, chord at 45° → α=45° → deflection=90° (quarter circle)
+    // via is along the tangent (y=0) at x≈10
+    expect(via.x).toBeCloseTo(10, 0)
+    expect(via.y).toBeCloseTo(0, 0)
+  })
+
+  it('does NOT force 90° — small angle stays small', () => {
+    const start = { x: 0, y: 0 }
+    const end = { x: 100, y: 5 } // very slight deviation
+    const dir = { x: 1, y: 0 }
+    const via = viaFromArc(start, end, dir)
+    // For small angle, the via should be along the tangent at roughly
+    // half the chord distance (not at the endpoint or beyond)
+    expect(via.x).toBeGreaterThan(40)
+    expect(via.x).toBeLessThan(60)
+    expect(via.y).toBeCloseTo(0, 0)
+    // The deflection should be small (not 90°)
+    const deflection = arcDeflectionDeg(start, end, dir)
+    expect(deflection).toBeLessThan(10)
+  })
+
+  it('handles end behind the tangent (large angle)', () => {
+    const start = { x: 0, y: 0 }
+    const end = { x: -10, y: 10 }
+    const dir = { x: 1, y: 0 }
+    const via = viaFromArc(start, end, dir)
+    // Should produce a valid via (not crash)
+    expect(isFinite(via.x)).toBe(true)
+    expect(isFinite(via.y)).toBe(true)
+  })
+})
+
+describe('arcRadius', () => {
+  it('returns Infinity for straight line', () => {
+    const r = arcRadius({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 1, y: 0 })
+    expect(r).toBe(Infinity)
+  })
+
+  it('returns a finite radius for a curved arc', () => {
+    const r = arcRadius({ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 1, y: 0 })
+    expect(r).toBeLessThan(Infinity)
+    expect(r).toBeGreaterThan(0)
+  })
+
+  it('larger radius for gentler curve', () => {
+    const tight = arcRadius({ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 1, y: 0 })
+    const gentle = arcRadius({ x: 0, y: 0 }, { x: 100, y: 10 }, { x: 1, y: 0 })
+    expect(gentle).toBeGreaterThan(tight)
+  })
+})
+
+describe('arcDeflectionDeg', () => {
+  it('returns 0 for straight line', () => {
+    const deg = arcDeflectionDeg({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 1, y: 0 })
+    expect(deg).toBeLessThan(0.1)
+  })
+
+  it('returns approximately 90° for a 45° chord (quarter circle)', () => {
+    const deg = arcDeflectionDeg({ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 1, y: 0 })
+    // chord at 45°, tangent at 0° → α = 45° → deflection = 90°
+    expect(deg).toBeCloseTo(90, 0)
+  })
+
+  it('returns approximately 180° for perpendicular chord (U-turn)', () => {
+    const deg = arcDeflectionDeg({ x: 0, y: 0 }, { x: 0, y: 10 }, { x: 1, y: 0 })
+    // chord at 90°, tangent at 0° → α = 90° → deflection = 180° (semicircle)
+    expect(deg).toBeCloseTo(180, 0)
+  })
+
+  it('small deflection for slight curve', () => {
+    const deg = arcDeflectionDeg({ x: 0, y: 0 }, { x: 100, y: 5 }, { x: 1, y: 0 })
+    expect(deg).toBeLessThan(10)
   })
 })
 
@@ -85,14 +156,14 @@ describe('viaFromTwoTangents', () => {
     expect(via.y).toBeCloseTo(0)
   })
 
-  it('falls back to viaFromTangent when tangents are parallel', () => {
+  it('falls back to arc when tangents are parallel', () => {
     const start = { x: 0, y: 0 }
     const end = { x: 10, y: 0 }
     const inDir = { x: 1, y: 0 }
     const outDir = { x: 1, y: 0 } // parallel
     const via = viaFromTwoTangents(start, end, inDir, outDir)
-    // Should fall back: via = (10, 0)
-    expect(via.x).toBeCloseTo(10)
+    // Should fall back to viaFromArc which returns midpoint for straight
+    expect(via.x).toBeCloseTo(5)
     expect(via.y).toBeCloseTo(0)
   })
 })
