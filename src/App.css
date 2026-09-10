@@ -10,12 +10,12 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* Modern Dark Theme with Cyan Accents */
+/* Clean Light Theme */
 .app-container {
   width: 100%;
   height: 100vh;
   position: relative;
-  background: #0f0f1a;
+  background: #ffffff;
   overflow: hidden;
 }
 
@@ -23,7 +23,7 @@ html, body, #root {
   width: 100%;
   height: 100%;
   display: block;
-  background: #161625;
+  background: #f8f9fa;
   cursor: grab;
   touch-action: none;
   transition: cursor 0.15s ease;
@@ -33,55 +33,38 @@ html, body, #root {
   cursor: grabbing;
 }
 
-/* Modern Glass Panel - Dark Theme */
+/* Clean Panel */
 .control-panel {
   position: fixed;
   top: 20px;
   left: 20px;
   width: 300px;
-  background: rgba(22, 22, 37, 0.75);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
   padding: 20px;
   z-index: 1000;
-  animation: slideIn 0.4s cubic-bezier(0.2, 0, 0, 1);
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
 }
 
 .panel-header i {
-  font-size: 1.4rem;
-  color: #00f5ff;
+  font-size: 1.3rem;
+  color: #3366ff;
 }
 
 .panel-header span {
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: 700;
-  background: linear-gradient(135deg, #00f5ff, #00a2ff);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: #1a1a2e;
 }
 
 .panel-body {
@@ -103,16 +86,14 @@ html, body, #root {
   gap: 8px;
   font-size: 0.85rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.7);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: #4a4a6a;
 }
 
 .control-label i {
-  color: #00f5ff;
+  color: #3366ff;
 }
 
-/* Modern Slider */
+/* Clean Slider */
 .slider-container {
   display: flex;
   align-items: center;
@@ -121,9 +102,9 @@ html, body, #root {
 
 .slider {
   flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 6px;
+  border-radius: 3px;
+  background: #e0e0e0;
   outline: none;
   -webkit-appearance: none;
   appearance: none;
@@ -132,140 +113,99 @@ html, body, #root {
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: #00f5ff;
+  background: #3366ff;
   cursor: pointer;
-  box-shadow: 0 0 12px #00f5ff;
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .slider::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-  box-shadow: 0 0 16px #00f5ff, 0 0 24px #00a2ff;
+  transform: scale(1.1);
 }
 
 .slider::-webkit-slider-thumb:active {
-  transform: scale(1.4);
+  transform: scale(1.2);
 }
 
 .slider::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: #00f5ff;
+  background: #3366ff;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 12px #00f5ff;
 }
 
 .slider::-moz-range-track {
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 6px;
+  border-radius: 3px;
+  background: #e0e0e0;
   border: none;
 }
 
 .value {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #00f5ff;
-  background: rgba(0, 245, 255, 0.1);
+  color: #3366ff;
+  background: #f0f4ff;
   padding: 4px 10px;
   border-radius: 6px;
   min-width: 45px;
   text-align: center;
-  font-family: 'JetBrains Mono', monospace;
 }
 
-/* Toggle Button - Modern Neon */
+/* Simple Toggle Button */
 .toggle-btn {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 245, 255, 0.3);
-  background: rgba(0, 245, 255, 0.05);
+  border-radius: 10px;
+  border: 2px solid #e0e0e0;
+  background: #ffffff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  color: #00f5ff;
-  position: relative;
-  overflow: hidden;
-}
-
-.toggle-btn::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, rgba(0, 245, 255, 0.2), rgba(0, 162, 255, 0.1));
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.toggle-btn:hover::before {
-  opacity: 1;
+  transition: all 0.2s ease;
+  color: #3366ff;
 }
 
 .toggle-btn:hover {
-  border-color: rgba(0, 245, 255, 0.6);
-  transform: scale(1.05);
-  box-shadow: 0 0 16px rgba(0, 245, 255, 0.2);
+  border-color: #3366ff;
+  background: #f0f4ff;
 }
 
 .toggle-btn.active {
-  background: linear-gradient(135deg, rgba(0, 245, 255, 0.2), rgba(0, 162, 255, 0.15));
-  border-color: #00f5ff;
-  box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+  background: #3366ff;
+  border-color: #3366ff;
+  color: white;
 }
 
 .toggle-btn i {
   font-size: 1.15rem;
 }
 
-/* Reset Button */
+/* Simple Reset Button */
 .reset-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 20px;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 245, 255, 0.3);
-  background: rgba(0, 245, 255, 0.05);
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 2px solid #e0e0e0;
+  background: #ffffff;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  color: #00f5ff;
+  transition: all 0.2s ease;
+  color: #3366ff;
   font-weight: 600;
   font-size: 0.9rem;
-  position: relative;
-  overflow: hidden;
-}
-
-.reset-btn::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(0, 245, 255, 0.1), transparent);
-  transition: left 0.4s ease;
-}
-
-.reset-btn:hover::before {
-  left: 100%;
 }
 
 .reset-btn:hover {
-  border-color: rgba(0, 245, 255, 0.6);
-  background: rgba(0, 245, 255, 0.1);
-  box-shadow: 0 0 20px rgba(0, 245, 255, 0.2);
+  border-color: #3366ff;
+  background: #f0f4ff;
 }
 
 .reset-btn i {
@@ -310,24 +250,4 @@ html, body, #root {
   .value {
     align-self: flex-start;
   }
-}
-
-/* Scrollbar styling for any scrollable content */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 245, 255, 0.3);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 245, 255, 0.5);
 }
