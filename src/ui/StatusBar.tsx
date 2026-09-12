@@ -12,10 +12,10 @@ function toolStatus(store: EditorStore): string {
   const sel = store.selection
   switch (store.tool) {
     case 'place':
-      return store.lastNodeId ? 'Prolongement actif · Clic pour poser' : 'Clic pour placer le point de départ'
+      return store.lastNodeId ? 'Prolongement actif · Clic pour poser (accroche auto sur voie)' : 'Clic pour placer le point de départ'
     case 'curve': {
-      if (store.curveState.phase === 1) return 'Courbe 2/2 · Clic pour poser le coupon'
-      return 'Courbe 1/2 · Clic pour définir le départ'
+      if (store.curveState.phase === 1) return 'Courbe 2/2 · Clic pour poser le coupon (accroche auto sur voie)'
+      return 'Courbe 1/2 · Clic pour définir le départ (ou sur une voie pour brancher)'
     }
     case 'select': {
       if (sel.nodes.size > 0 || sel.segments.size > 0) {

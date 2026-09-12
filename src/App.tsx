@@ -33,6 +33,19 @@ export default function App() {
     return () => window.removeEventListener('rail:fit-view', handler)
   }, [store, vp])
 
+  // Persist state when reloading or navigating away
+  useEffect(() => {
+    const handleUnload = () => {
+      store.savePersistedState()
+    }
+    window.addEventListener('beforeunload', handleUnload)
+    window.addEventListener('pagehide', handleUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload)
+      window.removeEventListener('pagehide', handleUnload)
+    }
+  }, [store])
+
   // Apply theme: auto = follow prefers-color-scheme, light/dark = explicit override.
   useEffect(() => {
     const root = document.documentElement

@@ -189,7 +189,7 @@ export function TrackPalette({ store }: { store: EditorStore }) {
                   <line x1="12" y1="16" x2="12" y2="12" />
                   <line x1="12" y1="8" x2="12.01" y2="8" />
                 </svg>
-                <span>Sélectionnez Droite ou Courbe pour poser des voies, ou cliquez une extrémité pour prolonger.</span>
+                <span>Sélectionnez Droite ou Courbe pour poser des voies. Les aiguillages et croisements sont créés automatiquement.</span>
               </div>
             )}
           </>

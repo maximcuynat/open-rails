@@ -2,6 +2,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { removeNode, removeSegment } from '../core/network'
 import { curveLength } from '../core/curve'
 import { arcRadius, arcDeflectionDeg } from '../core/tangent'
+import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '../core/junction'
+import { detectCrossings } from '../core/crossing'
+import { detectDeadEnds, detectLoops, detectConnectedComponents } from '../core/pathfinding'
 import type { EditorStore } from './store'
 
 function PanelHeader({ children }: { children: ReactNode }) {
@@ -41,18 +44,31 @@ function NetworkPanel({ store }: { store: EditorStore }) {
       ? `${(totalLen / 1000).toFixed(2)} m`
       : `${totalLen.toFixed(0)} mm`
 
+  const deadEnds = detectDeadEnds(net).length
+  const loops = detectLoops(net).length
+  const components = detectConnectedComponents(net).length
+
   return (
     <>
-      <PanelHeader>Network</PanelHeader>
+      <PanelHeader>Réseau ferroviaire</PanelHeader>
       <div className="sp-section">
-        <Field label="Nodes" value={net.nodes.size} />
-        <Field label="Segments" value={net.segments.size} />
-        <Field label="Straight" value={straightCount} />
-        <Field label="Curves" value={curveCount} />
-        <Field label="Total length" value={formattedTotal} />
+        <Field label="Nœuds" value={net.nodes.size} />
+        <Field label="Rails" value={net.segments.size} />
+        <Field label="Voies droites" value={straightCount} />
+        <Field label="Courbes" value={curveCount} />
+        <Field label="Aiguillages" value={net.junctions.size} />
+        <Field label="Longueur totale" value={formattedTotal} />
       </div>
+
+      <div className="sp-subheader">Topologie & Chemins</div>
+      <div className="sp-section">
+        <Field label="Impasses / heurtoirs" value={deadEnds} />
+        <Field label="Boucles détectées" value={loops} />
+        <Field label="Réseaux disjoints" value={components} />
+      </div>
+
       <div className="sp-hint">
-        Select a node or segment to edit its properties.
+        Sélectionnez un coupon de rail ou un nœud pour afficher et modifier ses caractéristiques.
       </div>
     </>
   )
@@ -67,6 +83,9 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   const connectedSegs = adj
     .map((sid) => store.network.segments.get(sid))
     .filter((s): s is NonNullable<typeof s> => !!s)
+
+  const junction = findJunctionAtNode(store.network, nodeId)
+  const crossing = detectCrossings(store.network).find((c) => c.nodeId === nodeId)
 
   const [x, setX] = useState(node.pos.x)
   const [y, setY] = useState(node.pos.y)
@@ -106,10 +125,10 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
   return (
     <>
-      <PanelHeader>Node</PanelHeader>
+      <PanelHeader>Nœud de jonction</PanelHeader>
       <div className="sp-section">
         <label className="sp-input-row">
-          <span>X</span>
+          <span>X (mm)</span>
           <input
             type="number"
             step="any"
@@ -119,7 +138,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
           />
         </label>
         <label className="sp-input-row">
-          <span>Y</span>
+          <span>Y (mm)</span>
           <input
             type="number"
             step="any"
@@ -129,9 +148,60 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
           />
         </label>
       </div>
-      <div className="sp-subheader">Connected segments ({connectedSegs.length})</div>
+
+      {junction && (
+        <>
+          <div className="sp-subheader">Aiguillage Kato #{junction.frogNumber ?? 6}</div>
+          <div className="sp-section">
+            <Field label="Déviation" value={junction.hand === 'left' ? 'Gauche' : 'Droite'} />
+            <Field
+              label="Voie active"
+              value={junction.activeBranch === 'straight' ? 'Directe' : 'Déviée'}
+            />
+          </div>
+          <div className="sp-list" style={{ gap: '6px', marginBottom: '12px' }}>
+            <button
+              className="sp-list-item"
+              style={{ justifyContent: 'center', fontWeight: 600 }}
+              onClick={() => store.toggleActiveJunction(junction.id)}
+            >
+              Basculer la voie (T)
+            </button>
+            <button
+              className="sp-list-item"
+              style={{ justifyContent: 'center' }}
+              onClick={() => {
+                toggleTurnoutHand(store.network, junction.id)
+                store.markDirty()
+                store.notify()
+              }}
+            >
+              Inverser côté ({junction.hand === 'left' ? 'Passer Droite' : 'Passer Gauche'})
+            </button>
+          </div>
+        </>
+      )}
+      {crossing && (
+        <>
+          <div className="sp-subheader">Croisement à niveau (Diamond Crossing)</div>
+          <div className="sp-section">
+            <Field label="Angle" value={`${crossing.angleDeg.toFixed(1)}° (${crossing.angleRad.toFixed(3)} rad)`} />
+            <Field label="Type" value={crossing.angleDeg === 15 ? 'Traversée Kato #4' : crossing.angleDeg === 90 ? 'Croisement orthogonal' : 'Croisement oblique'} />
+            <Field label="Ornières" value="1.6 mm (NEM 110)" />
+          </div>
+          <div className="sp-subheader">Pointes de cœur (Frogs)</div>
+          <div className="sp-section" style={{ fontSize: '11px' }}>
+            <Field label="P1 (Nord)" value={`(${crossing.frogs.p1.x.toFixed(1)}, ${crossing.frogs.p1.y.toFixed(1)})`} />
+            <Field label="P2 (Est)" value={`(${crossing.frogs.p2.x.toFixed(1)}, ${crossing.frogs.p2.y.toFixed(1)})`} />
+            <Field label="P3 (Sud)" value={`(${crossing.frogs.p3.x.toFixed(1)}, ${crossing.frogs.p3.y.toFixed(1)})`} />
+            <Field label="P4 (Ouest)" value={`(${crossing.frogs.p4.x.toFixed(1)}, ${crossing.frogs.p4.y.toFixed(1)})`} />
+          </div>
+        </>
+      )}
+
+      <div className="sp-subheader">Voies connectées ({connectedSegs.length})</div>
       <div className="sp-list">
-        {connectedSegs.length === 0 && <div className="sp-empty">No connections</div>}
+        {connectedSegs.length === 0 && <div className="sp-empty">Aucune connexion</div>}
         {connectedSegs.map((s) => {
           const otherId = s.from === nodeId ? s.to : s.from
           const other = store.network.nodes.get(otherId)
@@ -141,14 +211,14 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
               className="sp-list-item"
               onClick={() => selectNode(otherId)}
             >
-              <span className={`sp-tag ${s.kind}`}>{s.kind === 'curve' ? 'curve' : 'straight'}</span>
+              <span className={`sp-tag ${s.kind}`}>{s.kind === 'curve' ? 'courbe' : 'droite'}</span>
               → {other ? `(${other.pos.x.toFixed(0)}, ${other.pos.y.toFixed(0)})` : otherId}
             </button>
           )
         })}
       </div>
       <button className="sp-danger" onClick={onDelete}>
-        Delete node
+        Supprimer le nœud
       </button>
     </>
   )
@@ -163,15 +233,20 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   const b = store.network.nodes.get(seg.to)
   if (!a || !b) return <NetworkPanel store={store} />
 
+  const junction = findJunctionBySegment(store.network, segId)
+  const isStraightBranch = junction ? segId === junction.straightSegmentId : false
+  const isBranchActive = junction
+    ? (isStraightBranch && junction.activeBranch === 'straight') ||
+      (!isStraightBranch && junction.activeBranch === 'diverging')
+    : true
+
   let len = 0
   let radius: number | null = null
   let deflection: number | null = null
+  let curveSideLabel: string | null = null
   if (seg.kind === 'curve' && seg.via) {
     len = curveLength(a.pos, seg.via, b.pos)
-    // Approximate radius via Bezier curvature sampling would need minCurveRadius;
-    // use arc-based estimate from tangent for display.
     const incoming = (() => {
-      // Use start tangent direction
       const dx = seg.via.x - a.pos.x
       const dy = seg.via.y - a.pos.y
       const l = Math.hypot(dx, dy)
@@ -180,6 +255,10 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     if (incoming) {
       radius = arcRadius(a.pos, b.pos, incoming)
       deflection = arcDeflectionDeg(a.pos, b.pos, incoming)
+      const bdx = b.pos.x - a.pos.x
+      const bdy = b.pos.y - a.pos.y
+      const cross = incoming.x * bdy - incoming.y * bdx
+      curveSideLabel = cross < 0 ? 'Gauche' : 'Droite'
     }
   } else {
     len = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
@@ -205,32 +284,59 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   return (
     <>
       <PanelHeader>
-        {seg.kind === 'curve' ? 'Curve segment' : 'Straight segment'}
+        {seg.kind === 'curve' ? 'Coupon de courbe' : 'Coupon de voie droite'}
       </PanelHeader>
       <div className="sp-section">
-        <Field label="Type" value={seg.kind} />
-        <Field label="Length" value={`${len.toFixed(0)} mm`} />
+        <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
+        <Field label="Longueur" value={`${len.toFixed(0)} mm`} />
+        <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
         {seg.kind === 'curve' && seg.via && (
           <>
-            <Field label="Radius" value={radius === null || radius === Infinity ? '∞' : `${radius.toFixed(0)} mm`} />
-            <Field label="Deflection" value={deflection === null ? '—' : `${deflection.toFixed(1)}°`} />
-            <Field label="Via" value={`(${seg.via.x.toFixed(0)}, ${seg.via.y.toFixed(0)})`} />
+            {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
+            <Field label="Rayon" value={radius === null || radius === Infinity ? '∞' : `R${radius.toFixed(0)} mm`} />
+            <Field label="Angle" value={deflection === null ? '—' : `${deflection.toFixed(1)}°`} />
+            <Field label="Point via" value={`(${seg.via.x.toFixed(0)}, ${seg.via.y.toFixed(0)})`} />
+          </>
+        )}
+        {junction && (
+          <>
+            <Field
+              label="Aiguillage"
+              value={isStraightBranch ? 'Branche directe' : 'Branche déviée'}
+            />
+            <Field
+              label="Position de voie"
+              value={isBranchActive ? 'Active (ouverte)' : 'Inactive (fermée)'}
+            />
           </>
         )}
       </div>
-      <div className="sp-subheader">Endpoints</div>
+
+      {junction && (
+        <div className="sp-list" style={{ marginBottom: '12px' }}>
+          <button
+            className="sp-list-item"
+            style={{ justifyContent: 'center', fontWeight: 600 }}
+            onClick={() => store.toggleActiveJunction(junction.id)}
+          >
+            Basculer l'aiguillage (T)
+          </button>
+        </div>
+      )}
+
+      <div className="sp-subheader">Extrémités</div>
       <div className="sp-list">
         <button className="sp-list-item" onClick={() => selectNode(seg.from)}>
-          <span className="sp-tag from">from</span>
+          <span className="sp-tag from">Départ</span>
           ({a.pos.x.toFixed(0)}, {a.pos.y.toFixed(0)})
         </button>
         <button className="sp-list-item" onClick={() => selectNode(seg.to)}>
-          <span className="sp-tag to">to</span>
+          <span className="sp-tag to">Arrivée</span>
           ({b.pos.x.toFixed(0)}, {b.pos.y.toFixed(0)})
         </button>
       </div>
       <button className="sp-danger" onClick={onDelete}>
-        Delete segment
+        Supprimer le coupon
       </button>
     </>
   )

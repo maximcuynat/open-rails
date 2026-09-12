@@ -48,6 +48,7 @@ const TOOLS: ToolDef[] = [
       </svg>
     ),
   },
+
   {
     id: 'pan',
     label: 'Déplacer la vue',

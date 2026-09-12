@@ -1,8 +1,16 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, type Camera } from '../render/camera'
-import { createNetwork } from '../core/network'
+import { createNetwork, resetIdCounter } from '../core/network'
 import { CURVE_RADII } from '../core/profiles'
-import type { Network, Point, Selection } from '../core/types'
+import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '../core/junction'
+import { reconcileNetworkIntersections } from '../core/reconcile'
+import {
+  saveNetworkToStorage,
+  loadNetworkFromStorage,
+  clearNetworkStorage,
+  deserializeNetwork,
+} from '../core/persistence'
+import type { JunctionId, Network, Point, Selection } from '../core/types'
 
 export type Tool = 'select' | 'place' | 'curve' | 'pan'
 
@@ -48,6 +56,14 @@ export class EditorStore {
   selectedCurveRadius = 730
   selectedCurveAngle = 22.5
 
+  // Turnout configuration
+  selectedFrog: 4 | 6 = 6
+  selectedTurnoutHand: 'left' | 'right' = 'left'
+
+  // Crossing / Intersection configuration
+  selectedCrossingAngle = 15 // degrees (15, 30, 45, 60, 90)
+  selectedCrossingLength = 124 // mm (standard Kato/Peco crossing length)
+
   // Dragging nodes (Select tool)
   isDraggingNode = false
   dragStartWorld: Point | null = null
@@ -62,6 +78,66 @@ export class EditorStore {
   theme: ThemeMode = 'auto'
   projectName = 'Untitled Network'
   dirty = false
+
+  constructor() {
+    this.loadPersistedState()
+  }
+
+  /**
+   * Load persisted layout from localStorage if present.
+   */
+  loadPersistedState = (): boolean => {
+    const saved = loadNetworkFromStorage()
+    if (!saved) return false
+    this.network = saved.network
+    if (saved.projectName) {
+      this.projectName = saved.projectName
+    }
+    if (saved.camera) {
+      this.camera = createCamera(saved.camera.x, saved.camera.y, saved.camera.scale)
+    }
+    return true
+  }
+
+  /**
+   * Load network from serialized data structure.
+   */
+  loadFromData = (data: any): void => {
+    const res = deserializeNetwork(data)
+    this.network = res.network
+    if (res.projectName) this.projectName = res.projectName
+    if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.lastNodeId = null
+    this.curveState = { phase: 0, startId: null }
+    this.markDirty()
+    this.notify()
+  }
+
+  /**
+   * Immediately save layout state to localStorage.
+   */
+  savePersistedState = (): void => {
+    saveNetworkToStorage(this.network, this.projectName, this.camera)
+  }
+
+  /**
+   * Reset the project to a fresh empty layout and clear localStorage.
+   */
+  newProject = (): void => {
+    this.network = createNetwork()
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.lastNodeId = null
+    this.curveState = { phase: 0, startId: null }
+    this.projectName = 'Untitled Network'
+    this.camera.x = 0
+    this.camera.y = 0
+    this.camera.scale = 3
+    this.dirty = false
+    clearNetworkStorage()
+    resetIdCounter(0)
+    this.notify()
+  }
 
   // --- Notification ---
   private listeners = new Set<() => void>()
@@ -78,6 +154,7 @@ export class EditorStore {
 
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
+    autoDetectJunctions(this.network)
     this.version++
     this.listeners.forEach((l) => l())
   }
@@ -137,14 +214,14 @@ export class EditorStore {
 
   setProjectName = (name: string): void => {
     this.projectName = name
+    this.savePersistedState()
     this.notify()
   }
 
   markDirty = (): void => {
-    if (!this.dirty) {
-      this.dirty = true
-      this.notify()
-    }
+    this.dirty = true
+    this.savePersistedState()
+    this.notify()
   }
 
   markClean = (): void => {
@@ -211,6 +288,19 @@ export class EditorStore {
     this.notify()
   }
 
+  /**
+   * Reconcile network topology: heal disconnected branches, auto-split segments
+   * at intersecting points/nodes, and auto-detect turnouts & crossings.
+   */
+  reconcileTopology = (tolerance = 3.5): { splitCount: number; weldedCount: number } => {
+    const res = reconcileNetworkIntersections(this.network, tolerance)
+    if (res.splitCount > 0 || res.weldedCount > 0) {
+      this.markDirty()
+      this.notify()
+    }
+    return res
+  }
+
   cycleCurveProfile = (dir: 1 | -1): void => {
     // Only cycle non-Infinity radii
     const validCount = CURVE_RADII.length - 1
@@ -251,6 +341,99 @@ export class EditorStore {
   setSelectedCurveAngle = (a: number): void => {
     this.selectedCurveAngle = a
     this.notify()
+  }
+
+  setSelectedFrog = (frog: 4 | 6): void => {
+    this.selectedFrog = frog
+    this.notify()
+  }
+
+  setSelectedTurnoutHand = (hand: 'left' | 'right'): void => {
+    this.selectedTurnoutHand = hand
+    this.notify()
+  }
+
+  toggleTurnoutHand = (): void => {
+    this.selectedTurnoutHand = this.selectedTurnoutHand === 'left' ? 'right' : 'left'
+    this.notify()
+  }
+
+  setSelectedCrossingAngle = (angle: number): void => {
+    this.selectedCrossingAngle = angle
+    this.notify()
+  }
+
+  setSelectedCrossingLength = (len: number): void => {
+    this.selectedCrossingLength = len
+    this.notify()
+  }
+
+  cycleCrossingAngle = (): void => {
+    const angles = [15, 30, 45, 90]
+    const idx = angles.indexOf(this.selectedCrossingAngle)
+    const nextIdx = (idx + 1) % angles.length
+    this.selectedCrossingAngle = angles[nextIdx]
+    this.notify()
+  }
+
+  toggleActiveJunction = (junctionId?: JunctionId): void => {
+    if (junctionId) {
+      const junc = this.network.junctions.get(junctionId)
+      if (junc) {
+        toggleJunction(junc)
+        this.markDirty()
+        this.notify()
+      }
+      return
+    }
+    if (this.selection.junctions && this.selection.junctions.size > 0) {
+      for (const jid of this.selection.junctions) {
+        const junc = this.network.junctions.get(jid)
+        if (junc) toggleJunction(junc)
+      }
+      this.markDirty()
+      this.notify()
+      return
+    }
+    for (const nid of this.selection.nodes) {
+      const junc = findJunctionAtNode(this.network, nid)
+      if (junc) {
+        toggleJunction(junc)
+        this.markDirty()
+        this.notify()
+        return
+      }
+    }
+    for (const sid of this.selection.segments) {
+      const junc = findJunctionBySegment(this.network, sid)
+      if (junc) {
+        toggleJunction(junc)
+        this.markDirty()
+        this.notify()
+        return
+      }
+    }
+  }
+
+  toggleTurnoutHandAtSelection = (): void => {
+    for (const nid of this.selection.nodes) {
+      const junc = findJunctionAtNode(this.network, nid)
+      if (junc) {
+        toggleTurnoutHand(this.network, junc.id)
+        this.markDirty()
+        this.notify()
+        return
+      }
+    }
+    for (const sid of this.selection.segments) {
+      const junc = findJunctionBySegment(this.network, sid)
+      if (junc) {
+        toggleTurnoutHand(this.network, junc.id)
+        this.markDirty()
+        this.notify()
+        return
+      }
+    }
   }
 }
 

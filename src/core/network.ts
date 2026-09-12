@@ -12,8 +12,27 @@ export function generateId(prefix: string): string {
   return `${prefix}_${idCounter}`
 }
 
+/**
+ * Scan all node, segment, and junction IDs in the network and update
+ * idCounter so that any future generateId calls will not collide.
+ */
+export function syncIdCounter(net: Network): void {
+  let max = 0
+  const scan = (id: string) => {
+    const match = id.match(/_(\d+)$/)
+    if (match) {
+      const n = parseInt(match[1], 10)
+      if (!Number.isNaN(n) && n > max) max = n
+    }
+  }
+  for (const id of net.nodes.keys()) scan(id)
+  for (const id of net.segments.keys()) scan(id)
+  for (const id of net.junctions.keys()) scan(id)
+  resetIdCounter(max)
+}
+
 export function createNetwork(): Network {
-  return { nodes: new Map(), segments: new Map(), adjacency: new Map() }
+  return { nodes: new Map(), segments: new Map(), adjacency: new Map(), junctions: new Map() }
 }
 
 export function addNode(net: Network, pos: Point): RailNode {

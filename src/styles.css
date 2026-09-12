@@ -13,6 +13,7 @@
   --ballast-edge: #c2b9aa;
   --sleeper: #443425;
   --rail: #526071;
+  --rail-head: #ffffff;
   --danger: #dc2626;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
@@ -32,6 +33,7 @@
   --ballast-edge: #1a1715;
   --sleeper: #1c1510;
   --rail: #94a3b8;
+  --rail-head: #f1f5f9;
   --danger: #f87171;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
@@ -52,6 +54,7 @@
     --ballast-edge: #1a1715;
     --sleeper: #1c1510;
     --rail: #94a3b8;
+    --rail-head: #f1f5f9;
     --danger: #f87171;
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }

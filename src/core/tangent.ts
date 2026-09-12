@@ -78,6 +78,60 @@ export function outgoingTangent(
   return null
 }
 
+/**
+ * Find the optimal tangent direction at a node aligned with the user's cursor drag.
+ * Evaluates all connected segments at the node and picks the tangent vector (+ or -)
+ * having the highest alignment (dot product) with the vector (cursor - node.pos).
+ * If the node has no connected segments, returns null.
+ */
+export function getTangentForPlacement(
+  net: Network,
+  nodeId: NodeId,
+  cursor: Point,
+): Point | null {
+  const node = net.nodes.get(nodeId)
+  if (!node) return null
+  const adj = net.adjacency.get(nodeId)
+  if (!adj || adj.length === 0) return null
+
+  const dx = cursor.x - node.pos.x
+  const dy = cursor.y - node.pos.y
+  const dLen = Math.hypot(dx, dy)
+  const userDir = dLen > 0.01 ? { x: dx / dLen, y: dy / dLen } : null
+
+  let bestTangent: Point | null = null
+  let bestDot = -Infinity
+
+  for (const segId of adj) {
+    const seg = net.segments.get(segId)
+    if (!seg) continue
+    const tan = segmentTangentAt(net, seg, nodeId)
+    if (!tan) continue
+
+    if (!userDir) {
+      if (!bestTangent) bestTangent = tan
+      continue
+    }
+
+    const dotPlus = userDir.x * tan.x + userDir.y * tan.y
+    const dotMinus = -dotPlus
+
+    if (dotPlus >= dotMinus) {
+      if (dotPlus > bestDot) {
+        bestDot = dotPlus
+        bestTangent = tan
+      }
+    } else {
+      if (dotMinus > bestDot) {
+        bestDot = dotMinus
+        bestTangent = { x: -tan.x, y: -tan.y }
+      }
+    }
+  }
+
+  return bestTangent
+}
+
 /** Compute a via point for a quadratic Bezier that approximates a circular arc.
  *
  *  Given a start point, an incoming tangent direction, and an end point,

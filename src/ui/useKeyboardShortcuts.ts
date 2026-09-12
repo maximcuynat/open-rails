@@ -38,6 +38,9 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         store.setTool('place')
       } else if (e.key === 'c' || e.key === 'C') {
         store.setTool('curve')
+      } else if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        store.toggleActiveJunction()
       } else if (e.key === 'h' || e.key === 'H') {
         store.setTool('pan')
       } else if (e.key === 'g' || e.key === 'G') {
@@ -58,6 +61,11 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         }
       } else if (e.key === 'm' || e.key === 'M') {
         store.setTrackMode(store.trackMode === 'catalog' ? 'freeform' : 'catalog')
+      } else if (e.key === 'r' || e.key === 'R') {
+        if (!e.ctrlKey && !e.metaKey) {
+          e.preventDefault()
+          store.reconcileTopology()
+        }
       } else if (e.key === '[') {
         store.cycleCurveProfile(-1)
       } else if (e.key === ']') {

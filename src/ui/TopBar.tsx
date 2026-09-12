@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Menu, MenuBar, type MenuItem } from './Menu'
 import type { EditorStore } from './store'
+import { exportSVG } from '../render/exportSvg'
+import { serializeNetwork } from '../core/persistence'
 
 interface TopBarProps {
   store: EditorStore
@@ -23,6 +25,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const fileItems: MenuItem[] = [
     { id: 'new', label: 'New' },
+    { id: 'import-json', label: 'Import JSON...' },
     { id: 'export-json', label: 'Export JSON' },
     { id: 'export-svg', label: 'Export SVG', separatorAfter: true },
     { id: 'export-png', label: 'Export PNG' },
@@ -34,6 +37,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     { id: 'delete', label: 'Delete', shortcut: 'Del' },
     { id: 'duplicate', label: 'Duplicate', shortcut: 'Ctrl+D', disabled: true },
     { id: 'select-all', label: 'Select all', shortcut: 'Ctrl+A', separatorAfter: true },
+    { id: 'reconcile', label: 'Réconcilier les jonctions & aiguillages', shortcut: 'R', separatorAfter: true },
     { id: 'clear', label: 'Clear selection', shortcut: 'Esc' },
   ]
 
@@ -52,9 +56,29 @@ export function TopBar({ store, onFitView }: TopBarProps) {
   const onFileSelect = (id: string) => {
     switch (id) {
       case 'new':
-        // Future: confirm if dirty
-        window.location.reload()
+        if (store.network.nodes.size > 0 || store.network.segments.size > 0) {
+          if (!window.confirm('Start a new network? This will clear the current layout.')) return
+        }
+        store.newProject()
         break
+      case 'import-json': {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.json,application/json'
+        input.onchange = async () => {
+          const file = input.files?.[0]
+          if (!file) return
+          const text = await file.text()
+          try {
+            const data = JSON.parse(text)
+            store.loadFromData(data)
+          } catch {
+            alert('Invalid network JSON file')
+          }
+        }
+        input.click()
+        break
+      }
       case 'export-json':
         exportJSON(store)
         break
@@ -69,6 +93,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const onEditSelect = (id: string) => {
     switch (id) {
+      case 'reconcile':
+        store.reconcileTopology()
+        break
       case 'delete':
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))
         break
@@ -182,69 +209,13 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 // --- Export helpers (JSON / SVG / PNG) ---
 
 function exportJSON(store: EditorStore): void {
-  const net = store.network
-  const data = {
-    version: 1,
-    name: store.projectName,
-    nodes: [...net.nodes.values()].map((n) => ({ id: n.id, x: n.pos.x, y: n.pos.y })),
-    segments: [...net.segments.values()].map((s) => ({
-      id: s.id,
-      from: s.from,
-      to: s.to,
-      kind: s.kind,
-      via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
-    })),
-  }
+  const data = serializeNetwork(store.network, store.projectName, store.camera)
   download(
     JSON.stringify(data, null, 2),
     `${store.projectName.replace(/\s+/g, '-').toLowerCase()}.json`,
     'application/json',
   )
   store.markClean()
-}
-
-function exportSVG(store: EditorStore): void {
-  const net = store.network
-  if (net.nodes.size === 0) return
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const n of net.nodes.values()) {
-    minX = Math.min(minX, n.pos.x)
-    minY = Math.min(minY, n.pos.y)
-    maxX = Math.max(maxX, n.pos.x)
-    maxY = Math.max(maxY, n.pos.y)
-  }
-  for (const s of net.segments.values()) {
-    if (s.kind === 'curve' && s.via) {
-      minX = Math.min(minX, s.via.x)
-      minY = Math.min(minY, s.via.y)
-      maxX = Math.max(maxX, s.via.x)
-      maxY = Math.max(maxY, s.via.y)
-    }
-  }
-  const pad = 15
-  const w = maxX - minX + pad * 2
-  const h = maxY - minY + pad * 2
-  const ox = minX - pad
-  const oy = minY - pad
-
-  const paths: string[] = []
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    if (seg.kind === 'curve' && seg.via) {
-      paths.push(`M${a.pos.x - ox},${a.pos.y - oy} Q${seg.via.x - ox},${seg.via.y - oy} ${b.pos.x - ox},${b.pos.y - oy}`)
-    } else {
-      paths.push(`M${a.pos.x - ox},${a.pos.y - oy} L${b.pos.x - ox},${b.pos.y - oy}`)
-    }
-  }
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <g fill="none" stroke="currentColor" stroke-width="1">
-    ${paths.map((p) => `<path d="${p}" />`).join('\n    ')}
-  </g>
-</svg>`
-  download(svg, `${store.projectName.replace(/\s+/g, '-').toLowerCase()}.svg`, 'image/svg+xml')
 }
 
 function exportPNG(store: EditorStore): void {
