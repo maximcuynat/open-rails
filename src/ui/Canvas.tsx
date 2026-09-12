@@ -163,6 +163,16 @@ interface CurvePreviewData {
   side: 1 | -1
 }
 
+/** Determine which side of the tangent the cursor is on.
+ *  Returns 1 (left) or -1 (right) based on cross product. */
+function computeSide(tangent: Point, start: Point, cursor: Point): 1 | -1 {
+  const dx = cursor.x - start.x
+  const dy = cursor.y - start.y
+  // Cross product: tangent.x * dy - tangent.y * dx
+  // Positive = cursor is to the left of tangent direction
+  return tangent.x * dy - tangent.y * dx >= 0 ? 1 : -1
+}
+
 function renderCurvePreview(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
@@ -268,19 +278,28 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    // Curve preview — Kato catalog piece
+    // Curve preview — Kato catalog piece, side determined by cursor position
     const cs = store.curveState
     if (cs.phase === 1 && cs.startId) {
       const startNode = store.network.nodes.get(cs.startId)
       if (startNode) {
-        const incoming = outgoingTangent(store.network, cs.startId) ?? { x: 1, y: 0 }
+        const existing = outgoingTangent(store.network, cs.startId)
+        const cursor = store.snappedCursor
         const radius = CURVE_RADII[store.curveProfileIdx]
         if (radius !== Infinity) {
+          // Tangent: from previous segment, or from start->cursor direction if none
+          const tangent = existing ?? (() => {
+            const dx = cursor.x - startNode.pos.x
+            const dy = cursor.y - startNode.pos.y
+            const len = Math.hypot(dx, dy)
+            return len > 1 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
+          })()
+          const side = computeSide(tangent, startNode.pos, cursor)
           renderCurvePreview(ctx, cam, rect.width, rect.height, {
             start: startNode.pos,
-            incomingTangent: incoming,
+            incomingTangent: tangent,
             radius,
-            side: store.curveSide,
+            side,
           })
         }
       }
@@ -377,8 +396,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           if (cs.startId && radius !== Infinity) {
             const startNode = store.network.nodes.get(cs.startId)
             if (startNode) {
-              const incoming = outgoingTangent(store.network, cs.startId) ?? { x: 1, y: 0 }
-              const { end, via } = computeCurvePiece(startNode.pos, incoming, radius, store.curveSide)
+              const existing = outgoingTangent(store.network, cs.startId)
+              // Tangent: from previous segment, or from start->cursor direction if none
+              const tangent = existing ?? (() => {
+                const dx = snapped.x - startNode.pos.x
+                const dy = snapped.y - startNode.pos.y
+                const len = Math.hypot(dx, dy)
+                return len > 1 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
+              })()
+              const side = computeSide(tangent, startNode.pos, snapped)
+              const { end, via } = computeCurvePiece(startNode.pos, tangent, radius, side)
               const endId = addNode(store.network, end).id
               addCurveSegment(store.network, cs.startId, endId, via)
               store.markDirty()
@@ -387,12 +414,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.selection = { nodes: new Set([endId]), segments: new Set() }
             }
           } else if (cs.startId && radius === Infinity) {
-            // Straight piece — use place logic with default length
+            // Straight piece — follow tangent direction
             const startNode = store.network.nodes.get(cs.startId)
             if (startNode) {
-              const incoming = outgoingTangent(store.network, cs.startId) ?? { x: 1, y: 0 }
+              const existing = outgoingTangent(store.network, cs.startId)
+              const tangent = existing ?? (() => {
+                const dx = snapped.x - startNode.pos.x
+                const dy = snapped.y - startNode.pos.y
+                const len = Math.hypot(dx, dy)
+                return len > 1 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
+              })()
               const snappedLen = STRAIGHT_LENGTHS[8] // 246mm default straight
-              const endPos = computeStraightPiece(startNode.pos, incoming, snappedLen)
+              const endPos = computeStraightPiece(startNode.pos, tangent, snappedLen)
               const endId = addNode(store.network, endPos).id
               addSegment(store.network, cs.startId, endId)
               store.markDirty()
