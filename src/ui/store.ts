@@ -6,6 +6,8 @@ import type { Network, Point, Selection } from '../core/types'
 
 export type Tool = 'select' | 'place' | 'curve' | 'pan'
 
+export type TrackMode = 'catalog' | 'freeform'
+
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
 export interface CurveState {
@@ -30,13 +32,27 @@ export class EditorStore {
   showGrid = true
   lastNodeId: string | null = null
   curveState: CurveState = { phase: 0, startId: null }
-  curveProfileIdx = 0 // index into CURVE_RADII
+  curveProfileIdx = 5 // index into CURVE_RADII (defaults to 730mm)
   curveSide: 1 | -1 = 1
+  autoCurveSide = true
   cursorWorld: Point = { x: 0, y: 0 }
   snappedCursor: Point = { x: 0, y: 0 }
+  hoverNodeId: string | null = null
   panning = false
   moved = false
   showMinimap = false
+
+  // Track selection and mode
+  trackMode: TrackMode = 'catalog'
+  selectedStraightLength: number | 'auto' = 'auto'
+  selectedCurveRadius = 730
+  selectedCurveAngle = 22.5
+
+  // Dragging nodes (Select tool)
+  isDraggingNode = false
+  dragStartWorld: Point | null = null
+  draggedNodeInitialPositions = new Map<string, Point>()
+
   // Box selection (Select tool)
   boxSelectStart: Point | null = null
   boxSelectEnd: Point | null = null
@@ -68,8 +84,24 @@ export class EditorStore {
 
   setTool = (t: Tool): void => {
     this.tool = t
-    if (t === 'select') this.lastNodeId = null
-    if (t !== 'curve') this.curveState = { phase: 0, startId: null }
+    if (t === 'select') {
+      this.lastNodeId = null
+      this.curveState = { phase: 0, startId: null }
+    } else if (t === 'place') {
+      this.curveState = { phase: 0, startId: null }
+      // Auto-arm from selected node if exactly 1 node selected
+      if (!this.lastNodeId && this.selection.nodes.size === 1) {
+        const [singleId] = this.selection.nodes
+        this.lastNodeId = singleId
+      }
+    } else if (t === 'curve') {
+      if (this.selection.nodes.size === 1) {
+        const [singleId] = this.selection.nodes
+        this.curveState = { phase: 1, startId: singleId }
+      } else if (this.lastNodeId) {
+        this.curveState = { phase: 1, startId: this.lastNodeId }
+      }
+    }
     this.notify()
   }
 
@@ -180,12 +212,44 @@ export class EditorStore {
   }
 
   cycleCurveProfile = (dir: 1 | -1): void => {
-    this.curveProfileIdx = Math.max(0, Math.min(CURVE_RADII.length - 1, this.curveProfileIdx + dir))
+    // Only cycle non-Infinity radii
+    const validCount = CURVE_RADII.length - 1
+    this.curveProfileIdx = Math.max(0, Math.min(validCount - 1, this.curveProfileIdx + dir))
+    const r = CURVE_RADII[this.curveProfileIdx]
+    if (r !== Infinity) this.selectedCurveRadius = r
     this.notify()
   }
 
   flipCurveSide = (): void => {
     this.curveSide = this.curveSide === 1 ? -1 : 1
+    this.autoCurveSide = false
+    this.notify()
+  }
+
+  toggleAutoCurveSide = (): void => {
+    this.autoCurveSide = !this.autoCurveSide
+    this.notify()
+  }
+
+  setTrackMode = (mode: TrackMode): void => {
+    this.trackMode = mode
+    this.notify()
+  }
+
+  setSelectedStraightLength = (len: number | 'auto'): void => {
+    this.selectedStraightLength = len
+    this.notify()
+  }
+
+  setSelectedCurveRadius = (r: number): void => {
+    this.selectedCurveRadius = r
+    const idx = CURVE_RADII.indexOf(r)
+    if (idx >= 0) this.curveProfileIdx = idx
+    this.notify()
+  }
+
+  setSelectedCurveAngle = (a: number): void => {
+    this.selectedCurveAngle = a
     this.notify()
   }
 }

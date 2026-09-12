@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { removeNode, removeSegment } from '../core/network'
 import { curveLength } from '../core/curve'
 import { arcRadius, arcDeflectionDeg } from '../core/tangent'
@@ -36,6 +36,11 @@ function NetworkPanel({ store }: { store: EditorStore }) {
     }
   }
 
+  const formattedTotal =
+    totalLen >= 1000
+      ? `${(totalLen / 1000).toFixed(2)} m`
+      : `${totalLen.toFixed(0)} mm`
+
   return (
     <>
       <PanelHeader>Network</PanelHeader>
@@ -44,7 +49,7 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Segments" value={net.segments.size} />
         <Field label="Straight" value={straightCount} />
         <Field label="Curves" value={curveCount} />
-        <Field label="Total length" value={`${totalLen.toFixed(1)} m`} />
+        <Field label="Total length" value={formattedTotal} />
       </div>
       <div className="sp-hint">
         Select a node or segment to edit its properties.
@@ -66,6 +71,11 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   const [x, setX] = useState(node.pos.x)
   const [y, setY] = useState(node.pos.y)
 
+  useEffect(() => {
+    setX(node.pos.x)
+    setY(node.pos.y)
+  }, [node.pos.x, node.pos.y, nodeId])
+
   const applyX = (v: number) => {
     setX(v)
     node.pos.x = v
@@ -85,6 +95,10 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
   const onDelete = () => {
     removeNode(store.network, nodeId)
+    if (store.lastNodeId === nodeId) store.lastNodeId = null
+    if (store.curveState.startId === nodeId) {
+      store.curveState = { phase: 0, startId: null }
+    }
     store.clearSelection()
     store.markDirty()
     store.notify()
@@ -176,7 +190,13 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   }
 
   const onDelete = () => {
-    removeSegment(store.network, segId)
+    removeSegment(store.network, segId, true)
+    if (store.lastNodeId && !store.network.nodes.has(store.lastNodeId)) {
+      store.lastNodeId = null
+    }
+    if (store.curveState.startId && !store.network.nodes.has(store.curveState.startId)) {
+      store.curveState = { phase: 0, startId: null }
+    }
     store.clearSelection()
     store.markDirty()
     store.notify()
@@ -189,7 +209,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
       </PanelHeader>
       <div className="sp-section">
         <Field label="Type" value={seg.kind} />
-        <Field label="Length" value={`${len.toFixed(1)} m`} />
+        <Field label="Length" value={`${len.toFixed(0)} mm`} />
         {seg.kind === 'curve' && seg.via && (
           <>
             <Field label="Radius" value={radius === null || radius === Infinity ? '∞' : `${radius.toFixed(0)} mm`} />
@@ -221,10 +241,10 @@ export function SidePanel({ store }: { store: EditorStore }) {
   let content: ReactNode
   if (sel.nodes.size === 1 && sel.segments.size === 0) {
     const id = [...sel.nodes][0]
-    content = <NodePanel store={store} nodeId={id} />
+    content = <NodePanel key={id} store={store} nodeId={id} />
   } else if (sel.segments.size === 1 && sel.nodes.size === 0) {
     const id = [...sel.segments][0]
-    content = <SegmentPanel store={store} segId={id} />
+    content = <SegmentPanel key={id} store={store} segId={id} />
   } else {
     content = <NetworkPanel store={store} />
   }

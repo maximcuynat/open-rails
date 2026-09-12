@@ -99,12 +99,14 @@ export function renderGrid(
 
 /** HO gauge: 16.5 mm (NEM 010 / NMRA S-1.2) */
 export const GAUGE = 16.5
-/** Sleeper spacing in HO (~25 mm) */
-export const SLEEPER_SPACING = 25
-/** Sleeper length (gauge + 5.5 mm) */
-export const SLEEPER_LENGTH = 22
-/** Sleeper width in HO (~2.5 mm) */
-export const SLEEPER_WIDTH = 2.5
+/** Sleeper spacing in HO: ~7.5 mm (accurate HO scale, ~33 sleepers per 246mm track) */
+export const SLEEPER_SPACING = 7.5
+/** Sleeper length: 26 mm (gauge 16.5 mm + ~4.75 mm each side) */
+export const SLEEPER_LENGTH = 26
+/** Sleeper width in HO: ~2.8 mm */
+export const SLEEPER_WIDTH = 2.8
+/** Ballast roadbed width: 32 mm (standard Kato HO Unitrack roadbed) */
+export const BALLAST_WIDTH = 32
 /** Rail head width (Code 83 ≈ 1.0 mm) */
 export const RAIL_WIDTH = 1.0
 
@@ -124,7 +126,11 @@ export function renderNetwork(
 ): void {
   const ink = getComputedStyle(ctx.canvas).getPropertyValue('--ink').trim() || '#1a1a1a'
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#8a7a6a'
+  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#443425'
+  const ballastColor = getComputedStyle(ctx.canvas).getPropertyValue('--ballast').trim() || '#dcd6cc'
+  const ballastEdge = getComputedStyle(ctx.canvas).getPropertyValue('--ballast-edge').trim() || '#c2b9aa'
+  const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
+  const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#ffffff'
 
   const simplified = cam.scale < SIMPLIFY_THRESHOLD
 
@@ -143,7 +149,8 @@ export function renderNetwork(
       const by = (b.pos.y - cam.y) * cam.scale + vh / 2
 
       ctx.strokeStyle = selected ? accent : ink
-      ctx.lineWidth = 2
+      ctx.lineWidth = Math.max(2, 0.8 * cam.scale)
+      ctx.lineCap = 'round'
       ctx.beginPath()
       ctx.moveTo(ax, ay)
       if (seg.kind === 'curve' && seg.via) {
@@ -156,35 +163,58 @@ export function renderNetwork(
       ctx.stroke()
     } else {
       if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurve(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, ink, accent, sleeperColor)
+        renderDetailedCurve(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, sleeperColor, ballastColor, ballastEdge)
       } else {
-        renderDetailedRail(ctx, cam, a.pos, b.pos, vw, vh, selected, ink, accent, sleeperColor)
+        renderDetailedRail(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, sleeperColor, ballastColor, ballastEdge)
       }
     }
   }
 
-  // Draw nodes on top
+  // Draw nodes on top: open endpoints stand out, continuous joints blend cleanly
   for (const node of net.nodes.values()) {
     const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
     const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
     const selected = selection.nodes.has(node.id)
+    const adj = net.adjacency.get(node.id) ?? []
+    const connectionCount = adj.length
 
     // Cull off-screen
     if (sx < -20 || sx > vw + 20 || sy < -20 || sy > vh + 20) continue
 
-    const r = Math.max(3, 0.3 * cam.scale)
-
-    // Outer ring
-    ctx.fillStyle = selected ? accent : ink
-    ctx.beginPath()
-    ctx.arc(sx, sy, r, 0, Math.PI * 2)
-    ctx.fill()
-
-    // Inner dot
-    ctx.fillStyle = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
-    ctx.beginPath()
-    ctx.arc(sx, sy, r * 0.5, 0, Math.PI * 2)
-    ctx.fill()
+    if (selected) {
+      // Selected node: prominent accent ring + glow
+      ctx.fillStyle = accent
+      ctx.beginPath()
+      ctx.arc(sx, sy, Math.max(6, 1.2 * cam.scale), 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = paper
+      ctx.beginPath()
+      ctx.arc(sx, sy, Math.max(3, 0.6 * cam.scale), 0, Math.PI * 2)
+      ctx.fill()
+    } else if (connectionCount <= 1) {
+      // Open endpoint: clean connection point indicating an open rail end
+      const r = Math.max(4, 0.9 * cam.scale)
+      ctx.fillStyle = ink
+      ctx.globalAlpha = 0.8
+      ctx.beginPath()
+      ctx.arc(sx, sy, r, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = paper
+      ctx.beginPath()
+      ctx.arc(sx, sy, r * 0.45, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = 1
+    } else {
+      // Continuous joint (2+ connections): subtle tiny dot only when zoomed in
+      if (cam.scale > 2) {
+        ctx.fillStyle = ink
+        ctx.globalAlpha = 0.3
+        ctx.beginPath()
+        ctx.arc(sx, sy, Math.max(1.5, 0.35 * cam.scale), 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalAlpha = 1
+      }
+    }
   }
 }
 
@@ -199,6 +229,8 @@ export function renderDetailedRail(
   ink: string,
   accent: string,
   sleeperColor: string,
+  ballastColor?: string,
+  ballastEdgeColor?: string,
 ): void {
   const s = cam.scale
 
@@ -223,24 +255,35 @@ export function renderDetailedRail(
   const r2bx = (b.x - nx * hg - cam.x) * s + vw / 2
   const r2by = (b.y - ny * hg - cam.y) * s + vh / 2
 
-  const railPx = Math.max(1, RAIL_WIDTH * s)
+  const railPx = Math.max(1.2, RAIL_WIDTH * s)
   const railColor = selected ? accent : ink
 
-  // --- Sleepers + ballast (drawn in rotated space) ---
+  // --- Ballast roadbed and Sleepers (drawn in rotated space) ---
+  const ballastW = BALLAST_WIDTH * s
   const sleeperLen = SLEEPER_LENGTH * s
-  const sleeperW = Math.max(2, SLEEPER_WIDTH * s)
-  const totalSleepers = Math.max(1, Math.floor(len / SLEEPER_SPACING))
+  const sleeperW = Math.max(1.5, SLEEPER_WIDTH * s)
+  const totalSleepers = Math.max(1, Math.round(len / SLEEPER_SPACING))
   const step = len / totalSleepers
 
   ctx.save()
   ctx.translate((a.x - cam.x) * s + vw / 2, (a.y - cam.y) * s + vh / 2)
   ctx.rotate(Math.atan2(dy, dx))
 
-  // Ballast / track bed
-  ctx.fillStyle = selected ? 'rgba(37, 99, 235, 0.08)' : 'rgba(0,0,0,0.03)'
-  ctx.fillRect(0, -sleeperLen / 2, len * s, sleeperLen)
+  // Ballast roadbed fill
+  ctx.fillStyle = selected ? 'rgba(37, 99, 235, 0.15)' : (ballastColor ?? '#dcd6cc')
+  ctx.fillRect(0, -ballastW / 2, len * s, ballastW)
 
-  // Sleepers
+  // Ballast edge bevel lines
+  ctx.strokeStyle = ballastEdgeColor ?? '#c2b9aa'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(0, -ballastW / 2)
+  ctx.lineTo(len * s, -ballastW / 2)
+  ctx.moveTo(0, ballastW / 2)
+  ctx.lineTo(len * s, ballastW / 2)
+  ctx.stroke()
+
+  // Sleepers (ties)
   ctx.fillStyle = sleeperColor
   for (let i = 0; i <= totalSleepers; i++) {
     const t = i * step
@@ -252,7 +295,7 @@ export function renderDetailedRail(
   // --- Two rails ---
   ctx.strokeStyle = railColor
   ctx.lineWidth = railPx
-  ctx.lineCap = 'round'
+  ctx.lineCap = 'butt'
 
   ctx.beginPath()
   ctx.moveTo(r1ax, r1ay)
@@ -264,8 +307,8 @@ export function renderDetailedRail(
   // Highlight overlay if selected
   if (selected) {
     ctx.strokeStyle = accent
-    ctx.globalAlpha = 0.3
-    ctx.lineWidth = railPx + 4
+    ctx.globalAlpha = 0.35
+    ctx.lineWidth = railPx + 5
     ctx.beginPath()
     ctx.moveTo(r1ax, r1ay)
     ctx.lineTo(r1bx, r1by)
@@ -292,6 +335,8 @@ export function renderDetailedCurve(
   ink: string,
   accent: string,
   sleeperColor: string,
+  ballastColor?: string,
+  ballastEdgeColor?: string,
 ): void {
   const s = cam.scale
   const samples = curveSamples(p0, via, p2, s)
@@ -299,46 +344,69 @@ export function renderDetailedCurve(
   const len = curveLength(p0, via, p2, samples)
 
   const hg = GAUGE / 2
-  const railPx = Math.max(1, RAIL_WIDTH * s)
+  const hb = BALLAST_WIDTH / 2
+  const railPx = Math.max(1.2, RAIL_WIDTH * s)
   const railColor = selected ? accent : ink
 
-  // Compute offset rail points
+  // Compute ballast and rail polylines
+  const leftBallast: [number, number][] = []
+  const rightBallast: [number, number][] = []
   const leftRail: [number, number][] = []
   const rightRail: [number, number][] = []
 
   for (let i = 0; i <= samples; i++) {
     const t = i / samples
     const n = bezierNormal(t, p0, via, p2)
-    const cx = pts[i].x + n.x * hg
-    const cy = pts[i].y + n.y * hg
-    const dx = pts[i].x - n.x * hg
-    const dy = pts[i].y - n.y * hg
-    leftRail.push(w2s({ x: cx, y: cy }, cam, vw, vh))
-    rightRail.push(w2s({ x: dx, y: dy }, cam, vw, vh))
+
+    // Ballast boundary
+    leftBallast.push(w2s({ x: pts[i].x + n.x * hb, y: pts[i].y + n.y * hb }, cam, vw, vh))
+    rightBallast.push(w2s({ x: pts[i].x - n.x * hb, y: pts[i].y - n.y * hb }, cam, vw, vh))
+
+    // Rails
+    leftRail.push(w2s({ x: pts[i].x + n.x * hg, y: pts[i].y + n.y * hg }, cam, vw, vh))
+    rightRail.push(w2s({ x: pts[i].x - n.x * hg, y: pts[i].y - n.y * hg }, cam, vw, vh))
   }
 
-  // --- Sleepers + ballast ---
-  const sleeperLen = SLEEPER_LENGTH * s
-  const sleeperW = Math.max(2, SLEEPER_WIDTH * s)
-  const totalSleepers = Math.max(1, Math.floor(len / SLEEPER_SPACING))
-  const stepT = 1 / totalSleepers
-
-  // Ballast
-  ctx.fillStyle = selected ? 'rgba(37, 99, 235, 0.08)' : 'rgba(0,0,0,0.03)'
+  // --- Ballast roadbed fill ---
+  ctx.fillStyle = selected ? 'rgba(37, 99, 235, 0.15)' : (ballastColor ?? '#dcd6cc')
   ctx.beginPath()
   for (let i = 0; i <= samples; i++) {
-    const [sx, sy] = leftRail[i]
+    const [sx, sy] = leftBallast[i]
     if (i === 0) ctx.moveTo(sx, sy)
     else ctx.lineTo(sx, sy)
   }
   for (let i = samples; i >= 0; i--) {
-    const [sx, sy] = rightRail[i]
+    const [sx, sy] = rightBallast[i]
     ctx.lineTo(sx, sy)
   }
   ctx.closePath()
   ctx.fill()
 
-  // Sleepers
+  // Ballast edge lines
+  ctx.strokeStyle = ballastEdgeColor ?? '#c2b9aa'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  for (let i = 0; i <= samples; i++) {
+    const [sx, sy] = leftBallast[i]
+    if (i === 0) ctx.moveTo(sx, sy)
+    else ctx.lineTo(sx, sy)
+  }
+  ctx.stroke()
+
+  ctx.beginPath()
+  for (let i = 0; i <= samples; i++) {
+    const [sx, sy] = rightBallast[i]
+    if (i === 0) ctx.moveTo(sx, sy)
+    else ctx.lineTo(sx, sy)
+  }
+  ctx.stroke()
+
+  // --- Sleepers (ties) ---
+  const sleeperLen = SLEEPER_LENGTH * s
+  const sleeperW = Math.max(1.5, SLEEPER_WIDTH * s)
+  const totalSleepers = Math.max(1, Math.round(len / SLEEPER_SPACING))
+  const stepT = 1 / totalSleepers
+
   ctx.fillStyle = sleeperColor
   for (let i = 0; i <= totalSleepers; i++) {
     const t = i * stepT
@@ -357,7 +425,7 @@ export function renderDetailedCurve(
   // --- Two rails ---
   ctx.strokeStyle = railColor
   ctx.lineWidth = railPx
-  ctx.lineCap = 'round'
+  ctx.lineCap = 'butt'
   ctx.lineJoin = 'round'
 
   ctx.beginPath()
@@ -379,8 +447,8 @@ export function renderDetailedCurve(
   // Highlight overlay if selected
   if (selected) {
     ctx.strokeStyle = accent
-    ctx.globalAlpha = 0.3
-    ctx.lineWidth = railPx + 4
+    ctx.globalAlpha = 0.35
+    ctx.lineWidth = railPx + 5
     ctx.beginPath()
     for (let i = 0; i <= samples; i++) {
       const [sx, sy] = leftRail[i]

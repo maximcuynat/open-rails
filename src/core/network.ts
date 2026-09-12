@@ -3,6 +3,10 @@ import { distToCurve } from './curve'
 
 let idCounter = 0
 
+export function resetIdCounter(startFrom = 0): void {
+  idCounter = startFrom
+}
+
 export function generateId(prefix: string): string {
   idCounter++
   return `${prefix}_${idCounter}`
@@ -64,20 +68,36 @@ export function removeNode(net: Network, id: NodeId): void {
   net.adjacency.delete(id)
 }
 
-export function removeSegment(net: Network, id: SegmentId): void {
+export function removeSegment(net: Network, id: SegmentId, cleanOrphans = true): void {
   const seg = net.segments.get(id)
   if (!seg) return
-  const a = net.adjacency.get(seg.from)
+  const fromId = seg.from
+  const toId = seg.to
+
+  const a = net.adjacency.get(fromId)
   if (a) {
     const idx = a.indexOf(id)
     if (idx >= 0) a.splice(idx, 1)
   }
-  const b = net.adjacency.get(seg.to)
+  const b = net.adjacency.get(toId)
   if (b) {
     const idx = b.indexOf(id)
     if (idx >= 0) b.splice(idx, 1)
   }
   net.segments.delete(id)
+
+  if (cleanOrphans) {
+    const adjA = net.adjacency.get(fromId)
+    if (adjA && adjA.length === 0) {
+      net.nodes.delete(fromId)
+      net.adjacency.delete(fromId)
+    }
+    const adjB = net.adjacency.get(toId)
+    if (adjB && adjB.length === 0) {
+      net.nodes.delete(toId)
+      net.adjacency.delete(toId)
+    }
+  }
 }
 
 /** Snap a point to the nearest grid intersection. */

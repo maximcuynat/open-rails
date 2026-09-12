@@ -5,12 +5,24 @@ import {
   createNetwork,
   dist,
   distToSegment,
+  generateId,
   hitNode,
   hitSegment,
   removeNode,
   removeSegment,
+  resetIdCounter,
   snapToGrid,
 } from './network'
+
+describe('generateId and resetIdCounter', () => {
+  it('generates sequential IDs and resets', () => {
+    resetIdCounter(0)
+    expect(generateId('test')).toBe('test_1')
+    expect(generateId('test')).toBe('test_2')
+    resetIdCounter(10)
+    expect(generateId('test')).toBe('test_11')
+  })
+})
 
 describe('createNetwork', () => {
   it('starts empty', () => {
@@ -89,7 +101,7 @@ describe('removeNode', () => {
 })
 
 describe('removeSegment', () => {
-  it('removes the segment but keeps the nodes', () => {
+  it('removes the segment and cleans up orphan nodes by default', () => {
     const net = createNetwork()
     const a = addNode(net, { x: 0, y: 0 })
     const b = addNode(net, { x: 10, y: 0 })
@@ -98,10 +110,36 @@ describe('removeSegment', () => {
     removeSegment(net, seg.id)
 
     expect(net.segments.size).toBe(0)
+    expect(net.nodes.has(a.id)).toBe(false)
+    expect(net.nodes.has(b.id)).toBe(false)
+  })
+
+  it('keeps connected nodes and only removes dead-end orphan nodes', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 })
+    const c = addNode(net, { x: 20, y: 0 })
+    const s1 = addSegment(net, a.id, b.id)!
+    addSegment(net, b.id, c.id)!
+
+    removeSegment(net, s1.id)
+
+    expect(net.nodes.has(a.id)).toBe(false) // a had only s1 -> removed
+    expect(net.nodes.has(b.id)).toBe(true)  // b still connects to c -> kept
+    expect(net.nodes.has(c.id)).toBe(true)
+  })
+
+  it('keeps nodes if cleanOrphans is explicitly false', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 })
+    const seg = addSegment(net, a.id, b.id)!
+
+    removeSegment(net, seg.id, false)
+
+    expect(net.segments.size).toBe(0)
     expect(net.nodes.has(a.id)).toBe(true)
     expect(net.nodes.has(b.id)).toBe(true)
-    expect(net.adjacency.get(a.id)).toEqual([])
-    expect(net.adjacency.get(b.id)).toEqual([])
   })
 })
 

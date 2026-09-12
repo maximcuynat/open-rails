@@ -59,15 +59,16 @@ export function computeCurvePiece(
   tangent: { x: number; y: number },
   radius: number,
   side: 1 | -1,
+  customAngle?: number,
 ): { end: { x: number; y: number }; via: { x: number; y: number }; angle: number } {
-  const angle = radiusToAngle(radius)
+  const angle = customAngle !== undefined ? customAngle : radiusToAngle(radius)
   const angleRad = (angle * Math.PI) / 180
 
   // The chord length for an arc of radius R and angle θ: C = 2R sin(θ/2)
-  const chord = 2 * radius * Math.sin(angleRad / 2)
+  const halfAngle = angleRad / 2
+  const chord = 2 * radius * Math.sin(halfAngle)
 
   // Direction from start to end: tangent rotated by ±θ/2
-  const halfAngle = angleRad / 2
   const cosH = Math.cos(halfAngle * side)
   const sinH = Math.sin(halfAngle * side)
   const chordDir = {
@@ -80,10 +81,66 @@ export function computeCurvePiece(
     y: start.y + chordDir.y * chord,
   }
 
-  // Via using arcToVia
-  const via = arcToVia(start, end, radius, side)
+  // The quadratic Bézier control point P1 is at the intersection of start and end tangents,
+  // at distance R * tan(θ/2) along the start tangent. This guarantees exact G1 tangency at both ends.
+  const tDist = radius * Math.tan(halfAngle)
+  const via = {
+    x: start.x + tangent.x * tDist,
+    y: start.y + tangent.y * tDist,
+  }
 
   return { end, via, angle }
+}
+
+/** Compute a freeform tangential circular arc from start along tangent to target endpoint.
+ *  Returns the computed radius, deflection angle, and quadratic Bézier via point. */
+export function computeFreeformCurve(
+  start: { x: number; y: number },
+  tangent: { x: number; y: number },
+  target: { x: number; y: number },
+): { end: { x: number; y: number }; via: { x: number; y: number }; radius: number; angle: number } {
+  const dx = target.x - start.x
+  const dy = target.y - start.y
+  const chordLen = Math.hypot(dx, dy)
+
+  if (chordLen < 5) {
+    return {
+      end: target,
+      via: { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 },
+      radius: Infinity,
+      angle: 0,
+    }
+  }
+
+  const cdx = dx / chordLen
+  const cdy = dy / chordLen
+
+  // Dot product with tangent gives cos(alpha)
+  const dot = Math.max(-1, Math.min(1, tangent.x * cdx + tangent.y * cdy))
+  const rawAlpha = Math.acos(dot)
+  // Clamp alpha to avoid singularity when curve deflects > 170°
+  const alpha = Math.min(rawAlpha, (85 * Math.PI) / 180)
+
+  if (alpha < 0.005) {
+    return {
+      end: target,
+      via: { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 },
+      radius: Infinity,
+      angle: 0,
+    }
+  }
+
+  const sinAlpha = Math.sin(alpha)
+  const cosAlpha = Math.cos(alpha)
+  const radius = chordLen / (2 * sinAlpha)
+  const tDist = chordLen / (2 * cosAlpha)
+  const via = {
+    x: start.x + tangent.x * tDist,
+    y: start.y + tangent.y * tDist,
+  }
+  const angleDeg = (alpha * 2 * 180) / Math.PI
+
+  return { end: target, via, radius, angle: angleDeg }
 }
 
 /** Compute the end point of a standard straight piece.
@@ -138,8 +195,8 @@ export function snapRadius(rawRadius: number): number {
 
 /** Compute the via control point for a quadratic Bezier that approximates
  *  a circular arc with given start, end, and radius.
- *  The via is placed perpendicular to the chord at the midpoint,
- *  offset by the sagitta. */
+ *  The via is placed at the intersection of the start and end tangents
+ *  (distance (chord/2) * tan(θ/2) from chord midpoint). */
 export function arcToVia(
   start: { x: number; y: number },
   end: { x: number; y: number },
@@ -157,24 +214,27 @@ export function arcToVia(
     return mid
   }
 
-  // Sagitta for a circular arc: h = R - sqrt(R² - (L/2)²)
   const half = chord / 2
   if (half >= radius) {
-    // Chord too long for this radius — clamp to maximum sagitta
+    // Chord too long for this radius — clamp to maximum offset
     return {
       x: mid.x + (-dy / chord) * half * side,
       y: mid.y + (dx / chord) * half * side,
     }
   }
 
-  const sagitta = radius - Math.sqrt(radius * radius - half * half)
+  // Distance from chord midpoint to tangent intersection = half * tan(θ/2)
+  // where sin(θ/2) = half / radius, cos(θ/2) = sqrt(1 - sin^2)
+  const sinHalf = half / radius
+  const cosHalf = Math.sqrt(Math.max(0, 1 - sinHalf * sinHalf))
+  const viaOffset = cosHalf > 1e-9 ? half * (sinHalf / cosHalf) : half
 
-  // Perpendicular to chord (normalized), offset by sagitta * side
+  // Perpendicular to chord (normalized), offset by viaOffset * side
   const nx = -dy / chord
   const ny = dx / chord
 
   return {
-    x: mid.x + nx * sagitta * side,
-    y: mid.y + ny * sagitta * side,
+    x: mid.x + nx * viaOffset * side,
+    y: mid.y + ny * viaOffset * side,
   }
 }

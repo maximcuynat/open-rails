@@ -9,7 +9,10 @@
   --border: rgba(0, 0, 0, 0.1);
   --accent: #2563eb;
   --accent-fg: #ffffff;
-  --sleeper: #a89580;
+  --ballast: #dcd6cc;
+  --ballast-edge: #c2b9aa;
+  --sleeper: #443425;
+  --rail: #526071;
   --danger: #dc2626;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
@@ -25,7 +28,10 @@
   --border: rgba(255, 255, 255, 0.1);
   --accent: #60a5fa;
   --accent-fg: #0a0a0a;
-  --sleeper: #6b5d4a;
+  --ballast: #262320;
+  --ballast-edge: #1a1715;
+  --sleeper: #1c1510;
+  --rail: #94a3b8;
   --danger: #f87171;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
@@ -42,7 +48,10 @@
     --border: rgba(255, 255, 255, 0.1);
     --accent: #60a5fa;
     --accent-fg: #0a0a0a;
-    --sleeper: #6b5d4a;
+    --ballast: #262320;
+    --ballast-edge: #1a1715;
+    --sleeper: #1c1510;
+    --rail: #94a3b8;
     --danger: #f87171;
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }
@@ -374,6 +383,222 @@ kbd {
 
 .canvas-wrap canvas.tool-pan:active {
   cursor: grabbing;
+}
+
+/* ===== Track Palette (rail & curve selector) ===== */
+
+.track-palette {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 90%;
+  user-select: none;
+  font-size: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.tp-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tp-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  opacity: 0.75;
+}
+
+.tp-mode-btn:hover {
+  opacity: 1;
+  background: var(--panel-2);
+}
+
+.tp-mode-btn.active {
+  opacity: 1;
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.tp-mode-btn.active.free {
+  color: #10b981;
+}
+
+.tp-svg-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.tp-svg-icon-inline {
+  display: inline-block;
+  vertical-align: -1px;
+  flex-shrink: 0;
+}
+
+.tp-tool-tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--panel-2);
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.tp-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  transition: all 0.12s ease;
+}
+
+.tp-tab-btn:hover {
+  opacity: 1;
+}
+
+.tp-tab-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  opacity: 1;
+}
+
+.tp-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tp-curve-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.tp-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tp-label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.tp-chips {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.tp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.75;
+  transition: all 0.12s ease;
+}
+
+.tp-chip:hover {
+  opacity: 1;
+  background: var(--panel-2);
+}
+
+.tp-chip.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+  opacity: 1;
+  font-weight: 700;
+}
+
+.tp-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.tp-freeform-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.tp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.tp-desc {
+  font-size: 11px;
+  opacity: 0.75;
 }
 
 /* ===== Canvas overlay (hints + phase badge) ===== */

@@ -17,83 +17,124 @@ import {
   hitSegment,
   snapToGrid,
 } from '../core/network'
-import type { Point } from '../core/types'
+import type { Point, Network, RailNode } from '../core/types'
 import { curveLength } from '../core/curve'
 import { outgoingTangent } from '../core/tangent'
 import {
-  CURVE_RADII,
-  STRAIGHT_LENGTHS,
   snapStraightLength,
   computeStraightPiece,
   computeCurvePiece,
+  computeFreeformCurve,
 } from '../core/profiles'
 import type { EditorStore } from './store'
 
-/** Render a snap indicator at a world point — a small cross + circle. */
+/** Find the nearest node within screen pixel tolerance. */
+function findNearestNode(net: Network, worldPos: Point, maxScreenPx: number, cam: Camera): RailNode | null {
+  const maxDistWorld = maxScreenPx / cam.scale
+  let best: RailNode | null = null
+  let bestD = maxDistWorld
+  for (const node of net.nodes.values()) {
+    const d = Math.hypot(worldPos.x - node.pos.x, worldPos.y - node.pos.y)
+    if (d < bestD) {
+      bestD = d
+      best = node
+    }
+  }
+  return best
+}
+
+/** Snap a direction vector to standard angles (0°, 15°, 30°, 45°, 90°...). */
+function snapDirection(dir: Point, stepDeg = 15, tolDeg = 6): Point {
+  const angleRad = Math.atan2(dir.y, dir.x)
+  let angleDeg = (angleRad * 180) / Math.PI
+  if (angleDeg < 0) angleDeg += 360
+  const nearest = Math.round(angleDeg / stepDeg) * stepDeg
+  const diff = Math.abs(angleDeg - nearest)
+  if (diff <= tolDeg || Math.abs(diff - 360) <= tolDeg) {
+    const rad = (nearest * Math.PI) / 180
+    return { x: Math.cos(rad), y: Math.sin(rad) }
+  }
+  return dir
+}
+
+/** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
 function renderSnapIndicator(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   vw: number,
   vh: number,
   pos: Point,
+  isNodeSnap: boolean,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
   const sx = (pos.x - cam.x) * cam.scale + vw / 2
   const sy = (pos.y - cam.y) * cam.scale + vh / 2
 
   ctx.save()
-  ctx.strokeStyle = accent
-  ctx.fillStyle = accent
-  ctx.globalAlpha = 0.8
+  if (isNodeSnap) {
+    // Magnetic lock onto existing track node
+    ctx.strokeStyle = '#10b981' // emerald green
+    ctx.fillStyle = '#10b981'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(sx, sy, 10, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.globalAlpha = 0.3
+    ctx.beginPath()
+    ctx.arc(sx, sy, 5, 0, Math.PI * 2)
+    ctx.fill()
+  } else {
+    // Grid snap crosshair
+    ctx.strokeStyle = accent
+    ctx.fillStyle = accent
+    ctx.lineWidth = 1.5
+    ctx.globalAlpha = 0.8
+    const r = 7
+    ctx.beginPath()
+    ctx.moveTo(sx - r, sy)
+    ctx.lineTo(sx + r, sy)
+    ctx.moveTo(sx, sy - r)
+    ctx.lineTo(sx, sy + r)
+    ctx.stroke()
 
-  // Cross
-  ctx.lineWidth = 1.5
-  const r = 8
-  ctx.beginPath()
-  ctx.moveTo(sx - r, sy)
-  ctx.lineTo(sx + r, sy)
-  ctx.moveTo(sx, sy - r)
-  ctx.lineTo(sx, sy + r)
-  ctx.stroke()
-
-  // Ring
-  ctx.globalAlpha = 0.4
-  ctx.beginPath()
-  ctx.arc(sx, sy, 5, 0, Math.PI * 2)
-  ctx.stroke()
-
+    ctx.globalAlpha = 0.3
+    ctx.beginPath()
+    ctx.arc(sx, sy, 5, 0, Math.PI * 2)
+    ctx.stroke()
+  }
   ctx.restore()
 }
 
-/** Render a straight rail preview snapped to a Kato standard length.
- *  Direction comes from cursor, length snaps to nearest standard piece. */
+/** Determine which side of the tangent the cursor is on.
+ *  Returns 1 (left) or -1 (right) based on cross product. */
+function computeSide(tangent: Point, start: Point, cursor: Point): 1 | -1 {
+  const dx = cursor.x - start.x
+  const dy = cursor.y - start.y
+  // Cross product: positive = cursor is to the left of tangent direction
+  return tangent.x * dy - tangent.y * dx >= 0 ? 1 : -1
+}
+
+/** Render a straight rail preview to the candidate end. */
 function renderPlacePreview(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   vw: number,
   vh: number,
   start: Point,
-  cursor: Point,
-  incomingTangent: Point | null,
+  snappedEnd: Point,
+  labelText: string,
+  isClosedToNode = false,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const ink = getComputedStyle(ctx.canvas).getPropertyValue('--ink').trim() || '#1a1a1a'
-  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#8a7a6a'
+  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#443425'
+  const ballastColor = getComputedStyle(ctx.canvas).getPropertyValue('--ballast').trim() || '#dcd6cc'
+  const ballastEdge = getComputedStyle(ctx.canvas).getPropertyValue('--ballast-edge').trim() || '#c2b9aa'
+  const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
   const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
 
   ctx.save()
-
-  // Compute direction from start to cursor
-  const dx = cursor.x - start.x
-  const dy = cursor.y - start.y
-  const dist = Math.hypot(dx, dy)
-  const dir = dist > 1 ? { x: dx / dist, y: dy / dist } : (incomingTangent ?? { x: 1, y: 0 })
-
-  // Snap length to nearest Kato straight piece
-  const snappedLen = snapStraightLength(dist)
-  const snappedEnd = computeStraightPiece(start, dir, snappedLen)
 
   // Start node marker
   ctx.fillStyle = accent
@@ -118,33 +159,27 @@ function renderPlacePreview(
     ctx.stroke()
     ctx.setLineDash([])
   } else {
-    ctx.globalAlpha = 0.7
-    renderDetailedRail(ctx, cam, start, snappedEnd, vw, vh, false, ink, accent, sleeperColor)
+    ctx.globalAlpha = 0.75
+    renderDetailedRail(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent, sleeperColor, ballastColor, ballastEdge)
     ctx.globalAlpha = 1
   }
 
-  // Ghost line from snapped end to cursor
-  if (Math.abs(dist - snappedLen) > 1) {
-    ctx.strokeStyle = accent
-    ctx.globalAlpha = 0.2
-    ctx.lineWidth = 1
-    ctx.setLineDash([2, 4])
+  // End node marker / snap indicator
+  if (isClosedToNode) {
+    ctx.strokeStyle = '#10b981'
+    ctx.lineWidth = 2.5
     ctx.beginPath()
-    ctx.moveTo(w2sX(snappedEnd.x), w2sY(snappedEnd.y))
-    ctx.lineTo(w2sX(cursor.x), w2sY(cursor.y))
+    ctx.arc(w2sX(snappedEnd.x), w2sY(snappedEnd.y), 8, 0, Math.PI * 2)
     ctx.stroke()
-    ctx.setLineDash([])
-    ctx.globalAlpha = 1
   }
 
   // Length label near snapped end
-  const labelText = `${snappedLen}mm`
   ctx.font = '600 11px Archivo, system-ui, sans-serif'
   const labelW = ctx.measureText(labelText).width
   const lx = w2sX(snappedEnd.x) + 14
   const ly = w2sY(snappedEnd.y) - 10
 
-  ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+  ctx.fillStyle = isClosedToNode ? 'rgba(16, 185, 129, 0.9)' : 'rgba(37, 99, 235, 0.85)'
   ctx.beginPath()
   ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
   ctx.fill()
@@ -156,78 +191,72 @@ function renderPlacePreview(
   ctx.restore()
 }
 
-interface CurvePreviewData {
-  start: Point
-  incomingTangent: Point
-  radius: number
-  side: 1 | -1
-}
-
-/** Determine which side of the tangent the cursor is on.
- *  Returns 1 (left) or -1 (right) based on cross product. */
-function computeSide(tangent: Point, start: Point, cursor: Point): 1 | -1 {
-  const dx = cursor.x - start.x
-  const dy = cursor.y - start.y
-  // Cross product: tangent.x * dy - tangent.y * dx
-  // Positive = cursor is to the left of tangent direction
-  return tangent.x * dy - tangent.y * dx >= 0 ? 1 : -1
-}
-
 function renderCurvePreview(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   vw: number,
   vh: number,
-  data: CurvePreviewData,
+  start: Point,
+  via: Point,
+  end: Point,
+  labelText: string,
+  isClosedToNode = false,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#8a7a6a'
+  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#443425'
+  const ballastColor = getComputedStyle(ctx.canvas).getPropertyValue('--ballast').trim() || '#dcd6cc'
+  const ballastEdge = getComputedStyle(ctx.canvas).getPropertyValue('--ballast-edge').trim() || '#c2b9aa'
+  const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
   const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
 
   ctx.save()
 
-  const { end, via, angle } = computeCurvePiece(data.start, data.incomingTangent, data.radius, data.side)
-  const len = curveLength(data.start, via, end)
-  const profileLabel = `R${data.radius} ${angle}°`
-
   // Start node marker
   ctx.fillStyle = accent
   ctx.globalAlpha = 0.6
   ctx.beginPath()
-  ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 6, 0, Math.PI * 2)
+  ctx.arc(w2sX(start.x), w2sY(start.y), 6, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = paper
   ctx.beginPath()
-  ctx.arc(w2sX(data.start.x), w2sY(data.start.y), 3, 0, Math.PI * 2)
+  ctx.arc(w2sX(start.x), w2sY(start.y), 3, 0, Math.PI * 2)
   ctx.fill()
   ctx.globalAlpha = 1
 
-  // Curve preview — semi-transparent to distinguish from placed rails
+  // Curve preview
   if (cam.scale < SIMPLIFY_THRESHOLD) {
     ctx.strokeStyle = accent
     ctx.lineWidth = 2
     ctx.setLineDash([6, 4])
     ctx.beginPath()
-    ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
+    ctx.moveTo(w2sX(start.x), w2sY(start.y))
     ctx.quadraticCurveTo(w2sX(via.x), w2sY(via.y), w2sX(end.x), w2sY(end.y))
     ctx.stroke()
     ctx.setLineDash([])
   } else {
-    ctx.globalAlpha = 0.5
-    renderDetailedCurve(ctx, cam, data.start, via, end, vw, vh, false, accent, accent, sleeperColor)
+    ctx.globalAlpha = 0.75
+    renderDetailedCurve(ctx, cam, start, via, end, vw, vh, false, railColor, accent, sleeperColor, ballastColor, ballastEdge)
     ctx.globalAlpha = 1
   }
 
+  // End node marker / snap indicator
+  if (isClosedToNode) {
+    ctx.strokeStyle = '#10b981'
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    ctx.arc(w2sX(end.x), w2sY(end.y), 8, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+
   // Label near end
-  const labelText = `${profileLabel}  L: ${len.toFixed(0)}mm`
   ctx.font = '600 11px Archivo, system-ui, sans-serif'
   const labelW = ctx.measureText(labelText).width
   const lx = w2sX(end.x) + 14
   const ly = w2sY(end.y) - 10
 
-  ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+  ctx.fillStyle = isClosedToNode ? 'rgba(16, 185, 129, 0.9)' : 'rgba(37, 99, 235, 0.85)'
   ctx.beginPath()
   ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
   ctx.fill()
@@ -288,43 +317,91 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.restore()
     }
 
-    // Snap indicator (Place and Curve tools, when snap is on)
-    if (store.snap && (store.tool === 'place' || store.tool === 'curve')) {
-      renderSnapIndicator(ctx, cam, rect.width, rect.height, store.snappedCursor)
+    // Snap indicator (Place and Curve tools)
+    if (store.tool === 'place' || store.tool === 'curve') {
+      const isNode = store.hoverNodeId !== null
+      if (isNode || store.snap) {
+        renderSnapIndicator(ctx, cam, rect.width, rect.height, store.snappedCursor, isNode)
+      }
     }
 
-    // Place tool preview: rail from last node, snapped to Kato length
+    // Place tool preview: rail from last node, snapped to Kato length or freeform
     if (store.tool === 'place' && store.lastNodeId) {
       const startNode = store.network.nodes.get(store.lastNodeId)
       if (startNode) {
         const incoming = outgoingTangent(store.network, store.lastNodeId)
-        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, store.snappedCursor, incoming)
+        let dir: Point
+        let snappedLen: number
+        const cursor = store.cursorWorld
+        const dx = cursor.x - startNode.pos.x
+        const dy = cursor.y - startNode.pos.y
+        if (incoming) {
+          const proj = dx * incoming.x + dy * incoming.y
+          const connectionCount = store.network.adjacency.get(store.lastNodeId)?.length ?? 0
+          const isReverse = proj < -15 && connectionCount <= 1
+          dir = isReverse ? { x: -incoming.x, y: -incoming.y } : incoming
+          const dist = Math.max(10, isReverse ? -proj : proj)
+          if (store.trackMode === 'freeform') {
+            snappedLen = Math.max(10, Math.round(dist))
+          } else if (store.selectedStraightLength !== 'auto') {
+            snappedLen = store.selectedStraightLength
+          } else {
+            snappedLen = snapStraightLength(dist)
+          }
+        } else {
+          const dist = Math.hypot(dx, dy)
+          dir = dist > 1 ? snapDirection({ x: dx / dist, y: dy / dist }, 15, 6) : { x: 1, y: 0 }
+          if (store.trackMode === 'freeform') {
+            snappedLen = Math.max(10, Math.round(dist))
+          } else if (store.selectedStraightLength !== 'auto') {
+            snappedLen = store.selectedStraightLength
+          } else {
+            snappedLen = snapStraightLength(dist)
+          }
+        }
+        const candidateEnd = computeStraightPiece(startNode.pos, dir, snappedLen)
+        const closeNode = findNearestNode(store.network, candidateEnd, 16, cam)
+        const isJoin = closeNode !== null && closeNode.id !== store.lastNodeId
+        const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
+        const labelText = `${prefix}${snappedLen}mm${isJoin ? '  → Join' : ''}`
+        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
       }
     }
 
-    // Curve preview — Kato catalog piece, side determined by cursor position
+    // Curve preview — Kato catalog piece or freeform tangent arc
     const cs = store.curveState
     if (cs.phase === 1 && cs.startId) {
       const startNode = store.network.nodes.get(cs.startId)
       if (startNode) {
         const existing = outgoingTangent(store.network, cs.startId)
-        const cursor = store.snappedCursor
-        const radius = CURVE_RADII[store.curveProfileIdx]
-        if (radius !== Infinity) {
-          // Tangent: from previous segment, or from start->cursor direction if none
-          const tangent = existing ?? (() => {
-            const dx = cursor.x - startNode.pos.x
-            const dy = cursor.y - startNode.pos.y
-            const len = Math.hypot(dx, dy)
-            return len > 1 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-          })()
-          const side = computeSide(tangent, startNode.pos, cursor)
-          renderCurvePreview(ctx, cam, rect.width, rect.height, {
-            start: startNode.pos,
-            incomingTangent: tangent,
-            radius,
-            side,
-          })
+        const cursor = store.cursorWorld
+        const tangent = existing ?? (() => {
+          const dx = cursor.x - startNode.pos.x
+          const dy = cursor.y - startNode.pos.y
+          const len = Math.hypot(dx, dy)
+          return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
+        })()
+
+        if (store.trackMode === 'freeform') {
+          const closeNode = findNearestNode(store.network, cursor, 16, cam)
+          const target = closeNode && closeNode.id !== cs.startId ? closeNode.pos : cursor
+          const { end, via, radius, angle } = computeFreeformCurve(startNode.pos, tangent, target)
+          const isJoin = closeNode !== null && closeNode.id !== cs.startId
+          const len = curveLength(startNode.pos, via, end)
+          const labelText = radius === Infinity
+            ? `Flex ${len.toFixed(0)}mm${isJoin ? '  → Join' : ''}`
+            : `Flex R${radius.toFixed(0)} ${angle.toFixed(1)}° (${len.toFixed(0)}mm)${isJoin ? '  → Join' : ''}`
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
+        } else {
+          const radius = store.selectedCurveRadius
+          const angle = store.selectedCurveAngle
+          const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, cursor) : store.curveSide
+          const { end, via } = computeCurvePiece(startNode.pos, tangent, radius, side, angle)
+          const closeNode = findNearestNode(store.network, end, 16, cam)
+          const isJoin = closeNode !== null && closeNode.id !== cs.startId
+          const len = curveLength(startNode.pos, via, end)
+          const labelText = `R${radius} ${angle}° (${len.toFixed(0)}mm)${isJoin ? '  → Join' : ''}`
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
         }
       }
     }
@@ -366,6 +443,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     return () => ro.disconnect()
   }, [draw, onViewport])
 
+  // Subscribe to store notifications so external changes immediately redraw the canvas
+  useEffect(() => {
+    return store.subscribe(draw)
+  }, [store, draw])
+
   // Redraw trigger (called after mutations)
   const redraw = useCallback(() => {
     draw()
@@ -401,61 +483,60 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       if (e.button === 0 && store.tool === 'curve') {
         const world = getWorldPos(e.clientX, e.clientY)
-        const spacing = getSnapSpacing()
-        const snapped = snapToGrid(world, spacing)
-        const hitTol = 1.5 / store.camera.scale
         const cs = store.curveState
 
         if (cs.phase === 0) {
-          // Click 1: place/select start node
-          const existing = hitNode(store.network, snapped, hitTol)
-          const startId = existing ?? addNode(store.network, snapped).id
+          // Click 1: pick start node (magnetic snap to existing node or place new)
+          const clickedNode = findNearestNode(store.network, world, 16, store.camera)
+          const startId = clickedNode
+            ? clickedNode.id
+            : (() => {
+                const spacing = getSnapSpacing()
+                const pos = store.snap ? snapToGrid(world, spacing) : world
+                return addNode(store.network, pos).id
+              })()
           store.curveState = { phase: 1, startId }
+          store.lastNodeId = startId
           store.selection = { nodes: new Set([startId]), segments: new Set() }
           store.markDirty()
           redraw()
-        } else if (cs.phase === 1) {
-          // Click 2: place standard Kato curve piece from catalog
-          const radius = CURVE_RADII[store.curveProfileIdx]
-          if (cs.startId && radius !== Infinity) {
-            const startNode = store.network.nodes.get(cs.startId)
-            if (startNode) {
-              const existing = outgoingTangent(store.network, cs.startId)
-              // Tangent: from previous segment, or from start->cursor direction if none
-              const tangent = existing ?? (() => {
-                const dx = snapped.x - startNode.pos.x
-                const dy = snapped.y - startNode.pos.y
-                const len = Math.hypot(dx, dy)
-                return len > 1 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-              })()
-              const side = computeSide(tangent, startNode.pos, snapped)
-              const { end, via } = computeCurvePiece(startNode.pos, tangent, radius, side)
-              const endId = addNode(store.network, end).id
-              addCurveSegment(store.network, cs.startId, endId, via)
-              store.markDirty()
-              // Chain: end node becomes new start
-              store.curveState = { phase: 1, startId: endId }
-              store.selection = { nodes: new Set([endId]), segments: new Set() }
+        } else if (cs.phase === 1 && cs.startId) {
+          const startNode = store.network.nodes.get(cs.startId)
+          if (startNode) {
+            const incoming = outgoingTangent(store.network, cs.startId)
+            const tangent = incoming ?? (() => {
+              const dx = world.x - startNode.pos.x
+              const dy = world.y - startNode.pos.y
+              const len = Math.hypot(dx, dy)
+              return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
+            })()
+
+            let endPos: Point
+            let viaPos: Point
+
+            if (store.trackMode === 'freeform') {
+              const closeTarget = findNearestNode(store.network, world, 16, store.camera)
+              const target = closeTarget && closeTarget.id !== cs.startId ? closeTarget.pos : world
+              const curve = computeFreeformCurve(startNode.pos, tangent, target)
+              endPos = curve.end
+              viaPos = curve.via
+            } else {
+              const radius = store.selectedCurveRadius
+              const angle = store.selectedCurveAngle
+              const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, world) : store.curveSide
+              const curve = computeCurvePiece(startNode.pos, tangent, radius, side, angle)
+              endPos = curve.end
+              viaPos = curve.via
             }
-          } else if (cs.startId && radius === Infinity) {
-            // Straight piece — follow tangent direction
-            const startNode = store.network.nodes.get(cs.startId)
-            if (startNode) {
-              const existing = outgoingTangent(store.network, cs.startId)
-              const tangent = existing ?? (() => {
-                const dx = snapped.x - startNode.pos.x
-                const dy = snapped.y - startNode.pos.y
-                const len = Math.hypot(dx, dy)
-                return len > 1 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-              })()
-              const snappedLen = STRAIGHT_LENGTHS[8] // 246mm default straight
-              const endPos = computeStraightPiece(startNode.pos, tangent, snappedLen)
-              const endId = addNode(store.network, endPos).id
-              addSegment(store.network, cs.startId, endId)
-              store.markDirty()
-              store.curveState = { phase: 1, startId: endId }
-              store.selection = { nodes: new Set([endId]), segments: new Set() }
-            }
+
+            // Auto-snap destination: connect to existing node if close (closes loops!)
+            const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
+            const endId = closeNode && closeNode.id !== cs.startId ? closeNode.id : addNode(store.network, endPos).id
+            addCurveSegment(store.network, cs.startId, endId, viaPos)
+            store.markDirty()
+            store.curveState = { phase: 1, startId: endId }
+            store.lastNodeId = endId
+            store.selection = { nodes: new Set([endId]), segments: new Set() }
           }
           redraw()
         }
@@ -463,69 +544,102 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       if (e.button === 0 && store.tool === 'place') {
-        // Place a node — snapped to Kato standard length
         const world = getWorldPos(e.clientX, e.clientY)
-        const spacing = getSnapSpacing()
-        const snapped = snapToGrid(world, spacing)
+        const clickedNode = findNearestNode(store.network, world, 16, store.camera)
 
-        // Check if clicking on an existing node
-        const hitTol = 1.5 / store.camera.scale
-        const existing = hitNode(store.network, snapped, hitTol)
-
-        if (existing) {
-          if (store.lastNodeId && store.lastNodeId !== existing) {
-            addSegment(store.network, store.lastNodeId, existing)
+        if (clickedNode) {
+          // Clicked directly on an existing node: connect if coming from another node, and arm it!
+          if (store.lastNodeId && store.lastNodeId !== clickedNode.id) {
+            addSegment(store.network, store.lastNodeId, clickedNode.id)
             store.markDirty()
           }
-          store.lastNodeId = existing
-          store.selection = { nodes: new Set([existing]), segments: new Set() }
+          store.lastNodeId = clickedNode.id
+          store.selection = { nodes: new Set([clickedNode.id]), segments: new Set() }
         } else if (store.lastNodeId) {
-          // Compute direction from last node to cursor, snap length to Kato
+          // Extending from lastNodeId
           const startNode = store.network.nodes.get(store.lastNodeId)
           if (startNode) {
-            const dx = snapped.x - startNode.pos.x
-            const dy = snapped.y - startNode.pos.y
-            const dist = Math.hypot(dx, dy)
-            if (dist > 1) {
-              const dir = { x: dx / dist, y: dy / dist }
-              const snappedLen = snapStraightLength(dist)
-              const endPos = computeStraightPiece(startNode.pos, dir, snappedLen)
-              const node = addNode(store.network, endPos)
-              addSegment(store.network, store.lastNodeId, node.id)
-              store.markDirty()
-              store.lastNodeId = node.id
-              store.selection = { nodes: new Set([node.id]), segments: new Set() }
+            const incoming = outgoingTangent(store.network, store.lastNodeId)
+            let dir: Point
+            let snappedLen: number
+            const dx = world.x - startNode.pos.x
+            const dy = world.y - startNode.pos.y
+            if (incoming) {
+              const proj = dx * incoming.x + dy * incoming.y
+              const connectionCount = store.network.adjacency.get(store.lastNodeId)?.length ?? 0
+              const isReverse = proj < -15 && connectionCount <= 1
+              dir = isReverse ? { x: -incoming.x, y: -incoming.y } : incoming
+              const dist = Math.max(10, isReverse ? -proj : proj)
+              if (store.trackMode === 'freeform') {
+                snappedLen = Math.max(10, Math.round(dist))
+              } else if (store.selectedStraightLength !== 'auto') {
+                snappedLen = store.selectedStraightLength
+              } else {
+                snappedLen = snapStraightLength(dist)
+              }
+            } else {
+              const rawDist = Math.hypot(dx, dy)
+              dir = rawDist > 1 ? snapDirection({ x: dx / rawDist, y: dy / rawDist }, 15, 6) : { x: 1, y: 0 }
+              if (store.trackMode === 'freeform') {
+                snappedLen = Math.max(10, Math.round(rawDist))
+              } else if (store.selectedStraightLength !== 'auto') {
+                snappedLen = store.selectedStraightLength
+              } else {
+                snappedLen = snapStraightLength(rawDist)
+              }
             }
+
+            const endPos = computeStraightPiece(startNode.pos, dir, snappedLen)
+            const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
+            const endId = closeNode && closeNode.id !== store.lastNodeId ? closeNode.id : addNode(store.network, endPos).id
+            addSegment(store.network, store.lastNodeId, endId)
+            store.markDirty()
+            store.lastNodeId = endId
+            store.selection = { nodes: new Set([endId]), segments: new Set() }
           }
         } else {
-          // No previous node — place start node at cursor
-          const node = addNode(store.network, snapped)
+          // First node placement
+          const spacing = getSnapSpacing()
+          const pos = store.snap ? snapToGrid(world, spacing) : world
+          const node = addNode(store.network, pos)
           store.lastNodeId = node.id
           store.selection = { nodes: new Set([node.id]), segments: new Set() }
+          store.markDirty()
         }
         redraw()
         return
       }
 
       if (e.button === 0 && store.tool === 'select') {
-        // Select: try hit node, then segment
         const world = getWorldPos(e.clientX, e.clientY)
-        const hitTol = 1.5 / store.camera.scale
+        const hitTol = 14 / store.camera.scale
         const nodeId = hitNode(store.network, world, hitTol)
         if (nodeId) {
-          // Shift+click adds to selection
           if (e.shiftKey) {
             const newNodes = new Set(store.selection.nodes)
             if (newNodes.has(nodeId)) newNodes.delete(nodeId)
             else newNodes.add(nodeId)
             store.selection = { ...store.selection, nodes: newNodes }
           } else {
-            store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+            if (!store.selection.nodes.has(nodeId)) {
+              store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+            }
           }
+          // Start dragging selected nodes!
+          store.isDraggingNode = true
+          store.dragStartWorld = world
+          store.draggedNodeInitialPositions.clear()
+          for (const nid of store.selection.nodes) {
+            const node = store.network.nodes.get(nid)
+            if (node) {
+              store.draggedNodeInitialPositions.set(nid, { ...node.pos })
+            }
+          }
+          canvas.setPointerCapture(e.pointerId)
           redraw()
           return
         }
-        const segId = hitSegment(store.network, world, hitTol)
+        const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
           if (e.shiftKey) {
             const newSegs = new Set(store.selection.segments)
@@ -542,7 +656,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.isBoxSelecting = true
         store.boxSelectStart = world
         store.boxSelectEnd = world
-        // Clear selection on fresh click (unless shift)
         if (!e.shiftKey) {
           store.selection = { nodes: new Set(), segments: new Set() }
         }
@@ -552,22 +665,46 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     const onMove = (e: PointerEvent) => {
-      // Track cursor for previews
-      const world = getWorldPos(e.clientX, e.clientY)
-      store.cursorWorld = world
-      const spacing = store.snap ? getSnapSpacing() : 0
-      store.snappedCursor = snapToGrid(world, spacing)
+      const rawWorld = getWorldPos(e.clientX, e.clientY)
+      store.cursorWorld = rawWorld
+
+      // Dragging selected nodes in select tool
+      if (store.isDraggingNode && store.dragStartWorld) {
+        const dx = rawWorld.x - store.dragStartWorld.x
+        const dy = rawWorld.y - store.dragStartWorld.y
+        for (const [nid, initPos] of store.draggedNodeInitialPositions) {
+          const node = store.network.nodes.get(nid)
+          if (node) {
+            node.pos.x = initPos.x + dx
+            node.pos.y = initPos.y + dy
+          }
+        }
+        draw()
+        store.notify()
+        return
+      }
+
+      // Magnetic node snap has priority 1
+      const nearNode = findNearestNode(store.network, rawWorld, 16, store.camera)
+      if (nearNode) {
+        store.snappedCursor = { ...nearNode.pos }
+        store.hoverNodeId = nearNode.id
+      } else {
+        store.hoverNodeId = null
+        if (store.snap) {
+          const spacing = getSnapSpacing()
+          store.snappedCursor = snapToGrid(rawWorld, spacing)
+        } else {
+          store.snappedCursor = rawWorld
+        }
+      }
 
       if (!store.panning) {
-        // Redraw for preview if in place or curve mode
-        if (store.tool === 'place' && store.lastNodeId) {
-          draw()
-        } else if (store.tool === 'curve' && store.curveState.phase > 0) {
+        if (store.tool === 'place' || store.tool === 'curve') {
           draw()
         }
-        // Redraw for box selection
         if (store.isBoxSelecting) {
-          store.boxSelectEnd = world
+          store.boxSelectEnd = rawWorld
           draw()
         }
         store.notify()
@@ -587,6 +724,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     const onUp = (e: PointerEvent) => {
+      // Finalize node dragging
+      if (store.isDraggingNode) {
+        store.isDraggingNode = false
+        store.dragStartWorld = null
+        store.draggedNodeInitialPositions.clear()
+        if (canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId)
+        }
+        store.markDirty()
+        redraw()
+        return
+      }
       // Finalize box selection
       if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
         const x1 = Math.min(store.boxSelectStart.x, store.boxSelectEnd.x)

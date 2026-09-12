@@ -5,16 +5,16 @@ function hintText(store: EditorStore): string {
   switch (store.tool) {
     case 'place':
       return store.lastNodeId
-        ? 'Click to place next node · Right-click or Esc to end chain'
-        : 'Click to place the first node'
+        ? 'Clic pour poser le prochain rail · Clic-droit ou Échap pour terminer'
+        : 'Clic pour poser le premier nœud de voie'
     case 'curve':
       return store.curveState.phase === 1
-        ? 'Click to place the end point · Right-click or Esc to cancel'
-        : 'Click to place the start point'
+        ? 'Clic pour poser le coupon · Tab pour inverser côté · Échap pour annuler'
+        : 'Clic pour définir le point de départ de la courbe'
     case 'select':
-      return 'Click a node or segment to select · Del to remove · Esc to clear'
+      return 'Clic pour sélectionner · Glisser un nœud pour ajuster · Suppr pour effacer'
     case 'pan':
-      return 'Drag to pan · Scroll to zoom'
+      return 'Glisser pour déplacer la vue · Molette pour zoomer'
     default:
       return ''
   }

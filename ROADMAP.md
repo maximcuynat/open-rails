@@ -388,7 +388,13 @@ livrer et montrer à quelqu'un d'autre sans l'accompagner.
 
 ---
 
-## Principes techniques
+## Architecture logicielle
+
+Cette section décrit l'organisation cible, existant et à venir. Le détail
+module par module de l'existant reste dans `DESCRIPTION.md` ; ici, on garde
+la vue d'ensemble et on situe où va chaque nouvelle brique du roadmap.
+
+### Principes
 
 - **Rendu** : Canvas 2D, pas de lib tierce. RAF loop pour la simulation,
   redraw à la demande pour l'édition.
@@ -404,11 +410,52 @@ livrer et montrer à quelqu'un d'autre sans l'accompagner.
   `segmentIds` existants, un signal référence un `Portal` existant.
 - **Tests** : Vitest, logique pure isolée dans `src/core/`, pas de tests
   sur le canvas.
-- **Structure des dossiers** :
-  - `src/core/` — modèle de données, logique pure (network, types, history,
-    persist, pathfinding, signaling)
-  - `src/render/` — camera, renderer, palette
-  - `src/ui/` — composants React
+- **Pas de dépendance externe** au-delà de React. Pas de state management lib.
+- **Performance** : redraw incrémental si le réseau devient large (dirty
+  regions ou index spatial pour le hit-test).
+
+### Arborescence cible
+
+```
+src/
+├── core/                     # logique pure, sans dépendance React
+│   ├── types.ts              # Point, RailNode, Segment, Network (existant)
+│   ├── network.ts            # CRUD graphe, snapping, hit-testing (existant)
+│   ├── curve.ts               # géométrie Bezier quadratique (existant)
+│   ├── tangent.ts             # continuité G1, arc ↔ Bezier (existant)
+│   ├── profiles.ts            # catalogue Kato Unitrack HO (existant)
+│   ├── junction.ts            # phase 3.1 — type Junction, branches, gabarits
+│   ├── junction-edit.ts       # phase 3.3 — fusion, scission, déplacement en cascade
+│   ├── pathfinding.ts         # phase 3.5 — findPath, reachableFrom
+│   ├── section.ts             # phase 4.1/4.2 — type Section, Portal, vitesse
+│   ├── occupancy.ts           # phase 4.3 — état occupied, réservation
+│   ├── signal.ts              # phase 4.4 — type Signal, calcul d'aspect
+│   ├── route.ts               # phase 4.5 — type Route, verrouillage
+│   ├── history.ts             # phase 5 — undo/redo
+│   ├── persist.ts             # phase 6 — sauvegarde/restauration JSON
+│   └── *.test.ts              # un fichier de test par module ci-dessus
+├── render/                   # rendu Canvas, sans dépendance React
+│   ├── camera.ts             # caméra + transformations screen ↔ world (existant)
+│   └── renderer.ts           # grille, rails, traverses, ballast (existant)
+│       # + rendu jonctions (3.4), sections (4.1), signaux (4.4)
+└── ui/                        # composants React
+    ├── store.ts               # EditorStore, état mutable + subscribe (existant)
+    ├── Canvas.tsx              # <canvas> + interactions (existant)
+    ├── CanvasOverlay.tsx        # aide contextuelle (existant)
+    ├── SidePanel.tsx            # panneau propriétés (existant, à étendre
+    │                             # avec JunctionPanel, SectionPanel, SignalPanel)
+    ├── ToolBar.tsx, TopBar.tsx, StatusBar.tsx, MiniMap.tsx, Menu.tsx (existant)
+    └── useKeyboardShortcuts.ts  # raccourcis globaux (existant)
+```
+
+**Règle de placement :** toute nouvelle logique de graphe (jonctions,
+sections, chemins, signaux) va dans `src/core/`, testée en isolation, sans
+toucher au rendu. Le rendu de ces nouveaux objets s'ajoute à
+`renderer.ts`, pas dans de nouveaux fichiers de rendu séparés, pour garder
+un seul pipeline de dessin. Les nouveaux panneaux du `SidePanel` suivent le
+même pattern dispatcher que l'existant : un composant par type d'objet
+sélectionné.
+
 - **Pas de dépendance externe** au-delà de React. Pas de state management lib.
 - **Performance** : redraw incrémental si le réseau devient large (dirty
   regions ou index spatial pour le hit-test).

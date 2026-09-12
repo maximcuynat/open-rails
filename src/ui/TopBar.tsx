@@ -33,7 +33,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     { id: 'redo', label: 'Redo', shortcut: 'Ctrl+Shift+Z', disabled: true, separatorAfter: true },
     { id: 'delete', label: 'Delete', shortcut: 'Del' },
     { id: 'duplicate', label: 'Duplicate', shortcut: 'Ctrl+D', disabled: true },
-    { id: 'select-all', label: 'Select all', shortcut: 'Ctrl+A', disabled: true, separatorAfter: true },
+    { id: 'select-all', label: 'Select all', shortcut: 'Ctrl+A', separatorAfter: true },
     { id: 'clear', label: 'Clear selection', shortcut: 'Esc' },
   ]
 
@@ -71,6 +71,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     switch (id) {
       case 'delete':
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))
+        break
+      case 'select-all':
+        store.selectAll()
         break
       case 'clear':
         store.clearSelection()
@@ -210,7 +213,15 @@ function exportSVG(store: EditorStore): void {
     maxX = Math.max(maxX, n.pos.x)
     maxY = Math.max(maxY, n.pos.y)
   }
-  const pad = 10
+  for (const s of net.segments.values()) {
+    if (s.kind === 'curve' && s.via) {
+      minX = Math.min(minX, s.via.x)
+      minY = Math.min(minY, s.via.y)
+      maxX = Math.max(maxX, s.via.x)
+      maxY = Math.max(maxY, s.via.y)
+    }
+  }
+  const pad = 15
   const w = maxX - minX + pad * 2
   const h = maxY - minY + pad * 2
   const ox = minX - pad

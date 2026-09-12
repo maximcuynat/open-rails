@@ -12,47 +12,49 @@ interface ToolDef {
 const TOOLS: ToolDef[] = [
   {
     id: 'select',
-    label: 'Select',
+    label: 'Sélection / Déplacement',
     shortcut: 'V',
     group: 0,
     icon: (
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M5 3l14 7-6 2-2 6z" />
       </svg>
     ),
   },
   {
     id: 'place',
-    label: 'Place node',
+    label: 'Voie droite',
     shortcut: 'N',
     group: 1,
     icon: (
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="4" />
-        <path d="M12 4v2M12 18v2M4 12h2M18 12h2" />
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="3" y1="8" x2="21" y2="8" />
+        <line x1="3" y1="16" x2="21" y2="16" />
+        <line x1="7" y1="5" x2="7" y2="19" />
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="17" y1="5" x2="17" y2="19" />
       </svg>
     ),
   },
   {
     id: 'curve',
-    label: 'Curve',
+    label: 'Voie courbe',
     shortcut: 'C',
     group: 1,
     icon: (
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 18C4 18 8 6 20 6" />
-        <circle cx="4" cy="18" r="1.6" fill="currentColor" />
-        <circle cx="20" cy="6" r="1.6" fill="currentColor" />
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 20C4 20 7 8 20 5" />
+        <path d="M7 21C7 21 10 11 21 8" />
       </svg>
     ),
   },
   {
     id: 'pan',
-    label: 'Pan',
+    label: 'Déplacer la vue',
     shortcut: 'H',
     group: 2,
     icon: (
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2v6M9 5l3-3 3 3" />
         <path d="M5 9l-3 3 3 3M19 9l3 3-3 3" />
         <path d="M12 22v-6M9 19l3 3 3-3" />
@@ -115,7 +117,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
       </button>
       {hoverId === 'snap' && (
         <div className="tb-tooltip">
-          Snap to grid
+          Accrochage grille
           <kbd>G</kbd>
         </div>
       )}
@@ -136,7 +138,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
       </button>
       {hoverId === 'grid' && (
         <div className="tb-tooltip">
-          Toggle grid
+          Afficher la grille
         </div>
       )}
     </div>,

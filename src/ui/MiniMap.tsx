@@ -5,7 +5,13 @@ import type { EditorStore } from './store'
 const MINI_W = 160
 const MINI_H = 120
 
-export function MiniMap({ store }: { store: EditorStore }) {
+interface MiniMapProps {
+  store: EditorStore
+  viewportW?: number
+  viewportH?: number
+}
+
+export function MiniMap({ store, viewportW = 800, viewportH = 600 }: MiniMapProps) {
   const ref = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -87,9 +93,8 @@ export function MiniMap({ store }: { store: EditorStore }) {
       }
 
       // Viewport rectangle
-      const rect = canvas.getBoundingClientRect()
-      const vpWorldW = rect.width / cam.scale
-      const vpWorldH = rect.height / cam.scale
+      const vpWorldW = viewportW / cam.scale
+      const vpWorldH = viewportH / cam.scale
       ctx.strokeStyle = accent
       ctx.lineWidth = 1.5
       ctx.strokeRect(
@@ -103,7 +108,7 @@ export function MiniMap({ store }: { store: EditorStore }) {
     draw()
     const unsub = store.subscribe(draw)
     return unsub
-  }, [store])
+  }, [store, viewportW, viewportH])
 
   // Click/drag to navigate
   const navigate = (e: React.MouseEvent) => {

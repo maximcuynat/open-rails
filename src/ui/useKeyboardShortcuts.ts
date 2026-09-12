@@ -16,9 +16,16 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         e.preventDefault()
         const sel = store.selection
         for (const sid of sel.segments) removeSegment(store.network, sid)
-        for (const nid of sel.nodes) removeNode(store.network, nid)
+        for (const nid of sel.nodes) {
+          removeNode(store.network, nid)
+          if (store.lastNodeId === nid) store.lastNodeId = null
+          if (store.curveState.startId === nid) {
+            store.curveState = { phase: 0, startId: null }
+          }
+        }
         store.clearSelection()
         store.lastNodeId = null
+        store.curveState = { phase: 0, startId: null }
         store.markDirty()
         store.notify()
       } else if (e.key === 'Escape') {
@@ -44,6 +51,13 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         store.selectAll()
+      } else if (e.key === 'Tab') {
+        if (store.tool === 'curve') {
+          e.preventDefault()
+          store.flipCurveSide()
+        }
+      } else if (e.key === 'm' || e.key === 'M') {
+        store.setTrackMode(store.trackMode === 'catalog' ? 'freeform' : 'catalog')
       } else if (e.key === '[') {
         store.cycleCurveProfile(-1)
       } else if (e.key === ']') {

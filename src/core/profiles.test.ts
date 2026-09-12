@@ -9,6 +9,7 @@ import {
   radiusToAngle,
   computeCurvePiece,
   computeStraightPiece,
+  computeFreeformCurve,
 } from './profiles'
 
 describe('CURVE_RADII', () => {
@@ -186,5 +187,71 @@ describe('computeCurvePiece', () => {
     const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
     const viaDist = Math.hypot(via.x - mid.x, via.y - mid.y)
     expect(viaDist).toBeGreaterThan(1)
+  })
+
+  it('guarantees exact G1 start and end tangency', () => {
+    const start = { x: 100, y: 50 }
+    const tangent = { x: 0, y: 1 } // pointing up
+    const { via, end, angle } = computeCurvePiece(start, tangent, 610, 1)
+
+    // Start tangent must exactly match incoming tangent
+    const startDx = via.x - start.x
+    const startDy = via.y - start.y
+    const startLen = Math.hypot(startDx, startDy)
+    expect(startDx / startLen).toBeCloseTo(tangent.x, 5)
+    expect(startDy / startLen).toBeCloseTo(tangent.y, 5)
+
+    // End tangent must be rotated by +angle
+    const endDx = end.x - via.x
+    const endDy = end.y - via.y
+    const endLen = Math.hypot(endDx, endDy)
+    const angleRad = (angle * Math.PI) / 180
+    const expectedEndDir = {
+      x: tangent.x * Math.cos(angleRad) - tangent.y * Math.sin(angleRad),
+      y: tangent.x * Math.sin(angleRad) + tangent.y * Math.cos(angleRad),
+    }
+    expect(endDx / endLen).toBeCloseTo(expectedEndDir.x, 5)
+    expect(endDy / endLen).toBeCloseTo(expectedEndDir.y, 5)
+  })
+
+  it('chains 4 pieces to form an exact 90-degree quarter circle', () => {
+    let currentPos = { x: 0, y: 0 }
+    let currentDir = { x: 1, y: 0 }
+
+    for (let i = 0; i < 4; i++) {
+      const piece = computeCurvePiece(currentPos, currentDir, 550, 1)
+      const endDx = piece.end.x - piece.via.x
+      const endDy = piece.end.y - piece.via.y
+      const len = Math.hypot(endDx, endDy)
+      currentDir = { x: endDx / len, y: endDy / len }
+      currentPos = piece.end
+    }
+
+    // After four 22.5° curves, the direction must be exactly pointing in +Y (0, 1)
+    expect(currentDir.x).toBeCloseTo(0, 4)
+    expect(currentDir.y).toBeCloseTo(1, 4)
+  })
+
+  it('supports custom angles like 45 degrees', () => {
+    const piece = computeCurvePiece({ x: 0, y: 0 }, { x: 1, y: 0 }, 550, 1, 45)
+    expect(piece.angle).toBe(45)
+  })
+})
+
+describe('computeFreeformCurve', () => {
+  it('computes exact radius and G1 tangency to target', () => {
+    // 90 degree turn with R=100 from (0,0) along +X (1,0) to (100, 100)
+    const res = computeFreeformCurve({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 100, y: 100 })
+    expect(res.radius).toBeCloseTo(100, 1)
+    expect(res.angle).toBeCloseTo(90, 1)
+    // Via point must be along +X tangent
+    expect(res.via.x).toBeCloseTo(100, 1)
+    expect(res.via.y).toBeCloseTo(0, 1)
+  })
+
+  it('handles straight or tiny chord gracefully', () => {
+    const res = computeFreeformCurve({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 200, y: 0 })
+    expect(res.radius).toBe(Infinity)
+    expect(res.angle).toBe(0)
   })
 })
