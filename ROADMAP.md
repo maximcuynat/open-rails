@@ -6,33 +6,37 @@
 
 ## État actuel
 
-| Composant                                                   | Statut |
-| ----------------------------------------------------------- | ------ |
-| Scaffolding projet (Vite, TS, React)                        | Fait   |
-| Serveur dev port 8900                                       | Fait   |
-| Canvas infini (pan + zoom)                                  | Fait   |
-| Grille adaptive (minor/major)                               | Fait   |
-| Barre d'échelle adaptative                                  | Fait   |
-| HUD (zoom + position caméra)                                | Fait   |
-| Thèmes light/dark                                           | Fait   |
-| Modèle de données (Point, Node, Segment, Network)           | Fait   |
-| Placement de nœuds avec snap grille                         | Fait   |
-| Rendu rails détaillés (double file + traverses)             | Fait   |
-| Rendu simplifié (trait unique) quand dézoomé                | Fait   |
-| Sélection nœuds et segments                                 | Fait   |
-| Suppression (Delete/Backspace)                              | Fait   |
-| Barre d'outils (Place, Curve, Select, Snap)                 | Fait   |
-| Raccourcis clavier (N, C, V, G, Esc, Del)                   | Fait   |
-| Tests unitaires (72 tests)                                  | Fait   |
-| Continuité G1 (tangente entre segments)                     | Fait   |
-| Courbes dynamiques (rayon calculé, pas fixe)                | Fait   |
-| Courbes Bezier quadratique (3 clics: start → via → end)     | Fait   |
-| Rendu courbes détaillé et simplifié                         | Fait   |
-| Hit-test sur courbes                                        | Fait   |
-| Preview courbe en temps réel                                | Fait   |
-| Refonte UI (TopBar, ToolBar, SidePanel, StatusBar, MiniMap) | Fait   |
-| Export JSON / SVG / PNG                                     | Fait   |
-| Toggle thème manuel (light/dark/auto)                       | Fait   |
+| Composant                                                            | Statut |
+| -------------------------------------------------------------------- | ------ |
+| Scaffolding projet (Vite, TS, React)                                 | Fait   |
+| Serveur dev port 8900                                                | Fait   |
+| Canvas infini (pan + zoom cursé)                                     | Fait   |
+| Grille adaptive (minor/major) déconnectée de la géométrie rail       | Fait   |
+| Barre d'échelle adaptative en mm / m                                  | Fait   |
+| HUD (zoom + coordonnées caméra)                                      | Fait   |
+| Thèmes light / dark / auto (variables CSS dédiées)                   | Fait   |
+| Modèle de données (Point, RailNode, Segment, Network)                | Fait   |
+| Continuité tangentielle G1 stricte (10⁻⁵) entre coupons              | Fait   |
+| Géométrie Bézier quadratique exacte ($R \tan(\theta/2)$)             | Fait   |
+| Snapping magnétique intelligent (tolérance 16 px, priorité absolue)  | Fait   |
+| Bouclage automatique de réseau (Loop Closure sans doublons de nœuds) | Fait   |
+| Prolongement naturel depuis toute extrémité de rail                  | Fait   |
+| Nettoyage automatique des nœuds orphelins lors de la suppression     | Fait   |
+| Rendu HO 1:87 réaliste (ballast 32mm chanfreiné, traverses 2.8×26mm) | Fait   |
+| Détection visuelle des extrémités libres (anneaux de snap dédiés)     | Fait   |
+| Palette des voies (TrackPalette) 100% vectorielle SVG (0 emoji)      | Fait   |
+| Mode Catalogue Kato HO (longueurs 60–369mm, rayons R430–R867, angles) | Fait   |
+| Mode Voie Libre 100% (courbes flexibles continues, décalquage)       | Fait   |
+| Déplacement libre des nœuds et intersections à la souris             | Fait   |
+| Sélection multiple (rectangle de sélection + Shift+clic + Ctrl+A)    | Fait   |
+| Suppression complète (`Delete` / `Backspace` / panneau latéral)      | Fait   |
+| Barre d'outils avec icônes ferroviaires techniques (V, N, C, H)      | Fait   |
+| Barre d'état avec sélecteur de mode et états d'accrochage            | Fait   |
+| Raccourcis clavier (V, N, C, H, G, F, M, Tab, [, ], Del, Esc, Ctrl+0) | Fait   |
+| MiniMap vectorielle synchronisée avec le viewport réel               | Fait   |
+| Panneau latéral SidePanel avec conversion métrique (mm / m)          | Fait   |
+| Export JSON / SVG (boîte englobante avec `via`) / PNG                | Fait   |
+| Tests unitaires (100 tests Vitest, 100% passants)                    | Fait   |
 
 ---
 
@@ -100,16 +104,16 @@ jamais silencieuses.
 
 **Objectif :** tracer des rails droits et courbes, les mélanger, avec continuité G1.
 
-- [x] Rail courbe en Bezier quadratique, avec `via`
-- [x] Outil courbe (3 clics puis 2 clics), preview en direct
+- [x] Rail courbe en Bézier quadratique, avec `via` exact tangentiel ($R \tan(\theta/2)$)
+- [x] Outil courbe (preview en direct, accrochage magnétique, fermeture de boucle)
 - [x] Hit-testing et rendu détaillé/simplifié des courbes
-- [x] Profils prédéfinis Kato Unitrack, puis courbes dynamiques (G1)
-- [x] Continuité tangente automatique entre segments chaînés
-- [x] 72 tests au total
+- [x] Profils Kato Unitrack (R430 à R867 mm, angles 15° à 45°)
+- [x] Continuité tangente G1 automatique entre segments chaînés ($10^{-5}$)
+- [x] Mode Voie Libre 100% (`computeFreeformCurve`, flex track continue, décalquage)
+- [x] Palette de sélection interactive (`TrackPalette.tsx`) 100% vectorielle SVG
+- [x] 100 tests unitaires au total (Vitest)
 
-**Livrable :** les rails s'enchaînent avec continuité tangente. Pas de rayon
-fixe, tout dépend de l'orientation précédente et du point d'arrivée. Prêt
-pour les aiguillages.
+**Livrable :** les rails s'enchaînent avec continuité tangente parfaite, soit au standard rigide Kato, soit en tracé flexible 100% libre.
 
 ---
 
@@ -139,34 +143,24 @@ large, découpée en 5 étapes qui se construisent les unes sur les autres.
 
 ### 3.2 — Pose et découpe automatique
 
-- [ ] Outil **aiguillage** dans la barre d'outils, un gabarit sélectionnable
-      comme pour les courbes (`[` / `]`)
-- [ ] Pose sur du vide : place la jonction avec ses trois branches, comme un
-      placement de courbe standard
+- [ ] Outil **aiguillage** dans la barre d'outils et la palette, gabarit sélectionnable
+- [ ] Pose sur du vide : place la jonction avec ses trois branches
 - [ ] Pose sur une voie existante : le segment visé est découpé en deux, la
-      jonction s'insère au point de découpe. Reprend l'idée de XTrackCAD, où
-      déposer une pièce sur une voie la scinde automatiquement au lieu de la
-      chevaucher
-- [ ] Alignement assisté : pendant le déplacement de la pièce, les
-      extrémités compatibles à proximité se surlignent, la pose confirme la
-      connexion. Reprend le retour visuel d'AnyRail/SCARM plutôt qu'un snap
-      silencieux
+      jonction s'insère au point de découpe (style XTrackCAD)
+- [ ] Alignement assisté : surbrillance magnétique des extrémités compatibles
 - [ ] Refus de connexion si l'angle entre les deux voies dépasse une
       tolérance réglable (évite les jonctions vrillées)
 
 ### 3.3 — Édition libre des intersections
 
-- [ ] Déplacer un nœud partagé par plusieurs segments déplace tous les
-      segments connectés (au lieu d'un déplacement isolé)
-- [ ] Fusionner deux nœuds proches en un seul point de jonction (glisser un
-      nœud sur un autre, ou commande "Souder")
-- [ ] Scinder un segment existant en cliquant dessus avec l'outil place :
-      insère un nœud intermédiaire sans casser la géométrie
-- [ ] Convertir un croisement de deux voies en jonction réelle, ou au
-      contraire dissocier une jonction en deux voies indépendantes
+- [x] Déplacer un nœud partagé par plusieurs segments déplace tous les
+      segments connectés en temps réel (`isDraggingNode`)
+- [x] Nettoyage automatique des nœuds orphelins lors de la suppression d'un rail
+- [x] Affichage dédié des extrémités non connectées (anneaux de snap vert/accentué)
+- [ ] Fusionner deux nœuds proches en un seul point de jonction (souder)
+- [ ] Scinder un segment existant en cliquant dessus avec l'outil place
+- [ ] Convertir un croisement de deux voies en jonction réelle
 - [ ] Retourner une jonction (flip gauche/droite) sans la replacer
-- [ ] Affichage dédié des extrémités non connectées (halo ou couleur), pour
-      les repérer d'un coup d'œil comme dans XTrackCAD
 - [ ] Tests : `junction-edit.test.ts` (fusion, scission, déplacement en cascade)
 
 ### 3.4 — Rendu et bascule des aiguillages
@@ -175,7 +169,7 @@ large, découpée en 5 étapes qui se construisent les unes sur les autres.
       grisée
 - [ ] Clic sur la jonction ou touche `T` (jonction sélectionnée) : bascule
       `activeBranch`
-- [ ] Animation courte de la transition (lerp visuel, pas juste un saut)
+- [ ] Animation courte de la transition (lerp visuel)
 - [ ] Icône directionnelle dans le SidePanel quand une jonction est
       sélectionnée (numéro de talon, sens, branche active)
 
@@ -183,101 +177,42 @@ large, découpée en 5 étapes qui se construisent les unes sur les autres.
 
 - [ ] Fonction `findPath(net, fromNodeId, toNodeId)` : parcours du graphe en
       largeur, respecte `activeBranch` de chaque jonction traversée
-      (n'emprunte pas la branche fermée)
-- [ ] Fonction `reachableFrom(net, nodeId)` : ensemble de tous les points
-      atteignables depuis un point donné, compte tenu de l'état actuel des
-      aiguillages
-- [ ] Surlignage du chemin entre deux points sélectionnés (Ctrl+clic sur un
-      second nœud avec l'outil select)
-- [ ] Détection des voies orphelines (culs-de-sac non voulus, segments
-      totalement déconnectés du reste du réseau)
-- [ ] Détection des boucles fermées (utile pour valider un ovale ou une
-      voie de dépôt)
-- [ ] Mode debug optionnel : affiche l'graphe topologique par-dessus le
-      rendu (nœuds numérotés, jonctions en couleur)
-- [ ] Tests : `pathfinding.test.ts` (chemin direct, chemin bloqué par une
-      jonction fermée, détection de cul-de-sac, boucle fermée)
+- [ ] Fonction `reachableFrom(net, nodeId)` : ensemble des nœuds atteignables
+- [ ] Surlignage du chemin entre deux points sélectionnés
+- [ ] Détection des voies orphelines et boucles fermées
+- [ ] Tests : `pathfinding.test.ts`
 
 **Livrable :** un réseau avec aiguillages fonctionnels, des jonctions
 éditables comme n'importe quel autre élément, et un graphe interrogeable
-pour savoir ce qui est atteignable depuis n'importe quel point. C'est la
-base indispensable pour découper le réseau en sections (phase 4) puis
-simuler la circulation (phase 8).
+pour savoir ce qui est atteignable depuis n'importe quel point.
 
 ---
 
 ## Phase 4 — Sections, occupation et signalisation
 
 **Objectif :** découper le réseau en sections avec une limite de vitesse,
-un état d'occupation, et des signaux qui réagissent automatiquement à ce
-qui se passe autour d'eux. C'est le vocabulaire que JMRI et Rocrail
-appellent "blocks" et "signal logic", adapté à un éditeur de plan plutôt
-qu'à un pilotage temps réel.
+un état d'occupation, et des signaux automatiques.
 
 ### 4.1 — Modèle de section
-
-- [ ] Type `Section` : `id`, `name`, `segmentIds: SegmentId[]` (suite
-      contiguë de segments), `speedLimit`, `permissive: boolean`, `color`
-- [ ] Type `Portal` : point de transition entre deux sections, support
-      optionnel d'un signal (voir 4.4)
-- [ ] Une section regroupe un ou plusieurs segments, elle ne remplace pas
-      le graphe de la phase 3, elle l'annote
-- [ ] Outil "section" : sélectionner une suite de segments contigus, leur
-      assigner un nom et une couleur d'affichage
-- [ ] Fusion/scission de sections, redécoupage automatique quand un
-      segment est scindé (voir 3.3)
+- [ ] Type `Section` : `id`, `name`, `segmentIds: SegmentId[]`, `speedLimit`, `permissive: boolean`, `color`
+- [ ] Type `Portal` : point de transition entre deux sections, support optionnel d'un signal
+- [ ] Outil "section" et gestion fusion/scission
 - [ ] Tests : `section.test.ts`
 
 ### 4.2 — Vitesse limite par section
-
-- [ ] Champ `speedLimit` par section, affiché en overlay sur le canvas
-      (étiquette ou code couleur selon la vitesse)
-- [ ] Suggestion automatique de vitesse à la création, dérivée du rayon
-      minimum de la section (via `curveRadiusAt`), modifiable à la main
-- [ ] Alerte si la vitesse déclarée est incompatible avec le rayon réel de
-      la section
-- [ ] Cette valeur sera consommée telle quelle par la simulation (phase 8)
+- [ ] Champ `speedLimit` par section avec overlay
+- [ ] Suggestion automatique dérivée du rayon minimum de la section
 
 ### 4.3 — Occupation
-
-- [ ] État `occupied: boolean` par section, purement logiciel, pas de
-      capteur réel puisqu'on est dans un éditeur de plan
-- [ ] Pendant la simulation (phase 8), un train occupe une ou plusieurs
-      sections selon sa position et sa longueur
-- [ ] Option `permissive` : autorise plusieurs trains dans la même
-      section, sinon la section se réserve pour un seul train à la fois
-- [ ] Affichage visuel de l'occupation sur le canvas (surbrillance),
-      cohérent avec le rendu des jonctions actives/inactives
-- [ ] Tests : `occupancy.test.ts`
+- [ ] État `occupied: boolean` par section (simulation)
+- [ ] Surbrillance visuelle de l'occupation sur le canvas
 
 ### 4.4 — Signaux
-
-- [ ] Type `Signal` : `id`, `portalId`, `direction`, aspects disponibles
-      (vert / jaune / rouge, sous-ensemble configurable), aspect courant
-- [ ] Pose d'un signal sur un portail existant, orientation dans le sens
-      de circulation qu'il protège
-- [ ] Logique d'aspect dérivée automatiquement : rouge si la section
-      protégée est occupée ou verrouillée par un itinéraire, jaune si la
-      section suivante est occupée, vert sinon
-- [ ] Recalcul de l'aspect à chaque changement d'occupation ou de position
-      d'aiguillage
-- [ ] Rendu du signal sur le canvas (icône orientée, couleur d'aspect)
-- [ ] Tests : `signal.test.ts`
+- [ ] Type `Signal` : aspects vert / jaune / rouge
+- [ ] Calcul d'aspect automatique selon occupation et position d'aiguillage
 
 ### 4.5 — Itinéraires et verrouillage
-
-- [ ] Type `Route` : chemin prédéfini entre deux points, liste des
-      aiguillages à positionner et des sections à réserver
-- [ ] Activation d'un itinéraire : positionne les aiguillages du chemin,
-      réserve les sections traversées, refuse si une section est déjà
-      prise par un autre itinéraire actif (verrouillage simple)
-- [ ] Libération automatique de l'itinéraire une fois le train passé, en
-      simulation
-- [ ] Tests : `route.test.ts`
-
-**Livrable :** un réseau découpé en sections avec vitesse limite,
-occupation simulée, signaux automatiques et itinéraires verrouillables.
-Base directe pour une simulation de circulation réaliste.
+- [ ] Type `Route` et réservation d'itinéraires
 
 ---
 
@@ -285,19 +220,13 @@ Base directe pour une simulation de circulation réaliste.
 
 **Objectif :** édition confortable, construction d'un réseau complet.
 
-- [ ] Multi-sélection : Shift+clic, rectangle de sélection, Ctrl+A
-- [ ] Déplacement d'un nœud unique ou d'un groupe (connexions suivent,
-      y compris à travers les jonctions de la phase 3)
+- [x] Multi-sélection : Shift+clic, rectangle de sélection (box select), Ctrl+A
+- [x] Déplacement d'un nœud unique ou d'un groupe à la souris (les voies suivent)
+- [x] Raccourcis complets : `V` select, `N` droite, `C` courbe, `H` pan, `G` snap grille, `F` fit, `M` mode libre/kato, `Tab` côté courbe, `[` `]` rayon, `Suppr`
+- [x] Hit-test tolérant (14px nœuds, 12px segments, 16px snap magnétique)
 - [ ] Annuler / refaire : stack d'états, Ctrl+Z / Ctrl+Shift+Z, limite 50
-- [ ] Copier / coller (Ctrl+C/V), dupliquer (Ctrl+D), y compris des
-      groupes contenant des jonctions
-- [ ] Raccourcis : `V` select, `N` nœud, `C` courbe, `S` aiguillage,
-      `T` bascule jonction, `Suppr`
-- [ ] `G` toggle snap grille, `F` fit-to-view
-- [ ] Hit-test avec marge de tolérance
+- [ ] Copier / coller (Ctrl+C/V), dupliquer (Ctrl+D)
 - [ ] Tests : `history.test.ts`, `selection.test.ts`
-
-**Livrable :** édition fluide d'un réseau complet.
 
 ---
 
@@ -305,34 +234,31 @@ Base directe pour une simulation de circulation réaliste.
 
 **Objectif :** le travail est sauvegardé et exportable.
 
+- [x] Export SVG (avec boîtes englobantes incluant les points `via`)
+- [x] Export PNG (rendu haute définition canvas)
+- [x] Export JSON du réseau
+- [x] Nom du projet éditable et indicateur de modifications (`dirty`)
 - [ ] Sauvegarde automatique en `localStorage` (debounce 1s)
-- [ ] Restauration au chargement de l'app
-- [ ] Import / export JSON du réseau complet, format versionné, incluant
-      les jonctions, les sections, les signaux et leur état
-- [ ] Drag-and-drop de fichier JSON
-- [ ] Export SVG (rails uniquement) et PNG (rendu canvas)
-- [ ] Nom du projet persistant, indicateur "modifications non sauvegardées"
-- [ ] Tests : `persist.test.ts` (round-trip complet, jonctions incluses)
-
-**Livrable :** sauvegarde fiable + export multi-format.
+- [ ] Restauration automatique au chargement
+- [ ] Import JSON par menu et drag-and-drop de fichier
+- [ ] Tests : `persist.test.ts`
 
 ---
 
 ## Phase 7 — UI et ergonomie
 
-**Objectif :** interface complète, utilisable sur desktop et mobile.
+**Objectif :** interface complète, utilisable sur desktop et tactile.
 
-Itération 1 (TopBar, ToolBar, SidePanel, StatusBar, MiniMap, thèmes, export)
-déjà livrée. Reste à faire :
-
+- [x] TopBar avec menu complet (Fichier, Édition, Affichage, Aide)
+- [x] ToolBar verticale avec icônes ferroviaires vectorielles SVG
+- [x] Palette flottante TrackPalette 100% SVG (0 emoji) : bascule Catalogue Kato / Voie Libre, coupons droits et courbes
+- [x] SidePanel avec conversion métrique mm/m et suppression sécurisée
+- [x] StatusBar avec indicateurs d'état et raccourcis
+- [x] MiniMap vectorielle synchronisée avec le viewport
+- [x] Thèmes light / dark / auto
 - [ ] Raccourcis clavier configurables
-- [ ] Support mobile / touch : pinch-to-zoom, pan à un doigt, tap pour
-      placer/sélectionner, barre d'outils adaptée (bottom dock)
-- [ ] Panneau propriétés pour les jonctions dans SidePanel (numéro de
-      talon, sens, branche active, longueur de chaque branche)
-- [ ] Panneau propriétés pour les sections (nom, couleur, vitesse limite,
-      permissive) et pour les signaux (aspect courant, direction)
-- [ ] Tests : `keymap.test.ts`
+- [ ] Support mobile / touch (pinch-to-zoom, pan tactile)
+- [ ] Panneau propriétés pour les jonctions et aiguillages dans SidePanel
 
 **Livrable :** interface desktop professionnelle, utilisable au doigt sur
 tablette.
