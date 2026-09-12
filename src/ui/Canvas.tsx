@@ -171,7 +171,6 @@ function renderCurvePreview(
   data: CurvePreviewData,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const ink = getComputedStyle(ctx.canvas).getPropertyValue('--ink').trim() || '#1a1a1a'
   const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#8a7a6a'
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
@@ -195,16 +194,20 @@ function renderCurvePreview(
   ctx.fill()
   ctx.globalAlpha = 1
 
-  // Curve preview
+  // Curve preview — semi-transparent to distinguish from placed rails
   if (cam.scale < SIMPLIFY_THRESHOLD) {
     ctx.strokeStyle = accent
     ctx.lineWidth = 2
+    ctx.setLineDash([6, 4])
     ctx.beginPath()
     ctx.moveTo(w2sX(data.start.x), w2sY(data.start.y))
     ctx.quadraticCurveTo(w2sX(via.x), w2sY(via.y), w2sX(end.x), w2sY(end.y))
     ctx.stroke()
+    ctx.setLineDash([])
   } else {
-    renderDetailedCurve(ctx, cam, data.start, via, end, vw, vh, false, ink, accent, sleeperColor)
+    ctx.globalAlpha = 0.5
+    renderDetailedCurve(ctx, cam, data.start, via, end, vw, vh, false, accent, accent, sleeperColor)
+    ctx.globalAlpha = 1
   }
 
   // Label near end
