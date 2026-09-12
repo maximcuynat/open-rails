@@ -338,10 +338,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (e.button === 2) {
         // Right click: cancel placement chain or curve
         store.lastNodeId = null
-        if (store.tool === 'curve' && store.curveState.phase === 1) {
-          store.curveState = { phase: 0, startId: null }
-          redraw()
-        }
+        store.curveState = { phase: 0, startId: null }
+        redraw()
         return
       }
 
