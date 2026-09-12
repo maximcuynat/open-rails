@@ -41,6 +41,13 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if ((e.key === '0' || e.key === '0') && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         store.resetZoom()
+      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        store.selectAll()
+      } else if (e.key === '[') {
+        store.cycleCurveProfile(-1)
+      } else if (e.key === ']') {
+        store.cycleCurveProfile(1)
       }
     }
     window.addEventListener('keydown', onKey)

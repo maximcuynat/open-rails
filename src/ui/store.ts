@@ -37,6 +37,10 @@ export class EditorStore {
   panning = false
   moved = false
   showMinimap = false
+  // Box selection (Select tool)
+  boxSelectStart: Point | null = null
+  boxSelectEnd: Point | null = null
+  isBoxSelecting = false
 
   // --- UI-facing state ---
   theme: ThemeMode = 'auto'
@@ -125,6 +129,15 @@ export class EditorStore {
 
   clearSelection = (): void => {
     this.selection = { nodes: new Set(), segments: new Set() }
+    this.notify()
+  }
+
+  selectAll = (): void => {
+    const nodes = new Set<string>()
+    const segments = new Set<string>()
+    for (const id of this.network.nodes.keys()) nodes.add(id)
+    for (const id of this.network.segments.keys()) segments.add(id)
+    this.selection = { nodes, segments }
     this.notify()
   }
 

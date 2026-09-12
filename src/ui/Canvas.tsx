@@ -17,7 +17,7 @@ import {
   hitSegment,
   snapToGrid,
 } from '../core/network'
-import type { Point, Selection } from '../core/types'
+import type { Point } from '../core/types'
 import { curveLength } from '../core/curve'
 import { outgoingTangent } from '../core/tangent'
 import {
@@ -264,6 +264,30 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
     renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection)
 
+    // Box selection rectangle
+    if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
+      const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+      const sx1 = (store.boxSelectStart.x - cam.x) * cam.scale + rect.width / 2
+      const sy1 = (store.boxSelectStart.y - cam.y) * cam.scale + rect.height / 2
+      const sx2 = (store.boxSelectEnd.x - cam.x) * cam.scale + rect.width / 2
+      const sy2 = (store.boxSelectEnd.y - cam.y) * cam.scale + rect.height / 2
+      const x = Math.min(sx1, sx2)
+      const y = Math.min(sy1, sy2)
+      const w = Math.abs(sx2 - sx1)
+      const h = Math.abs(sy2 - sy1)
+      ctx.save()
+      ctx.strokeStyle = accent
+      ctx.fillStyle = accent
+      ctx.globalAlpha = 0.1
+      ctx.fillRect(x, y, w, h)
+      ctx.globalAlpha = 0.8
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 3])
+      ctx.strokeRect(x, y, w, h)
+      ctx.setLineDash([])
+      ctx.restore()
+    }
+
     // Snap indicator (Place and Curve tools, when snap is on)
     if (store.snap && (store.tool === 'place' || store.tool === 'curve')) {
       renderSnapIndicator(ctx, cam, rect.width, rect.height, store.snappedCursor)
@@ -489,24 +513,40 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const hitTol = 1.5 / store.camera.scale
         const nodeId = hitNode(store.network, world, hitTol)
         if (nodeId) {
-          store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+          // Shift+click adds to selection
+          if (e.shiftKey) {
+            const newNodes = new Set(store.selection.nodes)
+            if (newNodes.has(nodeId)) newNodes.delete(nodeId)
+            else newNodes.add(nodeId)
+            store.selection = { ...store.selection, nodes: newNodes }
+          } else {
+            store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+          }
           redraw()
           return
         }
         const segId = hitSegment(store.network, world, hitTol)
         if (segId) {
-          store.selection = { nodes: new Set(), segments: new Set([segId]) }
+          if (e.shiftKey) {
+            const newSegs = new Set(store.selection.segments)
+            if (newSegs.has(segId)) newSegs.delete(segId)
+            else newSegs.add(segId)
+            store.selection = { ...store.selection, segments: newSegs }
+          } else {
+            store.selection = { nodes: new Set(), segments: new Set([segId]) }
+          }
           redraw()
           return
         }
-        // Empty click: start panning
-        store.panning = true
-        lastX = e.clientX
-        lastY = e.clientY
-        store.moved = false
+        // Empty click: start box selection (not panning)
+        store.isBoxSelecting = true
+        store.boxSelectStart = world
+        store.boxSelectEnd = world
+        // Clear selection on fresh click (unless shift)
+        if (!e.shiftKey) {
+          store.selection = { nodes: new Set(), segments: new Set() }
+        }
         canvas.setPointerCapture(e.pointerId)
-        const empty: Selection = { nodes: new Set(), segments: new Set() }
-        store.selection = empty
         redraw()
       }
     }
@@ -523,6 +563,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (store.tool === 'place' && store.lastNodeId) {
           draw()
         } else if (store.tool === 'curve' && store.curveState.phase > 0) {
+          draw()
+        }
+        // Redraw for box selection
+        if (store.isBoxSelecting) {
+          store.boxSelectEnd = world
           draw()
         }
         store.notify()
@@ -542,6 +587,46 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     const onUp = (e: PointerEvent) => {
+      // Finalize box selection
+      if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
+        const x1 = Math.min(store.boxSelectStart.x, store.boxSelectEnd.x)
+        const y1 = Math.min(store.boxSelectStart.y, store.boxSelectEnd.y)
+        const x2 = Math.max(store.boxSelectStart.x, store.boxSelectEnd.x)
+        const y2 = Math.max(store.boxSelectStart.y, store.boxSelectEnd.y)
+
+        // Select nodes inside the box
+        const nodes = new Set(e.shiftKey ? store.selection.nodes : [])
+        for (const node of store.network.nodes.values()) {
+          if (node.pos.x >= x1 && node.pos.x <= x2 && node.pos.y >= y1 && node.pos.y <= y2) {
+            nodes.add(node.id)
+          }
+        }
+
+        // Select segments that have at least one endpoint inside the box
+        const segments = new Set(e.shiftKey ? store.selection.segments : [])
+        for (const seg of store.network.segments.values()) {
+          const a = store.network.nodes.get(seg.from)
+          const b = store.network.nodes.get(seg.to)
+          if (!a || !b) continue
+          // Segment is selected if both endpoints are inside the box
+          const aIn = a.pos.x >= x1 && a.pos.x <= x2 && a.pos.y >= y1 && a.pos.y <= y2
+          const bIn = b.pos.x >= x1 && b.pos.x <= x2 && b.pos.y >= y1 && b.pos.y <= y2
+          if (aIn && bIn) {
+            segments.add(seg.id)
+          }
+        }
+
+        store.selection = { nodes, segments }
+        store.isBoxSelecting = false
+        store.boxSelectStart = null
+        store.boxSelectEnd = null
+        if (canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId)
+        }
+        redraw()
+        return
+      }
+
       store.panning = false
       if (canvas.hasPointerCapture(e.pointerId)) {
         canvas.releasePointerCapture(e.pointerId)
