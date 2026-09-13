@@ -146,22 +146,19 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
               gap: '8px',
               padding: '8px 10px',
               marginBottom: '10px',
-              backgroundColor: 'rgba(239, 68, 68, 0.12)',
-              border: '1px solid #ef4444',
+              backgroundColor: 'rgba(220, 38, 38, 0.12)',
+              border: '1px solid #dc2626',
               borderRadius: '6px',
-              color: '#ef4444',
+              color: '#dc2626',
               fontSize: '11px',
               fontWeight: 600,
             }}
           >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <line x1="5" y1="4" x2="19" y2="4" />
-              <line x1="5" y1="20" x2="19" y2="20" />
-              <line x1="8" y1="4" x2="8" y2="20" />
-              <line x1="16" y1="4" x2="16" y2="20" />
-              <line x1="8" y1="12" x2="16" y2="12" />
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="10" fill="#dc2626" />
+              <rect x="5" y="10" width="14" height="4" rx="1.5" fill="#ffffff" />
             </svg>
-            <span>Fin de voie détectée — Butoir de sécurité (heurtoir) actif</span>
+            <span>Fin de voie — Impasse (sens interdit, aucun prolongement)</span>
           </div>
         )}
         <label className="sp-input-row">
@@ -528,22 +525,19 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
               gap: '8px',
               padding: '6px 10px',
               marginBottom: '10px',
-              backgroundColor: 'rgba(234, 88, 12, 0.12)',
-              border: '1px solid #ea580c',
+              backgroundColor: 'rgba(220, 38, 38, 0.12)',
+              border: '1px solid #dc2626',
               borderRadius: '6px',
-              color: '#ea580c',
+              color: '#dc2626',
               fontSize: '11px',
               fontWeight: 600,
             }}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <line x1="5" y1="4" x2="19" y2="4" />
-              <line x1="5" y1="20" x2="19" y2="20" />
-              <line x1="8" y1="4" x2="8" y2="20" />
-              <line x1="16" y1="4" x2="16" y2="20" />
-              <line x1="8" y1="12" x2="16" y2="12" />
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" style={{ flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="10" fill="#dc2626" />
+              <rect x="5" y="10.2" width="14" height="3.6" rx="1" fill="#ffffff" />
             </svg>
-            <span>Fin de voie : heurtoir de butoir installé en extrémité</span>
+            <span>Fin de voie : voie en impasse (sens interdit)</span>
           </div>
         )}
 

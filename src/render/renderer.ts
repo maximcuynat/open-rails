@@ -394,12 +394,39 @@ export function renderNetwork(
     }
   }
 
-  // 4. BUFFER STOPS (Heurtoirs de fin de voie automatiques sur chaque voie en cul-de-sac)
+  // 4. END OF TRACK / FIN DE VOIE (Sens interdit logique sur chaque fin de voie / impasse)
   for (const node of net.nodes.values()) {
     if (!isPointInBounds(node.pos, bounds)) continue
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length === 1) {
-      renderBufferStop(ctx, cam, node, net, vw, vh)
+      const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
+      const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+
+      ctx.save()
+      const signR = Math.max(7, Math.min(11, 1.8 * cam.scale))
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
+      ctx.shadowBlur = 5
+      ctx.shadowOffsetY = 1.5
+
+      // Red circle with white border
+      ctx.fillStyle = '#dc2626'
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(sx, sy, signR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+
+      // White horizontal bar
+      ctx.shadowColor = 'transparent'
+      const barW = signR * 1.35
+      const barH = Math.max(2.2, signR * 0.35)
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
+      ctx.fill()
+
+      ctx.restore()
     }
   }
 
@@ -424,18 +451,7 @@ export function renderNetwork(
       ctx.arc(sx, sy, 4, 0, Math.PI * 2)
       ctx.fill()
     } else if (connectionCount <= 1) {
-      // Open endpoint with buffer stop: subtle central indicator
-      if (cam.scale < 0.8) {
-        // Red target mark visible at macro zoom
-        ctx.fillStyle = '#dc2626'
-        ctx.beginPath()
-        ctx.arc(sx, sy, 4, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillStyle = '#ffffff'
-        ctx.beginPath()
-        ctx.arc(sx, sy, 2, 0, Math.PI * 2)
-        ctx.fill()
-      }
+      // Dead end already rendered with clean Sens Interdit sign
     } else {
       // Intermediate joint or junction: neat white dot
       ctx.fillStyle = '#334155'
