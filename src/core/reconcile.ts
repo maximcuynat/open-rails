@@ -109,7 +109,7 @@ interface ReconcileCandidate {
  */
 export function reconcileNetworkIntersections(
   net: Network,
-  tolerance = 3.5,
+  tolerance = 0.10,
 ): { splitCount: number; weldedCount: number } {
   let splitCount = 0
   let weldedCount = 0

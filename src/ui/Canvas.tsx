@@ -34,9 +34,10 @@ import {
 import { reconcileNetworkIntersections } from '../core/reconcile'
 import type { EditorStore } from './store'
 
-/** Find the nearest node within screen pixel tolerance. */
+/** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
 function findNearestNode(net: Network, worldPos: Point, maxScreenPx: number, cam: Camera): RailNode | null {
-  const maxDistWorld = maxScreenPx / cam.scale
+  // Cap snap radius to 0.80m in world space (half UIC track gauge) so distant nodes never grab the cursor
+  const maxDistWorld = Math.min(0.80, maxScreenPx / cam.scale)
   let best: RailNode | null = null
   let bestD = maxDistWorld
   for (const node of net.nodes.values()) {
@@ -611,8 +612,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             addCurveSegment(store.network, cs.startId, endId, viaPos)
             reconcileNetworkIntersections(store.network)
             store.markDirty()
-            store.curveState = { phase: 1, startId: endId }
-            store.lastNodeId = endId
+            // Finish curve: release cursor so it does not auto-continue
+            store.curveState = { phase: 0, startId: null }
+            store.lastNodeId = null
             store.selection = { nodes: new Set([endId]), segments: new Set() }
           }
           redraw()
@@ -625,14 +627,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const clickedNode = findNearestNode(store.network, world, 16, store.camera)
 
         if (clickedNode) {
-          // Clicked directly on an existing node: connect if coming from another node, and arm it!
+          // If already extending from another node, clicking this node completes the segment and finishes!
           if (store.lastNodeId && store.lastNodeId !== clickedNode.id) {
             addSegment(store.network, store.lastNodeId, clickedNode.id)
             reconcileNetworkIntersections(store.network)
             store.markDirty()
+            store.lastNodeId = null
+            store.selection = { nodes: new Set([clickedNode.id]), segments: new Set() }
+          } else {
+            // First click on an existing node: set as start node
+            store.lastNodeId = clickedNode.id
+            store.selection = { nodes: new Set([clickedNode.id]), segments: new Set() }
           }
-          store.lastNodeId = clickedNode.id
-          store.selection = { nodes: new Set([clickedNode.id]), segments: new Set() }
         } else if (store.lastNodeId) {
           // Extending from lastNodeId
           const startNode = store.network.nodes.get(store.lastNodeId)
@@ -691,7 +697,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             addSegment(store.network, store.lastNodeId, endId)
             reconcileNetworkIntersections(store.network)
             store.markDirty()
-            store.lastNodeId = endId
+            // Finish straight segment: release cursor so it does not auto-continue
+            store.lastNodeId = null
             store.selection = { nodes: new Set([endId]), segments: new Set() }
           }
         } else {
