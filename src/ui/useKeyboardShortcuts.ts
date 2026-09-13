@@ -17,6 +17,8 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if (e.key === 'Escape') {
         store.lastNodeId = null
         store.curveState = { phase: 0, startId: null }
+        store.parallelMode = false
+        store.parallelLastNodeId = null
         store.clearSelection()
       } else if (e.key === 'v' || e.key === 'V') {
         store.setTool('select')

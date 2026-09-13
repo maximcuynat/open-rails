@@ -334,5 +334,32 @@ export function ToolBar({ store }: { store: EditorStore }) {
     </div>,
   )
 
-  return <div className="toolbar-vert">{items}</div>
+  return (
+    <div className="toolbar-vert">
+      {items}
+      {store.parallelMode && (
+        <div
+          style={{
+            margin: '6px 4px 0',
+            padding: '5px 8px',
+            background: 'rgba(37,99,235,0.18)',
+            border: '1px solid #2563eb',
+            borderRadius: '6px',
+            fontSize: '10px',
+            fontWeight: 700,
+            color: '#60a5fa',
+            textAlign: 'center',
+            lineHeight: 1.4,
+            cursor: 'pointer',
+          }}
+          title="Cliquer pour quitter le mode double voie (ou Echap)"
+          onClick={() => store.exitParallelMode()}
+        >
+          <div>2 voies</div>
+          <div style={{ fontSize: '9px', fontWeight: 500, opacity: 0.8 }}>{store.parallelOffset}m</div>
+          <div style={{ fontSize: '9px', marginTop: '2px' }}>Echap / Clic</div>
+        </div>
+      )}
+    </div>
+  )
 }

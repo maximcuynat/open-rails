@@ -376,8 +376,35 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isJoin = isJoinNode || hitSegId !== null
         const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
         const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}`
+        const modeLabel = store.parallelMode ? '  | Double voie' : ''
+        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}`
         renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
+
+        // Preview de la voie secondaire parallele si mode double voie actif
+        if (store.parallelMode) {
+          const dxp = candidateEnd.x - startNode.pos.x
+          const dyp = candidateEnd.y - startNode.pos.y
+          const lenp = Math.hypot(dxp, dyp)
+          if (lenp > 0.5) {
+            const uxp = dxp / lenp
+            const uyp = dyp / lenp
+            const nxp = -uyp
+            const nyp = uxp
+            const off = store.parallelOffset
+            // Noeud de depart secondaire (soit parallelLastNodeId, soit decale du startNode)
+            const secStartNode = store.parallelLastNodeId
+              ? store.network.nodes.get(store.parallelLastNodeId)
+              : null
+            const secStart = secStartNode
+              ? secStartNode.pos
+              : { x: startNode.pos.x + nxp * off, y: startNode.pos.y + nyp * off }
+            const secEnd = { x: candidateEnd.x + nxp * off, y: candidateEnd.y + nyp * off }
+            ctx.save()
+            ctx.globalAlpha = 0.55
+            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, '', false)
+            ctx.restore()
+          }
+        }
       }
     }
 
@@ -619,6 +646,104 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       if (e.button === 0 && store.tool === 'place') {
         const world = getWorldPos(e.clientX, e.clientY)
+
+        // Shift+Click: mode double-voie parallele
+        if (e.shiftKey) {
+          const spacing = getSnapSpacing()
+          const snappedWorld = store.snap ? snapToGrid(world, spacing) : world
+
+          if (!store.parallelMode) {
+            // Activation du mode double-voie : poser le premier segment principal + secondaire
+            if (store.lastNodeId) {
+              const startNode = store.network.nodes.get(store.lastNodeId)
+              if (startNode) {
+                const dx = snappedWorld.x - startNode.pos.x
+                const dy = snappedWorld.y - startNode.pos.y
+                const len = Math.hypot(dx, dy)
+                if (len > 0.5) {
+                  const ux = dx / len
+                  const uy = dy / len
+                  // Vecteur normal perpendiculaire (gauche)
+                  const nx = -uy
+                  const ny = ux
+                  const off = store.parallelOffset
+
+                  // Voie principale : lastNodeId -> snappedWorld
+                  const endNode = addNode(store.network, snappedWorld)
+                  addSegment(store.network, store.lastNodeId, endNode.id)
+
+                  // Voie secondaire : startNode+offset -> snappedWorld+offset
+                  const startPos2 = { x: startNode.pos.x + nx * off, y: startNode.pos.y + ny * off }
+                  const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
+                  // Creer ou recuperer le noeud de depart secondaire
+                  let startNodeId2 = store.parallelLastNodeId
+                  if (!startNodeId2) {
+                    const s2 = addNode(store.network, startPos2)
+                    startNodeId2 = s2.id
+                  }
+                  const endNode2 = addNode(store.network, endPos2)
+                  addSegment(store.network, startNodeId2, endNode2.id)
+
+                  store.parallelMode = true
+                  store.lastNodeId = endNode.id
+                  store.parallelLastNodeId = endNode2.id
+                  store.selection = { nodes: new Set([endNode.id, endNode2.id]), segments: new Set() }
+                  reconcileNetworkIntersections(store.network)
+                  store.markDirty()
+                }
+              }
+            } else {
+              // Pas de lastNodeId : simplement poser le premier noeud et activer le mode
+              const startNode = addNode(store.network, snappedWorld)
+              store.lastNodeId = startNode.id
+              store.parallelMode = false // attend le prochain shift+click pour creer le 2e noeud
+              store.selection = { nodes: new Set([startNode.id]), segments: new Set() }
+              store.markDirty()
+            }
+          } else {
+            // Mode double-voie actif : etendre les 2 voies simultanement
+            if (store.lastNodeId && store.parallelLastNodeId) {
+              const mainStart = store.network.nodes.get(store.lastNodeId)
+              const secStart = store.network.nodes.get(store.parallelLastNodeId)
+              if (mainStart && secStart) {
+                const dx = snappedWorld.x - mainStart.pos.x
+                const dy = snappedWorld.y - mainStart.pos.y
+                const len = Math.hypot(dx, dy)
+                if (len > 0.5) {
+                  const ux = dx / len
+                  const uy = dy / len
+                  const nx = -uy
+                  const ny = ux
+                  const off = store.parallelOffset
+
+                  // Voie principale
+                  const endNode = addNode(store.network, snappedWorld)
+                  addSegment(store.network, store.lastNodeId, endNode.id)
+
+                  // Voie secondaire (meme direction, decalee)
+                  const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
+                  const endNode2 = addNode(store.network, endPos2)
+                  addSegment(store.network, store.parallelLastNodeId, endNode2.id)
+
+                  store.lastNodeId = endNode.id
+                  store.parallelLastNodeId = endNode2.id
+                  store.selection = { nodes: new Set([endNode.id, endNode2.id]), segments: new Set() }
+                  reconcileNetworkIntersections(store.network)
+                  store.markDirty()
+                }
+              }
+            }
+          }
+          redraw()
+          return
+        }
+
+        // Click normal (sans shift) : quitter le mode double-voie si actif
+        if (store.parallelMode) {
+          store.parallelMode = false
+          store.parallelLastNodeId = null
+        }
+
         const clickedNode = findNearestNode(store.network, world, 16, store.camera)
 
         if (clickedNode) {

@@ -56,6 +56,11 @@ export class EditorStore {
   showMinimap = false
   isSidePanelOpen = false
 
+  // Mode double voie : Shift+Click pour poser 2 rails en parallele simultanement
+  parallelMode = false
+  parallelOffset: number = 3.3 // metres entre les 2 axes de voie (voie double standard)
+  parallelLastNodeId: string | null = null // noeud courant sur la voie secondaire
+
 
   // Track selection and mode: freeform by default
   trackMode: TrackMode = 'freeform'
@@ -274,6 +279,8 @@ export class EditorStore {
     if (t === 'select') {
       this.lastNodeId = null
       this.curveState = { phase: 0, startId: null }
+      this.parallelMode = false
+      this.parallelLastNodeId = null
     } else if (t === 'place') {
       this.curveState = { phase: 0, startId: null }
       // Auto-arm from selected node if exactly 1 node selected
@@ -282,14 +289,32 @@ export class EditorStore {
         this.lastNodeId = singleId
       }
     } else if (t === 'curve') {
+      this.parallelMode = false
+      this.parallelLastNodeId = null
       if (this.selection.nodes.size === 1) {
         const [singleId] = this.selection.nodes
         this.curveState = { phase: 1, startId: singleId }
       } else if (this.lastNodeId) {
         this.curveState = { phase: 1, startId: this.lastNodeId }
       }
+    } else {
+      this.parallelMode = false
+      this.parallelLastNodeId = null
     }
     this.notify()
+  }
+
+  exitParallelMode = (): void => {
+    this.parallelMode = false
+    this.parallelLastNodeId = null
+    this.notify()
+  }
+
+  setParallelOffset = (offset: number): void => {
+    if (offset > 0) {
+      this.parallelOffset = offset
+      this.notify()
+    }
   }
 
   setSnap = (v: boolean): void => {
