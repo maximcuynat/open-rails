@@ -392,7 +392,7 @@ export function generateRealisticSVG(net: Network, projectName = 'OpenRail'): st
     const sHeelOuter = w2p(bladeLen, sHeelY + bladeHeelHalf)
 
     turnoutElements.push(
-      `<polygon points="${f(sToeOuter.x)},${f(sToeOuter.y)} ${f(sToeInner.x)},${f(sToeInner.y)} ${f(sHeelInner.x)},${f(sHeelInner.y)} ${f(sHeelOuter.x)},${f(sHeelOuter.y)}" class="switch-blade-fill" />`,
+      `<polygon points="${f(sToeOuter.x)},${f(sToeOuter.y)} ${f(sToeInner.x)},${f(sToeInner.y)} ${f(sHeelInner.x)},${f(sHeelInner.y)} ${f(sHeelOuter.x)},${f(sHeelOuter.y)}" class="switch-blade" />`,
     )
 
     // Diverging blade
@@ -408,7 +408,7 @@ export function generateRealisticSVG(net: Network, projectName = 'OpenRail'): st
 
     // Use straight polygon approximation for SVG (the real curve is subtle at this scale)
     turnoutElements.push(
-      `<polygon points="${f(dToeOuter.x)},${f(dToeOuter.y)} ${f(dToeInner.x)},${f(dToeInner.y)} ${f(dHeelInner.x)},${f(dHeelInner.y)} ${f(dHeelOuter.x)},${f(dHeelOuter.y)}" class="switch-blade-fill" />`,
+      `<polygon points="${f(dToeOuter.x)},${f(dToeOuter.y)} ${f(dToeInner.x)},${f(dToeInner.y)} ${f(dHeelInner.x)},${f(dHeelInner.y)} ${f(dHeelOuter.x)},${f(dHeelOuter.y)}" class="switch-blade" />`,
     )
 
     // Tringle de manoeuvre (stretcher bar) connecting the toes of both blades
@@ -663,7 +663,7 @@ export function generateRealisticSVG(net: Network, projectName = 'OpenRail'): st
       .flangeway { stroke: #1e1e1e; stroke-width: 1.6; stroke-linecap: butt; fill: none; }
       .frog-point { fill: #526071; }
       .guard-rail { stroke: #334155; stroke-width: 1.1; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-      .switch-blade { stroke: #64748b; stroke-width: 0.95; fill: none; stroke-linecap: round; }
+      .switch-blade { fill: #64748b; stroke: #475569; stroke-width: 0.3; }
       .switch-blade-fill { fill: #64748b; stroke: #475569; stroke-width: 0.3; }
       .stretcher-bar { stroke: #1e293b; stroke-width: 1.2; stroke-linecap: square; fill: none; }
       .switch-motor { fill: #1e293b; stroke: #475569; stroke-width: 0.8; }

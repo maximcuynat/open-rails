@@ -41,6 +41,8 @@ export class EditorStore {
   tool: Tool = 'place'
   snap = true
   showGrid = true
+  gridMode: 'auto' | 'fixed' = 'auto'
+  gridSpacing: number = 5 // meters in fixed mode (e.g. 1m, 2m, 5m, 10m, 25m, 50m)
   lastNodeId: string | null = null
   curveState: CurveState = { phase: 0, startId: null }
   curveProfileIdx = 2 // R500 (TER / ligne classique standard)
@@ -295,6 +297,19 @@ export class EditorStore {
   toggleGrid = (): void => {
     this.showGrid = !this.showGrid
     this.notify()
+  }
+
+  setGridMode = (mode: 'auto' | 'fixed'): void => {
+    this.gridMode = mode
+    this.notify()
+  }
+
+  setGridSpacing = (spacing: number): void => {
+    if (spacing > 0) {
+      this.gridSpacing = spacing
+      this.gridMode = 'fixed'
+      this.notify()
+    }
   }
 
   toggleMinimap = (): void => {

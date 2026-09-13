@@ -36,6 +36,7 @@ export function renderGrid(
   cam: Camera,
   vw: number,
   vh: number,
+  customSpacing?: number,
 ): void {
   ctx.save()
 
@@ -47,7 +48,7 @@ export function renderGrid(
   const minor = getCanvasStyle(ctx.canvas, '--grid', 'rgba(0,0,0,0.06)')
   const major = getCanvasStyle(ctx.canvas, '--grid-major', 'rgba(0,0,0,0.12)')
 
-  const spacing = pickSpacing(cam.scale)
+  const spacing = customSpacing && customSpacing > 0 ? customSpacing : pickSpacing(cam.scale)
   const halfW = vw / 2 / cam.scale
   const halfH = vh / 2 / cam.scale
 

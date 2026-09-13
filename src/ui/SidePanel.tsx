@@ -498,7 +498,18 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
             type="text"
             value={name}
             placeholder="ex: Voie 1 (Passage)"
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value)
+              applyName(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                e.stopPropagation()
+                applyName(e.currentTarget.value)
+                e.currentTarget.blur()
+              }
+            }}
             onBlur={(e) => applyName(e.target.value)}
           />
         </label>
@@ -508,119 +519,165 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
           <span className="sp-field-label" style={{ display: 'block', marginBottom: '4px', fontSize: '11px', fontWeight: 600 }}>
             Sens de circulation
           </span>
-          <div style={{ display: 'flex', gap: '4px' }}>
+          <div style={{ display: 'flex', gap: '6px' }}>
             <button
               className="sp-btn-compact"
               style={{
                 flex: 1,
-                padding: '6px 4px',
-                fontSize: '11px',
-                borderRadius: '5px',
-                border: direction === 'two_way' ? '1px solid var(--accent)' : '1px solid var(--border)',
-                background: direction === 'two_way' ? 'rgba(37, 99, 235, 0.15)' : 'var(--panel-2)',
-                color: 'var(--ink)',
+                padding: '8px 4px',
+                borderRadius: '6px',
+                border: direction === 'two_way' ? '1.5px solid var(--accent)' : '1px solid var(--border)',
+                background: direction === 'two_way' ? 'rgba(37, 99, 235, 0.2)' : 'var(--panel-2)',
+                color: direction === 'two_way' ? 'var(--accent)' : 'var(--ink)',
                 cursor: 'pointer',
-                fontWeight: direction === 'two_way' ? 700 : 500,
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
               }}
               onClick={() => applyDirection('two_way')}
-              title="Double sens de circulation"
+              title="Double sens de circulation (<->)"
+              aria-label="Double sens"
             >
-              &harr; Double sens
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7 16l-4-4m0 0l4-4m-4 4h18m-4-4l4 4m0 0l-4 4" />
+              </svg>
             </button>
             <button
               className="sp-btn-compact"
               style={{
                 flex: 1,
-                padding: '6px 4px',
-                fontSize: '11px',
-                borderRadius: '5px',
-                border: direction === 'forward' ? '1px solid #10b981' : '1px solid var(--border)',
-                background: direction === 'forward' ? 'rgba(16, 185, 129, 0.15)' : 'var(--panel-2)',
-                color: 'var(--ink)',
+                padding: '8px 4px',
+                borderRadius: '6px',
+                border: direction === 'forward' ? '1.5px solid #10b981' : '1px solid var(--border)',
+                background: direction === 'forward' ? 'rgba(16, 185, 129, 0.2)' : 'var(--panel-2)',
+                color: direction === 'forward' ? '#10b981' : 'var(--ink)',
                 cursor: 'pointer',
-                fontWeight: direction === 'forward' ? 700 : 500,
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
               }}
               onClick={() => applyDirection('forward')}
-              title="Sens unique direct"
+              title="Sens unique direct (->)"
+              aria-label="Sens direct"
             >
-              &rarr; Sens direct
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14m-6-6l6 6-6 6" />
+              </svg>
             </button>
             <button
               className="sp-btn-compact"
               style={{
                 flex: 1,
-                padding: '6px 4px',
-                fontSize: '11px',
-                borderRadius: '5px',
-                border: direction === 'backward' ? '1px solid #10b981' : '1px solid var(--border)',
-                background: direction === 'backward' ? 'rgba(16, 185, 129, 0.15)' : 'var(--panel-2)',
-                color: 'var(--ink)',
+                padding: '8px 4px',
+                borderRadius: '6px',
+                border: direction === 'backward' ? '1.5px solid #10b981' : '1px solid var(--border)',
+                background: direction === 'backward' ? 'rgba(16, 185, 129, 0.2)' : 'var(--panel-2)',
+                color: direction === 'backward' ? '#10b981' : 'var(--ink)',
                 cursor: 'pointer',
-                fontWeight: direction === 'backward' ? 700 : 500,
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
               }}
               onClick={() => applyDirection('backward')}
-              title="Sens unique inverse"
+              title="Sens unique inverse (<-)"
+              aria-label="Sens inverse"
             >
-              &larr; Sens inverse
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5m6-6l-6 6 6 6" />
+              </svg>
             </button>
           </div>
         </div>
 
         <div style={{ marginBottom: '8px' }}>
           <span className="sp-field-label" style={{ display: 'block', marginBottom: '4px', fontSize: '11px', fontWeight: 600 }}>
-            Usage ferroviaire
+            Type de voie
           </span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', gap: '4px' }}>
             <button
               className="sp-btn-compact"
               style={{
-                textAlign: 'left',
-                padding: '6px 8px',
-                fontSize: '11px',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '6px 4px',
+                fontSize: '10px',
                 borderRadius: '5px',
-                border: type === 'circulation' ? '1px solid var(--accent)' : '1px solid var(--border)',
+                border: type === 'circulation' ? '1.5px solid var(--accent)' : '1px solid var(--border)',
                 background: type === 'circulation' ? 'rgba(37, 99, 235, 0.15)' : 'var(--panel-2)',
                 color: 'var(--ink)',
                 cursor: 'pointer',
                 fontWeight: type === 'circulation' ? 700 : 500,
               }}
               onClick={() => applyType('circulation')}
+              title="Voie de circulation directe (passage sans arrêt)"
             >
-              Voie de circulation directe (passage sans arrêt)
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+                <line x1="8" y1="2" x2="8" y2="22" />
+                <line x1="16" y1="2" x2="16" y2="22" />
+              </svg>
+              <span>Circulation</span>
             </button>
             <button
               className="sp-btn-compact"
               style={{
-                textAlign: 'left',
-                padding: '6px 8px',
-                fontSize: '11px',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '6px 4px',
+                fontSize: '10px',
                 borderRadius: '5px',
-                border: type === 'station_stop' ? '1px solid #06b6d4' : '1px solid var(--border)',
+                border: type === 'station_stop' ? '1.5px solid #06b6d4' : '1px solid var(--border)',
                 background: type === 'station_stop' ? 'rgba(6, 182, 212, 0.15)' : 'var(--panel-2)',
                 color: 'var(--ink)',
                 cursor: 'pointer',
                 fontWeight: type === 'station_stop' ? 700 : 500,
               }}
               onClick={() => applyType('station_stop')}
+              title="Voie à quai / arrêt voyageurs (gare)"
             >
-              Voie à quai / arrêt voyageurs (gare)
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="9" y1="17" x2="9" y2="21" />
+                <line x1="15" y1="17" x2="15" y2="21" />
+                <line x1="9" y1="8" x2="15" y2="8" />
+                <circle cx="7.5" cy="14.5" r="1.5" />
+                <circle cx="16.5" cy="14.5" r="1.5" />
+              </svg>
+              <span>Gare</span>
             </button>
             <button
               className="sp-btn-compact"
               style={{
-                textAlign: 'left',
-                padding: '6px 8px',
-                fontSize: '11px',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '6px 4px',
+                fontSize: '10px',
                 borderRadius: '5px',
-                border: type === 'siding' ? '1px solid #f59e0b' : '1px solid var(--border)',
+                border: type === 'siding' ? '1.5px solid #f59e0b' : '1px solid var(--border)',
                 background: type === 'siding' ? 'rgba(245, 158, 11, 0.15)' : 'var(--panel-2)',
                 color: 'var(--ink)',
                 cursor: 'pointer',
                 fontWeight: type === 'siding' ? 700 : 500,
               }}
               onClick={() => applyType('siding')}
+              title="Voie d'évitement / garage / arrêt marchandise"
             >
-              Voie d'évitement / garage / arrêt marchandise
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 18h18" />
+                <path d="M3 6h7l4 6h7" />
+                <circle cx="18" cy="12" r="2" />
+              </svg>
+              <span>Évitement</span>
             </button>
           </div>
         </div>

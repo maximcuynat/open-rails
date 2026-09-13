@@ -66,6 +66,7 @@ const TOOLS: ToolDef[] = [
 
 export function ToolBar({ store }: { store: EditorStore }) {
   const [hoverId, setHoverId] = useState<string | null>(null)
+  const [showGridMenu, setShowGridMenu] = useState(false)
 
   // Group separators: insert a divider when group changes
   const items: ReactNode[] = []
@@ -172,11 +173,21 @@ export function ToolBar({ store }: { store: EditorStore }) {
     </div>,
   )
   items.push(
-    <div key="grid" className="tb-btn-wrap" onMouseEnter={() => setHoverId('grid')} onMouseLeave={() => setHoverId((h) => (h === 'grid' ? null : h))}>
+    <div
+      key="grid"
+      className="tb-btn-wrap"
+      style={{ position: 'relative' }}
+      onMouseEnter={() => setHoverId('grid')}
+      onMouseLeave={() => setHoverId((h) => (h === 'grid' ? null : h))}
+    >
       <button
         className={`tb-btn${store.showGrid ? ' active' : ''}`}
         onClick={() => store.toggleGrid()}
-        aria-label="Toggle grid"
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setShowGridMenu(!showGridMenu)
+        }}
+        aria-label="Afficher la grille"
         aria-pressed={store.showGrid}
       >
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -184,9 +195,140 @@ export function ToolBar({ store }: { store: EditorStore }) {
           <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
         </svg>
       </button>
-      {hoverId === 'grid' && (
+      {hoverId === 'grid' && !showGridMenu && (
         <div className="tb-tooltip">
-          Afficher la grille
+          Grille ({store.gridMode === 'auto' ? 'Auto' : `${store.gridSpacing}m`})
+          <span style={{ fontSize: '9px', opacity: 0.7, display: 'block', marginTop: '2px' }}>
+            Clic-droit ou bouton pour régler le pas
+          </span>
+        </div>
+      )}
+
+      {showGridMenu && (
+        <div
+          style={{
+            position: 'absolute',
+            left: '100%',
+            top: '0',
+            marginLeft: '8px',
+            background: 'var(--panel-bg, #1e293b)',
+            border: '1px solid var(--border, #334155)',
+            borderRadius: '6px',
+            padding: '8px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+            zIndex: 200,
+            minWidth: '170px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            fontSize: '11px',
+            color: 'var(--ink, #f8fafc)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontWeight: 600, borderBottom: '1px solid var(--border, #334155)', paddingBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Pas de la grille</span>
+            <button
+              onClick={() => setShowGridMenu(false)}
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted, #94a3b8)', cursor: 'pointer', fontSize: '11px' }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              style={{
+                flex: 1,
+                padding: '4px 6px',
+                fontSize: '10px',
+                borderRadius: '4px',
+                border: store.gridMode === 'auto' ? '1px solid var(--accent, #3b82f6)' : '1px solid var(--border, #334155)',
+                background: store.gridMode === 'auto' ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
+                color: 'var(--ink, #f8fafc)',
+                cursor: 'pointer',
+                fontWeight: store.gridMode === 'auto' ? 700 : 500,
+              }}
+              onClick={() => {
+                store.setGridMode('auto')
+                if (!store.showGrid) store.toggleGrid()
+              }}
+            >
+              Mode Auto
+            </button>
+            <button
+              style={{
+                flex: 1,
+                padding: '4px 6px',
+                fontSize: '10px',
+                borderRadius: '4px',
+                border: store.gridMode === 'fixed' ? '1px solid var(--accent, #3b82f6)' : '1px solid var(--border, #334155)',
+                background: store.gridMode === 'fixed' ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
+                color: 'var(--ink, #f8fafc)',
+                cursor: 'pointer',
+                fontWeight: store.gridMode === 'fixed' ? 700 : 500,
+              }}
+              onClick={() => {
+                store.setGridMode('fixed')
+                if (!store.showGrid) store.toggleGrid()
+              }}
+            >
+              Mode Fixe
+            </button>
+          </div>
+
+          {store.gridMode === 'fixed' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '2px' }}>
+              <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                {[1, 2, 5, 10, 25, 50].map((val) => (
+                  <button
+                    key={val}
+                    style={{
+                      padding: '3px 6px',
+                      fontSize: '10px',
+                      borderRadius: '3px',
+                      border: store.gridSpacing === val ? '1px solid var(--accent, #3b82f6)' : '1px solid var(--border, #334155)',
+                      background: store.gridSpacing === val ? 'var(--accent, #3b82f6)' : 'var(--panel-2, rgba(255,255,255,0.05))',
+                      color: store.gridSpacing === val ? '#fff' : 'var(--ink, #f8fafc)',
+                      cursor: 'pointer',
+                      fontWeight: store.gridSpacing === val ? 700 : 500,
+                    }}
+                    onClick={() => {
+                      store.setGridSpacing(val)
+                      if (!store.showGrid) store.toggleGrid()
+                    }}
+                  >
+                    {val}m
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted, #94a3b8)' }}>Perso :</span>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.5"
+                  value={store.gridSpacing}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value)
+                    if (!isNaN(v) && v > 0) store.setGridSpacing(v)
+                  }}
+                  style={{
+                    width: '50px',
+                    padding: '2px 4px',
+                    fontSize: '10px',
+                    borderRadius: '3px',
+                    border: '1px solid var(--border, #334155)',
+                    background: 'var(--input-bg, #0f172a)',
+                    color: 'var(--ink, #f8fafc)',
+                    textAlign: 'right',
+                  }}
+                />
+                <span style={{ fontSize: '10px' }}>m</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>,

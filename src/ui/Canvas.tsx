@@ -290,7 +290,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const cam = store.camera
     const rect = canvas.getBoundingClientRect()
     if (store.showGrid) {
-      renderGrid(ctx, cam, rect.width, rect.height)
+      const customSpacing = store.gridMode === 'fixed' ? store.gridSpacing : undefined
+      renderGrid(ctx, cam, rect.width, rect.height, customSpacing)
     } else {
       const bg = getComputedStyle(canvas).getPropertyValue('--paper').trim() || '#fff'
       ctx.fillStyle = bg
@@ -440,7 +441,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
   )
 
   const getSnapSpacing = useCallback(() => {
-    return store.snap ? pickSpacing(store.camera.scale) : 0
+    if (!store.snap) return 0
+    return store.gridMode === 'fixed' ? store.gridSpacing : pickSpacing(store.camera.scale)
   }, [store])
 
   // Inline rename state for double click on section
@@ -458,9 +460,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
   }, [renamingSection])
 
-  const commitRename = () => {
+  const commitRename = (overrideName?: string) => {
     if (!renamingSection) return
-    const trimmed = renamingSection.name.trim()
+    const targetName = overrideName !== undefined ? overrideName : (renameInputRef.current?.value ?? renamingSection.name)
+    const trimmed = targetName.trim()
     if (trimmed) {
       store.setSectionMeta(renamingSection.sectionId, { name: trimmed })
     }
@@ -1052,60 +1055,77 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
             Renommer la section
           </div>
-          <input
-            ref={renameInputRef}
-            type="text"
-            value={renamingSection.name}
-            onChange={(e) => setRenamingSection({ ...renamingSection, name: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitRename()
-              if (e.key === 'Escape') setRenamingSection(null)
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              commitRename()
             }}
-            onBlur={commitRename}
-            style={{
-              padding: '5px 8px',
-              fontSize: '12px',
-              fontWeight: 600,
-              background: 'var(--input-bg, #0f172a)',
-              color: 'var(--ink, #f8fafc)',
-              border: '1px solid var(--border, #334155)',
-              borderRadius: '4px',
-              outline: 'none',
-              width: '100%',
-              boxSizing: 'border-box',
-            }}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '2px' }}>
-            <button
-              onClick={() => setRenamingSection(null)}
-              style={{
-                fontSize: '10px',
-                padding: '3px 8px',
-                background: 'transparent',
-                border: '1px solid var(--border, #334155)',
-                borderRadius: '3px',
-                color: 'var(--text-muted, #94a3b8)',
-                cursor: 'pointer',
+            style={{ margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}
+          >
+            <input
+              ref={renameInputRef}
+              type="text"
+              value={renamingSection.name}
+              onChange={(e) => setRenamingSection({ ...renamingSection, name: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  commitRename(e.currentTarget.value)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setRenamingSection(null)
+                }
               }}
-            >
-              Annuler
-            </button>
-            <button
-              onClick={commitRename}
+              onBlur={(e) => commitRename(e.target.value)}
               style={{
-                fontSize: '10px',
-                padding: '3px 8px',
-                background: 'var(--accent, #3b82f6)',
-                border: 'none',
-                borderRadius: '3px',
-                color: '#fff',
+                padding: '5px 8px',
+                fontSize: '12px',
                 fontWeight: 600,
-                cursor: 'pointer',
+                background: 'var(--input-bg, #0f172a)',
+                color: 'var(--ink, #f8fafc)',
+                border: '1px solid var(--border, #334155)',
+                borderRadius: '4px',
+                outline: 'none',
+                width: '100%',
+                boxSizing: 'border-box',
               }}
-            >
-              Valider
-            </button>
-          </div>
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '2px' }}>
+              <button
+                type="button"
+                onClick={() => setRenamingSection(null)}
+                style={{
+                  fontSize: '10px',
+                  padding: '3px 8px',
+                  background: 'transparent',
+                  border: '1px solid var(--border, #334155)',
+                  borderRadius: '3px',
+                  color: 'var(--text-muted, #94a3b8)',
+                  cursor: 'pointer',
+                }}
+              >
+                Annuler
+              </button>
+              <button
+                type="submit"
+                style={{
+                  fontSize: '10px',
+                  padding: '3px 8px',
+                  background: 'var(--accent, #3b82f6)',
+                  border: 'none',
+                  borderRadius: '3px',
+                  color: '#fff',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Valider
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
