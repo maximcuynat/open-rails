@@ -373,11 +373,6 @@ export function renderNetwork(
       ctx.arc(sx, sy, r * 0.45, 0, Math.PI * 2)
       ctx.fill()
       ctx.globalAlpha = 1
-
-      // Realistic buffer stop (heurtoir de voie) on dead ends when unselected
-      if (connectionCount === 1 && !selected && cam.scale >= 0.8) {
-        renderBufferStop(ctx, cam, node, net, vw, vh)
-      }
     } else {
       // Continuous joint (2+ connections): pure clean rails without any extra overlay
     }

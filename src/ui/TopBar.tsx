@@ -26,8 +26,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
   const fileItems: MenuItem[] = [
     { id: 'new', label: 'New' },
     { id: 'import-json', label: 'Import JSON...' },
-    { id: 'export-json', label: 'Export JSON' },
-    { id: 'export-svg', label: 'Export SVG', separatorAfter: true },
+    { id: 'export-json', label: 'Export JSON', separatorAfter: true },
     { id: 'export-png', label: 'Export PNG' },
   ]
 
