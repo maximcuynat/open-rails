@@ -261,30 +261,6 @@ export function renderNetwork(
       }
       ctx.stroke()
       if (isInactive) ctx.setLineDash([])
-
-      // Direction arrow along skeleton showing construction direction (A -> B)
-      const midPt = seg.kind === 'curve' && seg.via
-        ? bezierPoint(0.5, a.pos, seg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
-      const midTan = seg.kind === 'curve' && seg.via
-        ? bezierTangent(0.5, a.pos, seg.via, b.pos)
-        : { x: b.pos.x - a.pos.x, y: b.pos.y - a.pos.y }
-      const sMidX = (midPt.x - cam.x) * cam.scale + vw / 2
-      const sMidY = (midPt.y - cam.y) * cam.scale + vh / 2
-      const angle = Math.atan2(midTan.y, midTan.x)
-
-      ctx.save()
-      ctx.translate(sMidX, sMidY)
-      ctx.rotate(angle)
-      ctx.fillStyle = selected ? accent : ink
-      ctx.beginPath()
-      ctx.moveTo(4, 0)
-      ctx.lineTo(-3, -2.5)
-      ctx.lineTo(-3, 2.5)
-      ctx.closePath()
-      ctx.fill()
-      ctx.restore()
-
       ctx.restore()
     }
   } else {
@@ -391,38 +367,6 @@ export function renderNetwork(
       ctx.restore()
     }
 
-    // Directional chevron along track center showing construction direction
-    for (const seg of visibleSegments) {
-      if (!selection.segments.has(seg.id)) continue
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-      const midPt = seg.kind === 'curve' && seg.via
-        ? bezierPoint(0.5, a.pos, seg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
-      const midTan = seg.kind === 'curve' && seg.via
-        ? bezierTangent(0.5, a.pos, seg.via, b.pos)
-        : { x: b.pos.x - a.pos.x, y: b.pos.y - a.pos.y }
-      const sMidX = (midPt.x - cam.x) * cam.scale + vw / 2
-      const sMidY = (midPt.y - cam.y) * cam.scale + vh / 2
-      const angle = Math.atan2(midTan.y, midTan.x)
-
-      ctx.save()
-      ctx.translate(sMidX, sMidY)
-      ctx.rotate(angle)
-      ctx.fillStyle = accent
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.moveTo(8, 0)
-      ctx.lineTo(-5, -6)
-      ctx.lineTo(-2, 0)
-      ctx.lineTo(-5, 6)
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-      ctx.restore()
-    }
   }
 
   // Draw nodes on top: visible white points with crisp border for structural clarity

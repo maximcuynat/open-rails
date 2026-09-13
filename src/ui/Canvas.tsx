@@ -18,7 +18,7 @@ import {
   snapToGrid,
 } from '../core/network'
 import type { Point, Network, RailNode } from '../core/types'
-import { curveLength, bezierPoint, bezierTangent } from '../core/curve'
+import { curveLength, bezierPoint } from '../core/curve'
 import { getTangentForPlacement } from '../core/tangent'
 import {
   snapStraightLength,
@@ -171,24 +171,6 @@ function renderPlacePreview(
     ctx.globalAlpha = 1
   }
 
-  // Directional chevron at midpoint showing construction direction (start -> end)
-  const midX = (start.x + snappedEnd.x) / 2
-  const midY = (start.y + snappedEnd.y) / 2
-  const pAngle = Math.atan2(snappedEnd.y - start.y, snappedEnd.x - start.x)
-  ctx.save()
-  ctx.translate(w2sX(midX), w2sY(midY))
-  ctx.rotate(pAngle)
-  ctx.strokeStyle = accent
-  ctx.lineWidth = 2.5
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.beginPath()
-  ctx.moveTo(-6, -5)
-  ctx.lineTo(2, 0)
-  ctx.lineTo(-6, 5)
-  ctx.stroke()
-  ctx.restore()
-
   // End node marker / snap indicator
   if (isClosedToNode) {
     ctx.strokeStyle = '#10b981'
@@ -262,24 +244,6 @@ function renderCurvePreview(
     renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, false, railColor, accent)
     ctx.globalAlpha = 1
   }
-
-  // Directional chevron at t=0.5 along curve tangent showing construction direction
-  const midPt = bezierPoint(0.5, start, via, end)
-  const midTan = bezierTangent(0.5, start, via, end)
-  const cAngle = Math.atan2(midTan.y, midTan.x)
-  ctx.save()
-  ctx.translate(w2sX(midPt.x), w2sY(midPt.y))
-  ctx.rotate(cAngle)
-  ctx.strokeStyle = accent
-  ctx.lineWidth = 2.5
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.beginPath()
-  ctx.moveTo(-6, -5)
-  ctx.lineTo(2, 0)
-  ctx.lineTo(-6, 5)
-  ctx.stroke()
-  ctx.restore()
 
   // End node marker / snap indicator
   if (isClosedToNode) {
