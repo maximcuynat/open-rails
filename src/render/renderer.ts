@@ -5,6 +5,7 @@ import type { Network, Point, Selection, RailNode, Segment, NodeId } from '../co
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '../core/curve'
 import { lineLineIntersection, type DiamondCrossing } from '../core/crossing'
 import { segmentTangentAt } from '../core/tangent'
+import { computeTrackSections, findSectionBySegment } from '../core/sections'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -214,6 +215,7 @@ export function renderNetwork(
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
+  const trackSections = computeTrackSections(net)
   const visibleSegments: Segment[] = []
   for (const seg of net.segments.values()) {
     const a = net.nodes.get(seg.from)
@@ -242,8 +244,10 @@ export function renderNetwork(
       const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
       const by = (b.pos.y - cam.y) * cam.scale + vh / 2
 
-      ctx.strokeStyle = selected ? accent : ink
-      ctx.lineWidth = Math.max(2, 0.8 * cam.scale)
+      const sec = findSectionBySegment(trackSections, seg.id)
+      const secColor = sec?.color ?? ink
+      ctx.strokeStyle = selected ? accent : secColor
+      ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
       ctx.lineCap = 'round'
       if (isInactive) ctx.setLineDash([5, 4])
       ctx.beginPath()
@@ -284,7 +288,40 @@ export function renderNetwork(
       ctx.restore()
     }
   } else {
-    // PURE RAIL RENDERING (2 parallel rails at GAUGE = 1.435m + dynamic miter joints)
+    // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
+    // Draw a subtle, distinct colored stripe in the track center identifying each functional section
+    for (const seg of visibleSegments) {
+      const a = net.nodes.get(seg.from)
+      const b = net.nodes.get(seg.to)
+      if (!a || !b) continue
+
+      const sec = findSectionBySegment(trackSections, seg.id)
+      const secColor = sec?.color ?? '#94a3b8'
+      const isSecSelected = sec && sec.segmentIds.some((sid) => selection.segments.has(sid))
+
+      ctx.save()
+      ctx.strokeStyle = secColor
+      ctx.lineWidth = Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
+      ctx.globalAlpha = isSecSelected ? 0.95 : 0.45
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
+      const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
+      const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
+      const by = (b.pos.y - cam.y) * cam.scale + vh / 2
+      ctx.moveTo(ax, ay)
+      if (seg.kind === 'curve' && seg.via) {
+        const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+        const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+        ctx.quadraticCurveTo(vx, vy, bx, by)
+      } else {
+        ctx.lineTo(bx, by)
+      }
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    // 2. PURE RAIL RENDERING (2 parallel rails at GAUGE = 1.435m + dynamic miter joints)
     for (const seg of visibleSegments) {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
@@ -304,6 +341,55 @@ export function renderNetwork(
     }
     // Connect rails and create smooth dynamic miter joints at nodes
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds)
+
+    // 3. SECTION BADGES (Étiquettes discrètes au milieu de chaque section)
+    for (const sec of trackSections) {
+      if (sec.segmentIds.length === 0) continue
+      const midSegIdx = Math.floor(sec.segmentIds.length / 2)
+      const midSegId = sec.segmentIds[midSegIdx]
+      const midSeg = net.segments.get(midSegId)
+      if (!midSeg) continue
+      const a = net.nodes.get(midSeg.from)
+      const b = net.nodes.get(midSeg.to)
+      if (!a || !b) continue
+
+      const midPt = midSeg.kind === 'curve' && midSeg.via
+        ? bezierPoint(0.5, a.pos, midSeg.via, b.pos)
+        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+
+      if (!isPointInBounds(midPt, bounds)) continue
+
+      const sx = (midPt.x - cam.x) * cam.scale + vw / 2
+      const sy = (midPt.y - cam.y) * cam.scale + vh / 2
+
+      const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
+      const text = `${sec.name} · ${sec.totalLength.toFixed(1)} m`
+
+      ctx.save()
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      const metrics = ctx.measureText(text)
+      const bgW = metrics.width + 12
+      const bgH = 18
+      const badgeY = sy - 14
+
+      // Pill background
+      ctx.fillStyle = isSecSelected ? sec.color : 'rgba(30, 41, 59, 0.85)'
+      ctx.beginPath()
+      ctx.roundRect(sx - bgW / 2, badgeY - bgH / 2, bgW, bgH, 4)
+      ctx.fill()
+
+      // Border with section color
+      ctx.strokeStyle = sec.color
+      ctx.lineWidth = 1.2
+      ctx.stroke()
+
+      // Label text
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, sx, badgeY)
+      ctx.restore()
+    }
 
     // Directional chevron along track center showing construction direction
     for (const seg of visibleSegments) {

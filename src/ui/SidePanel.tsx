@@ -5,6 +5,7 @@ import { arcRadius, arcDeflectionDeg } from '../core/tangent'
 import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '../core/junction'
 import { detectCrossings } from '../core/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '../core/pathfinding'
+import { computeTrackSections, findSectionBySegment } from '../core/sections'
 import type { EditorStore } from './store'
 
 function PanelHeader({ children }: { children: ReactNode }) {
@@ -65,6 +66,38 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Impasses / heurtoirs" value={deadEnds} />
         <Field label="Boucles détectées" value={loops} />
         <Field label="Réseaux disjoints" value={components} />
+      </div>
+
+      <div className="sp-subheader">Sections de voie & Cantons ({computeTrackSections(net).length})</div>
+      <div className="sp-list">
+        {computeTrackSections(net).map((sec) => (
+          <button
+            key={sec.id}
+            className="sp-list-item"
+            onClick={() => {
+              store.setSelection({
+                nodes: new Set(sec.nodeIds),
+                segments: new Set(sec.segmentIds),
+              })
+            }}
+            title="Cliquer pour sélectionner tous les rails de ce canton"
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                backgroundColor: sec.color,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontWeight: 600 }}>{sec.name}</span>
+            <span style={{ marginLeft: 'auto', opacity: 0.65, fontSize: '11px' }}>
+              {sec.totalLength.toFixed(2)} m ({sec.segmentIds.length} r.)
+            </span>
+          </button>
+        ))}
       </div>
 
       <div className="sp-hint">
@@ -296,12 +329,63 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     store.markDirty()
   }
 
+  const allSections = computeTrackSections(store.network)
+  const currentSection = findSectionBySegment(allSections, segId)
+
   return (
     <>
       <PanelHeader>
         {seg.kind === 'curve' ? 'Voie courbe' : 'Voie droite'}
       </PanelHeader>
       <div className="sp-section">
+        {currentSection && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '6px 8px',
+              marginBottom: '6px',
+              background: 'var(--panel-2)',
+              borderRadius: '6px',
+              border: `1px solid ${currentSection.color}`,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: '9px',
+                  height: '9px',
+                  borderRadius: '50%',
+                  backgroundColor: currentSection.color,
+                }}
+              />
+              <span style={{ fontWeight: 700, fontSize: '12px' }}>{currentSection.name}</span>
+            </div>
+            <button
+              style={{
+                fontSize: '10px',
+                fontWeight: 600,
+                padding: '2px 6px',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--paper)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                store.setSelection({
+                  nodes: new Set(currentSection.nodeIds),
+                  segments: new Set(currentSection.segmentIds),
+                })
+              }}
+              title="Sélectionner tous les rails de cette section"
+            >
+              Tout le canton ({currentSection.totalLength.toFixed(1)} m)
+            </button>
+          </div>
+        )}
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
