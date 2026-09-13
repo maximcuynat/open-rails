@@ -47,6 +47,8 @@ export interface SerializedProject {
   junctions?: SerializedJunction[]
   camera?: SerializedCamera
   sectionMeta?: Record<string, any>
+  gridMode?: 'auto' | 'fixed'
+  gridSpacing?: number
 }
 
 /**
@@ -57,6 +59,8 @@ export function serializeNetwork(
   projectName?: string,
   camera?: Camera,
   sectionMeta?: Record<string, any>,
+  gridMode?: 'auto' | 'fixed',
+  gridSpacing?: number,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -104,6 +108,8 @@ export function serializeNetwork(
         }
       : undefined,
     sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
+    gridMode,
+    gridSpacing,
   }
 }
 
@@ -116,6 +122,8 @@ export function deserializeNetwork(data: SerializedProject): {
   projectName?: string
   camera?: SerializedCamera
   sectionMeta?: Record<string, any>
+  gridMode?: 'auto' | 'fixed'
+  gridSpacing?: number
 } {
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
@@ -209,6 +217,8 @@ export function deserializeNetwork(data: SerializedProject): {
     projectName: typeof data.name === 'string' ? data.name : undefined,
     camera,
     sectionMeta: data.sectionMeta && typeof data.sectionMeta === 'object' ? data.sectionMeta : undefined,
+    gridMode: data.gridMode === 'auto' || data.gridMode === 'fixed' ? data.gridMode : undefined,
+    gridSpacing: typeof data.gridSpacing === 'number' && data.gridSpacing > 0 ? data.gridSpacing : undefined,
   }
 }
 
@@ -258,11 +268,13 @@ export function saveNetworkToStorage(
   projectName?: string,
   camera?: Camera,
   sectionMeta?: Record<string, any>,
+  gridMode?: 'auto' | 'fixed',
+  gridSpacing?: number,
 ): boolean {
   try {
     const storage = getStorage()
     if (!storage) return false
-    const serialized = serializeNetwork(net, projectName, camera, sectionMeta)
+    const serialized = serializeNetwork(net, projectName, camera, sectionMeta, gridMode, gridSpacing)
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
   } catch (err) {
@@ -279,6 +291,8 @@ export function loadNetworkFromStorage(): {
   projectName?: string
   camera?: SerializedCamera
   sectionMeta?: Record<string, any>
+  gridMode?: 'auto' | 'fixed'
+  gridSpacing?: number
 } | null {
   try {
     const storage = getStorage()

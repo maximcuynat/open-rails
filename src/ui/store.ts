@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, type Camera } from '../render/camera'
-import { createNetwork, resetIdCounter } from '../core/network'
+import { createNetwork, resetIdCounter, removeNode, removeSegment } from '../core/network'
 import { CURVE_RADII } from '../core/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '../core/junction'
 import { reconcileNetworkIntersections } from '../core/reconcile'
@@ -193,6 +193,12 @@ export class EditorStore {
     if (saved.sectionMeta) {
       this.sectionMeta = saved.sectionMeta
     }
+    if (saved.gridMode) {
+      this.gridMode = saved.gridMode
+    }
+    if (saved.gridSpacing) {
+      this.gridSpacing = saved.gridSpacing
+    }
     return true
   }
 
@@ -205,6 +211,8 @@ export class EditorStore {
     if (res.projectName) this.projectName = res.projectName
     if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
     if (res.sectionMeta) this.sectionMeta = res.sectionMeta
+    if (res.gridMode) this.gridMode = res.gridMode
+    if (res.gridSpacing) this.gridSpacing = res.gridSpacing
     this.selection = { nodes: new Set(), segments: new Set() }
     this.lastNodeId = null
     this.curveState = { phase: 0, startId: null }
@@ -216,7 +224,7 @@ export class EditorStore {
    * Immediately save layout state to localStorage.
    */
   savePersistedState = (): void => {
-    saveNetworkToStorage(this.network, this.projectName, this.camera, this.sectionMeta)
+    saveNetworkToStorage(this.network, this.projectName, this.camera, this.sectionMeta, this.gridMode, this.gridSpacing)
   }
 
   /**
@@ -373,6 +381,81 @@ export class EditorStore {
     for (const id of this.network.nodes.keys()) nodes.add(id)
     for (const id of this.network.segments.keys()) segments.add(id)
     this.selection = { nodes, segments }
+    this.notify()
+  }
+
+  /**
+   * Deletes currently selected elements according to strict graph theory principles.
+   * - Selected segments are removed from the network graph.
+   * - Boundary/intersection nodes that still connect surviving tracks are NEVER deleted,
+   *   ensuring adjacent tracks and lines at junctions remain 100% intact.
+   * - Internal nodes whose incident segments are all removed are cleaned up as orphans.
+   * - Junctions and turnouts are cleanly reconciled.
+   */
+  deleteSelection = (): void => {
+    const sel = this.selection
+    if (sel.segments.size === 0 && sel.nodes.size === 0) return
+
+    this.pushHistorySnapshot()
+
+    const segsToDelete = new Set(sel.segments)
+    const nodesToDelete = new Set(sel.nodes)
+
+    // If segments were selected for deletion, protect any node that still has surviving connected segments
+    if (segsToDelete.size > 0) {
+      for (const nid of nodesToDelete) {
+        const adj = this.network.adjacency.get(nid) ?? []
+        const hasSurvivingSegments = adj.some((sid) => !segsToDelete.has(sid))
+        if (hasSurvivingSegments) {
+          // This node touches other tracks that are not being deleted — PRESERVE IT!
+          nodesToDelete.delete(nid)
+        }
+      }
+    }
+
+    // 1. Remove all selected segments
+    for (const sid of segsToDelete) {
+      removeSegment(this.network, sid, false)
+    }
+
+    // 2. Remove nodes that were specifically targeted and have no unselected segments
+    for (const nid of nodesToDelete) {
+      removeNode(this.network, nid)
+      if (this.lastNodeId === nid) this.lastNodeId = null
+      if (this.curveState.startId === nid) {
+        this.curveState = { phase: 0, startId: null }
+      }
+    }
+
+    // 3. Clean up any remaining isolated/orphan nodes (degree 0) that lost all segments
+    for (const [nid, adj] of this.network.adjacency) {
+      if (adj.length === 0) {
+        this.network.nodes.delete(nid)
+        this.network.adjacency.delete(nid)
+        if (this.lastNodeId === nid) this.lastNodeId = null
+        if (this.curveState.startId === nid) {
+          this.curveState = { phase: 0, startId: null }
+        }
+      }
+    }
+
+    // 4. Reconcile junctions: remove invalid turnout entries where segments or nodes were deleted
+    for (const [juncId, junc] of this.network.junctions) {
+      const nodeExists = this.network.nodes.has(junc.nodeId)
+      const adj = this.network.adjacency.get(junc.nodeId) ?? []
+      const sStraight = this.network.segments.has(junc.straightSegmentId)
+      const sDiverging = this.network.segments.has(junc.divergingSegmentId)
+
+      if (!nodeExists || adj.length !== 3 || !sStraight || !sDiverging) {
+        this.network.junctions.delete(juncId)
+      }
+    }
+
+    // Re-detect turnouts on any modified 3-way nodes
+    autoDetectJunctions(this.network)
+
+    this.clearSelection()
+    this.markDirty()
     this.notify()
   }
 

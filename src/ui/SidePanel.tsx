@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { removeNode, removeSegment } from '../core/network'
 import { curveLength } from '../core/curve'
 import { arcRadius, arcDeflectionDeg } from '../core/tangent'
 import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '../core/junction'
@@ -122,14 +121,8 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   }
 
   const onDelete = () => {
-    removeNode(store.network, nodeId)
-    if (store.lastNodeId === nodeId) store.lastNodeId = null
-    if (store.curveState.startId === nodeId) {
-      store.curveState = { phase: 0, startId: null }
-    }
-    store.clearSelection()
-    store.markDirty()
-    store.notify()
+    store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+    store.deleteSelection()
   }
 
   const isDeadEnd = adj.length === 1
@@ -325,9 +318,8 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   }
 
   const onDelete = () => {
-    removeSegment(store.network, segId)
-    store.selection = { nodes: new Set(), segments: new Set() }
-    store.markDirty()
+    store.selection = { nodes: new Set(), segments: new Set([segId]) }
+    store.deleteSelection()
   }
 
   const allSections = computeTrackSections(store.network, store.sectionMeta)

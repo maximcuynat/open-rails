@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { removeNode, removeSegment } from '../core/network'
 import type { EditorStore } from './store'
 
 /** Global keyboard shortcuts wired to the shared store. */
@@ -14,20 +13,7 @@ export function useKeyboardShortcuts(store: EditorStore): void {
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        const sel = store.selection
-        for (const sid of sel.segments) removeSegment(store.network, sid)
-        for (const nid of sel.nodes) {
-          removeNode(store.network, nid)
-          if (store.lastNodeId === nid) store.lastNodeId = null
-          if (store.curveState.startId === nid) {
-            store.curveState = { phase: 0, startId: null }
-          }
-        }
-        store.clearSelection()
-        store.lastNodeId = null
-        store.curveState = { phase: 0, startId: null }
-        store.markDirty()
-        store.notify()
+        store.deleteSelection()
       } else if (e.key === 'Escape') {
         store.lastNodeId = null
         store.curveState = { phase: 0, startId: null }
