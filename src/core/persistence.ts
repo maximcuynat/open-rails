@@ -46,6 +46,7 @@ export interface SerializedProject {
   segments: SerializedSegment[]
   junctions?: SerializedJunction[]
   camera?: SerializedCamera
+  sectionMeta?: Record<string, any>
 }
 
 /**
@@ -55,6 +56,7 @@ export function serializeNetwork(
   net: Network,
   projectName?: string,
   camera?: Camera,
+  sectionMeta?: Record<string, any>,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -101,6 +103,7 @@ export function serializeNetwork(
           scale: camera.scale,
         }
       : undefined,
+    sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
   }
 }
 
@@ -112,6 +115,7 @@ export function deserializeNetwork(data: SerializedProject): {
   network: Network
   projectName?: string
   camera?: SerializedCamera
+  sectionMeta?: Record<string, any>
 } {
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
@@ -204,6 +208,7 @@ export function deserializeNetwork(data: SerializedProject): {
     network: net,
     projectName: typeof data.name === 'string' ? data.name : undefined,
     camera,
+    sectionMeta: data.sectionMeta && typeof data.sectionMeta === 'object' ? data.sectionMeta : undefined,
   }
 }
 
@@ -252,11 +257,12 @@ export function saveNetworkToStorage(
   net: Network,
   projectName?: string,
   camera?: Camera,
+  sectionMeta?: Record<string, any>,
 ): boolean {
   try {
     const storage = getStorage()
     if (!storage) return false
-    const serialized = serializeNetwork(net, projectName, camera)
+    const serialized = serializeNetwork(net, projectName, camera, sectionMeta)
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
   } catch (err) {
@@ -272,6 +278,7 @@ export function loadNetworkFromStorage(): {
   network: Network
   projectName?: string
   camera?: SerializedCamera
+  sectionMeta?: Record<string, any>
 } | null {
   try {
     const storage = getStorage()

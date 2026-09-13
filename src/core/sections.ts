@@ -1,9 +1,18 @@
 import type { Network, NodeId, SegmentId, Segment } from './types'
 import { curveLength } from './curve'
 
+export type SectionType = 'circulation' | 'station_stop' | 'siding' | 'yard'
+
+export interface SectionMetadata {
+  name?: string
+  type?: SectionType
+  color?: string
+}
+
 export interface TrackSection {
   id: string
   name: string
+  type: SectionType
   segmentIds: SegmentId[]
   nodeIds: NodeId[]
   totalLength: number
@@ -22,6 +31,13 @@ export const SECTION_COLORS = [
   '#14b8a6', // Teal / Manœuvre
 ]
 
+export const SECTION_TYPE_LABELS: Record<SectionType, string> = {
+  circulation: 'Voie de circulation directe (passage)',
+  station_stop: "Voie à quai / d'arrêt (gare)",
+  siding: "Voie d'évitement / garage",
+  yard: 'Voie de manœuvre / triage',
+}
+
 /**
  * Computes connected track sections (cantons / tronçons continus).
  * A section boundary occurs at:
@@ -29,8 +45,12 @@ export const SECTION_COLORS = [
  * - Switch / junction nodes (degree >= 3)
  *
  * Intermediate nodes (degree 2) continue the same track section.
+ * Merges user-customized metadata (names, types, colors) persisted in customMeta.
  */
-export function computeTrackSections(net: Network): TrackSection[] {
+export function computeTrackSections(
+  net: Network,
+  customMeta?: Record<string, SectionMetadata>,
+): TrackSection[] {
   const sections: TrackSection[] = []
   const visitedSegments = new Set<SegmentId>()
 
@@ -104,18 +124,23 @@ export function computeTrackSections(net: Network): TrackSection[] {
       }
     }
 
+    // Stable ID based on sorted segment IDs so renaming is preserved
+    const sortedSegKey = [...sectionSegIds].sort().join('-')
     const index = sections.length
-    const color = SECTION_COLORS[index % SECTION_COLORS.length]
-    const id = `sec_${index + 1}`
-    const name = `Section ${String.fromCharCode(65 + (index % 26))}${index >= 26 ? Math.floor(index / 26) : ''}`
+    const fallbackColor = SECTION_COLORS[index % SECTION_COLORS.length]
+    const fallbackName = `Section ${String.fromCharCode(65 + (index % 26))}${index >= 26 ? Math.floor(index / 26) : ''}`
+
+    // Check user custom metadata
+    const userMeta = customMeta?.[sortedSegKey] || customMeta?.[sectionSegIds[0]]
 
     sections.push({
-      id,
-      name,
+      id: sortedSegKey,
+      name: userMeta?.name || fallbackName,
+      type: userMeta?.type || 'circulation',
       segmentIds: sectionSegIds,
       nodeIds: Array.from(nodeSet),
       totalLength: totalLen,
-      color,
+      color: userMeta?.color || (userMeta?.type === 'station_stop' ? '#06b6d4' : fallbackColor),
     })
   }
 

@@ -295,7 +295,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, rect.width, rect.height)
     }
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection)
+    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta)
 
     // Box selection rectangle
     if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {

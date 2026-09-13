@@ -11,6 +11,7 @@ import {
   deserializeNetwork,
 } from '../core/persistence'
 import type { JunctionId, Network, Point, Selection } from '../core/types'
+import type { SectionMetadata } from '../core/sections'
 
 export type Tool = 'select' | 'place' | 'curve' | 'pan'
 
@@ -74,10 +75,22 @@ export class EditorStore {
   boxSelectEnd: Point | null = null
   isBoxSelecting = false
 
+  // Custom Section / Canton / Station track metadata (name, type, color)
+  sectionMeta: Record<string, SectionMetadata> = {}
+
   // --- UI-facing state ---
   theme: ThemeMode = 'auto'
   projectName = 'Untitled Network'
   dirty = false
+
+  setSectionMeta = (sectionId: string, meta: Partial<SectionMetadata>): void => {
+    this.sectionMeta[sectionId] = {
+      ...this.sectionMeta[sectionId],
+      ...meta,
+    }
+    this.markDirty()
+    this.notify()
+  }
 
   constructor() {
     this.loadPersistedState()
@@ -96,6 +109,9 @@ export class EditorStore {
     if (saved.camera) {
       this.camera = createCamera(saved.camera.x, saved.camera.y, saved.camera.scale)
     }
+    if (saved.sectionMeta) {
+      this.sectionMeta = saved.sectionMeta
+    }
     return true
   }
 
@@ -107,6 +123,7 @@ export class EditorStore {
     this.network = res.network
     if (res.projectName) this.projectName = res.projectName
     if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
+    if (res.sectionMeta) this.sectionMeta = res.sectionMeta
     this.selection = { nodes: new Set(), segments: new Set() }
     this.lastNodeId = null
     this.curveState = { phase: 0, startId: null }
@@ -118,7 +135,7 @@ export class EditorStore {
    * Immediately save layout state to localStorage.
    */
   savePersistedState = (): void => {
-    saveNetworkToStorage(this.network, this.projectName, this.camera)
+    saveNetworkToStorage(this.network, this.projectName, this.camera, this.sectionMeta)
   }
 
   /**
@@ -126,6 +143,7 @@ export class EditorStore {
    */
   newProject = (): void => {
     this.network = createNetwork()
+    this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.lastNodeId = null
     this.curveState = { phase: 0, startId: null }

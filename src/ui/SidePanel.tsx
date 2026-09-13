@@ -5,7 +5,13 @@ import { arcRadius, arcDeflectionDeg } from '../core/tangent'
 import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '../core/junction'
 import { detectCrossings } from '../core/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '../core/pathfinding'
-import { computeTrackSections, findSectionBySegment } from '../core/sections'
+import {
+  computeTrackSections,
+  findSectionBySegment,
+  type TrackSection,
+  type SectionType,
+  SECTION_COLORS,
+} from '../core/sections'
 import type { EditorStore } from './store'
 
 function PanelHeader({ children }: { children: ReactNode }) {
@@ -68,9 +74,9 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Réseaux disjoints" value={components} />
       </div>
 
-      <div className="sp-subheader">Sections de voie & Cantons ({computeTrackSections(net).length})</div>
+      <div className="sp-subheader">Sections de voie & Cantons ({computeTrackSections(net, store.sectionMeta).length})</div>
       <div className="sp-list">
-        {computeTrackSections(net).map((sec) => (
+        {computeTrackSections(net, store.sectionMeta).map((sec) => (
           <button
             key={sec.id}
             className="sp-list-item"
@@ -329,7 +335,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     store.markDirty()
   }
 
-  const allSections = computeTrackSections(store.network)
+  const allSections = computeTrackSections(store.network, store.sectionMeta)
   const currentSection = findSectionBySegment(allSections, segId)
 
   return (
@@ -451,10 +457,170 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   )
 }
 
+/** Section properties — shown when a canton/section is selected. */
+function SectionPanel({ store, section }: { store: EditorStore; section: TrackSection }) {
+  const [name, setName] = useState(section.name)
+  const [type, setType] = useState<SectionType>(section.type)
+
+  useEffect(() => {
+    setName(section.name)
+    setType(section.type)
+  }, [section.id, section.name, section.type])
+
+  const applyName = (newName: string) => {
+    setName(newName)
+    store.setSectionMeta(section.id, { name: newName })
+  }
+
+  const applyType = (newType: SectionType) => {
+    setType(newType)
+    store.setSectionMeta(section.id, { type: newType })
+  }
+
+  const applyColor = (col: string) => {
+    store.setSectionMeta(section.id, { color: col })
+  }
+
+  return (
+    <>
+      <PanelHeader>Propriétés de la section</PanelHeader>
+      <div className="sp-section">
+        <label className="sp-input-row" style={{ marginBottom: '8px' }}>
+          <span style={{ width: '45px' }}>Nom</span>
+          <input
+            type="text"
+            value={name}
+            placeholder="ex: Voie 1 (Passage)"
+            onChange={(e) => setName(e.target.value)}
+            onBlur={(e) => applyName(e.target.value)}
+          />
+        </label>
+
+        <div style={{ marginBottom: '8px' }}>
+          <span className="sp-field-label" style={{ display: 'block', marginBottom: '4px', fontSize: '11px', fontWeight: 600 }}>
+            Usage ferroviaire
+          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <button
+              className="sp-btn-compact"
+              style={{
+                textAlign: 'left',
+                padding: '6px 8px',
+                fontSize: '11px',
+                borderRadius: '5px',
+                border: type === 'circulation' ? '1px solid var(--accent)' : '1px solid var(--border)',
+                background: type === 'circulation' ? 'rgba(37, 99, 235, 0.15)' : 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+                fontWeight: type === 'circulation' ? 700 : 500,
+              }}
+              onClick={() => applyType('circulation')}
+            >
+              🚅 Voie de circulation directe (passage sans arrêt)
+            </button>
+            <button
+              className="sp-btn-compact"
+              style={{
+                textAlign: 'left',
+                padding: '6px 8px',
+                fontSize: '11px',
+                borderRadius: '5px',
+                border: type === 'station_stop' ? '1px solid #06b6d4' : '1px solid var(--border)',
+                background: type === 'station_stop' ? 'rgba(6, 182, 212, 0.15)' : 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+                fontWeight: type === 'station_stop' ? 700 : 500,
+              }}
+              onClick={() => applyType('station_stop')}
+            >
+              🚉 Voie à quai / arrêt voyageurs (gare)
+            </button>
+            <button
+              className="sp-btn-compact"
+              style={{
+                textAlign: 'left',
+                padding: '6px 8px',
+                fontSize: '11px',
+                borderRadius: '5px',
+                border: type === 'siding' ? '1px solid #f59e0b' : '1px solid var(--border)',
+                background: type === 'siding' ? 'rgba(245, 158, 11, 0.15)' : 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+                fontWeight: type === 'siding' ? 700 : 500,
+              }}
+              onClick={() => applyType('siding')}
+            >
+              🛑 Voie d'évitement / garage / arrêt marchandise
+            </button>
+          </div>
+        </div>
+
+        <Field label="Longueur totale" value={`${section.totalLength.toFixed(2)} m`} />
+        <Field label="Coupons de rail" value={section.segmentIds.length} />
+        <Field label="Nœuds" value={section.nodeIds.length} />
+
+        <div style={{ marginTop: '6px' }}>
+          <span className="sp-field-label" style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 600 }}>
+            Couleur de canton
+          </span>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {SECTION_COLORS.map((col) => (
+              <button
+                key={col}
+                style={{
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  backgroundColor: col,
+                  border: section.color === col ? '2px solid #ffffff' : '1px solid transparent',
+                  boxShadow: section.color === col ? '0 0 0 1px var(--ink)' : 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+                onClick={() => applyColor(col)}
+                title={`Choisir cette teinte`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="sp-subheader">Sélection des rails du canton</div>
+      <div className="sp-list">
+        {section.segmentIds.map((sid, idx) => {
+          const s = store.network.segments.get(sid)
+          return (
+            <button
+              key={sid}
+              className="sp-list-item"
+              onClick={() => {
+                store.setSelection({ nodes: new Set(), segments: new Set([sid]) })
+              }}
+            >
+              <span className={`sp-tag ${s?.kind || 'straight'}`}>{s?.kind === 'curve' ? 'courbe' : 'droite'}</span>
+              <span>Coupon #{idx + 1} ({sid})</span>
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
 export function SidePanel({ store }: { store: EditorStore }) {
   const sel = store.selection
+  const allSections = computeTrackSections(store.network, store.sectionMeta)
+
+  // Check if selection matches an entire track section
+  const matchingSection = allSections.find((sec) => {
+    if (sec.segmentIds.length !== sel.segments.size) return false
+    return sec.segmentIds.every((sid) => sel.segments.has(sid))
+  })
+
   let content: ReactNode
-  if (sel.nodes.size === 1 && sel.segments.size === 0) {
+  if (matchingSection) {
+    content = <SectionPanel key={matchingSection.id} store={store} section={matchingSection} />
+  } else if (sel.nodes.size === 1 && sel.segments.size === 0) {
     const id = [...sel.nodes][0]
     content = <NodePanel key={id} store={store} nodeId={id} />
   } else if (sel.segments.size === 1 && sel.nodes.size === 0) {

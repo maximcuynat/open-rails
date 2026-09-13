@@ -205,6 +205,7 @@ export function renderNetwork(
   vh: number,
   net: Network,
   selection: Selection,
+  sectionMeta?: Record<string, any>,
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
@@ -215,7 +216,7 @@ export function renderNetwork(
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
-  const trackSections = computeTrackSections(net)
+  const trackSections = computeTrackSections(net, sectionMeta)
   const visibleSegments: Segment[] = []
   for (const seg of net.segments.values()) {
     const a = net.nodes.get(seg.from)
@@ -277,9 +278,13 @@ export function renderNetwork(
 
       ctx.save()
       ctx.strokeStyle = secColor
-      ctx.lineWidth = Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
-      ctx.globalAlpha = isSecSelected ? 0.95 : 0.45
+      const isStation = sec?.type === 'station_stop'
+      ctx.lineWidth = isStation ? Math.max(2.5, Math.min(5.0, 0.6 * cam.scale)) : Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
+      ctx.globalAlpha = isSecSelected ? 0.95 : isStation ? 0.8 : 0.45
       ctx.lineCap = 'round'
+      if (isStation) {
+        ctx.setLineDash([8, 4])
+      }
       ctx.beginPath()
       const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
       const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
@@ -339,24 +344,25 @@ export function renderNetwork(
       const sy = (midPt.y - cam.y) * cam.scale + vh / 2
 
       const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
-      const text = `${sec.name} · ${sec.totalLength.toFixed(1)} m`
+      const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Voie d\'évit. · ' : ''
+      const text = `${typePrefix}${sec.name} (${sec.totalLength.toFixed(1)} m)`
 
       ctx.save()
       ctx.font = '600 10px Archivo, system-ui, sans-serif'
       const metrics = ctx.measureText(text)
-      const bgW = metrics.width + 12
+      const bgW = metrics.width + 14
       const bgH = 18
       const badgeY = sy - 14
 
-      // Pill background
-      ctx.fillStyle = isSecSelected ? sec.color : 'rgba(30, 41, 59, 0.85)'
+      // Pill background: cyan/amber for platforms and stations
+      ctx.fillStyle = isSecSelected ? sec.color : sec.type === 'station_stop' ? 'rgba(8, 51, 68, 0.92)' : 'rgba(30, 41, 59, 0.85)'
       ctx.beginPath()
       ctx.roundRect(sx - bgW / 2, badgeY - bgH / 2, bgW, bgH, 4)
       ctx.fill()
 
-      // Border with section color
+      // Border with section color (dashed or double if station stop)
       ctx.strokeStyle = sec.color
-      ctx.lineWidth = 1.2
+      ctx.lineWidth = sec.type === 'station_stop' ? 1.8 : 1.2
       ctx.stroke()
 
       // Label text
