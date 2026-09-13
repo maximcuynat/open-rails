@@ -132,10 +132,38 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     store.notify()
   }
 
+  const isDeadEnd = adj.length === 1
+
   return (
     <>
-      <PanelHeader>Nœud de jonction</PanelHeader>
+      <PanelHeader>{isDeadEnd ? 'Fin de voie (Heurtoir)' : 'Nœud de jonction'}</PanelHeader>
       <div className="sp-section">
+        {isDeadEnd && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 10px',
+              marginBottom: '10px',
+              backgroundColor: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid #ef4444',
+              borderRadius: '6px',
+              color: '#ef4444',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <line x1="5" y1="4" x2="19" y2="4" />
+              <line x1="5" y1="20" x2="19" y2="20" />
+              <line x1="8" y1="4" x2="8" y2="20" />
+              <line x1="16" y1="4" x2="16" y2="20" />
+              <line x1="8" y1="12" x2="16" y2="12" />
+            </svg>
+            <span>Fin de voie détectée — Butoir de sécurité (heurtoir) actif</span>
+          </div>
+        )}
         <label className="sp-input-row">
           <span>X (m)</span>
           <input
@@ -489,6 +517,33 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
             <span>
               Sens interdit détecté : collision frontale (&rarr;&larr;) avec la voie adjacente ({myConflict.sectionA.id === section.id ? myConflict.sectionB.name : myConflict.sectionA.name}) !
             </span>
+          </div>
+        )}
+
+        {section.hasDeadEnd && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '6px 10px',
+              marginBottom: '10px',
+              backgroundColor: 'rgba(234, 88, 12, 0.12)',
+              border: '1px solid #ea580c',
+              borderRadius: '6px',
+              color: '#ea580c',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <line x1="5" y1="4" x2="19" y2="4" />
+              <line x1="5" y1="20" x2="19" y2="20" />
+              <line x1="8" y1="4" x2="8" y2="20" />
+              <line x1="16" y1="4" x2="16" y2="20" />
+              <line x1="8" y1="12" x2="16" y2="12" />
+            </svg>
+            <span>Fin de voie : heurtoir de butoir installé en extrémité</span>
           </div>
         )}
 

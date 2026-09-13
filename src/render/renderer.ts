@@ -324,9 +324,22 @@ export function renderNetwork(
     // Connect rails and create smooth dynamic miter joints at nodes
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds)
 
-    // 3. SECTION BADGES (Étiquettes discrètes au milieu de chaque section)
+    // 3. SECTION BADGES (LOD: multi-level representation according to cam.scale)
+    // - Scale < 1.0 (Macro view): hide all labels unless the section is actively selected
+    // - 1.0 <= Scale < 3.0 (Overview): compact badge (name + arrow) only if section is >= 45px on screen
+    // - Scale >= 3.0 (Detailed view): full badge with type prefix, name, arrow, and exact length
+    const showAllBadges = cam.scale >= 1.0
     for (const sec of trackSections) {
       if (sec.segmentIds.length === 0) continue
+      const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
+
+      // When zoomed out (< 1.0), only show badge for the currently selected section
+      if (!showAllBadges && !isSecSelected) continue
+
+      // In overview mode (1.0 to 3.0), avoid drawing badges on tiny track fragments (< 45px on screen)
+      const secScreenLen = sec.totalLength * cam.scale
+      if (!isSecSelected && cam.scale < 3.0 && secScreenLen < 45) continue
+
       const midSegIdx = Math.floor(sec.segmentIds.length / 2)
       const midSegId = sec.segmentIds[midSegIdx]
       const midSeg = net.segments.get(midSegId)
@@ -344,25 +357,30 @@ export function renderNetwork(
       const sx = (midPt.x - cam.x) * cam.scale + vw / 2
       const sy = (midPt.y - cam.y) * cam.scale + vh / 2
 
-      const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
-      const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Voie d\'évit. · ' : ''
       const dirSymbol = sec.direction === 'forward' ? ' →' : sec.direction === 'backward' ? ' ←' : ''
-      const text = `${typePrefix}${sec.name}${dirSymbol} (${sec.totalLength.toFixed(1)} m)`
+      let text: string
+      if (cam.scale >= 3.0 || isSecSelected) {
+        const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Évit. · ' : ''
+        text = `${typePrefix}${sec.name}${dirSymbol} (${sec.totalLength.toFixed(1)} m)`
+      } else {
+        // Compact LOD
+        text = `${sec.name}${dirSymbol}`
+      }
 
       ctx.save()
       ctx.font = '600 10px Archivo, system-ui, sans-serif'
       const metrics = ctx.measureText(text)
-      const bgW = metrics.width + 14
+      const bgW = metrics.width + 12
       const bgH = 18
       const badgeY = sy - 14
 
-      // Pill background: cyan/amber for platforms and stations
+      // Pill background
       ctx.fillStyle = isSecSelected ? sec.color : sec.type === 'station_stop' ? 'rgba(8, 51, 68, 0.92)' : 'rgba(30, 41, 59, 0.85)'
       ctx.beginPath()
       ctx.roundRect(sx - bgW / 2, badgeY - bgH / 2, bgW, bgH, 4)
       ctx.fill()
 
-      // Border with section color (dashed or double if station stop)
+      // Border with section color
       ctx.strokeStyle = sec.color
       ctx.lineWidth = sec.type === 'station_stop' ? 1.8 : 1.2
       ctx.stroke()
@@ -374,10 +392,18 @@ export function renderNetwork(
       ctx.fillText(text, sx, badgeY)
       ctx.restore()
     }
-
   }
 
-  // Draw nodes on top: visible white points with crisp border for structural clarity
+  // 4. BUFFER STOPS (Heurtoirs de fin de voie automatiques sur chaque voie en cul-de-sac)
+  for (const node of net.nodes.values()) {
+    if (!isPointInBounds(node.pos, bounds)) continue
+    const adj = net.adjacency.get(node.id) ?? []
+    if (adj.length === 1) {
+      renderBufferStop(ctx, cam, node, net, vw, vh)
+    }
+  }
+
+  // 5. NODES (Points d'articulation et sélection)
   for (const node of net.nodes.values()) {
     if (!isPointInBounds(node.pos, bounds)) continue
 
@@ -398,15 +424,18 @@ export function renderNetwork(
       ctx.arc(sx, sy, 4, 0, Math.PI * 2)
       ctx.fill()
     } else if (connectionCount <= 1) {
-      // Open endpoint: prominent white point with darker ring
-      ctx.fillStyle = ink
-      ctx.beginPath()
-      ctx.arc(sx, sy, 5.5, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = '#ffffff'
-      ctx.beginPath()
-      ctx.arc(sx, sy, 3.5, 0, Math.PI * 2)
-      ctx.fill()
+      // Open endpoint with buffer stop: subtle central indicator
+      if (cam.scale < 0.8) {
+        // Red target mark visible at macro zoom
+        ctx.fillStyle = '#dc2626'
+        ctx.beginPath()
+        ctx.arc(sx, sy, 4, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(sx, sy, 2, 0, Math.PI * 2)
+        ctx.fill()
+      }
     } else {
       // Intermediate joint or junction: neat white dot
       ctx.fillStyle = '#334155'
@@ -420,14 +449,16 @@ export function renderNetwork(
     }
   }
 
-  // 4. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)
-  for (const sec of trackSections) {
-    if (sec.direction === 'two_way' || sec.orderedNodeIds.length < 2) continue
-    const isForward = sec.direction === 'forward'
+  // 6. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)
+  // Skip at macro zoom (< 0.8) to keep network schematic clean
+  if (cam.scale >= 0.8) {
+    for (const sec of trackSections) {
+      if (sec.direction === 'two_way' || sec.orderedNodeIds.length < 2) continue
+      const isForward = sec.direction === 'forward'
 
-    // Draw discreet directional arrow along each segment of the section
-    for (const sid of sec.segmentIds) {
-      const seg = net.segments.get(sid)
+      // Draw discreet directional arrow along each segment of the section
+      for (const sid of sec.segmentIds) {
+        const seg = net.segments.get(sid)
       if (!seg) continue
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
@@ -483,8 +514,9 @@ export function renderNetwork(
       ctx.restore()
     }
   }
+}
 
-  // 5. DIRECTION CONFLICTS / SENS INTERDIT (Panneau sens interdit en cas d'incohérence -> <-)
+  // 7. DIRECTION CONFLICTS / SENS INTERDIT (Panneau sens interdit en cas d'incohérence -> <-)
   const conflicts = detectDirectionConflicts(net, trackSections)
   for (const conf of conflicts) {
     if (!isPointInBounds(conf.pos, bounds)) continue

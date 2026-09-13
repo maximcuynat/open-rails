@@ -455,10 +455,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
   const renameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (renamingSection) {
-      setTimeout(() => renameInputRef.current?.select(), 50)
+    if (renamingSection?.sectionId) {
+      setTimeout(() => {
+        renameInputRef.current?.focus()
+        renameInputRef.current?.select()
+      }, 50)
     }
-  }, [renamingSection])
+  }, [renamingSection?.sectionId])
 
   const commitRename = (overrideName?: string) => {
     if (!renamingSection) return

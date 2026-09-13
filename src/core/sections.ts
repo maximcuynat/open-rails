@@ -1,5 +1,6 @@
 import type { Network, NodeId, SegmentId, Segment, Point } from './types'
 import { curveLength } from './curve'
+import { segmentTangentAt } from './tangent'
 
 export type SectionType = 'circulation' | 'station_stop' | 'siding' | 'yard'
 
@@ -29,6 +30,8 @@ export interface TrackSection {
   nodeIds: NodeId[]
   totalLength: number
   color: string
+  /** Whether this section ends at an open dead-end (heurtoir / fin de voie) */
+  hasDeadEnd?: boolean
 }
 
 export interface DirectionConflict {
@@ -176,6 +179,10 @@ export function computeTrackSections(
     // Check user custom metadata
     const userMeta = customMeta?.[sortedSegKey] || customMeta?.[sectionSegIds[0]]
 
+    const startNodeId = orderedNodes[0]
+    const endNodeId = orderedNodes[orderedNodes.length - 1]
+    const hasDeadEnd = isEndOfTrackNode(net, startNodeId) || isEndOfTrackNode(net, endNodeId)
+
     sections.push({
       id: sortedSegKey,
       name: userMeta?.name || fallbackName,
@@ -186,10 +193,17 @@ export function computeTrackSections(
       nodeIds: Array.from(new Set(orderedNodes)),
       totalLength: totalLen,
       color: userMeta?.color || (userMeta?.type === 'station_stop' ? '#06b6d4' : fallbackColor),
+      hasDeadEnd,
     })
   }
 
   return sections
+}
+
+/** Determine if a node is an open end of track (dead end / heurtoir / cul-de-sac). */
+export function isEndOfTrackNode(net: Network, nodeId: NodeId): boolean {
+  const adj = net.adjacency.get(nodeId) ?? []
+  return adj.length <= 1
 }
 
 /** Find the section containing a specific segment */
@@ -200,70 +214,145 @@ export function findSectionBySegment(sections: TrackSection[], segId: SegmentId)
   return null
 }
 
+/** Helper to compute a normalized ray pointing away from a node into a connected segment */
+function getRayFromNode(net: Network, seg: Segment, nodeId: NodeId): Point {
+  const tan = segmentTangentAt(net, seg, nodeId)
+  if (tan) {
+    const isFrom = seg.from === nodeId
+    const ray = isFrom ? tan : { x: -tan.x, y: -tan.y }
+    const len = Math.hypot(ray.x, ray.y)
+    if (len > 1e-5) return { x: ray.x / len, y: ray.y / len }
+  }
+  const otherId = seg.from === nodeId ? seg.to : seg.from
+  const node = net.nodes.get(nodeId)
+  const other = net.nodes.get(otherId)
+  if (node && other) {
+    const dx = other.pos.x - node.pos.x
+    const dy = other.pos.y - node.pos.y
+    const len = Math.hypot(dx, dy)
+    if (len > 1e-5) return { x: dx / len, y: dy / len }
+  }
+  return { x: 1, y: 0 }
+}
+
+interface SectionEndpoint {
+  section: TrackSection
+  segmentId: SegmentId
+  ray: Point
+  canInflow: boolean
+  canOutflow: boolean
+}
+
 /**
- * Detect directional circulation conflicts between connected sections.
- * For any junction or connection node shared between 2 or more sections:
- * If Section A sends trains TOWARDS the node, and Section B also sends trains TOWARDS the same node (head-on collision -> <-),
- * or opposing flows, a conflict is raised with the node location for rendering the prohibitory sign.
+ * Detect directional circulation conflicts between connected sections using graph theory.
+ *
+ * Each junction or intersection node in the rail network acts as a routing vertex:
+ * - A train arriving on section A can only proceed into section B if:
+ *   1. Track geometry allows transit through the node without hairpin reversal (dot(rayA, rayB) < -0.2).
+ *   2. Section B allows outflow away from the node (two-way or directed away).
+ *
+ * When two tracks converge into a common stem (e.g. an aiguillage / merge):
+ * - If both converging branches flow into the node, and the stem allows outflow,
+ *   traffic safely merges into the stem — THIS IS VALID (no conflict).
+ * - A conflict occurs when arriving trains face a Sens Interdit on ALL physically possible exit paths,
+ *   or when two opposite sections are directly pointing head-on into each other (-> <-) with no exit.
  */
 export function detectDirectionConflicts(net: Network, sections: TrackSection[]): DirectionConflict[] {
   const conflicts: DirectionConflict[] = []
+  const reportedPairs = new Set<string>()
 
-  // Map each boundary node to the sections meeting at that node and their flow direction relative to the node
-  // flow: 'inflow' = traffic goes towards this node; 'outflow' = traffic goes away from this node; 'both' = bidirectional
-  interface NodeFlow {
-    section: TrackSection
-    flow: 'inflow' | 'outflow' | 'both'
-  }
-
-  const nodeSectionFlows = new Map<NodeId, NodeFlow[]>()
+  // Map each boundary node to its incident section endpoints
+  const nodeEndpoints = new Map<NodeId, SectionEndpoint[]>()
 
   for (const sec of sections) {
-    if (sec.orderedNodeIds.length < 2) continue
+    if (sec.orderedNodeIds.length < 2 || sec.segmentIds.length === 0) continue
     const startNode = sec.orderedNodeIds[0]
     const endNode = sec.orderedNodeIds[sec.orderedNodeIds.length - 1]
 
-    let startFlow: 'inflow' | 'outflow' | 'both' = 'both'
-    let endFlow: 'inflow' | 'outflow' | 'both' = 'both'
+    const firstSeg = net.segments.get(sec.segmentIds[0])
+    const lastSeg = net.segments.get(sec.segmentIds[sec.segmentIds.length - 1])
 
-    if (sec.direction === 'forward') {
-      // Moves from startNode to endNode
-      startFlow = 'outflow' // leaves startNode
-      endFlow = 'inflow'    // enters endNode
-    } else if (sec.direction === 'backward') {
-      // Moves from endNode to startNode
-      startFlow = 'inflow'   // enters startNode
-      endFlow = 'outflow'  // leaves endNode
+    if (firstSeg) {
+      const ray = getRayFromNode(net, firstSeg, startNode)
+      const canInflow = sec.direction === 'two_way' || sec.direction === 'backward'
+      const canOutflow = sec.direction === 'two_way' || sec.direction === 'forward'
+      if (!nodeEndpoints.has(startNode)) nodeEndpoints.set(startNode, [])
+      nodeEndpoints.get(startNode)!.push({
+        section: sec,
+        segmentId: firstSeg.id,
+        ray,
+        canInflow,
+        canOutflow,
+      })
     }
 
-    // Record at startNode
-    if (!nodeSectionFlows.has(startNode)) nodeSectionFlows.set(startNode, [])
-    nodeSectionFlows.get(startNode)!.push({ section: sec, flow: startFlow })
-
-    // Record at endNode
-    if (!nodeSectionFlows.has(endNode)) nodeSectionFlows.set(endNode, [])
-    nodeSectionFlows.get(endNode)!.push({ section: sec, flow: endFlow })
+    if (lastSeg && endNode !== startNode) {
+      const ray = getRayFromNode(net, lastSeg, endNode)
+      const canInflow = sec.direction === 'two_way' || sec.direction === 'forward'
+      const canOutflow = sec.direction === 'two_way' || sec.direction === 'backward'
+      if (!nodeEndpoints.has(endNode)) nodeEndpoints.set(endNode, [])
+      nodeEndpoints.get(endNode)!.push({
+        section: sec,
+        segmentId: lastSeg.id,
+        ray,
+        canInflow,
+        canOutflow,
+      })
+    }
   }
 
-  // Detect head-on conflicts (two sections both flowing IN towards the same node: -> <-)
-  for (const [nodeId, flows] of nodeSectionFlows.entries()) {
+  // Evaluate routability at every connection/junction node
+  for (const [nodeId, eps] of nodeEndpoints.entries()) {
     const node = net.nodes.get(nodeId)
-    if (!node) continue
+    if (!node || eps.length < 2) continue
 
-    for (let i = 0; i < flows.length; i++) {
-      for (let j = i + 1; j < flows.length; j++) {
-        const f1 = flows[i]
-        const f2 = flows[j]
+    // For each endpoint with one-way inflow towards this node:
+    for (const epIn of eps) {
+      // Only one-way inflows can face a blocked route / head-on collision
+      if (!epIn.canInflow || epIn.canOutflow) continue
 
-        // Both sections have a designated one-way flow directly towards each other at this node
-        if (f1.flow === 'inflow' && f2.flow === 'inflow') {
+      // Find all physically candidate continuation routes through the node
+      // Candidate routes face opposite sides of the node (dot < -0.2)
+      const candidates = eps.filter(
+        (other) => other !== epIn && (epIn.ray.x * other.ray.x + epIn.ray.y * other.ray.y) < -0.2,
+      )
+
+      if (candidates.length === 0) {
+        // No geometrically valid through route exists at this multi-track node
+        const pairKey = `${nodeId}:${epIn.section.id}`
+        if (!reportedPairs.has(pairKey)) {
+          reportedPairs.add(pairKey)
           conflicts.push({
             nodeId,
             pos: node.pos,
-            sectionA: f1.section,
-            sectionB: f2.section,
+            sectionA: epIn.section,
+            sectionB: eps.find((o) => o !== epIn)?.section ?? epIn.section,
             type: 'head_on',
           })
+        }
+        continue
+      }
+
+      // Check if at least one candidate continuation allows trains to proceed out
+      const hasValidExit = candidates.some((cand) => cand.canOutflow)
+
+      if (!hasValidExit) {
+        // Every geometrically possible continuation is strictly one-way towards this node!
+        // Arriving trains face a direct head-on / Sens Interdit collision.
+        for (const cand of candidates) {
+          const idA = epIn.section.id < cand.section.id ? epIn.section.id : cand.section.id
+          const idB = epIn.section.id < cand.section.id ? cand.section.id : epIn.section.id
+          const pairKey = `${nodeId}:${idA}:${idB}`
+          if (!reportedPairs.has(pairKey)) {
+            reportedPairs.add(pairKey)
+            conflicts.push({
+              nodeId,
+              pos: node.pos,
+              sectionA: epIn.section,
+              sectionB: cand.section,
+              type: 'head_on',
+            })
+          }
         }
       }
     }
