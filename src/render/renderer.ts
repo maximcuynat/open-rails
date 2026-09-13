@@ -3,7 +3,7 @@ import type { Camera } from './camera'
 export type { Selection } from '../core/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '../core/types'
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '../core/curve'
-import { detectCrossings, lineLineIntersection, type DiamondCrossing } from '../core/crossing'
+import { lineLineIntersection, type DiamondCrossing } from '../core/crossing'
 import { segmentTangentAt } from '../core/tangent'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
@@ -110,26 +110,28 @@ export function renderGrid(
   ctx.restore()
 }
 
-// --- Rail rendering (HO scale, world units = model mm) ---
+// --- Rail rendering (Real scale UIC / French railway standard: 1 unit = 1 meter) ---
 
-/** HO gauge: 16.5 mm (NEM 010 / NMRA S-1.2) */
-export const GAUGE = 16.5
-/** Sleeper spacing in HO: ~7.5 mm (accurate HO scale, ~33 sleepers per 246mm track) */
-export const SLEEPER_SPACING = 7.5
-/** Sleeper length: 26 mm (gauge 16.5 mm + ~4.75 mm each side) */
-export const SLEEPER_LENGTH = 26
-/** Sleeper width in HO: ~2.8 mm */
-export const SLEEPER_WIDTH = 2.8
-/** Ballast roadbed width: 32 mm (standard Kato HO Unitrack roadbed) */
-export const BALLAST_WIDTH = 32
-/** Rail head width (Code 83 ≈ 1.0 mm) */
-export const RAIL_WIDTH = 1.0
+/** Standard UIC gauge: 1.435 m (Voie normale standard: France LGV / TER / Intercités) */
+export const GAUGE = 1.435
 
-/** Below this scale (px/mm), render as a single simplified line. */
-export const SIMPLIFY_THRESHOLD = 2
+/** Rail head width UIC 60: ~0.07 m (72 mm) */
+export const RAIL_WIDTH = 0.07
 
-/** Minimum curve radius for HO (380 mm, 15 inches) */
-export const MIN_RADIUS = 380
+/** Sleeper spacing in meters: ~0.60 m (standard 60 cm on SNCF mainline) */
+export const SLEEPER_SPACING = 0.60
+/** Sleeper length in meters: 2.60 m (standard traverse béton monobloc/bois) */
+export const SLEEPER_LENGTH = 2.60
+/** Sleeper width in meters: 0.28 m (28 cm) */
+export const SLEEPER_WIDTH = 0.28
+/** Ballast roadbed width in meters: ~3.20 m */
+export const BALLAST_WIDTH = 3.20
+
+/** Minimum curve radius for full-speed classical tracks (meters) */
+export const MIN_RADIUS = 150.0
+
+/** Below this scale (pixels per meter), render as a single simplified line. */
+export const SIMPLIFY_THRESHOLD = 0.05
 
 export interface ViewportBounds {
   minX: number
@@ -205,9 +207,6 @@ export function renderNetwork(
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
-  const sleeperColor = getCanvasStyle(ctx.canvas, '--sleeper', '#443425')
-  const ballastColor = getCanvasStyle(ctx.canvas, '--ballast', '#dcd6cc')
-  const ballastEdge = getCanvasStyle(ctx.canvas, '--ballast-edge', '#c2b9aa')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
   const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
@@ -286,60 +285,7 @@ export function renderNetwork(
       ctx.restore()
     }
   } else {
-    // Detect diamond crossings only amongst visible segments in the viewport
-    const crossings = detectCrossings(net, visibleSegments)
-    const visibleCrossings = crossings.filter((c) => isPointInBounds(c.center, bounds))
-
-    // LAYER 1: BALLAST ROADBED
-    // Draw ballast roadbed for visible segments
-    for (const seg of visibleSegments) {
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-
-      const selected = selection.segments.has(seg.id)
-      const isInactive = isInactiveBranch(net, seg.id)
-
-      ctx.save()
-      if (isInactive) ctx.globalAlpha = 0.4
-      if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurveBallast(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, ballastColor, ballastEdge)
-      } else {
-        renderDetailedRailBallast(ctx, cam, a.pos, b.pos, vw, vh, selected, ballastColor, ballastEdge)
-      }
-      ctx.restore()
-    }
-    // Connect ballast seamlessly at nodes with degree >= 2 (drawn under all rails and sleepers)
-    renderBallastJoints(ctx, cam, vw, vh, net, ballastColor, ballastEdge, bounds)
-    // Draw unified diamond ballast platform for visible crossings
-    for (const c of visibleCrossings) {
-      renderDiamondCrossingBallast(ctx, cam, c, vw, vh, ballastColor, ballastEdge)
-    }
-
-    // LAYER 2: SLEEPERS (TRAVERSES)
-    // Draw sleepers with half-offset spacing across visible segments (skipping crossing diamond interiors)
-    for (const seg of visibleSegments) {
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-
-      const isInactive = isInactiveBranch(net, seg.id)
-      ctx.save()
-      if (isInactive) ctx.globalAlpha = 0.4
-      if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurveSleepers(ctx, cam, a.pos, seg.via, b.pos, vw, vh, sleeperColor, visibleCrossings)
-      } else {
-        renderDetailedRailSleepers(ctx, cam, a.pos, b.pos, vw, vh, sleeperColor, visibleCrossings)
-      }
-      ctx.restore()
-    }
-    // Draw unified shared crossing timbers across visible diamonds
-    for (const c of visibleCrossings) {
-      renderDiamondCrossingSleepers(ctx, cam, c, vw, vh, sleeperColor)
-    }
-
-    // LAYER 3: RAILS
-    // Draw steel rails with polished gleaming white rail head for visible segments.
+    // PURE RAIL RENDERING (2 parallel rails at GAUGE = 1.435m + dynamic miter joints)
     for (const seg of visibleSegments) {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
@@ -360,14 +306,7 @@ export function renderNetwork(
     // Connect rails and create smooth dynamic miter joints at nodes
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds)
 
-    // LAYER 4: TURNOUT & DIAMOND CROSSING MECHANICAL DETAILS + FISHPLATES
-    renderTurnoutMechanicalDetails(ctx, cam, vw, vh, net, bounds)
-    renderFishplates(ctx, cam, vw, vh, net, bounds)
-    for (const c of visibleCrossings) {
-      renderDiamondCrossingDetails(ctx, cam, c, vw, vh, railColor, accent)
-    }
-
-    // For selected segments, draw a prominent directional arrow along track center showing construction direction
+    // Directional chevron along track center showing construction direction
     for (const seg of visibleSegments) {
       if (!selection.segments.has(seg.id)) continue
       const a = net.nodes.get(seg.from)
@@ -1019,9 +958,8 @@ export function renderScaleBar(
 }
 
 function formatDistance(world: number): string {
-  if (world >= 1000) return `${world / 1000}k`
-  if (Number.isInteger(world)) return `${world}`
-  return `${world.toFixed(world < 1 ? 2 : 1)}`
+  if (world >= 1000) return `${(world / 1000).toFixed(2)} km`
+  return `${world.toFixed(2)} m`
 }
 
 function roundRect(

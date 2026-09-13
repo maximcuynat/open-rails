@@ -4,8 +4,8 @@ import {
   renderGrid,
   renderNetwork,
   renderScaleBar,
-  renderDetailedCurve,
-  renderDetailedRail,
+  renderDetailedCurveRails,
+  renderDetailedRailLines,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
 } from '../render/renderer'
@@ -135,9 +135,6 @@ function renderPlacePreview(
   isClosedToNode = false,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#443425'
-  const ballastColor = getComputedStyle(ctx.canvas).getPropertyValue('--ballast').trim() || '#dcd6cc'
-  const ballastEdge = getComputedStyle(ctx.canvas).getPropertyValue('--ballast-edge').trim() || '#c2b9aa'
   const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
@@ -168,8 +165,8 @@ function renderPlacePreview(
     ctx.stroke()
     ctx.setLineDash([])
   } else {
-    ctx.globalAlpha = 0.75
-    renderDetailedRail(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent, sleeperColor, ballastColor, ballastEdge)
+    ctx.globalAlpha = 0.85
+    renderDetailedRailLines(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent)
     ctx.globalAlpha = 1
   }
 
@@ -230,9 +227,6 @@ function renderCurvePreview(
   isClosedToNode = false,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const sleeperColor = getComputedStyle(ctx.canvas).getPropertyValue('--sleeper').trim() || '#443425'
-  const ballastColor = getComputedStyle(ctx.canvas).getPropertyValue('--ballast').trim() || '#dcd6cc'
-  const ballastEdge = getComputedStyle(ctx.canvas).getPropertyValue('--ballast-edge').trim() || '#c2b9aa'
   const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
@@ -263,8 +257,8 @@ function renderCurvePreview(
     ctx.stroke()
     ctx.setLineDash([])
   } else {
-    ctx.globalAlpha = 0.75
-    renderDetailedCurve(ctx, cam, start, via, end, vw, vh, false, railColor, accent, sleeperColor, ballastColor, ballastEdge)
+    ctx.globalAlpha = 0.85
+    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, false, railColor, accent)
     ctx.globalAlpha = 1
   }
 
@@ -415,12 +409,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isJoin = isJoinNode || hitSegId !== null
         const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
         const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-        const labelText = `${prefix}${snappedLen}mm${joinSuffix}`
+        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}`
         renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
       }
     }
 
-    // Curve preview — Kato catalog piece or freeform tangent arc
+    // Curve preview — UIC catalog piece or freeform tangent arc
     const cs = store.curveState
     if (cs.phase === 1 && cs.startId) {
       const startNode = store.network.nodes.get(cs.startId)
@@ -445,8 +439,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const sideLabel = side === -1 ? 'Gauche' : 'Droite'
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
           const labelText = radius === Infinity
-            ? `Flex ${len.toFixed(0)}mm${joinSuffix}`
-            : `Flex ${sideLabel} R${radius.toFixed(0)} ${angle.toFixed(1)}° (${len.toFixed(0)}mm)${joinSuffix}`
+            ? `Flex ${len.toFixed(2)} m${joinSuffix}`
+            : `Flex ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
           renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
         } else {
           const radius = store.selectedCurveRadius
@@ -460,7 +454,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const isJoin = isJoinNode || hitSegId !== null
           const len = curveLength(startNode.pos, via, end)
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-          const labelText = `Courbe ${sideLabel} R${radius} ${angle}° (${len.toFixed(0)}mm)${joinSuffix}`
+          const labelText = `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
           renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
         }
       }

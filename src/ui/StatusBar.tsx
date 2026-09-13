@@ -35,8 +35,8 @@ function toolStatus(store: EditorStore): string {
 
 export function StatusBar({ store }: { store: EditorStore }) {
   const cam = store.camera
-  const cx = store.cursorWorld.x.toFixed(0)
-  const cy = store.cursorWorld.y.toFixed(0)
+  const cx = store.cursorWorld.x.toFixed(2)
+  const cy = store.cursorWorld.y.toFixed(2)
   const isCatalog = store.trackMode === 'catalog'
 
   return (
@@ -51,7 +51,7 @@ export function StatusBar({ store }: { store: EditorStore }) {
           onClick={() => store.setTrackMode(isCatalog ? 'freeform' : 'catalog')}
           title="Basculer de mode (Raccourci M)"
         >
-          {isCatalog ? 'Kato HO' : 'Voie Libre'}
+          {isCatalog ? 'Standards UIC' : 'Voie Libre'}
         </button>
         <button
           className={`sb-chip${store.snap ? ' on' : ''}`}
@@ -70,9 +70,9 @@ export function StatusBar({ store }: { store: EditorStore }) {
       </div>
       <div className="sb-right">
         <button className="sb-chip" onClick={() => store.resetZoom()} title="Reset zoom (Ctrl+0)">
-          {cam.scale.toFixed(2)}x
+          {cam.scale.toFixed(2)} px/m
         </button>
-        <span className="sb-coord">({cx}, {cy})</span>
+        <span className="sb-coord">X: {cx} m, Y: {cy} m</span>
       </div>
     </div>
   )

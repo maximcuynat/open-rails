@@ -1,39 +1,38 @@
-/** Kato Unitrack HO standard curve radii in model mm.
- *  Ordered from tightest to widest.
- *  All Kato curves are 22.5° segments (except 2-290 at 10°).
- *  4 pieces = quarter circle, 16 pieces = full circle. */
+/** French / UIC standard curve radii in real meters (LGV / TER / Intercités).
+ *  Ordered from tightest (yard/depot) to widest (LGV high speed).
+ */
 export const CURVE_RADII: number[] = [
-  430,  // 2-260
-  490,  // 2-270
-  550,  // 2-210
-  610,  // 2-220
-  670,  // 2-230
-  730,  // 2-240
-  790,  // 2-250
-  867,  // 2-290 (10° segments)
-  Infinity, // straight
+  150,  // Dépôt / triage très serré
+  250,  // Gare / zone de manœuvre
+  500,  // TER / Ligne classique (V <= 100 km/h)
+  800,  // Ligne classique moyenne (V ~ 130 km/h)
+  1200, // Ligne classique rapide (V ~ 160 km/h)
+  2000, // Ligne rapide (V ~ 200-220 km/h)
+  4000, // LGV standard (V ~ 270-300 km/h)
+  7000, // LGV haute vitesse (V >= 320 km/h)
+  Infinity, // Ligne droite
 ]
 
-/** Standard Kato Unitrack HO straight lengths in mm. */
+/** Reference straight lengths in meters. */
 export const STRAIGHT_LENGTHS: number[] = [
-  60,   // 2-105
-  94,   // 2-111
-  109,  // 2-170 (with buffer)
-  114,  // 2-120
-  123,  // 2-140
-  149,  // 2-193
-  174,  // 2-130
-  227,  // 2-160
-  246,  // 2-150 / 2-151 (feeder)
-  369,  // 2-180
+  25,   // Barre courte
+  50,   // Tronçon élémentaire
+  100,  // 100m
+  200,  // 200m
+  400,  // Longueur train standard
+  800,  // Demi-canton
+  1000, // 1 km
 ]
 
-/** Standard curve segment angles in degrees. */
-export const CURVE_ANGLES: number[] = [22.5, 10]
+/** Standard curve segment deflection angles in degrees. */
+export const CURVE_ANGLES: number[] = [5, 10, 15, 30, 45, 90]
 
-/** Map radius to its standard angle (867mm uses 10°, all others 22.5°). */
+/** Map radius to a default deflection angle in degrees. */
 export function radiusToAngle(radius: number): number {
-  return radius === 867 ? 10 : 22.5
+  if (radius >= 4000) return 5
+  if (radius >= 1200) return 10
+  if (radius >= 500) return 15
+  return 30
 }
 
 /** Snap a raw length to the closest standard straight piece. */

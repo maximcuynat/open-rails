@@ -33,14 +33,14 @@ export interface CurveState {
 export class EditorStore {
   // --- Mutable canvas state (not React state) ---
   network: Network = createNetwork()
-  camera: Camera = createCamera(0, 0, 3)
+  camera: Camera = createCamera(0, 0, 1) // 1 px per meter by default
   selection: Selection = { nodes: new Set(), segments: new Set() }
   tool: Tool = 'place'
   snap = true
   showGrid = true
   lastNodeId: string | null = null
   curveState: CurveState = { phase: 0, startId: null }
-  curveProfileIdx = 5 // index into CURVE_RADII (defaults to 730mm)
+  curveProfileIdx = 2 // R500 (TER / ligne classique standard)
   curveSide: 1 | -1 = 1
   autoCurveSide = true
   cursorWorld: Point = { x: 0, y: 0 }
@@ -50,11 +50,11 @@ export class EditorStore {
   moved = false
   showMinimap = false
 
-  // Track selection and mode
-  trackMode: TrackMode = 'catalog'
+  // Track selection and mode: freeform by default
+  trackMode: TrackMode = 'freeform'
   selectedStraightLength: number | 'auto' = 'auto'
-  selectedCurveRadius = 730
-  selectedCurveAngle = 22.5
+  selectedCurveRadius = 500
+  selectedCurveAngle = 15
 
   // Turnout configuration
   selectedFrog: 4 | 6 = 6

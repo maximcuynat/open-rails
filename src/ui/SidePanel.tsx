@@ -128,20 +128,20 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
       <PanelHeader>Nœud de jonction</PanelHeader>
       <div className="sp-section">
         <label className="sp-input-row">
-          <span>X (mm)</span>
+          <span>X (m)</span>
           <input
             type="number"
-            step="any"
+            step="0.01"
             value={x}
             onChange={(e) => setX(parseFloat(e.target.value) || 0)}
             onBlur={(e) => applyX(parseFloat(e.target.value) || 0)}
           />
         </label>
         <label className="sp-input-row">
-          <span>Y (mm)</span>
+          <span>Y (m)</span>
           <input
             type="number"
-            step="any"
+            step="0.01"
             value={y}
             onChange={(e) => setY(parseFloat(e.target.value) || 0)}
             onBlur={(e) => applyY(parseFloat(e.target.value) || 0)}
@@ -212,7 +212,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
               onClick={() => selectNode(otherId)}
             >
               <span className={`sp-tag ${s.kind}`}>{s.kind === 'curve' ? 'courbe' : 'droite'}</span>
-              → {other ? `(${other.pos.x.toFixed(0)}, ${other.pos.y.toFixed(0)})` : otherId}
+              → {other ? `(${other.pos.x.toFixed(2)} m, ${other.pos.y.toFixed(2)} m)` : otherId}
             </button>
           )
         })}
@@ -234,7 +234,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   if (!a || !b) return <NetworkPanel store={store} />
 
   const junction = findJunctionBySegment(store.network, segId)
-  const isStraightBranch = junction ? segId === junction.straightSegmentId : false
+  const isStraightBranch = junction?.straightSegmentId === segId
   const isBranchActive = junction
     ? (isStraightBranch && junction.activeBranch === 'straight') ||
       (!isStraightBranch && junction.activeBranch === 'diverging')
@@ -269,33 +269,26 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   }
 
   const onDelete = () => {
-    removeSegment(store.network, segId, true)
-    if (store.lastNodeId && !store.network.nodes.has(store.lastNodeId)) {
-      store.lastNodeId = null
-    }
-    if (store.curveState.startId && !store.network.nodes.has(store.curveState.startId)) {
-      store.curveState = { phase: 0, startId: null }
-    }
-    store.clearSelection()
+    removeSegment(store.network, segId)
+    store.selection = { nodes: new Set(), segments: new Set() }
     store.markDirty()
-    store.notify()
   }
 
   return (
     <>
       <PanelHeader>
-        {seg.kind === 'curve' ? 'Coupon de courbe' : 'Coupon de voie droite'}
+        {seg.kind === 'curve' ? 'Voie courbe' : 'Voie droite'}
       </PanelHeader>
       <div className="sp-section">
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
-        <Field label="Longueur" value={`${len.toFixed(0)} mm`} />
+        <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
-            <Field label="Rayon" value={radius === null || radius === Infinity ? '∞' : `R${radius.toFixed(0)} mm`} />
-            <Field label="Angle" value={deflection === null ? '—' : `${deflection.toFixed(1)}°`} />
-            <Field label="Point via" value={`(${seg.via.x.toFixed(0)}, ${seg.via.y.toFixed(0)})`} />
+            <Field label="Rayon" value={radius === null || radius === Infinity ? '∞' : `R${radius.toFixed(2)} m`} />
+            <Field label="Angle" value={deflection === null ? '—' : `${deflection.toFixed(2)}°`} />
+            <Field label="Point via" value={`(${seg.via.x.toFixed(2)} m, ${seg.via.y.toFixed(2)} m)`} />
           </>
         )}
         {junction && (

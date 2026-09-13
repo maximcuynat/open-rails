@@ -26,12 +26,12 @@ export function TrackPalette({ store }: { store: EditorStore }) {
               <line x1="12" y1="4" x2="12" y2="20" />
               <line x1="17" y1="4" x2="17" y2="20" />
             </svg>
-            <span>Catalogue Kato</span>
+            <span>Standards UIC</span>
           </button>
           <button
             className={`tp-mode-btn ${!isCatalog ? 'active free' : ''}`}
             onClick={() => store.setTrackMode('freeform')}
-            title="Voie Libre / Flexible (courbes et longueurs libres, décalquage)"
+            title="Voie Libre / Continue (courbes et longueurs libres au mètre près)"
           >
             <svg className="tp-svg-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 17c3.5 0 5.5-10 9-10s5.5 10 9 10" />
@@ -95,9 +95,9 @@ export function TrackPalette({ store }: { store: EditorStore }) {
                       key={len}
                       className={`tp-chip ${store.selectedStraightLength === len ? 'active' : ''}`}
                       onClick={() => store.setSelectedStraightLength(len)}
-                      title={`Coupon droit Kato ${len} mm`}
+                      title={`Tronçon de voie droite de ${len.toFixed(2)} m`}
                     >
-                      {len} mm
+                      {len} m
                     </button>
                   ))}
                 </div>
@@ -114,9 +114,9 @@ export function TrackPalette({ store }: { store: EditorStore }) {
                         key={r}
                         className={`tp-chip ${store.selectedCurveRadius === r ? 'active' : ''}`}
                         onClick={() => store.setSelectedCurveRadius(r)}
-                        title={`Rayon de courbe R${r} mm (Raccourci [ / ])`}
+                        title={`Rayon de courbe R${r.toFixed(2)} m (Raccourci [ / ])`}
                       >
-                        R{r}
+                        R{r} m
                       </button>
                     ))}
                   </div>
@@ -130,7 +130,7 @@ export function TrackPalette({ store }: { store: EditorStore }) {
                         key={ang}
                         className={`tp-chip ${store.selectedCurveAngle === ang ? 'active' : ''}`}
                         onClick={() => store.setSelectedCurveAngle(ang)}
-                        title={`Angle de courbe ${ang}°`}
+                        title={`Angle de déviation ${ang}°`}
                       >
                         {ang}°
                       </button>
