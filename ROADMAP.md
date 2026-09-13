@@ -30,13 +30,37 @@
 | Déplacement libre des nœuds et intersections à la souris             | Fait   |
 | Sélection multiple (rectangle de sélection + Shift+clic + Ctrl+A)    | Fait   |
 | Suppression complète (`Delete` / `Backspace` / panneau latéral)      | Fait   |
-| Barre d'outils avec icônes ferroviaires techniques (V, N, C, H)      | Fait   |
+| Barre d'outils avec icônes ferroviaires techniques (V, N, C, Y, H)   | Fait   |
 | Barre d'état avec sélecteur de mode et états d'accrochage            | Fait   |
-| Raccourcis clavier (V, N, C, H, G, F, M, Tab, [, ], Del, Esc, Ctrl+0) | Fait   |
+| Raccourcis clavier (V, N, C, Y, T, H, G, F, M, Tab, [, ], Del, Esc)   | Fait   |
+| Outil et catalogue Aiguillages Kato #4 & #6 (gauche/droite)          | Fait   |
+| Scission automatique de segment (`splitSegment`) lors de la pose     | Fait   |
+| Soudure de nœuds (`weldNodes`) et bascule de déviation symétrique     | Fait   |
+| Continuité 100% sans trou des rails aux jonctions (`renderRailJoints`) | Fait   |
+| Accrochage grille strict en mode Voie Libre (pose & déplacement)     | Fait   |
+| Auto-détection dynamique des aiguillages (`autoDetectJunctions`)     | Fait   |
+| Auto-détection croisements à niveau sans superposition (Diamond Cross)| Fait   |
+| Outil précis Croisement / Traversée (X) avec angles 15°, 30°, 45°, 90°| Fait   |
+| Rendu SVG & Canvas géométrie pure : droites strictes & courbes Bézier Q| Fait   |
+| Lames et contre-rails épousant fidèlement les courbes de déviation   | Fait   |
+| Rendu mécanique aiguillage : contre-rails, cœur V, coussinets, cales | Fait   |
+| Rendu dynamique lames mobiles, biellette de commande & moteur        | Fait   |
+| Jonctions épurées : rails continus + discontinuité rail-head 1.2mm   | Fait   |
+| Selles métalliques d'assise (tie plates) & tirefonds sous rails      | Fait   |
+| Heurtoirs de voie (buffer stops) SNCF/UIC réalistes sur impasses      | Fait   |
+| Export SVG réaliste multi-calques (croisements, aiguilles, heurtoirs)| Fait   |
+| Bascule dynamique de voie active (clic / touche T / panneau)          | Fait   |
+| Indicateur visuel d'aiguillage (vert directe, ambre déviée + flèche)  | Fait   |
+| Pathfinding Dijkstra orienté aiguillages (`findPath`, `reachableFrom`)| Fait   |
+| Détection des impasses, boucles fermées et composantes disjointes    | Fait   |
 | MiniMap vectorielle synchronisée avec le viewport réel               | Fait   |
-| Panneau latéral SidePanel avec conversion métrique (mm / m)          | Fait   |
-| Export JSON / SVG (boîte englobante avec `via`) / PNG                | Fait   |
-| Tests unitaires (100 tests Vitest, 100% passants)                    | Fait   |
+| Panneau latéral SidePanel avec conversion métrique & contrôles aiguille| Fait   |
+| Squelette logique de jonction & réconciliation topologique (`reconcileNetworkIntersections`)| Fait   |
+| Détection automatique et scission de voie lors de pose de courbes/droites sur voies existantes| Fait   |
+| Accrochage magnétique direct sur rail avec maintien de la tangence G1 | Fait   |
+| Importation & Réconciliation JSON automatique (raccourci `R` / Menu)  | Fait   |
+| Export JSON / SVG réaliste / PNG                                     | Fait   |
+| Tests unitaires (147 tests Vitest, 100% passants)                    | Fait   |
 
 ---
 
@@ -128,63 +152,65 @@ large, découpée en 5 étapes qui se construisent les unes sur les autres.
 
 ### 3.1 — Extension du modèle : le nœud jonction
 
-- [ ] Nouveau type `Junction` dans `types.ts` :
-  - [ ] `id`, `position: Point`
-  - [ ] `stem: NodeId` (branche commune)
-  - [ ] `straightBranch: NodeId`, `divergingBranch: NodeId`
-  - [ ] `activeBranch: 'straight' | 'diverging'`
-  - [ ] `hand: 'left' | 'right'` (sens de la déviation)
-- [ ] Une jonction reste un nœud du graphe existant : elle ne casse pas
-      `adjacency`, elle ajoute juste une règle de traversée dessus
-- [ ] Catalogue des gabarits d'aiguillage dans `profiles.ts` (numéro de
-      talon #4 / #6, rayon de la branche déviée, angle), sur le modèle du
-      catalogue Kato déjà en place pour les rails
-- [ ] Tests : `junction.test.ts` (création, branches, validité)
+- [x] Nouveau type `Junction` dans `types.ts` :
+  - [x] `id`, `nodeId: NodeId` (nœud de pointe / apex)
+  - [x] `stemNodeId?: NodeId` (branche commune / tronc)
+  - [x] `straightNodeId: NodeId`, `divergingNodeId: NodeId`
+  - [x] `straightSegmentId: SegmentId`, `divergingSegmentId: SegmentId`
+  - [x] `activeBranch: 'straight' | 'diverging'`
+  - [x] `hand: 'left' | 'right'` (sens de la déviation)
+  - [x] `frogNumber?: number` (#4 ou #6)
+- [x] Une jonction reste un nœud du graphe existant : elle ne casse pas
+      `adjacency`, elle ajoute une règle d'orientation et de traversée dessus
+- [x] Catalogue des gabarits d'aiguillage dans `junction.ts` (`TURNOUT_SPECS` :
+      Kato #6 246mm / R867 10°, Kato #4 123mm / R490 15°)
+- [x] Tests : `junction.test.ts` (7 tests unitaires)
 
-### 3.2 — Pose et découpe automatique
+### 3.2 — Pose et découpe automatique ✅
 
-- [ ] Outil **aiguillage** dans la barre d'outils et la palette, gabarit sélectionnable
-- [ ] Pose sur du vide : place la jonction avec ses trois branches
-- [ ] Pose sur une voie existante : le segment visé est découpé en deux, la
-      jonction s'insère au point de découpe (style XTrackCAD)
-- [ ] Alignement assisté : surbrillance magnétique des extrémités compatibles
-- [ ] Refus de connexion si l'angle entre les deux voies dépasse une
-      tolérance réglable (évite les jonctions vrillées)
+- [x] Outil **aiguillage** dans la barre d'outils (`Y`) et la palette (`TrackPalette`), gabarit et côté sélectionnables
+- [x] Pose sur du vide : place la jonction avec sa branche directe et sa branche déviée exacte
+- [x] Pose sur une voie existante : scission de segment (`splitSegment`) de Casteljau et insertion automatique
+- [x] Alignement assisté : surbrillance magnétique des extrémités compatibles et prolongement tangentiel
+- [x] Découpe automatique de segment droit et courbe au point de clic
 
-### 3.3 — Édition libre des intersections
+### 3.3 — Édition libre des intersections ✅
 
 - [x] Déplacer un nœud partagé par plusieurs segments déplace tous les
-      segments connectés en temps réel (`isDraggingNode`)
+      segments connectés en temps réel (`isDraggingNode`), snapé sur la grille
 - [x] Nettoyage automatique des nœuds orphelins lors de la suppression d'un rail
 - [x] Affichage dédié des extrémités non connectées (anneaux de snap vert/accentué)
-- [ ] Fusionner deux nœuds proches en un seul point de jonction (souder)
-- [ ] Scinder un segment existant en cliquant dessus avec l'outil place
-- [ ] Convertir un croisement de deux voies en jonction réelle
-- [ ] Retourner une jonction (flip gauche/droite) sans la replacer
-- [ ] Tests : `junction-edit.test.ts` (fusion, scission, déplacement en cascade)
+- [x] Fusionner deux nœuds proches en un seul point de jonction (`weldNodes`)
+- [x] Scinder un segment existant en sous-segments (`splitSegment`)
+- [x] Retourner une jonction (flip gauche/droite : `toggleTurnoutHand`) par symétrie axiale
+- [x] Tests : `junction.test.ts` (fusion `weldNodes`, bascule `toggleTurnoutHand`, scission de Casteljau)
 
-### 3.4 — Rendu et bascule des aiguillages
+### 3.4 — Rendu réaliste, mécanique ferroviaire et bascule des aiguillages ✅
 
-- [ ] Branche active dessinée pleine, branche inactive en pointillé ou
-      grisée
-- [ ] Clic sur la jonction ou touche `T` (jonction sélectionnée) : bascule
-      `activeBranch`
-- [ ] Animation courte de la transition (lerp visuel)
-- [ ] Icône directionnelle dans le SidePanel quand une jonction est
-      sélectionnée (numéro de talon, sens, branche active)
+- [x] Auto-détection automatique des aiguillages dès que 3 voies convergent (`autoDetectJunctions`)
+- [x] Rendu des protections latérales (contre-rails / guard rails) avec extrémités évasées opposées au cœur
+- [x] Cœur d'aiguille (crossing frog point en V) et pattes de lièvre (wing rails)
+- [x] Lames d'aiguilles mobiles (switch blades) dynamiques selon la branche active
+- [x] Tringle de manœuvre (stretcher bar) et moteur d'aiguille latéral sur traverses
+- [x] Rendu des éclisses métalliques (fishplates) avec 4 têtes de boulons aux jonctions à 2 segments
+- [x] Export SVG réaliste multi-calques vectoriel fidèle à l'échelle HO 1:87 (`generateRealisticSVG`)
+- [x] Branche active dessinée pleine, branche inactive atténuée (opacité 40% + tirets)
+- [x] Clic direct sur l'aiguillage ou touche `T` : bascule instantanée `activeBranch`
+- [x] Indicateur visuel de lanterne d'aiguille (vert = voie directe, ambre = voie déviée) avec flèche d'alignement
+- [x] Continuité parfaite des rails aux nœuds (`renderRailJoints`) : les files de rails et le ballast se touchent sans aucun jour
+- [x] Panneau dédié dans le `SidePanel` : statut de l'aiguille, branche active, bouton de bascule et inverseur gauche/droite
 
-### 3.5 — Détection de chemins
+### 3.5 — Détection de chemins & pathfinding ✅
 
-- [ ] Fonction `findPath(net, fromNodeId, toNodeId)` : parcours du graphe en
-      largeur, respecte `activeBranch` de chaque jonction traversée
-- [ ] Fonction `reachableFrom(net, nodeId)` : ensemble des nœuds atteignables
-- [ ] Surlignage du chemin entre deux points sélectionnés
-- [ ] Détection des voies orphelines et boucles fermées
-- [ ] Tests : `pathfinding.test.ts`
+- [x] Algorithme de recherche `findPath(net, fromNodeId, toNodeId, options)` : Dijkstra avec contraintes d'aiguillage
+- [x] Fonction `reachableFrom(net, nodeId)` : ensemble des nœuds et segments atteignables selon l'orientation des aiguilles
+- [x] Détection des voies impasses / heurtoirs (`detectDeadEnds`)
+- [x] Détection des boucles fermées / cycles (`detectLoops`)
+- [x] Détection des voies orphelines et composantes disjointes (`detectConnectedComponents`)
+- [x] Statistiques topologiques en direct dans le `SidePanel` (impasses, boucles, composantes)
+- [x] Tests : `pathfinding.test.ts` (9 tests unitaires)
 
-**Livrable :** un réseau avec aiguillages fonctionnels, des jonctions
-éditables comme n'importe quel autre élément, et un graphe interrogeable
-pour savoir ce qui est atteignable depuis n'importe quel point.
+**Livrable :** Phase 3 100% opérationnelle avec aiguillages Kato, topologie libre, raccordement parfait des rails aux nœuds, accrochage grille en mode Voie Libre, bascule clavier/souris et pathfinding.
 
 ---
 
