@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { clampScale, screenToWorld, type Camera } from '../render/camera'
 import {
   renderGrid,
@@ -442,6 +442,30 @@ export function Canvas({ store, onViewport }: CanvasProps) {
   const getSnapSpacing = useCallback(() => {
     return store.snap ? pickSpacing(store.camera.scale) : 0
   }, [store])
+
+  // Inline rename state for double click on section
+  const [renamingSection, setRenamingSection] = useState<{
+    sectionId: string
+    name: string
+    x: number
+    y: number
+  } | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (renamingSection) {
+      setTimeout(() => renameInputRef.current?.select(), 50)
+    }
+  }, [renamingSection])
+
+  const commitRename = () => {
+    if (!renamingSection) return
+    const trimmed = renamingSection.name.trim()
+    if (trimmed) {
+      store.setSectionMeta(renamingSection.sectionId, { name: trimmed })
+    }
+    setRenamingSection(null)
+  }
 
   // Resize handling
   useEffect(() => {
@@ -960,23 +984,130 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     const onContextMenu = (e: Event) => e.preventDefault()
 
+    const onDblClick = (e: MouseEvent) => {
+      const world = getWorldPos(e.clientX, e.clientY)
+      const hitTol = 14 / store.camera.scale
+      const segId = hitSegment(store.network, world, hitTol)
+      if (segId) {
+        const sections = computeTrackSections(store.network, store.sectionMeta)
+        const clickedSection = findSectionBySegment(sections, segId)
+        if (clickedSection) {
+          const rect = canvas.getBoundingClientRect()
+          setRenamingSection({
+            sectionId: clickedSection.id,
+            name: clickedSection.name,
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top,
+          })
+          store.selection = {
+            nodes: new Set(clickedSection.nodeIds),
+            segments: new Set(clickedSection.segmentIds),
+          }
+          redraw()
+        }
+      }
+    }
+
     canvas.addEventListener('pointerdown', onDown)
     canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContextMenu)
+    canvas.addEventListener('dblclick', onDblClick)
     return () => {
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContextMenu)
+      canvas.removeEventListener('dblclick', onDblClick)
     }
   }, [store, draw, redraw, getWorldPos, getSnapSpacing])
 
   return (
-    <div className="canvas-wrap">
+    <div className="canvas-wrap" style={{ position: 'relative' }}>
       <canvas ref={canvasRef} className={`tool-${store.tool}`} />
+
+      {renamingSection && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${renamingSection.x}px`,
+            top: `${renamingSection.y}px`,
+            transform: 'translate(-50%, -120%)',
+            background: 'var(--panel-bg, #181c24)',
+            border: '1px solid var(--accent, #3b82f6)',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+            borderRadius: '6px',
+            padding: '8px 10px',
+            zIndex: 100,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            minWidth: '220px',
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
+            Renommer la section
+          </div>
+          <input
+            ref={renameInputRef}
+            type="text"
+            value={renamingSection.name}
+            onChange={(e) => setRenamingSection({ ...renamingSection, name: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              if (e.key === 'Escape') setRenamingSection(null)
+            }}
+            onBlur={commitRename}
+            style={{
+              padding: '5px 8px',
+              fontSize: '12px',
+              fontWeight: 600,
+              background: 'var(--input-bg, #0f172a)',
+              color: 'var(--ink, #f8fafc)',
+              border: '1px solid var(--border, #334155)',
+              borderRadius: '4px',
+              outline: 'none',
+              width: '100%',
+              boxSizing: 'border-box',
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '2px' }}>
+            <button
+              onClick={() => setRenamingSection(null)}
+              style={{
+                fontSize: '10px',
+                padding: '3px 8px',
+                background: 'transparent',
+                border: '1px solid var(--border, #334155)',
+                borderRadius: '3px',
+                color: 'var(--text-muted, #94a3b8)',
+                cursor: 'pointer',
+              }}
+            >
+              Annuler
+            </button>
+            <button
+              onClick={commitRename}
+              style={{
+                fontSize: '10px',
+                padding: '3px 8px',
+                background: 'var(--accent, #3b82f6)',
+                border: 'none',
+                borderRadius: '3px',
+                color: '#fff',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Valider
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

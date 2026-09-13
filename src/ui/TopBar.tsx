@@ -31,8 +31,8 @@ export function TopBar({ store, onFitView }: TopBarProps) {
   ]
 
   const editItems: MenuItem[] = [
-    { id: 'undo', label: 'Undo', shortcut: 'Ctrl+Z', disabled: true },
-    { id: 'redo', label: 'Redo', shortcut: 'Ctrl+Shift+Z', disabled: true, separatorAfter: true },
+    { id: 'undo', label: 'Undo', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
+    { id: 'redo', label: 'Redo', shortcut: 'Ctrl+Shift+Z', disabled: !store.canRedo, separatorAfter: true },
     { id: 'delete', label: 'Delete', shortcut: 'Del' },
     { id: 'duplicate', label: 'Duplicate', shortcut: 'Ctrl+D', disabled: true },
     { id: 'select-all', label: 'Select all', shortcut: 'Ctrl+A', separatorAfter: true },
@@ -93,6 +93,12 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const onEditSelect = (id: string) => {
     switch (id) {
+      case 'undo':
+        store.undo()
+        break
+      case 'redo':
+        store.redo()
+        break
       case 'reconcile':
         store.reconcileTopology()
         break

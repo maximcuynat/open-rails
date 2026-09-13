@@ -9,6 +9,8 @@ import {
   loadNetworkFromStorage,
   clearNetworkStorage,
   deserializeNetwork,
+  serializeNetwork,
+  type SerializedProject,
 } from '../core/persistence'
 import type { JunctionId, Network, Point, Selection } from '../core/types'
 import type { SectionMetadata } from '../core/sections'
@@ -80,6 +82,80 @@ export class EditorStore {
   // Custom Section / Canton / Station track metadata (name, type, color)
   sectionMeta: Record<string, SectionMetadata> = {}
 
+  // --- Undo / Redo history stack ---
+  private history: SerializedProject[] = []
+  private historyIndex = -1
+  private isUndoingRedoing = false
+  private maxHistory = 50
+
+  get canUndo(): boolean {
+    return this.historyIndex > 0
+  }
+
+  get canRedo(): boolean {
+    return this.historyIndex >= 0 && this.historyIndex < this.history.length - 1
+  }
+
+  pushHistorySnapshot = (): void => {
+    if (this.isUndoingRedoing) return
+    const snapshot = serializeNetwork(this.network, this.projectName, undefined, this.sectionMeta)
+    // Truncate any forward redo history if we are in the middle of history
+    if (this.historyIndex < this.history.length - 1) {
+      this.history = this.history.slice(0, this.historyIndex + 1)
+    }
+    this.history.push(snapshot)
+    if (this.history.length > this.maxHistory) {
+      this.history.shift()
+    }
+    this.historyIndex = this.history.length - 1
+  }
+
+  undo = (): void => {
+    if (!this.canUndo) return
+    this.historyIndex--
+    const snapshot = this.history[this.historyIndex]
+    if (snapshot) {
+      this.isUndoingRedoing = true
+      try {
+        const res = deserializeNetwork(snapshot)
+        this.network = res.network
+        if (res.sectionMeta) this.sectionMeta = res.sectionMeta
+        else this.sectionMeta = {}
+        this.selection = { nodes: new Set(), segments: new Set() }
+        this.lastNodeId = null
+        this.curveState = { phase: 0, startId: null }
+        this.dirty = true
+        this.savePersistedState()
+        this.notify()
+      } finally {
+        this.isUndoingRedoing = false
+      }
+    }
+  }
+
+  redo = (): void => {
+    if (!this.canRedo) return
+    this.historyIndex++
+    const snapshot = this.history[this.historyIndex]
+    if (snapshot) {
+      this.isUndoingRedoing = true
+      try {
+        const res = deserializeNetwork(snapshot)
+        this.network = res.network
+        if (res.sectionMeta) this.sectionMeta = res.sectionMeta
+        else this.sectionMeta = {}
+        this.selection = { nodes: new Set(), segments: new Set() }
+        this.lastNodeId = null
+        this.curveState = { phase: 0, startId: null }
+        this.dirty = true
+        this.savePersistedState()
+        this.notify()
+      } finally {
+        this.isUndoingRedoing = false
+      }
+    }
+  }
+
   // --- UI-facing state ---
   theme: ThemeMode = 'auto'
   projectName = 'Untitled Network'
@@ -96,6 +172,7 @@ export class EditorStore {
 
   constructor() {
     this.loadPersistedState()
+    this.pushHistorySnapshot()
   }
 
   /**
@@ -156,6 +233,9 @@ export class EditorStore {
     this.dirty = false
     clearNetworkStorage()
     resetIdCounter(0)
+    this.history = []
+    this.historyIndex = -1
+    this.pushHistorySnapshot()
     this.notify()
   }
 
@@ -251,6 +331,7 @@ export class EditorStore {
   markDirty = (): void => {
     this.dirty = true
     this.savePersistedState()
+    this.pushHistorySnapshot()
     this.notify()
   }
 

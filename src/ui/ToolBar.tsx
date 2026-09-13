@@ -101,6 +101,53 @@ export function ToolBar({ store }: { store: EditorStore }) {
     )
   }
 
+  // Undo / Redo
+  items.push(<div key="sep-undoredo" className="tb-sep" />)
+  items.push(
+    <div key="undo" className="tb-btn-wrap" onMouseEnter={() => setHoverId('undo')} onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}>
+      <button
+        className="tb-btn"
+        disabled={!store.canUndo}
+        onClick={() => store.undo()}
+        aria-label="Annuler"
+        style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 7v6h6" />
+          <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
+        </svg>
+      </button>
+      {hoverId === 'undo' && (
+        <div className="tb-tooltip">
+          Annuler
+          <kbd>Ctrl+Z</kbd>
+        </div>
+      )}
+    </div>,
+  )
+  items.push(
+    <div key="redo" className="tb-btn-wrap" onMouseEnter={() => setHoverId('redo')} onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}>
+      <button
+        className="tb-btn"
+        disabled={!store.canRedo}
+        onClick={() => store.redo()}
+        aria-label="Rétablir"
+        style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 7v6h-6" />
+          <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
+        </svg>
+      </button>
+      {hoverId === 'redo' && (
+        <div className="tb-tooltip">
+          Rétablir
+          <kbd>Ctrl+Y</kbd>
+        </div>
+      )}
+    </div>,
+  )
+
   // Toggles: grid + snap
   items.push(<div key="sep-toggles" className="tb-sep" />)
   items.push(

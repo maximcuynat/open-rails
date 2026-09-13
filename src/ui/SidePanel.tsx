@@ -586,7 +586,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
               }}
               onClick={() => applyType('circulation')}
             >
-              🚅 Voie de circulation directe (passage sans arrêt)
+              Voie de circulation directe (passage sans arrêt)
             </button>
             <button
               className="sp-btn-compact"
@@ -603,7 +603,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
               }}
               onClick={() => applyType('station_stop')}
             >
-              🚉 Voie à quai / arrêt voyageurs (gare)
+              Voie à quai / arrêt voyageurs (gare)
             </button>
             <button
               className="sp-btn-compact"
@@ -620,7 +620,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
               }}
               onClick={() => applyType('siding')}
             >
-              🛑 Voie d'évitement / garage / arrêt marchandise
+              Voie d'évitement / garage / arrêt marchandise
             </button>
           </div>
         </div>

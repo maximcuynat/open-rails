@@ -7,7 +7,6 @@ import { ToolBar } from './ui/ToolBar'
 import { SidePanel } from './ui/SidePanel'
 import { CanvasOverlay } from './ui/CanvasOverlay'
 import { MiniMap } from './ui/MiniMap'
-import { TrackPalette } from './ui/TrackPalette'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
@@ -72,7 +71,6 @@ export default function App() {
         <div className="app-canvas-area">
           <Canvas store={store} onViewport={onViewport} />
           <ToolBar store={store} />
-          <TrackPalette store={store} />
           <CanvasOverlay store={store} />
           <SidePanel store={store} />
           {store.showMinimap && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}

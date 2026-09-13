@@ -48,6 +48,16 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if (e.key === 'f' || e.key === 'F') {
         // Fit-to-view handled by App via a custom event (needs viewport size)
         window.dispatchEvent(new CustomEvent('rail:fit-view'))
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        if (e.shiftKey) {
+          store.redo()
+        } else {
+          store.undo()
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault()
+        store.redo()
       } else if ((e.key === '0' || e.key === '0') && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         store.resetZoom()
