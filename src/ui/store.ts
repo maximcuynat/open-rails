@@ -38,7 +38,7 @@ export class EditorStore {
   network: Network = createNetwork()
   camera: Camera = createCamera(0, 0, 1) // 1 px per meter by default
   selection: Selection = { nodes: new Set(), segments: new Set() }
-  tool: Tool = 'place'
+  tool: Tool = 'select'
   snap = true
   showGrid = true
   gridMode: 'auto' | 'fixed' = 'auto'
