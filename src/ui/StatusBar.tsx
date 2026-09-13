@@ -37,7 +37,6 @@ export function StatusBar({ store }: { store: EditorStore }) {
   const cam = store.camera
   const cx = store.cursorWorld.x.toFixed(2)
   const cy = store.cursorWorld.y.toFixed(2)
-  const isCatalog = store.trackMode === 'catalog'
 
   return (
     <div className="status-bar">
@@ -46,13 +45,7 @@ export function StatusBar({ store }: { store: EditorStore }) {
         <span className="sb-status">{toolStatus(store)}</span>
       </div>
       <div className="sb-center">
-        <button
-          className={`sb-chip${isCatalog ? ' on' : ''}`}
-          onClick={() => store.setTrackMode(isCatalog ? 'freeform' : 'catalog')}
-          title="Basculer de mode (Raccourci M)"
-        >
-          {isCatalog ? 'Standards UIC' : 'Voie Libre'}
-        </button>
+        <span className="sb-chip on" title="Mode voie continue métrique">Voie Libre (m)</span>
         <button
           className={`sb-chip${store.snap ? ' on' : ''}`}
           onClick={() => store.toggleSnap()}

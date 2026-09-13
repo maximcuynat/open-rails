@@ -151,7 +151,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
       {junction && (
         <>
-          <div className="sp-subheader">Aiguillage Kato #{junction.frogNumber ?? 6}</div>
+          <div className="sp-subheader">Aiguillage #{junction.frogNumber ?? 6}</div>
           <div className="sp-section">
             <Field label="Déviation" value={junction.hand === 'left' ? 'Gauche' : 'Droite'} />
             <Field
@@ -159,24 +159,46 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
               value={junction.activeBranch === 'straight' ? 'Directe' : 'Déviée'}
             />
           </div>
-          <div className="sp-list" style={{ gap: '6px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', gap: '6px', padding: '0 14px 10px' }}>
             <button
-              className="sp-list-item"
-              style={{ justifyContent: 'center', fontWeight: 600 }}
+              className="sp-btn-compact"
+              style={{
+                flex: 1,
+                padding: '4px 8px',
+                fontSize: '11px',
+                fontWeight: 600,
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+              }}
               onClick={() => store.toggleActiveJunction(junction.id)}
+              title="Basculer l'aiguillage (Raccourci T)"
             >
-              Basculer la voie (T)
+              Aiguiller (T)
             </button>
             <button
-              className="sp-list-item"
-              style={{ justifyContent: 'center' }}
+              className="sp-btn-compact"
+              style={{
+                flex: 1,
+                padding: '4px 8px',
+                fontSize: '11px',
+                fontWeight: 500,
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'transparent',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+              }}
               onClick={() => {
                 toggleTurnoutHand(store.network, junction.id)
                 store.markDirty()
                 store.notify()
               }}
+              title="Inverser le côté de déviation"
             >
-              Inverser côté ({junction.hand === 'left' ? 'Passer Droite' : 'Passer Gauche'})
+              Inverser {junction.hand === 'left' ? 'D' : 'G'}
             </button>
           </div>
         </>
@@ -306,13 +328,23 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
       </div>
 
       {junction && (
-        <div className="sp-list" style={{ marginBottom: '12px' }}>
+        <div style={{ padding: '0 14px 10px' }}>
           <button
-            className="sp-list-item"
-            style={{ justifyContent: 'center', fontWeight: 600 }}
+            style={{
+              width: '100%',
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontWeight: 600,
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              background: 'var(--panel-2)',
+              color: 'var(--ink)',
+              cursor: 'pointer',
+            }}
             onClick={() => store.toggleActiveJunction(junction.id)}
+            title="Basculer l'aiguillage (Raccourci T)"
           >
-            Basculer l'aiguillage (T)
+            Aiguiller (T)
           </button>
         </div>
       )}

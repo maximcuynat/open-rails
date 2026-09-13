@@ -382,7 +382,7 @@ export function renderNetwork(
     }
   }
 
-  // Draw switch stand / junction frog indicators on top
+  // Draw switch stand / junction indicator on top (discreet, compact)
   for (const junc of net.junctions.values()) {
     const apex = net.nodes.get(junc.nodeId)
     if (!apex || !isPointInBounds(apex.pos, bounds)) continue
@@ -393,17 +393,17 @@ export function renderNetwork(
     const activeNode = net.nodes.get(activeNodeId)
 
     ctx.save()
-    const r = Math.max(5, 1.2 * cam.scale)
-    // Emerald green for straight route, amber for diverging route
+    // Compact, discreet indicator (fixed 4.5px radius, doesn't blow up with scale)
+    const r = 4.5
     ctx.fillStyle = junc.activeBranch === 'straight' ? '#10b981' : '#f59e0b'
-    ctx.strokeStyle = ink
-    ctx.lineWidth = 1.5
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.2
     ctx.beginPath()
     ctx.arc(sx, sy, r, 0, Math.PI * 2)
     ctx.fill()
     ctx.stroke()
 
-    // Direction arrow inside indicator
+    // Direction micro chevron inside indicator
     if (activeNode) {
       const dx = activeNode.pos.x - apex.pos.x
       const dy = activeNode.pos.y - apex.pos.y
@@ -415,8 +415,9 @@ export function renderNetwork(
         ctx.rotate(angle)
         ctx.fillStyle = '#ffffff'
         ctx.beginPath()
-        ctx.moveTo(r * 0.65, 0)
+        ctx.moveTo(r * 0.6, 0)
         ctx.lineTo(-r * 0.35, -r * 0.45)
+        ctx.lineTo(-r * 0.1, 0)
         ctx.lineTo(-r * 0.35, r * 0.45)
         ctx.closePath()
         ctx.fill()
