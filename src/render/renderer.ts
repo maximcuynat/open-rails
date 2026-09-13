@@ -209,7 +209,6 @@ export function renderNetwork(
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
-  const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
 
   const simplified = cam.scale < SIMPLIFY_THRESHOLD
 
@@ -340,7 +339,7 @@ export function renderNetwork(
     }
   }
 
-  // Draw nodes on top: open endpoints stand out, continuous joints blend cleanly without any extra marks
+  // Draw nodes on top: visible white points with crisp border for structural clarity
   for (const node of net.nodes.values()) {
     if (!isPointInBounds(node.pos, bounds)) continue
 
@@ -351,30 +350,35 @@ export function renderNetwork(
     const connectionCount = adj.length
 
     if (selected) {
-      // Selected node: prominent accent ring + glow
+      // Selected node: accent ring + central white point
       ctx.fillStyle = accent
       ctx.beginPath()
-      ctx.arc(sx, sy, Math.max(6, 1.2 * cam.scale), 0, Math.PI * 2)
+      ctx.arc(sx, sy, 7, 0, Math.PI * 2)
       ctx.fill()
-      ctx.fillStyle = paper
+      ctx.fillStyle = '#ffffff'
       ctx.beginPath()
-      ctx.arc(sx, sy, Math.max(3, 0.6 * cam.scale), 0, Math.PI * 2)
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2)
       ctx.fill()
     } else if (connectionCount <= 1) {
-      // Open endpoint: clean connection point indicating an open rail end
-      const r = Math.max(4, 0.9 * cam.scale)
+      // Open endpoint: prominent white point with darker ring
       ctx.fillStyle = ink
-      ctx.globalAlpha = 0.8
       ctx.beginPath()
-      ctx.arc(sx, sy, r, 0, Math.PI * 2)
+      ctx.arc(sx, sy, 5.5, 0, Math.PI * 2)
       ctx.fill()
-      ctx.fillStyle = paper
+      ctx.fillStyle = '#ffffff'
       ctx.beginPath()
-      ctx.arc(sx, sy, r * 0.45, 0, Math.PI * 2)
+      ctx.arc(sx, sy, 3.5, 0, Math.PI * 2)
       ctx.fill()
-      ctx.globalAlpha = 1
     } else {
-      // Continuous joint (2+ connections): pure clean rails without any extra overlay
+      // Intermediate joint or junction: neat white dot
+      ctx.fillStyle = '#334155'
+      ctx.beginPath()
+      ctx.arc(sx, sy, 4, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
+      ctx.fill()
     }
   }
 
