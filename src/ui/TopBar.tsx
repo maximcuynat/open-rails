@@ -45,7 +45,8 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     { id: 'zoom-100', label: 'Zoom 100%', shortcut: 'Ctrl+0', separatorAfter: true },
     { id: 'toggle-grid', label: 'Toggle grid' },
     { id: 'toggle-snap', label: 'Toggle snap', shortcut: 'G' },
-    { id: 'toggle-minimap', label: 'Toggle minimap', separatorAfter: true },
+    { id: 'toggle-minimap', label: 'Toggle minimap' },
+    { id: 'toggle-inspector', label: 'Toggle inspector / properties', shortcut: 'I', separatorAfter: true },
   ]
 
   const helpItems: MenuItem[] = [
@@ -125,6 +126,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
         break
       case 'toggle-minimap':
         store.toggleMinimap()
+        break
+      case 'toggle-inspector':
+        store.toggleSidePanel()
         break
     }
   }

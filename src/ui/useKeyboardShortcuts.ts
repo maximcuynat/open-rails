@@ -61,6 +61,8 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         }
       } else if (e.key === 'm' || e.key === 'M') {
         store.setTrackMode(store.trackMode === 'catalog' ? 'freeform' : 'catalog')
+      } else if (e.key === 'i' || e.key === 'I') {
+        store.toggleSidePanel()
       } else if (e.key === 'r' || e.key === 'R') {
         if (!e.ctrlKey && !e.metaKey) {
           e.preventDefault()

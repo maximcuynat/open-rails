@@ -608,6 +608,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
 }
 
 export function SidePanel({ store }: { store: EditorStore }) {
+  const isOpen = store.isSidePanelOpen
   const sel = store.selection
   const allSections = computeTrackSections(store.network, store.sectionMeta)
 
@@ -630,5 +631,42 @@ export function SidePanel({ store }: { store: EditorStore }) {
     content = <NetworkPanel store={store} />
   }
 
-  return <div className="side-panel">{content}</div>
+  return (
+    <>
+      {/* Floating toggle button on the right edge */}
+      <button
+        className={`sp-toggle-btn ${isOpen ? 'open' : 'closed'}`}
+        onClick={() => store.toggleSidePanel()}
+        title={isOpen ? 'Replier le volet d’informations (I)' : 'Ouvrir le volet d’informations (I)'}
+        aria-label="Toggle side panel"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          {isOpen ? (
+            <polyline points="9 18 15 12 9 6" />
+          ) : (
+            <polyline points="15 18 9 12 15 6" />
+          )}
+        </svg>
+      </button>
+
+      {/* Floating drawer side panel */}
+      <div className={`side-panel ${isOpen ? 'open' : 'collapsed'}`}>
+        <div className="sp-top-bar">
+          <span className="sp-top-title">Inspecteur & Propriétés</span>
+          <button
+            className="sp-close-btn"
+            onClick={() => store.setSidePanelOpen(false)}
+            title="Fermer le volet"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="sp-content">{content}</div>
+      </div>
+    </>
+  )
 }
+

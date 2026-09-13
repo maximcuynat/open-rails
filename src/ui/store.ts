@@ -50,6 +50,8 @@ export class EditorStore {
   panning = false
   moved = false
   showMinimap = false
+  isSidePanelOpen = false
+
 
   // Track selection and mode: freeform by default
   trackMode: TrackMode = 'freeform'
@@ -217,6 +219,16 @@ export class EditorStore {
 
   toggleMinimap = (): void => {
     this.showMinimap = !this.showMinimap
+    this.notify()
+  }
+
+  toggleSidePanel = (): void => {
+    this.isSidePanelOpen = !this.isSidePanelOpen
+    this.notify()
+  }
+
+  setSidePanelOpen = (v: boolean): void => {
+    this.isSidePanelOpen = v
     this.notify()
   }
 
