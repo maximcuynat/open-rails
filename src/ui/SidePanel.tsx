@@ -8,8 +8,10 @@ import { detectDeadEnds, detectLoops, detectConnectedComponents } from '../core/
 import {
   computeTrackSections,
   findSectionBySegment,
+  detectDirectionConflicts,
   type TrackSection,
   type SectionType,
+  type SectionDirection,
   SECTION_COLORS,
 } from '../core/sections'
 import type { EditorStore } from './store'
@@ -74,40 +76,8 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Réseaux disjoints" value={components} />
       </div>
 
-      <div className="sp-subheader">Sections de voie & Cantons ({computeTrackSections(net, store.sectionMeta).length})</div>
-      <div className="sp-list">
-        {computeTrackSections(net, store.sectionMeta).map((sec) => (
-          <button
-            key={sec.id}
-            className="sp-list-item"
-            onClick={() => {
-              store.setSelection({
-                nodes: new Set(sec.nodeIds),
-                segments: new Set(sec.segmentIds),
-              })
-            }}
-            title="Cliquer pour sélectionner tous les rails de ce canton"
-          >
-            <span
-              style={{
-                display: 'inline-block',
-                width: '10px',
-                height: '10px',
-                borderRadius: '50%',
-                backgroundColor: sec.color,
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ fontWeight: 600 }}>{sec.name}</span>
-            <span style={{ marginLeft: 'auto', opacity: 0.65, fontSize: '11px' }}>
-              {sec.totalLength.toFixed(2)} m ({sec.segmentIds.length} r.)
-            </span>
-          </button>
-        ))}
-      </div>
-
       <div className="sp-hint">
-        Sélectionnez un coupon de rail ou un nœud pour afficher et modifier ses caractéristiques.
+        Cliquez sur une section de voie sur le plan pour la renommer, choisir son sens de circulation ou modifier son type.
       </div>
     </>
   )
@@ -461,11 +431,13 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
 function SectionPanel({ store, section }: { store: EditorStore; section: TrackSection }) {
   const [name, setName] = useState(section.name)
   const [type, setType] = useState<SectionType>(section.type)
+  const [direction, setDirection] = useState<SectionDirection>(section.direction)
 
   useEffect(() => {
     setName(section.name)
     setType(section.type)
-  }, [section.id, section.name, section.type])
+    setDirection(section.direction)
+  }, [section.id, section.name, section.type, section.direction])
 
   const applyName = (newName: string) => {
     setName(newName)
@@ -477,14 +449,49 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
     store.setSectionMeta(section.id, { type: newType })
   }
 
+  const applyDirection = (newDir: SectionDirection) => {
+    setDirection(newDir)
+    store.setSectionMeta(section.id, { direction: newDir })
+  }
+
   const applyColor = (col: string) => {
     store.setSectionMeta(section.id, { color: col })
   }
+
+  const allSections = computeTrackSections(store.network, store.sectionMeta)
+  const conflicts = detectDirectionConflicts(store.network, allSections)
+  const myConflict = conflicts.find((c) => c.sectionA.id === section.id || c.sectionB.id === section.id)
 
   return (
     <>
       <PanelHeader>Propriétés de la section</PanelHeader>
       <div className="sp-section">
+        {myConflict && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 10px',
+              marginBottom: '10px',
+              backgroundColor: 'rgba(239, 68, 68, 0.15)',
+              border: '1px solid #ef4444',
+              borderRadius: '6px',
+              color: '#ef4444',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="10" />
+              <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+            </svg>
+            <span>
+              Sens interdit détecté : collision frontale (&rarr;&larr;) avec la voie adjacente ({myConflict.sectionA.id === section.id ? myConflict.sectionB.name : myConflict.sectionA.name}) !
+            </span>
+          </div>
+        )}
+
         <label className="sp-input-row" style={{ marginBottom: '8px' }}>
           <span style={{ width: '45px' }}>Nom</span>
           <input
@@ -495,6 +502,69 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
             onBlur={(e) => applyName(e.target.value)}
           />
         </label>
+
+        {/* Sens de circulation */}
+        <div style={{ marginBottom: '10px' }}>
+          <span className="sp-field-label" style={{ display: 'block', marginBottom: '4px', fontSize: '11px', fontWeight: 600 }}>
+            Sens de circulation
+          </span>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button
+              className="sp-btn-compact"
+              style={{
+                flex: 1,
+                padding: '6px 4px',
+                fontSize: '11px',
+                borderRadius: '5px',
+                border: direction === 'two_way' ? '1px solid var(--accent)' : '1px solid var(--border)',
+                background: direction === 'two_way' ? 'rgba(37, 99, 235, 0.15)' : 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+                fontWeight: direction === 'two_way' ? 700 : 500,
+              }}
+              onClick={() => applyDirection('two_way')}
+              title="Double sens de circulation"
+            >
+              &harr; Double sens
+            </button>
+            <button
+              className="sp-btn-compact"
+              style={{
+                flex: 1,
+                padding: '6px 4px',
+                fontSize: '11px',
+                borderRadius: '5px',
+                border: direction === 'forward' ? '1px solid #10b981' : '1px solid var(--border)',
+                background: direction === 'forward' ? 'rgba(16, 185, 129, 0.15)' : 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+                fontWeight: direction === 'forward' ? 700 : 500,
+              }}
+              onClick={() => applyDirection('forward')}
+              title="Sens unique direct"
+            >
+              &rarr; Sens direct
+            </button>
+            <button
+              className="sp-btn-compact"
+              style={{
+                flex: 1,
+                padding: '6px 4px',
+                fontSize: '11px',
+                borderRadius: '5px',
+                border: direction === 'backward' ? '1px solid #10b981' : '1px solid var(--border)',
+                background: direction === 'backward' ? 'rgba(16, 185, 129, 0.15)' : 'var(--panel-2)',
+                color: 'var(--ink)',
+                cursor: 'pointer',
+                fontWeight: direction === 'backward' ? 700 : 500,
+              }}
+              onClick={() => applyDirection('backward')}
+              title="Sens unique inverse"
+            >
+              &larr; Sens inverse
+            </button>
+          </div>
+        </div>
 
         <div style={{ marginBottom: '8px' }}>
           <span className="sp-field-label" style={{ display: 'block', marginBottom: '4px', fontSize: '11px', fontWeight: 600 }}>
@@ -605,6 +675,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
       </div>
     </>
   )
+
 }
 
 export function SidePanel({ store }: { store: EditorStore }) {
@@ -618,9 +689,17 @@ export function SidePanel({ store }: { store: EditorStore }) {
     return sec.segmentIds.every((sid) => sel.segments.has(sid))
   })
 
+  // If a single segment is selected, find which section it belongs to
+  const singleSegSection = sel.segments.size === 1 && sel.nodes.size === 0
+    ? findSectionBySegment(allSections, [...sel.segments][0])
+    : null
+
   let content: ReactNode
   if (matchingSection) {
     content = <SectionPanel key={matchingSection.id} store={store} section={matchingSection} />
+  } else if (singleSegSection) {
+    // When clicking a track segment, directly show the SectionPanel to rename & set direction
+    content = <SectionPanel key={singleSegSection.id} store={store} section={singleSegSection} />
   } else if (sel.nodes.size === 1 && sel.segments.size === 0) {
     const id = [...sel.nodes][0]
     content = <NodePanel key={id} store={store} nodeId={id} />
@@ -630,6 +709,7 @@ export function SidePanel({ store }: { store: EditorStore }) {
   } else {
     content = <NetworkPanel store={store} />
   }
+
 
   return (
     <>

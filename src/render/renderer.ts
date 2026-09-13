@@ -5,7 +5,7 @@ import type { Network, Point, Selection, RailNode, Segment, NodeId } from '../co
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '../core/curve'
 import { lineLineIntersection, type DiamondCrossing } from '../core/crossing'
 import { segmentTangentAt } from '../core/tangent'
-import { computeTrackSections, findSectionBySegment } from '../core/sections'
+import { computeTrackSections, findSectionBySegment, detectDirectionConflicts } from '../core/sections'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -345,7 +345,8 @@ export function renderNetwork(
 
       const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
       const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Voie d\'évit. · ' : ''
-      const text = `${typePrefix}${sec.name} (${sec.totalLength.toFixed(1)} m)`
+      const dirSymbol = sec.direction === 'forward' ? ' →' : sec.direction === 'backward' ? ' ←' : ''
+      const text = `${typePrefix}${sec.name}${dirSymbol} (${sec.totalLength.toFixed(1)} m)`
 
       ctx.save()
       ctx.font = '600 10px Archivo, system-ui, sans-serif'
@@ -418,51 +419,122 @@ export function renderNetwork(
     }
   }
 
-  // Draw switch stand / junction indicator on top (discreet, compact)
-  for (const junc of net.junctions.values()) {
-    const apex = net.nodes.get(junc.nodeId)
-    if (!apex || !isPointInBounds(apex.pos, bounds)) continue
-    const sx = (apex.pos.x - cam.x) * cam.scale + vw / 2
-    const sy = (apex.pos.y - cam.y) * cam.scale + vh / 2
+  // 4. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)
+  for (const sec of trackSections) {
+    if (sec.direction === 'two_way' || sec.orderedNodeIds.length < 2) continue
+    const isForward = sec.direction === 'forward'
 
-    const activeNodeId = junc.activeBranch === 'straight' ? junc.straightNodeId : junc.divergingNodeId
-    const activeNode = net.nodes.get(activeNodeId)
+    // Draw discreet directional arrow along each segment of the section
+    for (const sid of sec.segmentIds) {
+      const seg = net.segments.get(sid)
+      if (!seg) continue
+      const a = net.nodes.get(seg.from)
+      const b = net.nodes.get(seg.to)
+      if (!a || !b) continue
+
+      // Determine forward direction along the segment based on orderedNodeIds
+      const fromIdx = sec.orderedNodeIds.indexOf(seg.from)
+      const toIdx = sec.orderedNodeIds.indexOf(seg.to)
+      let alongForward = true
+      if (fromIdx !== -1 && toIdx !== -1) {
+        alongForward = fromIdx < toIdx
+      }
+      const dirSign = (isForward ? 1 : -1) * (alongForward ? 1 : -1)
+
+      // Center point of segment
+      const mid = seg.kind === 'curve' && seg.via
+        ? bezierPoint(0.5, a.pos, seg.via, b.pos)
+        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+
+      if (!isPointInBounds(mid, bounds)) continue
+
+      // Tangent vector
+      let tx = b.pos.x - a.pos.x
+      let ty = b.pos.y - a.pos.y
+      if (seg.kind === 'curve' && seg.via) {
+        const tVec = bezierTangent(0.5, a.pos, seg.via, b.pos)
+        tx = tVec.x
+        ty = tVec.y
+      }
+      const tLen = Math.hypot(tx, ty)
+      if (tLen === 0) continue
+      let angle = Math.atan2(ty, tx)
+      if (dirSign < 0) angle += Math.PI
+
+      const sx = (mid.x - cam.x) * cam.scale + vw / 2
+      const sy = (mid.y - cam.y) * cam.scale + vh / 2
+
+      ctx.save()
+      ctx.translate(sx, sy)
+      ctx.rotate(angle)
+      ctx.fillStyle = sec.color
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      const arrSize = Math.max(6, Math.min(10, 1.2 * cam.scale))
+      ctx.moveTo(arrSize, 0)
+      ctx.lineTo(-arrSize * 0.7, -arrSize * 0.6)
+      ctx.lineTo(-arrSize * 0.3, 0)
+      ctx.lineTo(-arrSize * 0.7, arrSize * 0.6)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
+  // 5. DIRECTION CONFLICTS / SENS INTERDIT (Panneau sens interdit en cas d'incohérence -> <-)
+  const conflicts = detectDirectionConflicts(net, trackSections)
+  for (const conf of conflicts) {
+    if (!isPointInBounds(conf.pos, bounds)) continue
+    const sx = (conf.pos.x - cam.x) * cam.scale + vw / 2
+    const sy = (conf.pos.y - cam.y) * cam.scale + vh / 2
 
     ctx.save()
-    // Compact, discreet indicator (fixed 4.5px radius, doesn't blow up with scale)
-    const r = 4.5
-    ctx.fillStyle = junc.activeBranch === 'straight' ? '#10b981' : '#f59e0b'
+    // Prohibitory sign: Red disc with white horizontal bar (B0 sens interdit)
+    const signR = Math.max(10, Math.min(16, 2.2 * cam.scale))
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'
+    ctx.shadowBlur = 6
+    ctx.shadowOffsetY = 2
+
+    // Red circle
+    ctx.fillStyle = '#dc2626'
     ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 1.2
+    ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.arc(sx, sy, r, 0, Math.PI * 2)
+    ctx.arc(sx, sy, signR, 0, Math.PI * 2)
     ctx.fill()
     ctx.stroke()
 
-    // Direction micro chevron inside indicator
-    if (activeNode) {
-      const dx = activeNode.pos.x - apex.pos.x
-      const dy = activeNode.pos.y - apex.pos.y
-      const len = Math.hypot(dx, dy)
-      if (len > 0) {
-        const angle = Math.atan2(dy, dx)
-        ctx.save()
-        ctx.translate(sx, sy)
-        ctx.rotate(angle)
-        ctx.fillStyle = '#ffffff'
-        ctx.beginPath()
-        ctx.moveTo(r * 0.6, 0)
-        ctx.lineTo(-r * 0.35, -r * 0.45)
-        ctx.lineTo(-r * 0.1, 0)
-        ctx.lineTo(-r * 0.35, r * 0.45)
-        ctx.closePath()
-        ctx.fill()
-        ctx.restore()
-      }
-    }
+    // Reset shadow for inner bar
+    ctx.shadowColor = 'transparent'
+
+    // White horizontal rectangle bar
+    const barW = signR * 1.4
+    const barH = Math.max(2.5, signR * 0.35)
+    ctx.fillStyle = '#ffffff'
+    ctx.beginPath()
+    ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
+    ctx.fill()
+
+    // Pulsing warning text above the sign
+    ctx.font = '700 10px Archivo, system-ui, sans-serif'
+    const warnText = 'SENS INTERDIT · CONFLIT'
+    const tw = ctx.measureText(warnText).width
+    const textY = sy - signR - 12
+    ctx.fillStyle = '#dc2626'
+    ctx.beginPath()
+    ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
+    ctx.fill()
+    ctx.fillStyle = '#ffffff'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(warnText, sx, textY)
+
     ctx.restore()
   }
 }
+
 
 export function renderDetailedRailBallast(
   ctx: CanvasRenderingContext2D,

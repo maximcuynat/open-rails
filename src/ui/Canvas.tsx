@@ -32,6 +32,7 @@ import {
   toggleJunction,
 } from '../core/junction'
 import { reconcileNetworkIntersections } from '../core/reconcile'
+import { computeTrackSections, findSectionBySegment } from '../core/sections'
 import type { EditorStore } from './store'
 
 /** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
@@ -722,13 +723,37 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
         const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
-          if (e.shiftKey) {
-            const newSegs = new Set(store.selection.segments)
-            if (newSegs.has(segId)) newSegs.delete(segId)
-            else newSegs.add(segId)
-            store.selection = { ...store.selection, segments: newSegs }
+          const sections = computeTrackSections(store.network, store.sectionMeta)
+          const clickedSection = findSectionBySegment(sections, segId)
+
+          if (clickedSection) {
+            if (e.shiftKey) {
+              const newSegs = new Set(store.selection.segments)
+              const newNodes = new Set(store.selection.nodes)
+              const alreadyHas = clickedSection.segmentIds.some((sid) => newSegs.has(sid))
+              if (alreadyHas) {
+                for (const sid of clickedSection.segmentIds) newSegs.delete(sid)
+                for (const nid of clickedSection.nodeIds) newNodes.delete(nid)
+              } else {
+                for (const sid of clickedSection.segmentIds) newSegs.add(sid)
+                for (const nid of clickedSection.nodeIds) newNodes.add(nid)
+              }
+              store.selection = { nodes: newNodes, segments: newSegs }
+            } else {
+              store.selection = {
+                nodes: new Set(clickedSection.nodeIds),
+                segments: new Set(clickedSection.segmentIds),
+              }
+            }
           } else {
-            store.selection = { nodes: new Set(), segments: new Set([segId]) }
+            if (e.shiftKey) {
+              const newSegs = new Set(store.selection.segments)
+              if (newSegs.has(segId)) newSegs.delete(segId)
+              else newSegs.add(segId)
+              store.selection = { ...store.selection, segments: newSegs }
+            } else {
+              store.selection = { nodes: new Set(), segments: new Set([segId]) }
+            }
           }
           redraw()
           return

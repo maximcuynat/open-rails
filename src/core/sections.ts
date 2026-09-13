@@ -1,22 +1,42 @@
-import type { Network, NodeId, SegmentId, Segment } from './types'
+import type { Network, NodeId, SegmentId, Segment, Point } from './types'
 import { curveLength } from './curve'
 
 export type SectionType = 'circulation' | 'station_stop' | 'siding' | 'yard'
+
+/**
+ * Traffic circulation direction:
+ * - 'two_way': Bidirectionnel (<->) - trains can run both ways
+ * - 'forward': Sens unique direct (start -> end selon l'ordre des rails)
+ * - 'backward': Sens unique inverse (end -> start)
+ */
+export type SectionDirection = 'two_way' | 'forward' | 'backward'
 
 export interface SectionMetadata {
   name?: string
   type?: SectionType
   color?: string
+  direction?: SectionDirection
 }
 
 export interface TrackSection {
   id: string
   name: string
   type: SectionType
+  direction: SectionDirection
   segmentIds: SegmentId[]
+  /** Ordered node sequence from start to end of the section */
+  orderedNodeIds: NodeId[]
   nodeIds: NodeId[]
   totalLength: number
   color: string
+}
+
+export interface DirectionConflict {
+  nodeId: NodeId
+  pos: Point
+  sectionA: TrackSection
+  sectionB: TrackSection
+  type: 'head_on' | 'opposing_outflow' // head-on: -> <- (face-à-face)
 }
 
 /** Distinct elegant rail canton colors (pastel / railway signaling palette) */
@@ -45,7 +65,7 @@ export const SECTION_TYPE_LABELS: Record<SectionType, string> = {
  * - Switch / junction nodes (degree >= 3)
  *
  * Intermediate nodes (degree 2) continue the same track section.
- * Merges user-customized metadata (names, types, colors) persisted in customMeta.
+ * Merges user-customized metadata (names, types, colors, directions) persisted in customMeta.
  */
 export function computeTrackSections(
   net: Network,
@@ -112,16 +132,39 @@ export function computeTrackSections(
       prevSegId = nextSegId
     }
 
-    // Gather ordered nodes and total length
-    const nodeSet = new Set<NodeId>()
+    // Reconstruct contiguous ordered sequence of nodes from one tip to the other
+    const orderedNodes: NodeId[] = []
+    if (sectionSegIds.length > 0) {
+      const firstSeg = net.segments.get(sectionSegIds[0])!
+      let currentChainNode: NodeId
+
+      if (sectionSegIds.length === 1) {
+        currentChainNode = firstSeg.from
+        orderedNodes.push(firstSeg.from, firstSeg.to)
+      } else {
+        const secondSeg = net.segments.get(sectionSegIds[1])!
+        // The shared node between segment 0 and 1 is the second node
+        const sharedNode = (firstSeg.from === secondSeg.from || firstSeg.from === secondSeg.to)
+          ? firstSeg.from
+          : firstSeg.to
+        const tipNode = firstSeg.from === sharedNode ? firstSeg.to : firstSeg.from
+        orderedNodes.push(tipNode, sharedNode)
+        currentChainNode = sharedNode
+
+        for (let i = 1; i < sectionSegIds.length; i++) {
+          const seg = net.segments.get(sectionSegIds[i])!
+          const nextNode = seg.from === currentChainNode ? seg.to : seg.from
+          orderedNodes.push(nextNode)
+          currentChainNode = nextNode
+        }
+      }
+    }
+
+    // Total length
     let totalLen = 0
     for (const sid of sectionSegIds) {
       const seg = net.segments.get(sid)
-      if (seg) {
-        nodeSet.add(seg.from)
-        nodeSet.add(seg.to)
-        totalLen += getSegLength(seg)
-      }
+      if (seg) totalLen += getSegLength(seg)
     }
 
     // Stable ID based on sorted segment IDs so renaming is preserved
@@ -137,8 +180,10 @@ export function computeTrackSections(
       id: sortedSegKey,
       name: userMeta?.name || fallbackName,
       type: userMeta?.type || 'circulation',
+      direction: userMeta?.direction || 'two_way',
       segmentIds: sectionSegIds,
-      nodeIds: Array.from(nodeSet),
+      orderedNodeIds: orderedNodes,
+      nodeIds: Array.from(new Set(orderedNodes)),
       totalLength: totalLen,
       color: userMeta?.color || (userMeta?.type === 'station_stop' ? '#06b6d4' : fallbackColor),
     })
@@ -153,4 +198,76 @@ export function findSectionBySegment(sections: TrackSection[], segId: SegmentId)
     if (sec.segmentIds.includes(segId)) return sec
   }
   return null
+}
+
+/**
+ * Detect directional circulation conflicts between connected sections.
+ * For any junction or connection node shared between 2 or more sections:
+ * If Section A sends trains TOWARDS the node, and Section B also sends trains TOWARDS the same node (head-on collision -> <-),
+ * or opposing flows, a conflict is raised with the node location for rendering the prohibitory sign.
+ */
+export function detectDirectionConflicts(net: Network, sections: TrackSection[]): DirectionConflict[] {
+  const conflicts: DirectionConflict[] = []
+
+  // Map each boundary node to the sections meeting at that node and their flow direction relative to the node
+  // flow: 'inflow' = traffic goes towards this node; 'outflow' = traffic goes away from this node; 'both' = bidirectional
+  interface NodeFlow {
+    section: TrackSection
+    flow: 'inflow' | 'outflow' | 'both'
+  }
+
+  const nodeSectionFlows = new Map<NodeId, NodeFlow[]>()
+
+  for (const sec of sections) {
+    if (sec.orderedNodeIds.length < 2) continue
+    const startNode = sec.orderedNodeIds[0]
+    const endNode = sec.orderedNodeIds[sec.orderedNodeIds.length - 1]
+
+    let startFlow: 'inflow' | 'outflow' | 'both' = 'both'
+    let endFlow: 'inflow' | 'outflow' | 'both' = 'both'
+
+    if (sec.direction === 'forward') {
+      // Moves from startNode to endNode
+      startFlow = 'outflow' // leaves startNode
+      endFlow = 'inflow'    // enters endNode
+    } else if (sec.direction === 'backward') {
+      // Moves from endNode to startNode
+      startFlow = 'inflow'   // enters startNode
+      endFlow = 'outflow'  // leaves endNode
+    }
+
+    // Record at startNode
+    if (!nodeSectionFlows.has(startNode)) nodeSectionFlows.set(startNode, [])
+    nodeSectionFlows.get(startNode)!.push({ section: sec, flow: startFlow })
+
+    // Record at endNode
+    if (!nodeSectionFlows.has(endNode)) nodeSectionFlows.set(endNode, [])
+    nodeSectionFlows.get(endNode)!.push({ section: sec, flow: endFlow })
+  }
+
+  // Detect head-on conflicts (two sections both flowing IN towards the same node: -> <-)
+  for (const [nodeId, flows] of nodeSectionFlows.entries()) {
+    const node = net.nodes.get(nodeId)
+    if (!node) continue
+
+    for (let i = 0; i < flows.length; i++) {
+      for (let j = i + 1; j < flows.length; j++) {
+        const f1 = flows[i]
+        const f2 = flows[j]
+
+        // Both sections have a designated one-way flow directly towards each other at this node
+        if (f1.flow === 'inflow' && f2.flow === 'inflow') {
+          conflicts.push({
+            nodeId,
+            pos: node.pos,
+            sectionA: f1.section,
+            sectionB: f2.section,
+            type: 'head_on',
+          })
+        }
+      }
+    }
+  }
+
+  return conflicts
 }
