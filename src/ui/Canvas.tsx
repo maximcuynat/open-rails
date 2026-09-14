@@ -922,16 +922,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       if (e.button === 0 && store.tool === 'select') {
+        const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
         const nodeId = hitNode(store.network, world, hitTol)
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
-          if (existingJunc && store.selection.nodes.has(nodeId) && !e.shiftKey) {
+          if (existingJunc && store.selection.nodes.has(nodeId) && !isMulti) {
             toggleJunction(existingJunc)
             store.markDirty()
           }
-          if (e.shiftKey) {
+          if (isMulti) {
             const newNodes = new Set(store.selection.nodes)
             if (newNodes.has(nodeId)) newNodes.delete(nodeId)
             else newNodes.add(nodeId)
@@ -974,7 +975,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const clickedSection = findSectionBySegment(sections, segId)
 
           if (clickedSection) {
-            if (e.shiftKey) {
+            if (isMulti) {
               const newSegs = new Set(store.selection.segments)
               const newNodes = new Set(store.selection.nodes)
               const alreadyHas = clickedSection.segmentIds.some((sid) => newSegs.has(sid))
@@ -993,7 +994,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               }
             }
           } else {
-            if (e.shiftKey) {
+            if (isMulti) {
               const newSegs = new Set(store.selection.segments)
               if (newSegs.has(segId)) newSegs.delete(segId)
               else newSegs.add(segId)
@@ -1009,7 +1010,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.isBoxSelecting = true
         store.boxSelectStart = world
         store.boxSelectEnd = world
-        if (!e.shiftKey) {
+        if (!isMulti) {
           store.selection = { nodes: new Set(), segments: new Set() }
         }
         canvas.setPointerCapture(e.pointerId)
@@ -1164,8 +1165,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const x2 = Math.max(store.boxSelectStart.x, store.boxSelectEnd.x)
         const y2 = Math.max(store.boxSelectStart.y, store.boxSelectEnd.y)
 
+        const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
+
         // Select nodes inside the box
-        const nodes = new Set(e.shiftKey ? store.selection.nodes : [])
+        const nodes = new Set(isMulti ? store.selection.nodes : [])
         for (const node of store.network.nodes.values()) {
           if (node.pos.x >= x1 && node.pos.x <= x2 && node.pos.y >= y1 && node.pos.y <= y2) {
             nodes.add(node.id)
@@ -1173,7 +1176,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
 
         // Select segments that have at least one endpoint inside the box
-        const segments = new Set(e.shiftKey ? store.selection.segments : [])
+        const segments = new Set(isMulti ? store.selection.segments : [])
         for (const seg of store.network.segments.values()) {
           const a = store.network.nodes.get(seg.from)
           const b = store.network.nodes.get(seg.to)

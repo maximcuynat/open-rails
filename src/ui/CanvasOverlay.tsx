@@ -12,7 +12,7 @@ function hintText(store: EditorStore): string {
         ? 'Clic pour poser le coupon · Tab pour inverser côté · Échap pour annuler'
         : 'Clic pour définir le point de départ de la courbe'
     case 'select':
-      return 'Clic pour sélectionner · Glisser un nœud pour ajuster · Suppr pour effacer'
+      return 'Clic pour sélectionner · Ctrl/Shift+Clic pour multi-sélection · Suppr pour effacer'
     case 'pan':
       return 'Glisser pour déplacer la vue · Molette pour zoomer'
     default:
