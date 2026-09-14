@@ -304,7 +304,11 @@ export function renderNetwork(
     }
 
     // 2. PURE RAIL RENDERING (2 parallel rails at GAUGE = 1.435m + dynamic miter joints)
-    for (const seg of visibleSegments) {
+    // Separate ground segments and overpass segments so overpass segments render above
+    const groundSegments = visibleSegments.filter((s) => !s.overpass)
+    const overpassSegments = visibleSegments.filter((s) => !!s.overpass)
+
+    for (const seg of groundSegments) {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
       if (!a || !b) continue
@@ -320,6 +324,84 @@ export function renderNetwork(
         renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
       }
       ctx.restore()
+    }
+
+    // Overpass (Pont / Ouvrage 2D) deck underlay: creates a bridge structure cutting across underlying tracks
+    if (overpassSegments.length > 0) {
+      const deckWidth = (GAUGE + 1.2) * cam.scale
+      ctx.save()
+      ctx.lineCap = 'butt'
+      for (const seg of overpassSegments) {
+        const a = net.nodes.get(seg.from)
+        const b = net.nodes.get(seg.to)
+        if (!a || !b) continue
+        const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
+        const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
+        const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
+        const by = (b.pos.y - cam.y) * cam.scale + vh / 2
+
+        // Bridge shadow
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)'
+        ctx.lineWidth = deckWidth + 4
+        ctx.beginPath()
+        ctx.moveTo(ax, ay + 2)
+        if (seg.kind === 'curve' && seg.via) {
+          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+          ctx.quadraticCurveTo(vx, vy + 2, bx, by + 2)
+        } else {
+          ctx.lineTo(bx, by + 2)
+        }
+        ctx.stroke()
+
+        // Bridge deck base (solid mask that hides the track underneath)
+        ctx.strokeStyle = '#1e293b'
+        ctx.lineWidth = deckWidth
+        ctx.beginPath()
+        ctx.moveTo(ax, ay)
+        if (seg.kind === 'curve' && seg.via) {
+          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+          ctx.quadraticCurveTo(vx, vy, bx, by)
+        } else {
+          ctx.lineTo(bx, by)
+        }
+        ctx.stroke()
+
+        // Bridge parapets / bordures
+        ctx.strokeStyle = '#64748b'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(ax, ay)
+        if (seg.kind === 'curve' && seg.via) {
+          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+          ctx.quadraticCurveTo(vx, vy, bx, by)
+        } else {
+          ctx.lineTo(bx, by)
+        }
+        ctx.stroke()
+      }
+      ctx.restore()
+
+      // Rails on overpass deck
+      for (const seg of overpassSegments) {
+        const a = net.nodes.get(seg.from)
+        const b = net.nodes.get(seg.to)
+        if (!a || !b) continue
+
+        const selected = selection.segments.has(seg.id)
+        const isInactive = isInactiveBranch(net, seg.id)
+
+        ctx.save()
+        if (isInactive) ctx.globalAlpha = 0.4
+        if (seg.kind === 'curve' && seg.via) {
+          renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
+        } else {
+          renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
+        }
+        ctx.restore()
+      }
     }
     // Connect rails and create smooth dynamic miter joints at nodes
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds)

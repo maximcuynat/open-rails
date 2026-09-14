@@ -20,6 +20,8 @@ export interface Segment {
   kind: SegmentKind
   /** Control point for curved segments (midpoint arc definition). */
   via?: Point
+  /** If true, this segment passes over intersecting tracks (2D overpass / pont). */
+  overpass?: boolean
 }
 
 export type JunctionId = string

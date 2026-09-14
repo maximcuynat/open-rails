@@ -3,6 +3,7 @@ import { createNetwork, syncIdCounter } from './network'
 import { findJunctionAtNode } from './junction'
 import { reconcileNetworkIntersections } from './reconcile'
 import type { Junction, Network, RailNode, Segment, SegmentKind } from './types'
+import type { TrackSection } from './sections'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -18,6 +19,7 @@ export interface SerializedSegment {
   to: string
   kind: SegmentKind
   via?: { x: number; y: number }
+  overpass?: boolean
 }
 
 export interface SerializedJunction {
@@ -39,6 +41,27 @@ export interface SerializedCamera {
   scale: number
 }
 
+/** Serialized section (canton / troncon) with type, direction and topology */
+export interface SerializedSection {
+  id: string
+  name: string
+  type: string
+  direction: string
+  color: string
+  segmentIds: string[]
+  nodeIds: string[]
+  totalLength: number
+  hasDeadEnd?: boolean
+  /** IDs des sections directement adjacentes (partageant un noeud) */
+  adjacentSectionIds: string[]
+}
+
+/** Serialized graph node (adjacency) entry */
+export interface SerializedGraphEdge {
+  sectionId: string
+  viaNodeId: string
+}
+
 export interface SerializedProject {
   version: 1
   name?: string
@@ -49,6 +72,8 @@ export interface SerializedProject {
   sectionMeta?: Record<string, any>
   gridMode?: 'auto' | 'fixed'
   gridSpacing?: number
+  /** Computed sections (cantons) with type, direction, length, and adjacency graph */
+  sections?: SerializedSection[]
 }
 
 /**
@@ -61,6 +86,7 @@ export function serializeNetwork(
   sectionMeta?: Record<string, any>,
   gridMode?: 'auto' | 'fixed',
   gridSpacing?: number,
+  computedSections?: TrackSection[],
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -75,6 +101,7 @@ export function serializeNetwork(
       to: s.to,
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
+      overpass: s.overpass || undefined,
     })
   }
 
@@ -94,6 +121,42 @@ export function serializeNetwork(
     })
   }
 
+  // Construire le graphe d'adjacence entre sections : deux sections sont adjacentes
+  // si elles partagent au moins un noeud frontiere (endpoint de leurs segments)
+  let serializedSections: SerializedSection[] | undefined
+  if (computedSections && computedSections.length > 0) {
+    // Index : nodeId -> sectionIds qui le contiennent
+    const nodeSectionIndex = new Map<string, string[]>()
+    for (const sec of computedSections) {
+      for (const nid of sec.nodeIds) {
+        if (!nodeSectionIndex.has(nid)) nodeSectionIndex.set(nid, [])
+        nodeSectionIndex.get(nid)!.push(sec.id)
+      }
+    }
+
+    serializedSections = computedSections.map((sec) => {
+      const adjacentIds = new Set<string>()
+      for (const nid of sec.nodeIds) {
+        const neighbors = nodeSectionIndex.get(nid) ?? []
+        for (const otherId of neighbors) {
+          if (otherId !== sec.id) adjacentIds.add(otherId)
+        }
+      }
+      return {
+        id: sec.id,
+        name: sec.name,
+        type: sec.type,
+        direction: sec.direction,
+        color: sec.color,
+        segmentIds: sec.segmentIds,
+        nodeIds: sec.nodeIds,
+        totalLength: Math.round(sec.totalLength * 100) / 100,
+        hasDeadEnd: sec.hasDeadEnd || undefined,
+        adjacentSectionIds: [...adjacentIds],
+      }
+    })
+  }
+
   return {
     version: 1,
     name: projectName,
@@ -110,6 +173,7 @@ export function serializeNetwork(
     sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
     gridMode,
     gridSpacing,
+    sections: serializedSections,
   }
 }
 
@@ -164,6 +228,7 @@ export function deserializeNetwork(data: SerializedProject): {
           !Number.isNaN(s.via.y)
             ? { x: s.via.x, y: s.via.y }
             : undefined,
+        overpass: s.overpass === true ? true : undefined,
       }
       net.segments.set(seg.id, seg)
       net.adjacency.get(s.from)?.push(seg.id)
@@ -270,11 +335,12 @@ export function saveNetworkToStorage(
   sectionMeta?: Record<string, any>,
   gridMode?: 'auto' | 'fixed',
   gridSpacing?: number,
+  computedSections?: TrackSection[],
 ): boolean {
   try {
     const storage = getStorage()
     if (!storage) return false
-    const serialized = serializeNetwork(net, projectName, camera, sectionMeta, gridMode, gridSpacing)
+    const serialized = serializeNetwork(net, projectName, camera, sectionMeta, gridMode, gridSpacing, computedSections)
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
   } catch (err) {

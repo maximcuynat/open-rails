@@ -14,6 +14,7 @@ import {
 } from '../core/persistence'
 import type { JunctionId, Network, Point, Selection } from '../core/types'
 import type { SectionMetadata } from '../core/sections'
+import { computeTrackSections } from '../core/sections'
 
 export type Tool = 'select' | 'place' | 'curve' | 'pan'
 
@@ -53,6 +54,8 @@ export class EditorStore {
   hoverNodeId: string | null = null
   panning = false
   moved = false
+  // Step-on-track: when Shift is held over a segment, stores the snap step points
+  hoverSegSteps: { segId: string; points: Point[]; nearest: Point | null } | null = null
   showMinimap = false
   isSidePanelOpen = false
 
@@ -229,7 +232,8 @@ export class EditorStore {
    * Immediately save layout state to localStorage.
    */
   savePersistedState = (): void => {
-    saveNetworkToStorage(this.network, this.projectName, this.camera, this.sectionMeta, this.gridMode, this.gridSpacing)
+    const sections = computeTrackSections(this.network, this.sectionMeta)
+    saveNetworkToStorage(this.network, this.projectName, this.camera, this.sectionMeta, this.gridMode, this.gridSpacing, sections)
   }
 
   /**

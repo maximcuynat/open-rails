@@ -402,6 +402,29 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
             />
           </>
         )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Ouvrage / Pont (2D)</span>
+          <button
+            style={{
+              fontSize: '11px',
+              padding: '3px 8px',
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              background: seg.overpass ? 'rgba(59, 130, 246, 0.2)' : 'var(--panel-2)',
+              color: seg.overpass ? 'var(--accent, #3b82f6)' : 'var(--ink)',
+              fontWeight: seg.overpass ? 700 : 500,
+              cursor: 'pointer',
+            }}
+            onClick={() => {
+              seg.overpass = !seg.overpass
+              store.markDirty()
+              store.notify()
+            }}
+            title="Définit si cette portion passe au-dessus des autres voies (pont)"
+          >
+            {seg.overpass ? 'Passe dessus (Pont)' : 'Niveau du sol'}
+          </button>
+        </div>
       </div>
 
       {junction && (

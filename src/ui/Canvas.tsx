@@ -16,6 +16,7 @@ import {
   hitNode,
   hitSegment,
   snapToGrid,
+  getStepPointsAlongSegment,
 } from '../core/network'
 import type { Point, Network, RailNode } from '../core/types'
 import { curveLength, bezierPoint } from '../core/curve'
@@ -329,6 +330,48 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (isNode || store.snap) {
         renderSnapIndicator(ctx, cam, rect.width, rect.height, store.snappedCursor, isNode)
       }
+    }
+
+    // Shift+Survol : affichage des pas de grille sur la voie survole
+    if (store.hoverSegSteps) {
+      const { points, nearest } = store.hoverSegSteps
+      const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+      const w2sX = (wx: number) => (wx - cam.x) * cam.scale + rect.width / 2
+      const w2sY = (wy: number) => (wy - cam.y) * cam.scale + rect.height / 2
+      ctx.save()
+      // Tous les pas : petits cercles bleus semi-transparents
+      ctx.fillStyle = accent
+      ctx.globalAlpha = 0.35
+      for (const p of points) {
+        const r = Math.max(3, Math.min(7, cam.scale * 0.8))
+        ctx.beginPath()
+        ctx.arc(w2sX(p.x), w2sY(p.y), r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      // Pas le plus proche : cercle plein + anneau
+      if (nearest) {
+        ctx.globalAlpha = 1
+        ctx.fillStyle = accent
+        ctx.beginPath()
+        ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 6, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 9, 0, Math.PI * 2)
+        ctx.stroke()
+        // Label distance
+        const dx = nearest.x - (store.network.nodes.get(store.network.segments.get(store.hoverSegSteps.segId)?.from ?? '')?.pos.x ?? 0)
+        const dy = nearest.y - (store.network.nodes.get(store.network.segments.get(store.hoverSegSteps.segId)?.from ?? '')?.pos.y ?? 0)
+        const distFromStart = Math.hypot(dx, dy).toFixed(1)
+        ctx.font = '600 10px Archivo, system-ui, sans-serif'
+        ctx.fillStyle = accent
+        ctx.globalAlpha = 0.9
+        ctx.textBaseline = 'bottom'
+        ctx.textAlign = 'center'
+        ctx.fillText(`+${distFromStart} m`, w2sX(nearest.x), w2sY(nearest.y) - 12)
+      }
+      ctx.restore()
     }
 
     // Place tool preview: rail from last node, snapped to Kato length or freeform
@@ -693,11 +736,20 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 }
               }
             } else {
-              // Pas de lastNodeId : simplement poser le premier noeud et activer le mode
-              const startNode = addNode(store.network, snappedWorld)
-              store.lastNodeId = startNode.id
+              // Pas de lastNodeId : poser le premier noeud (ou splitter la voie si on clique sur un pas de voie)
+              let startNodeId: string
+              const targetPos = store.hoverSegSteps?.nearest ?? snappedWorld
+              const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, targetPos, 16 / store.camera.scale)
+              if (hitSegId) {
+                const splitRes = splitSegment(store.network, hitSegId, targetPos)
+                startNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, targetPos).id
+              } else {
+                startNodeId = addNode(store.network, targetPos).id
+              }
+              store.lastNodeId = startNodeId
               store.parallelMode = false // attend le prochain shift+click pour creer le 2e noeud
-              store.selection = { nodes: new Set([startNode.id]), segments: new Set() }
+              store.selection = { nodes: new Set([startNodeId]), segments: new Set() }
+              reconcileNetworkIntersections(store.network)
               store.markDirty()
             }
           } else {
@@ -876,6 +928,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           redraw()
           return
         }
+        // Si on est en Shift-clic sur un pas de voie prévisualisé, poser un noeud (splitter le segment)
+        if (e.shiftKey && store.hoverSegSteps?.nearest && store.hoverSegSteps?.segId) {
+          const splitPt = store.hoverSegSteps.nearest
+          const splitSegId = store.hoverSegSteps.segId
+          const splitRes = splitSegment(store.network, splitSegId, splitPt)
+          const newNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, splitPt).id
+          store.selection = { nodes: new Set([newNodeId]), segments: new Set() }
+          reconcileNetworkIntersections(store.network)
+          store.markDirty()
+          redraw()
+          return
+        }
+
         const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
           const sections = computeTrackSections(store.network, store.sectionMeta)
@@ -1008,8 +1073,27 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
       }
 
+      // Shift+survol : calcul des points de pas sur la voie
+      if (e.shiftKey && (store.tool === 'place' || store.tool === 'select')) {
+        const hitTol2 = 20 / store.camera.scale
+        const nearSeg = hitSegment(store.network, rawWorld, hitTol2)
+        if (nearSeg) {
+          const spacing = getSnapSpacing()
+          const { points, nearest } = getStepPointsAlongSegment(nearSeg, store.network, spacing, rawWorld)
+          store.hoverSegSteps = { segId: nearSeg, points, nearest }
+          // Snapper le curseur sur le point le plus proche
+          if (nearest) {
+            store.snappedCursor = { ...nearest }
+          }
+        } else {
+          store.hoverSegSteps = null
+        }
+      } else {
+        store.hoverSegSteps = null
+      }
+
       if (!store.panning) {
-        if (store.tool === 'place' || store.tool === 'curve') {
+        if (store.tool === 'place' || store.tool === 'curve' || store.hoverSegSteps !== null) {
           draw()
         }
         if (store.isBoxSelecting) {

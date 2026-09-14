@@ -3,6 +3,7 @@ import { Menu, MenuBar, type MenuItem } from './Menu'
 import type { EditorStore } from './store'
 import { exportSVG } from '../render/exportSvg'
 import { serializeNetwork } from '../core/persistence'
+import { computeTrackSections } from '../core/sections'
 
 interface TopBarProps {
   store: EditorStore
@@ -218,7 +219,8 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 // --- Export helpers (JSON / SVG / PNG) ---
 
 function exportJSON(store: EditorStore): void {
-  const data = serializeNetwork(store.network, store.projectName, store.camera)
+  const sections = computeTrackSections(store.network, store.sectionMeta)
+  const data = serializeNetwork(store.network, store.projectName, store.camera, store.sectionMeta, store.gridMode, store.gridSpacing, sections)
   download(
     JSON.stringify(data, null, 2),
     `${store.projectName.replace(/\s+/g, '-').toLowerCase()}.json`,

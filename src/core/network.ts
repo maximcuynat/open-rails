@@ -176,3 +176,71 @@ export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId
   }
   return best
 }
+
+/**
+ * Compute evenly-spaced step positions along a straight or curved segment
+ * at the given spacing (metres). Returns the list of world-space points and
+ * the closest one to the cursor, for snap-on-track interaction.
+ */
+export function getStepPointsAlongSegment(
+  segId: SegmentId,
+  net: Network,
+  spacing: number,
+  cursorPos: Point,
+): { points: Point[]; nearest: Point | null; nearestT: number } {
+  const seg = net.segments.get(segId)
+  if (!seg || spacing <= 0) return { points: [], nearest: null, nearestT: 0 }
+  const a = net.nodes.get(seg.from)
+  const b = net.nodes.get(seg.to)
+  if (!a || !b) return { points: [], nearest: null, nearestT: 0 }
+
+  const SUBDIV = 32
+  const len = seg.kind === 'curve' && seg.via
+    ? (() => {
+        let total = 0
+        let prev = a.pos
+        for (let i = 1; i <= SUBDIV; i++) {
+          const t = i / SUBDIV
+          const mt = 1 - t
+          const px = mt * mt * a.pos.x + 2 * mt * t * seg.via!.x + t * t * b.pos.x
+          const py = mt * mt * a.pos.y + 2 * mt * t * seg.via!.y + t * t * b.pos.y
+          total += Math.hypot(px - prev.x, py - prev.y)
+          prev = { x: px, y: py }
+        }
+        return total
+      })()
+    : Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
+
+  if (len < spacing * 0.1) return { points: [], nearest: null, nearestT: 0 }
+
+  const points: Point[] = []
+  const count = Math.floor(len / spacing)
+  for (let i = 1; i <= count; i++) {
+    const t = (i * spacing) / len
+    let p: Point
+    if (seg.kind === 'curve' && seg.via) {
+      const mt = 1 - t
+      p = {
+        x: mt * mt * a.pos.x + 2 * mt * t * seg.via.x + t * t * b.pos.x,
+        y: mt * mt * a.pos.y + 2 * mt * t * seg.via.y + t * t * b.pos.y,
+      }
+    } else {
+      p = { x: a.pos.x + t * (b.pos.x - a.pos.x), y: a.pos.y + t * (b.pos.y - a.pos.y) }
+    }
+    points.push(p)
+  }
+
+  let nearest: Point | null = null
+  let nearestDist = Infinity
+  let nearestT = 0
+  for (let i = 0; i < points.length; i++) {
+    const d = Math.hypot(points[i].x - cursorPos.x, points[i].y - cursorPos.y)
+    if (d < nearestDist) {
+      nearestDist = d
+      nearest = points[i]
+      nearestT = (i + 1) * spacing / len
+    }
+  }
+
+  return { points, nearest, nearestT }
+}
