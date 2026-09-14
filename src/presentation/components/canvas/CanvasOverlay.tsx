@@ -25,8 +25,56 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
   const curvePhase = store.tool === 'curve' ? store.curveState.phase : null
   const layer = store.activePlacementLayer
 
+  // Live placement stats (Clarity & Feedback)
+  const isPlacing = (store.tool === 'place' && store.lastNodeId !== null) ||
+                    (store.tool === 'curve' && store.curveState.phase === 1 && store.curveState.startId !== null)
+
+  const activeNodeId = store.tool === 'place' ? store.lastNodeId : store.curveState.startId
+  const activeNode = activeNodeId ? store.network.nodes.get(activeNodeId) : null
+  const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+  const currentZ = store.activePlacementAltitude
+
+  let currentDist = 0
+  let currentSlope = 0
+  if (activeNode) {
+    const dx = cursor.x - activeNode.pos.x
+    const dy = cursor.y - activeNode.pos.y
+    currentDist = Math.hypot(dx, dy)
+    const dz = currentZ - (activeNode.z ?? 0)
+    currentSlope = currentDist > 0 ? (dz / currentDist) * 1000 : 0
+  }
+
   return (
     <div className="canvas-overlay" style={{ pointerEvents: 'none' }}>
+      {/* Live Engineering HUD during placement */}
+      {isPlacing && activeNode && (
+        <div className="hud-realtime-card">
+          <span className="hud-pill hud-pill-accent">
+            📐 {currentDist.toFixed(1)} m
+          </span>
+          <span className="hud-sep" />
+          {store.tool === 'curve' && (
+            <>
+              <span className="hud-pill hud-pill-amber">
+                🔄 {store.trackMode === 'freeform' ? 'Flex' : `R${store.selectedCurveRadius}m (${store.selectedCurveAngle}°)`}
+              </span>
+              <span className="hud-sep" />
+            </>
+          )}
+          <span className="hud-pill hud-pill-emerald">
+            ⛰️ Z: {currentZ.toFixed(1)}m {Math.abs(currentSlope) >= 0.5 && `(${currentSlope > 0 ? '+' : ''}${currentSlope.toFixed(1)}‰)`}
+          </span>
+          {store.parallelMode && (
+            <>
+              <span className="hud-sep" />
+              <span className="hud-pill" style={{ color: '#c084fc' }}>
+                🛤️ Voie double ({store.parallelOffset}m)
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {curvePhase !== null && (
         <div className="phase-badge">{curvePhase === 0 ? '1/2' : '2/2'}</div>
       )}
