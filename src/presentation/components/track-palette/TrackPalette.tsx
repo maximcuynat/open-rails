@@ -1,4 +1,4 @@
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 export function TrackPalette({ store }: { store: EditorStore }) {
   const isPlace = store.tool === 'place'

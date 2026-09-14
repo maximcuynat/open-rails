@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Menu, MenuBar, type MenuItem } from './Menu'
-import type { EditorStore } from './store'
-import { exportSVG } from '../render/exportSvg'
+import type { EditorStore } from '@application/state/editorStore'
+import { exportSVG } from '@infrastructure/export/exportSvg'
 import { serializeNetwork } from '@infrastructure/persistence/persistence'
 import { computeTrackSections } from '@domain/models/sections'
 

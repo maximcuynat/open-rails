@@ -1,7 +1,7 @@
 import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
-import type { EditorStore } from '../ui/store'
+import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
-import type { Camera } from './camera'
+import type { Camera } from '@infrastructure/render/camera'
 import { detectCrossings, lineLineIntersection } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import {
@@ -13,7 +13,7 @@ import {
   RAIL_WIDTH,
   getNodeSegmentEnds,
   getConnectedEndPairs,
-} from './renderer'
+} from '@infrastructure/render/renderer'
 
 /**
  * Generate a complete, high-fidelity HO 1:87 scale SVG drawing of the rail network.

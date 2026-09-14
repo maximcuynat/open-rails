@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import { autoDetectJunctions } from '@domain/models/junction'
-import { generateRealisticSVG } from './exportSvg'
+import { generateRealisticSVG } from '@infrastructure/export/exportSvg'
 
 describe('generateRealisticSVG', () => {
   it('returns empty svg when network has no nodes', () => {

@@ -13,7 +13,7 @@ import {
   type SectionDirection,
   SECTION_COLORS,
 } from '@domain/models/sections'
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>

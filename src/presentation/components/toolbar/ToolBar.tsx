@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import type { EditorStore, Tool } from './store'
+import type { EditorStore, Tool } from '@application/state/editorStore'
 
 interface ToolDef {
   id: Tool

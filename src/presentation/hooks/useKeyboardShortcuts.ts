@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 /** Global keyboard shortcuts wired to the shared store. */
 export function useKeyboardShortcuts(store: EditorStore): void {

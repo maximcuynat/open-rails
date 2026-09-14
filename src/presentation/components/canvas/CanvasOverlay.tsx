@@ -1,4 +1,4 @@
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { createCamera, type Camera } from '../../render/camera'
+import { createCamera, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment } from '@domain/models/network'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'

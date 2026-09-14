@@ -1,4 +1,4 @@
-import type { Camera } from '../../render/camera'
+import type { Camera } from '@infrastructure/render/camera'
 import { createNetwork, syncIdCounter } from '../../domain/models/network'
 import { findJunctionAtNode } from '../../domain/models/junction'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'

@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createCamera } from './camera'
+import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment } from '@domain/models/network'
 import {
   getViewportBounds,
   isPointInBounds,
   isSegmentInBounds,
   renderNetwork,
-} from './renderer'
+} from '@infrastructure/render/renderer'
 
 describe('Viewport culling (optimisation hors-champ)', () => {
   it('computes correct world viewport bounds from camera', () => {

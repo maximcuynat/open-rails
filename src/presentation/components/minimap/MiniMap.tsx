@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { bezierPoint } from '@domain/geometry/curve'
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 const MINI_W = 160
 const MINI_H = 120

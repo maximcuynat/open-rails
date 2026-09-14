@@ -1,4 +1,4 @@
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 const TOOL_LABELS: Record<string, string> = {
   select: 'Sélection',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clampScale, screenToWorld, type Camera } from '../render/camera'
+import { clampScale, screenToWorld, type Camera } from '@infrastructure/render/camera'
 import {
   renderGrid,
   renderNetwork,
@@ -8,7 +8,7 @@ import {
   renderDetailedRailLines,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
-} from '../render/renderer'
+} from '@infrastructure/render/renderer'
 import {
   addNode,
   addSegment,
@@ -34,7 +34,7 @@ import {
 } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
-import type { EditorStore } from './store'
+import type { EditorStore } from '@application/state/editorStore'
 
 /** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
 function findNearestNode(net: Network, worldPos: Point, maxScreenPx: number, cam: Camera): RailNode | null {

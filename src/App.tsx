@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { EditorStore, useEditorVersion } from './ui/store'
-import { useKeyboardShortcuts } from './ui/useKeyboardShortcuts'
-import { Canvas } from './ui/Canvas'
-import { TopBar } from './ui/TopBar'
-import { ToolBar } from './ui/ToolBar'
-import { SidePanel } from './ui/SidePanel'
-import { CanvasOverlay } from './ui/CanvasOverlay'
-import { MiniMap } from './ui/MiniMap'
+import { EditorStore, useEditorVersion } from '@application/state/editorStore'
+import { useKeyboardShortcuts } from '@presentation/hooks/useKeyboardShortcuts'
+import { Canvas } from '@presentation/components/canvas/Canvas'
+import { TopBar } from '@presentation/components/topbar/TopBar'
+import { ToolBar } from '@presentation/components/toolbar/ToolBar'
+import { SidePanel } from '@presentation/components/sidepanel/SidePanel'
+import { CanvasOverlay } from '@presentation/components/canvas/CanvasOverlay'
+import { MiniMap } from '@presentation/components/minimap/MiniMap'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)

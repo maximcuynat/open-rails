@@ -16,7 +16,7 @@ import {
   resetMemoryStorage,
   STORAGE_KEY,
 } from './persistence'
-import { createCamera } from '../../render/camera'
+import { createCamera } from '@infrastructure/render/camera'
 
 describe('persistence module', () => {
   beforeEach(() => {

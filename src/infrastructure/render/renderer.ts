@@ -1,5 +1,5 @@
-export type { Camera } from './camera'
-import type { Camera } from './camera'
+export type { Camera } from '@infrastructure/render/camera'
+import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'

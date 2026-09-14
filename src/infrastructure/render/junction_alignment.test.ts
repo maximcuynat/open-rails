@@ -7,8 +7,8 @@ import {
   getConnectedEndPairs,
   GAUGE,
   BALLAST_WIDTH,
-} from './renderer'
-import type { Camera, Selection } from './renderer'
+} from '@infrastructure/render/renderer'
+import type { Camera, Selection } from '@infrastructure/render/renderer'
 
 const dummyCam: Camera = { x: 0, y: 0, scale: 1 }
 const dummySel: Selection = { nodes: new Set(), segments: new Set() }
