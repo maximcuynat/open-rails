@@ -40,8 +40,8 @@ describe('generateRealisticSVG', () => {
     addSegment(net, n2.id, n3.id)
 
     const svg = generateRealisticSVG(net, 'TwoTracks')
-    expect(svg).not.toContain('class="fishplate"')
-    expect(svg).not.toContain('class="bolt"')
+    expect(svg).toContain('class="fishplate"')
+    expect(svg).toContain('class="fishplate-bolt"')
     expect(svg).toContain('class="rail-head"')
   })
 
@@ -97,11 +97,9 @@ describe('generateRealisticSVG', () => {
     expect(svg).toContain('x1="246"')
     // Ballast fill covers the joint
     expect(svg).toContain('class="joint-fill"')
-    // Polished rail head is present
-    expect(svg).toContain('class="rail-head"')
-    // No obsolete fishplates or bolts
-    expect(svg).not.toContain('class="fishplate"')
-    expect(svg).not.toContain('class="bolt"')
+    // Fishplates with bolts at track joints
+    expect(svg).toContain('class="fishplate"')
+    expect(svg).toContain('class="fishplate-bolt"')
   })
 
   it('dynamically generates miter joint paths when tracks meet at an angle', () => {

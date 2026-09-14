@@ -4,6 +4,7 @@ import type { EditorStore } from '@application/state/editorStore'
 import { exportSVG } from '@infrastructure/export/exportSvg'
 import { serializeNetwork } from '@infrastructure/persistence/persistence'
 import { computeTrackSections } from '@domain/models/sections'
+import { showToast } from '../common/Toast'
 
 interface TopBarProps {
   store: EditorStore
@@ -73,8 +74,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           try {
             const data = JSON.parse(text)
             store.loadFromData(data)
+            showToast('Projet importé avec succès', 'success')
           } catch {
-            alert('Invalid network JSON file')
+            showToast('Fichier JSON invalide', 'error')
           }
         }
         input.click()
@@ -82,12 +84,15 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       }
       case 'export-json':
         exportJSON(store)
+        showToast('Export JSON téléchargé', 'success')
         break
       case 'export-svg':
         exportSVG(store)
+        showToast('Plan SVG vectoriel exporté', 'success')
         break
       case 'export-png':
         exportPNG(store)
+        showToast('Image PNG exportée', 'success')
         break
     }
   }
@@ -102,6 +107,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
         break
       case 'reconcile':
         store.reconcileTopology()
+        showToast('Topologie et aiguillages réconciliés', 'info')
         break
       case 'delete':
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))

@@ -563,7 +563,11 @@ export function renderNetwork(
       const barH = Math.max(2.2, signR * 0.35)
       ctx.fillStyle = '#ffffff'
       ctx.beginPath()
-      ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
+      } else {
+        ctx.rect(sx - barW / 2, sy - barH / 2, barW, barH)
+      }
       ctx.fill()
 
       ctx.restore()

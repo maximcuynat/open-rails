@@ -23,26 +23,28 @@ describe('CURVE_RADII', () => {
     expect(CURVE_RADII[CURVE_RADII.length - 1]).toBe(Infinity)
   })
 
-  it('includes HO standard radii', () => {
-    expect(CURVE_RADII).toContain(430)
-    expect(CURVE_RADII).toContain(550)
-    expect(CURVE_RADII).toContain(867)
+  it('includes UIC standard radii', () => {
+    expect(CURVE_RADII).toContain(150)
+    expect(CURVE_RADII).toContain(500)
+    expect(CURVE_RADII).toContain(1200)
+    expect(CURVE_RADII).toContain(4000)
   })
 })
 
 describe('CURVE_PROFILES', () => {
   it('has labels matching radii', () => {
-    expect(CURVE_PROFILES[0].label).toBe('R430')
+    expect(CURVE_PROFILES[0].label).toBe('R150')
     expect(CURVE_PROFILES[CURVE_PROFILES.length - 1].label).toBe('Straight')
   })
 })
 
 describe('snapRadius', () => {
   it('snaps to closest predefined radius', () => {
-    expect(snapRadius(440)).toBe(430)
-    expect(snapRadius(470)).toBe(490)
-    expect(snapRadius(560)).toBe(550)
-    expect(snapRadius(800)).toBe(790)
+    expect(snapRadius(160)).toBe(150)
+    expect(snapRadius(280)).toBe(250)
+    expect(snapRadius(550)).toBe(500)
+    expect(snapRadius(900)).toBe(800)
+    expect(snapRadius(1300)).toBe(1200)
   })
 
   it('returns Infinity for very large values', () => {
@@ -113,35 +115,35 @@ describe('arcToVia', () => {
 })
 
 describe('radiusToAngle', () => {
-  it('returns 22.5 for standard radii', () => {
-    expect(radiusToAngle(430)).toBe(22.5)
-    expect(radiusToAngle(550)).toBe(22.5)
-    expect(radiusToAngle(790)).toBe(22.5)
-  })
-
-  it('returns 10 for R867', () => {
-    expect(radiusToAngle(867)).toBe(10)
+  it('returns appropriate deflection angle based on radius', () => {
+    expect(radiusToAngle(150)).toBe(30)
+    expect(radiusToAngle(250)).toBe(30)
+    expect(radiusToAngle(500)).toBe(15)
+    expect(radiusToAngle(800)).toBe(15)
+    expect(radiusToAngle(1200)).toBe(10)
+    expect(radiusToAngle(2000)).toBe(10)
+    expect(radiusToAngle(4000)).toBe(5)
   })
 })
 
 describe('snapStraightLength', () => {
   it('snaps to closest standard length', () => {
-    expect(snapStraightLength(62)).toBe(60)
-    expect(snapStraightLength(100)).toBe(94)
-    expect(snapStraightLength(120)).toBe(123)
-    expect(snapStraightLength(250)).toBe(246)
+    expect(snapStraightLength(28)).toBe(25)
+    expect(snapStraightLength(60)).toBe(50)
+    expect(snapStraightLength(120)).toBe(100)
+    expect(snapStraightLength(250)).toBe(200)
   })
 
   it('returns exact value when on standard', () => {
-    expect(snapStraightLength(246)).toBe(246)
-    expect(snapStraightLength(369)).toBe(369)
+    expect(snapStraightLength(100)).toBe(100)
+    expect(snapStraightLength(400)).toBe(400)
   })
 })
 
 describe('computeStraightPiece', () => {
   it('computes end point along direction', () => {
-    const end = computeStraightPiece({ x: 0, y: 0 }, { x: 1, y: 0 }, 246)
-    expect(end).toEqual({ x: 246, y: 0 })
+    const end = computeStraightPiece({ x: 0, y: 0 }, { x: 1, y: 0 }, 100)
+    expect(end).toEqual({ x: 100, y: 0 })
   })
 
   it('works with diagonal direction', () => {
@@ -152,23 +154,22 @@ describe('computeStraightPiece', () => {
 })
 
 describe('computeCurvePiece', () => {
-  it('produces correct chord for R550 at 22.5 degrees', () => {
+  it('produces correct chord for R500 at 15 degrees', () => {
     const start = { x: 0, y: 0 }
     const tangent = { x: 1, y: 0 }
-    const { end, angle } = computeCurvePiece(start, tangent, 550, 1)
-    expect(angle).toBe(22.5)
-    // Chord = 2 * 550 * sin(11.25°) ≈ 214.6 mm
+    const { end, angle } = computeCurvePiece(start, tangent, 500, 1)
+    expect(angle).toBe(15)
     const chordLen = Math.hypot(end.x - start.x, end.y - start.y)
-    expect(chordLen).toBeCloseTo(2 * 550 * Math.sin((22.5 * Math.PI / 180) / 2), 0)
+    expect(chordLen).toBeCloseTo(2 * 500 * Math.sin((15 * Math.PI / 180) / 2), 0)
   })
 
-  it('produces correct chord for R867 at 10 degrees', () => {
+  it('produces correct chord for R1200 at 10 degrees', () => {
     const start = { x: 0, y: 0 }
     const tangent = { x: 1, y: 0 }
-    const { end, angle } = computeCurvePiece(start, tangent, 867, 1)
+    const { end, angle } = computeCurvePiece(start, tangent, 1200, 1)
     expect(angle).toBe(10)
     const chordLen = Math.hypot(end.x - start.x, end.y - start.y)
-    expect(chordLen).toBeCloseTo(2 * 867 * Math.sin((10 * Math.PI / 180) / 2), 0)
+    expect(chordLen).toBeCloseTo(2 * 1200 * Math.sin((10 * Math.PI / 180) / 2), 0)
   })
 
   it('side -1 curves in opposite direction', () => {
@@ -214,12 +215,12 @@ describe('computeCurvePiece', () => {
     expect(endDy / endLen).toBeCloseTo(expectedEndDir.y, 5)
   })
 
-  it('chains 4 pieces to form an exact 90-degree quarter circle', () => {
+  it('chains 6 pieces of 15 degrees to form an exact 90-degree quarter circle', () => {
     let currentPos = { x: 0, y: 0 }
     let currentDir = { x: 1, y: 0 }
 
-    for (let i = 0; i < 4; i++) {
-      const piece = computeCurvePiece(currentPos, currentDir, 550, 1)
+    for (let i = 0; i < 6; i++) {
+      const piece = computeCurvePiece(currentPos, currentDir, 500, 1, 15)
       const endDx = piece.end.x - piece.via.x
       const endDy = piece.end.y - piece.via.y
       const len = Math.hypot(endDx, endDy)
@@ -227,7 +228,7 @@ describe('computeCurvePiece', () => {
       currentPos = piece.end
     }
 
-    // After four 22.5° curves, the direction must be exactly pointing in +Y (0, 1)
+    // After six 15° curves, the direction must be exactly pointing in +Y (0, 1)
     expect(currentDir.x).toBeCloseTo(0, 4)
     expect(currentDir.y).toBeCloseTo(1, 4)
   })

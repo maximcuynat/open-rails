@@ -86,6 +86,8 @@ describe('Viewport culling (optimisation hors-champ)', () => {
       stroke: vi.fn(),
       fill: vi.fn(),
       arc: vi.fn(),
+      rect: vi.fn(),
+      roundRect: vi.fn(),
       fillRect: vi.fn(),
       strokeRect: vi.fn(),
       setLineDash: vi.fn(),
