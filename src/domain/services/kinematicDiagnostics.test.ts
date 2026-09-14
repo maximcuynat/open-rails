@@ -79,4 +79,25 @@ describe('kinematicDiagnostics', () => {
     // A gentle turnout has through angle = 0° and diverging angle = 10°, no error!
     expect(issues).toHaveLength(0)
   })
+
+  it('validates a diamond crossing (X intersection of 2 lines) without kinematic errors', () => {
+    const net = createNetwork()
+    // Center crossing node
+    const center = addNode(net, { x: 0, y: 0 })
+    // Horizontal line
+    const w = addNode(net, { x: -100, y: 0 })
+    const e = addNode(net, { x: 100, y: 0 })
+    addSegment(net, w.id, center.id)
+    addSegment(net, center.id, e.id)
+
+    // Vertical line (or 45° line)
+    const s = addNode(net, { x: 0, y: -100 })
+    const n = addNode(net, { x: 0, y: 100 })
+    addSegment(net, s.id, center.id)
+    addSegment(net, center.id, n.id)
+
+    const issues = analyzeKinematics(net)
+    // Both lines continue straight ahead, crossing is valid and traversable!
+    expect(issues).toHaveLength(0)
+  })
 })

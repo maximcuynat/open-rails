@@ -142,3 +142,67 @@ function distToSeg(p: Point, a: Point, b: Point): number {
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
+
+/**
+ * Compute the parallel (concentric) quadratic curve offset by `offset` distance (positive = normal side / left).
+ */
+export function computeParallelCurve(
+  start: Point,
+  via: Point,
+  end: Point,
+  offset: number,
+): { start: Point; via: Point; end: Point } {
+  // Tangents at start and end
+  const d0x = via.x - start.x
+  const d0y = via.y - start.y
+  const len0 = Math.hypot(d0x, d0y)
+  const tan0 = len0 > 0 ? { x: d0x / len0, y: d0y / len0 } : { x: 1, y: 0 }
+  const norm0 = { x: -tan0.y, y: tan0.x }
+
+  const d1x = end.x - via.x
+  const d1y = end.y - via.y
+  const len1 = Math.hypot(d1x, d1y)
+  const tan1 = len1 > 0 ? { x: d1x / len1, y: d1y / len1 } : { x: 1, y: 0 }
+  const norm1 = { x: -tan1.y, y: tan1.x }
+
+  const newStart: Point = {
+    x: start.x + norm0.x * offset,
+    y: start.y + norm0.y * offset,
+  }
+
+  const newEnd: Point = {
+    x: end.x + norm1.x * offset,
+    y: end.y + norm1.y * offset,
+  }
+
+  // To find the new via point:
+  // It lies on the line: newStart + t * tan0
+  // and on the line: newEnd - s * tan1
+  // newStart + t * tan0 = newEnd - s * tan1
+  // t * tan0 + s * tan1 = newEnd - newStart
+  // Solve by Cramer's rule:
+  const chordX = newEnd.x - newStart.x
+  const chordY = newEnd.y - newStart.y
+  const det = tan0.x * tan1.y - tan0.y * tan1.x
+
+  if (Math.abs(det) < 1e-5) {
+    // Tangents are parallel: fallback to midpoint
+    return {
+      start: newStart,
+      via: { x: (newStart.x + newEnd.x) / 2, y: (newStart.y + newEnd.y) / 2 },
+      end: newEnd,
+    }
+  }
+
+  const t = (chordX * tan1.y - chordY * tan1.x) / det
+  const newVia: Point = {
+    x: newStart.x + tan0.x * t,
+    y: newStart.y + tan0.y * t,
+  }
+
+  return {
+    start: newStart,
+    via: newVia,
+    end: newEnd,
+  }
+}

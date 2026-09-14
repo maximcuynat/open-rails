@@ -164,8 +164,46 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
       }
     }
 
-    // Case 3: More than 3 rails without diamond crossing or turntable
-    else if (segIds.length > 3) {
+    // Case 3: 4-rail intersection (croisement / traversée à niveau en X ou convergence)
+    else if (segIds.length === 4) {
+      const segs = segIds.map(id => net.segments.get(id)).filter((s): s is Segment => !!s)
+      if (segs.length === 4) {
+        const dirs = segs.map(s => getOutgoingTangent(net, s, node.id))
+        if (!dirs.some(d => !d)) {
+          let pairA2 = -1, minDotA = 1
+          for (let j = 1; j < 4; j++) {
+            const dj = dirs[j]!
+            const dot = dirs[0]!.x * dj.x + dirs[0]!.y * dj.y
+            if (dot < minDotA) {
+              minDotA = dot
+              pairA2 = j
+            }
+          }
+
+          if (pairA2 > 0 && minDotA < -0.65) {
+            const remaining = [1, 2, 3].filter(idx => idx !== pairA2)
+            const dotB = dirs[remaining[0]]!.x * dirs[remaining[1]]!.x + dirs[remaining[0]]!.y * dirs[remaining[1]]!.y
+            if (dotB < -0.65) {
+              // C'est une vraie traversée oblique ou orthogonale en X :
+              // chaque ligne continue tout droit sans changer de voie. C'est parfaitement franchissable !
+              continue
+            }
+          }
+        }
+      }
+
+      issues.push({
+        id: `excess-rails-${node.id}`,
+        nodeId: node.id,
+        kind: 'invalid_turnout',
+        severity: 'warning',
+        message: `Convergence anormale de 4 voies sans alignement traversant cohérent`,
+        involvedSegmentIds: segIds,
+      })
+    }
+
+    // Case 4: Plus de 4 rails
+    else if (segIds.length > 4) {
       issues.push({
         id: `excess-rails-${node.id}`,
         nodeId: node.id,

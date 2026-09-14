@@ -19,7 +19,7 @@ import {
   getStepPointsAlongSegment,
 } from '@domain/models/network'
 import type { Point, Network, RailNode } from '@domain/models/types'
-import { curveLength, bezierPoint } from '@domain/geometry/curve'
+import { curveLength, bezierPoint, computeParallelCurve } from '@domain/geometry/curve'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import {
   snapStraightLength,
@@ -497,6 +497,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
         })()
 
+        const showParallelPreview = store.parallelMode || isModifierDownRef.current
+
         if (store.trackMode === 'freeform') {
           const closeNode = findNearestNode(store.network, cursor, 16, cam)
           const target = closeNode && closeNode.id !== cs.startId ? closeNode.pos : cursor
@@ -519,6 +521,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             ? `Flex ${len.toFixed(2)} m${joinSuffix}${slopeLabel}`
             : `Flex ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}${slopeLabel}`
           renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
+
+          if (showParallelPreview) {
+            const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
+            const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
+            const secStart = secStartNode ? secStartNode.pos : par.start
+            ctx.save()
+            ctx.globalAlpha = 0.55
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+            ctx.restore()
+          }
         } else {
           const radius = store.selectedCurveRadius
           const angle = store.selectedCurveAngle
@@ -540,6 +552,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             : ''
           const labelText = `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}${slopeLabel}`
           renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
+
+          if (showParallelPreview) {
+            const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
+            const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
+            const secStart = secStartNode ? secStartNode.pos : par.start
+            ctx.save()
+            ctx.globalAlpha = 0.55
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+            ctx.restore()
+          }
         }
       }
     }
@@ -744,12 +766,40 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               newCurveSeg.layer = store.activePlacementLayer
               if (store.activePlacementLayer > 0) newCurveSeg.overpass = true
             }
+
+            const isParallelKey = e.shiftKey || e.ctrlKey || store.parallelMode
+            let secEndId: string | null = null
+
+            if (isParallelKey) {
+              const par = computeParallelCurve(startNode.pos, viaPos, endPos, store.parallelOffset)
+              let secStartId = store.parallelLastNodeId
+              if (!secStartId) {
+                const s2 = addNode(store.network, par.start)
+                s2.z = store.activePlacementAltitude
+                s2.pos.z = store.activePlacementAltitude
+                secStartId = s2.id
+              }
+              const endNode2 = addNode(store.network, par.end)
+              endNode2.z = store.activePlacementAltitude
+              endNode2.pos.z = store.activePlacementAltitude
+              secEndId = endNode2.id
+
+              const sSec = addCurveSegment(store.network, secStartId, endNode2.id, par.via)
+              if (sSec && store.activePlacementLayer !== 0) {
+                sSec.layer = store.activePlacementLayer
+                if (store.activePlacementLayer > 0) sSec.overpass = true
+              }
+
+              store.parallelMode = true
+              store.parallelLastNodeId = endNode2.id
+            }
+
             reconcileNetworkIntersections(store.network)
             store.markDirty()
             // Finish curve: release cursor so it does not auto-continue
             store.curveState = { phase: 0, startId: null }
-            store.lastNodeId = null
-            store.selection = { nodes: new Set([endId]), segments: new Set() }
+            store.lastNodeId = endId
+            store.selection = { nodes: new Set(secEndId ? [endId, secEndId] : [endId]), segments: new Set() }
           }
           redraw()
         }
