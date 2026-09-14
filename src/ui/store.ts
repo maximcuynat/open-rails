@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, type Camera } from '../render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment } from '../core/network'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment } from '../core/network'
 import { CURVE_RADII } from '../core/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '../core/junction'
 import { reconcileNetworkIntersections } from '../core/reconcile'
@@ -324,6 +324,92 @@ export class EditorStore {
       this.parallelOffset = offset
       this.notify()
     }
+  }
+
+  /**
+   * Crée un doublement de voie parallèle à partir de 2 nœuds sélectionnés.
+   * Calcule le vecteur perpendiculaire et trace une voie secondaire à la distance parallèle active.
+   */
+  createParallelTrackFromSelection = (customOffset?: number): boolean => {
+    if (this.selection.nodes.size !== 2) return false
+    const [idA, idB] = [...this.selection.nodes]
+    const nodeA = this.network.nodes.get(idA)
+    const nodeB = this.network.nodes.get(idB)
+    if (!nodeA || !nodeB) return false
+
+    const dx = nodeB.pos.x - nodeA.pos.x
+    const dy = nodeB.pos.y - nodeA.pos.y
+    const len = Math.hypot(dx, dy)
+    if (len < 0.5) return false
+
+    const ux = dx / len
+    const uy = dy / len
+    // Normale gauche perpendiculaire
+    const nx = -uy
+    const ny = ux
+    const off = customOffset ?? this.parallelOffset
+
+    // Créer ou récupérer le segment principal entre A et B s'il n'existe pas encore
+    let mainSeg = null
+    const adjA = this.network.adjacency.get(idA) ?? []
+    for (const sid of adjA) {
+      const s = this.network.segments.get(sid)
+      if (s && (s.from === idB || s.to === idB)) {
+        mainSeg = s
+        break
+      }
+    }
+    if (!mainSeg) {
+      mainSeg = addSegment(this.network, idA, idB)
+      if (mainSeg && this.activePlacementLayer !== 0) {
+        mainSeg.layer = this.activePlacementLayer
+        if (this.activePlacementLayer > 0) mainSeg.overpass = true
+      }
+    }
+
+    // Créer les 2 nouveaux nœuds parallèles
+    const zA = nodeA.z ?? nodeA.pos.z ?? this.activePlacementAltitude
+    const zB = nodeB.z ?? nodeB.pos.z ?? this.activePlacementAltitude
+    const p2A = { x: nodeA.pos.x + nx * off, y: nodeA.pos.y + ny * off, z: zA }
+    const p2B = { x: nodeB.pos.x + nx * off, y: nodeB.pos.y + ny * off, z: zB }
+
+    const newNodeA = addNode(this.network, p2A)
+    newNodeA.z = zA
+    newNodeA.pos.z = zA
+
+    const newNodeB = addNode(this.network, p2B)
+    newNodeB.z = zB
+    newNodeB.pos.z = zB
+
+    const secSeg = addSegment(this.network, newNodeA.id, newNodeB.id)
+    if (secSeg && this.activePlacementLayer !== 0) {
+      secSeg.layer = this.activePlacementLayer
+      if (this.activePlacementLayer > 0) secSeg.overpass = true
+    }
+
+    // Sélectionner les 2 nouveaux nœuds pour permettre d'enchaîner la pose ou les visualiser
+    this.selection = { nodes: new Set([newNodeA.id, newNodeB.id]), segments: new Set(secSeg ? [secSeg.id] : []) }
+    reconcileNetworkIntersections(this.network)
+    this.markDirty()
+    this.notify()
+    return true
+  }
+
+  /**
+   * Relie directement deux nœuds sélectionnés par un rail droit.
+   */
+  connectSelectedNodes = (): boolean => {
+    if (this.selection.nodes.size !== 2) return false
+    const [idA, idB] = [...this.selection.nodes]
+    const s = addSegment(this.network, idA, idB)
+    if (s && this.activePlacementLayer !== 0) {
+      s.layer = this.activePlacementLayer
+      if (this.activePlacementLayer > 0) s.overpass = true
+    }
+    reconcileNetworkIntersections(this.network)
+    this.markDirty()
+    this.notify()
+    return !!s
   }
 
   setActivePlacementLayer = (layer: number): void => {

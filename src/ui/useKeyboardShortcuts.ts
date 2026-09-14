@@ -59,6 +59,13 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         }
       } else if (e.key === 'm' || e.key === 'M') {
         store.setTrackMode(store.trackMode === 'catalog' ? 'freeform' : 'catalog')
+      } else if (e.key === 'd' || e.key === 'D') {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          if (store.selection.nodes.size === 2) {
+            e.preventDefault()
+            store.createParallelTrackFromSelection()
+          }
+        }
       } else if (e.key === 'i' || e.key === 'I') {
         store.toggleSidePanel()
       } else if (e.key === 'r' || e.key === 'R') {

@@ -997,8 +997,187 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
       </div>
     </>
   )
-
 }
+
+/** Panneau de contrôle affiché lorsque 2 nœuds sont sélectionnés avec Ctrl/Cmd */
+function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStore; nodeAId: string; nodeBId: string }) {
+  const nodeA = store.network.nodes.get(nodeAId)
+  const nodeB = store.network.nodes.get(nodeBId)
+  if (!nodeA || !nodeB) return <NetworkPanel store={store} />
+
+  const dx = nodeB.pos.x - nodeA.pos.x
+  const dy = nodeB.pos.y - nodeA.pos.y
+  const dist = Math.hypot(dx, dy)
+  const zA = nodeA.z ?? nodeA.pos.z ?? 0
+  const zB = nodeB.z ?? nodeB.pos.z ?? 0
+  const deltaZ = zB - zA
+  const slopePermil = dist > 0 ? (deltaZ / dist) * 1000 : 0
+
+  // Vérifier s'ils sont déjà reliés par un rail
+  const adjA = store.network.adjacency.get(nodeAId) ?? []
+  const connectingSeg = adjA
+    .map((sid) => store.network.segments.get(sid))
+    .find((s) => s && (s.from === nodeBId || s.to === nodeBId))
+
+  return (
+    <>
+      <PanelHeader>Sélection de 2 nœuds</PanelHeader>
+      <div className="sp-section">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', padding: '6px 8px', background: 'rgba(37,99,235,0.12)', border: '1px solid #3b82f6', borderRadius: '6px' }}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <line x1="4" y1="9" x2="20" y2="9" />
+            <line x1="4" y1="15" x2="20" y2="15" />
+            <circle cx="6" cy="9" r="2" fill="#3b82f6" />
+            <circle cx="18" cy="9" r="2" fill="#3b82f6" />
+            <circle cx="6" cy="15" r="2" fill="#3b82f6" />
+            <circle cx="18" cy="15" r="2" fill="#3b82f6" />
+          </svg>
+          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ink)' }}>
+            2 nœuds sélectionnés (Ctrl / Cmd)
+          </span>
+        </div>
+
+        <Field label="Nœud A" value={`(${nodeA.pos.x.toFixed(1)}m, ${nodeA.pos.y.toFixed(1)}m) · Z: ${zA.toFixed(1)}m`} />
+        <Field label="Nœud B" value={`(${nodeB.pos.x.toFixed(1)}m, ${nodeB.pos.y.toFixed(1)}m) · Z: ${zB.toFixed(1)}m`} />
+        <Field label="Distance" value={`${dist.toFixed(2)} m`} />
+        <Field label="Dénivelé (ΔZ)" value={`${deltaZ >= 0 ? '+' : ''}${deltaZ.toFixed(2)} m`} />
+        <Field
+          label="Pente"
+          value={
+            Math.abs(slopePermil) < 0.1 ? (
+              '0 ‰ (De niveau)'
+            ) : (
+              <span style={{ fontWeight: 700, color: Math.abs(slopePermil) > 35 ? '#ef4444' : Math.abs(slopePermil) > 20 ? '#f59e0b' : 'var(--accent)' }}>
+                {slopePermil > 0 ? '▲ Rampe' : '▼ Pente'} {Math.abs(slopePermil).toFixed(1)} ‰
+              </span>
+            )
+          }
+        />
+        <Field label="Reliés par voie" value={connectingSeg ? 'Oui (voie existante)' : 'Non (non connectés)'} />
+      </div>
+
+      <div className="sp-subheader">Construction voie double</div>
+      <div style={{ padding: '0 14px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Écartement double voie :</span>
+          <input
+            type="number"
+            min="1.0"
+            max="20.0"
+            step="0.1"
+            value={store.parallelOffset}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value)
+              if (!isNaN(val) && val > 0) store.setParallelOffset(val)
+            }}
+            style={{
+              width: '55px',
+              padding: '3px 6px',
+              fontSize: '11px',
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              background: 'var(--input-bg, #0f172a)',
+              color: 'var(--ink)',
+              textAlign: 'right',
+            }}
+          />
+          <span style={{ fontSize: '11px' }}>m</span>
+        </div>
+
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            className="sp-btn-compact"
+            style={{
+              flex: 1,
+              padding: '8px 10px',
+              background: 'var(--accent)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              fontWeight: 700,
+              fontSize: '11px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+            onClick={() => store.createParallelTrackFromSelection()}
+            title="Génère la voie parallèle à gauche (+écartement). Raccourci : D"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="8" x2="21" y2="8" />
+              <line x1="3" y1="16" x2="21" y2="16" />
+            </svg>
+            Créer voie double (D)
+          </button>
+          <button
+            className="sp-btn-compact"
+            style={{
+              padding: '8px 10px',
+              background: 'var(--panel-2)',
+              color: 'var(--ink)',
+              border: '1px solid var(--border)',
+              borderRadius: '6px',
+              fontWeight: 600,
+              fontSize: '11px',
+              cursor: 'pointer',
+            }}
+            onClick={() => store.createParallelTrackFromSelection(-store.parallelOffset)}
+            title="Créer la voie parallèle du côté opposé (-écartement)"
+          >
+            Côté opposé
+          </button>
+        </div>
+      </div>
+
+      <div className="sp-subheader">Actions sur les 2 nœuds</div>
+      <div style={{ display: 'flex', gap: '6px', padding: '0 14px 10px' }}>
+        {!connectingSeg && (
+          <button
+            className="sp-btn-compact"
+            style={{
+              flex: 1,
+              padding: '6px 8px',
+              fontSize: '11px',
+              fontWeight: 600,
+              borderRadius: '4px',
+              border: '1px solid var(--border)',
+              background: 'var(--panel-2)',
+              color: 'var(--ink)',
+              cursor: 'pointer',
+            }}
+            onClick={() => {
+              store.connectSelectedNodes()
+            }}
+            title="Relier directement ces 2 nœuds par un coupon de voie droite"
+          >
+            Relier par un rail
+          </button>
+        )}
+        <button
+          className="sp-btn-compact"
+          style={{
+            flex: 1,
+            padding: '6px 8px',
+            fontSize: '11px',
+            fontWeight: 500,
+            borderRadius: '4px',
+            border: '1px solid #ef4444',
+            background: 'rgba(239, 68, 68, 0.1)',
+            color: '#ef4444',
+            cursor: 'pointer',
+          }}
+          onClick={() => store.deleteSelection()}
+          title="Supprimer les 2 nœuds sélectionnés"
+        >
+          Supprimer les 2 nœuds
+        </button>
+      </div>
+    </>
+  )
+}
+
 
 export function SidePanel({ store }: { store: EditorStore }) {
   const isOpen = store.isSidePanelOpen
@@ -1017,7 +1196,11 @@ export function SidePanel({ store }: { store: EditorStore }) {
     : null
 
   let content: ReactNode
-  if (sel.segments.size === 1 && sel.nodes.size === 0) {
+  // If 2 nodes are selected: special panel allowing direct double track creation / connection
+  if (sel.nodes.size === 2 && sel.segments.size === 0) {
+    const [idA, idB] = [...sel.nodes]
+    content = <TwoNodesSelectionPanel key={`${idA}-${idB}`} store={store} nodeAId={idA} nodeBId={idB} />
+  } else if (sel.segments.size === 1 && sel.nodes.size === 0) {
     const id = [...sel.segments][0]
     content = <SegmentPanel key={id} store={store} segId={id} />
   } else if (matchingSection) {

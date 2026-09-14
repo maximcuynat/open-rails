@@ -505,6 +505,29 @@ export function ToolBar({ store }: { store: EditorStore }) {
           <div style={{ fontSize: '9px', marginTop: '2px' }}>Echap / Clic</div>
         </div>
       )}
+
+      {store.selection.nodes.size === 2 && !store.parallelMode && (
+        <div
+          style={{
+            margin: '6px 2px 0',
+            padding: '5px 4px',
+            background: 'rgba(16, 185, 129, 0.15)',
+            border: '1px solid #10b981',
+            borderRadius: '6px',
+            fontSize: '10px',
+            fontWeight: 700,
+            color: '#34d399',
+            textAlign: 'center',
+            lineHeight: 1.3,
+            cursor: 'pointer',
+          }}
+          title="Créer une voie double parallèle à partir des 2 nœuds sélectionnés. Raccourci clavier : D"
+          onClick={() => store.createParallelTrackFromSelection()}
+        >
+          <div>+ Double</div>
+          <div style={{ fontSize: '9px', opacity: 0.8 }}>(D)</div>
+        </div>
+      )}
     </div>
   )
 }
