@@ -149,4 +149,28 @@ describe('persistence module', () => {
       expect(loaded?.network.nodes.size).toBe(0)
     }
   })
+
+  it('serializes and deserializes node altitude z correctly for slopes', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0, z: 2.5 })
+    n1.z = 2.5
+    const n2 = addNode(net, { x: 100, y: 0, z: 5.0 })
+    n2.z = 5.0
+    addSegment(net, n1.id, n2.id)
+
+    const serialized = serializeNetwork(net, 'Slope Project')
+    const node1Serialized = serialized.nodes.find((n: any) => n.id === n1.id)
+    const node2Serialized = serialized.nodes.find((n: any) => n.id === n2.id)
+    expect(node1Serialized?.z).toBe(2.5)
+    expect(node2Serialized?.z).toBe(5.0)
+
+    const restored = deserializeNetwork(serialized)
+    const restoredN1 = restored.network.nodes.get(n1.id)
+    const restoredN2 = restored.network.nodes.get(n2.id)
+    expect(restoredN1?.z).toBe(2.5)
+    expect(restoredN1?.pos.z).toBe(2.5)
+    expect(restoredN2?.z).toBe(5.0)
+    expect(restoredN2?.pos.z).toBe(5.0)
+  })
 })
+

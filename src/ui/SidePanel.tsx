@@ -97,11 +97,13 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
   const [x, setX] = useState(node.pos.x)
   const [y, setY] = useState(node.pos.y)
+  const [z, setZ] = useState(node.z ?? node.pos.z ?? 0)
 
   useEffect(() => {
     setX(node.pos.x)
     setY(node.pos.y)
-  }, [node.pos.x, node.pos.y, nodeId])
+    setZ(node.z ?? node.pos.z ?? 0)
+  }, [node.pos.x, node.pos.y, node.z, node.pos.z, nodeId])
 
   const applyX = (v: number) => {
     setX(v)
@@ -112,6 +114,13 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   const applyY = (v: number) => {
     setY(v)
     node.pos.y = v
+    store.markDirty()
+    store.notify()
+  }
+  const applyZ = (v: number) => {
+    setZ(v)
+    node.z = v
+    node.pos.z = v
     store.markDirty()
     store.notify()
   }
@@ -172,6 +181,16 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             value={y}
             onChange={(e) => setY(parseFloat(e.target.value) || 0)}
             onBlur={(e) => applyY(parseFloat(e.target.value) || 0)}
+          />
+        </label>
+        <label className="sp-input-row">
+          <span>Hauteur Z (m)</span>
+          <input
+            type="number"
+            step="0.1"
+            value={z}
+            onChange={(e) => setZ(parseFloat(e.target.value) || 0)}
+            onBlur={(e) => applyZ(parseFloat(e.target.value) || 0)}
           />
         </label>
       </div>
@@ -382,6 +401,33 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
+        {(() => {
+          const za = a.z ?? a.pos.z ?? 0
+          const zb = b.z ?? b.pos.z ?? 0
+          const deltaZ = zb - za
+          const slopePct = len > 0 ? (deltaZ / len) * 100 : 0
+          const slopePermil = len > 0 ? (deltaZ / len) * 1000 : 0
+          return (
+            <>
+              <Field
+                label="Dénivelé (ΔZ)"
+                value={`${deltaZ >= 0 ? '+' : ''}${deltaZ.toFixed(2)} m (${za.toFixed(1)}m → ${zb.toFixed(1)}m)`}
+              />
+              <Field
+                label="Pente / Rampe"
+                value={
+                  Math.abs(slopePermil) < 0.1 ? (
+                    'Voie de niveau (0 ‰)'
+                  ) : (
+                    <span style={{ fontWeight: 700, color: Math.abs(slopePermil) > 35 ? '#ef4444' : Math.abs(slopePermil) > 20 ? '#f59e0b' : 'var(--accent)' }}>
+                      {slopePermil > 0 ? '▲ Rampe' : '▼ Pente'} {Math.abs(slopePermil).toFixed(1)} ‰ ({Math.abs(slopePct).toFixed(2)} %)
+                    </span>
+                  )
+                }
+              />
+            </>
+          )
+        })()}
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
@@ -495,11 +541,11 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
       <div className="sp-list">
         <button className="sp-list-item" onClick={() => selectNode(seg.from)}>
           <span className="sp-tag from">Départ</span>
-          ({a.pos.x.toFixed(0)}, {a.pos.y.toFixed(0)})
+          ({a.pos.x.toFixed(0)}, {a.pos.y.toFixed(0)}) · Z: {(a.z ?? a.pos.z ?? 0).toFixed(1)}m
         </button>
         <button className="sp-list-item" onClick={() => selectNode(seg.to)}>
           <span className="sp-tag to">Arrivée</span>
-          ({b.pos.x.toFixed(0)}, {b.pos.y.toFixed(0)})
+          ({b.pos.x.toFixed(0)}, {b.pos.y.toFixed(0)}) · Z: {(b.z ?? b.pos.z ?? 0).toFixed(1)}m
         </button>
       </div>
       <button className="sp-danger" onClick={onDelete}>
@@ -791,6 +837,36 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
         <Field label="Longueur totale" value={`${section.totalLength.toFixed(2)} m`} />
         <Field label="Coupons de rail" value={section.segmentIds.length} />
         <Field label="Nœuds" value={section.nodeIds.length} />
+        {(() => {
+          if (section.orderedNodeIds.length < 2) return null
+          const startN = store.network.nodes.get(section.orderedNodeIds[0])
+          const endN = store.network.nodes.get(section.orderedNodeIds[section.orderedNodeIds.length - 1])
+          if (!startN || !endN) return null
+          const zStart = startN.z ?? startN.pos.z ?? 0
+          const zEnd = endN.z ?? endN.pos.z ?? 0
+          const deltaZ = zEnd - zStart
+          const slopePermil = section.totalLength > 0 ? (deltaZ / section.totalLength) * 1000 : 0
+          return (
+            <>
+              <Field
+                label="Dénivelé total (ΔZ)"
+                value={`${deltaZ >= 0 ? '+' : ''}${deltaZ.toFixed(2)} m (${zStart.toFixed(1)}m → ${zEnd.toFixed(1)}m)`}
+              />
+              <Field
+                label="Pente moyenne"
+                value={
+                  Math.abs(slopePermil) < 0.1 ? (
+                    'Voie de niveau (0 ‰)'
+                  ) : (
+                    <span style={{ fontWeight: 700, color: Math.abs(slopePermil) > 35 ? '#ef4444' : Math.abs(slopePermil) > 20 ? '#f59e0b' : 'var(--accent)' }}>
+                      {slopePermil > 0 ? '▲ Rampe' : '▼ Pente'} {Math.abs(slopePermil).toFixed(1)} ‰
+                    </span>
+                  )
+                }
+              />
+            </>
+          )
+        })()}
 
         {/* Niveau / Ouvrage d'art (Pont 2D / Tunnels) avec stepper +/- */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', margin: '8px 0' }}>

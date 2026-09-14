@@ -11,6 +11,7 @@ export interface SerializedNode {
   id: string
   x: number
   y: number
+  z?: number
 }
 
 export interface SerializedSegment {
@@ -91,7 +92,12 @@ export function serializeNetwork(
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
-    nodes.push({ id: n.id, x: n.pos.x, y: n.pos.y })
+    nodes.push({
+      id: n.id,
+      x: n.pos.x,
+      y: n.pos.y,
+      z: typeof n.z === 'number' ? n.z : typeof n.pos.z === 'number' ? n.pos.z : undefined,
+    })
   }
 
   const segments: SerializedSegment[] = []
@@ -202,7 +208,8 @@ export function deserializeNetwork(data: SerializedProject): {
       if (!n || typeof n.id !== 'string') continue
       const x = typeof n.x === 'number' && !Number.isNaN(n.x) ? n.x : 0
       const y = typeof n.y === 'number' && !Number.isNaN(n.y) ? n.y : 0
-      const node: RailNode = { id: n.id, pos: { x, y } }
+      const z = typeof n.z === 'number' && !Number.isNaN(n.z) ? n.z : 0
+      const node: RailNode = { id: n.id, pos: { x, y, z }, z }
       net.nodes.set(node.id, node)
       net.adjacency.set(node.id, [])
     }

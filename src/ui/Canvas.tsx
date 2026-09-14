@@ -423,7 +423,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const layerLabel = store.activePlacementLayer !== 0
           ? `  | ${store.activePlacementLayer > 0 ? `Pont (+${store.activePlacementLayer})` : `Tunnel (${store.activePlacementLayer})`}`
           : ''
-        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}${layerLabel}`
+        const startZ = startNode.z ?? startNode.pos.z ?? 0
+        const endZ = closeNode ? (closeNode.z ?? closeNode.pos.z ?? 0) : store.activePlacementAltitude
+        const deltaZ = endZ - startZ
+        const slopePermil = snappedLen > 0 ? (deltaZ / snappedLen) * 1000 : 0
+        const slopeLabel = Math.abs(slopePermil) >= 0.5
+          ? `  | ${slopePermil > 0 ? '▲' : '▼'} ${Math.abs(slopePermil).toFixed(1)}‰ (ΔZ ${deltaZ > 0 ? '+' : ''}${deltaZ.toFixed(1)}m)`
+          : ''
+        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}${layerLabel}${slopeLabel}`
         renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
 
         // Preview de la voie secondaire parallele si mode double voie actif
@@ -478,9 +485,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const side = computeSide(tangent, startNode.pos, target)
           const sideLabel = side === -1 ? 'Gauche' : 'Droite'
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
+          const startZ = startNode.z ?? startNode.pos.z ?? 0
+          const endZ = closeNode ? (closeNode.z ?? closeNode.pos.z ?? 0) : store.activePlacementAltitude
+          const deltaZ = endZ - startZ
+          const slopePermil = len > 0 ? (deltaZ / len) * 1000 : 0
+          const slopeLabel = Math.abs(slopePermil) >= 0.5
+            ? `  | ${slopePermil > 0 ? '▲' : '▼'} ${Math.abs(slopePermil).toFixed(1)}‰ (ΔZ ${deltaZ > 0 ? '+' : ''}${deltaZ.toFixed(1)}m)`
+            : ''
           const labelText = radius === Infinity
-            ? `Flex ${len.toFixed(2)} m${joinSuffix}`
-            : `Flex ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
+            ? `Flex ${len.toFixed(2)} m${joinSuffix}${slopeLabel}`
+            : `Flex ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}${slopeLabel}`
           renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
         } else {
           const radius = store.selectedCurveRadius
@@ -494,7 +508,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const isJoin = isJoinNode || hitSegId !== null
           const len = curveLength(startNode.pos, via, end)
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-          const labelText = `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
+          const startZ = startNode.z ?? startNode.pos.z ?? 0
+          const endZ = closeNode ? (closeNode.z ?? closeNode.pos.z ?? 0) : store.activePlacementAltitude
+          const deltaZ = endZ - startZ
+          const slopePermil = len > 0 ? (deltaZ / len) * 1000 : 0
+          const slopeLabel = Math.abs(slopePermil) >= 0.5
+            ? `  | ${slopePermil > 0 ? '▲' : '▼'} ${Math.abs(slopePermil).toFixed(1)}‰ (ΔZ ${deltaZ > 0 ? '+' : ''}${deltaZ.toFixed(1)}m)`
+            : ''
+          const labelText = `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}${slopeLabel}`
           renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
         }
       }
@@ -623,7 +644,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             } else {
               const spacing = getSnapSpacing()
               const pos = store.snap ? snapToGrid(world, spacing) : world
-              startId = addNode(store.network, pos).id
+              const node = addNode(store.network, pos)
+              node.z = store.activePlacementAltitude
+              node.pos.z = store.activePlacementAltitude
+              startId = node.id
             }
           }
           store.curveState = { phase: 1, startId }
@@ -674,7 +698,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 const splitRes = splitSegment(store.network, hitSegId, endPos)
                 endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
               } else {
-                endId = addNode(store.network, endPos).id
+                const endNode = addNode(store.network, endPos)
+                endNode.z = store.activePlacementAltitude
+                endNode.pos.z = store.activePlacementAltitude
+                endId = endNode.id
               }
             }
             const newCurveSeg = addCurveSegment(store.network, cs.startId, endId, viaPos)
@@ -720,6 +747,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
                   // Voie principale : lastNodeId -> snappedWorld
                   const endNode = addNode(store.network, snappedWorld)
+                  endNode.z = store.activePlacementAltitude
+                  endNode.pos.z = store.activePlacementAltitude
                   const sMain = addSegment(store.network, store.lastNodeId, endNode.id)
                   if (sMain && store.activePlacementLayer !== 0) {
                     sMain.layer = store.activePlacementLayer
@@ -733,9 +762,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   let startNodeId2 = store.parallelLastNodeId
                   if (!startNodeId2) {
                     const s2 = addNode(store.network, startPos2)
+                    s2.z = store.activePlacementAltitude
+                    s2.pos.z = store.activePlacementAltitude
                     startNodeId2 = s2.id
                   }
                   const endNode2 = addNode(store.network, endPos2)
+                  endNode2.z = store.activePlacementAltitude
+                  endNode2.pos.z = store.activePlacementAltitude
                   const sSec = addSegment(store.network, startNodeId2, endNode2.id)
                   if (sSec && store.activePlacementLayer !== 0) {
                     sSec.layer = store.activePlacementLayer
@@ -759,7 +792,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 const splitRes = splitSegment(store.network, hitSegId, targetPos)
                 startNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, targetPos).id
               } else {
-                startNodeId = addNode(store.network, targetPos).id
+                const n = addNode(store.network, targetPos)
+                n.z = store.activePlacementAltitude
+                n.pos.z = store.activePlacementAltitude
+                startNodeId = n.id
               }
               store.lastNodeId = startNodeId
               store.parallelMode = false // attend le prochain shift+click pour creer le 2e noeud
@@ -785,6 +821,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
                   // Voie principale
                   const endNode = addNode(store.network, snappedWorld)
+                  endNode.z = store.activePlacementAltitude
+                  endNode.pos.z = store.activePlacementAltitude
                   const sMain = addSegment(store.network, store.lastNodeId, endNode.id)
                   if (sMain && store.activePlacementLayer !== 0) {
                     sMain.layer = store.activePlacementLayer
@@ -794,6 +832,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   // Voie secondaire (meme direction, decalee)
                   const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
                   const endNode2 = addNode(store.network, endPos2)
+                  endNode2.z = store.activePlacementAltitude
+                  endNode2.pos.z = store.activePlacementAltitude
                   const sSec = addSegment(store.network, store.parallelLastNodeId, endNode2.id)
                   if (sSec && store.activePlacementLayer !== 0) {
                     sSec.layer = store.activePlacementLayer
@@ -886,7 +926,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 const splitRes = splitSegment(store.network, hitSegId, endPos)
                 endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
               } else {
-                endId = addNode(store.network, endPos).id
+                const endNode = addNode(store.network, endPos)
+                endNode.z = store.activePlacementAltitude
+                endNode.pos.z = store.activePlacementAltitude
+                endId = endNode.id
               }
             }
             const newSeg = addSegment(store.network, store.lastNodeId, endId)
@@ -911,7 +954,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else {
             const spacing = getSnapSpacing()
             const pos = store.snap ? snapToGrid(world, spacing) : world
-            startNodeId = addNode(store.network, pos).id
+            const n = addNode(store.network, pos)
+            n.z = store.activePlacementAltitude
+            n.pos.z = store.activePlacementAltitude
+            startNodeId = n.id
           }
           store.lastNodeId = startNodeId
           store.selection = { nodes: new Set([startNodeId]), segments: new Set() }

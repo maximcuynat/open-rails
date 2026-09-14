@@ -4,11 +4,15 @@ export type SegmentId = string
 export interface Point {
   x: number
   y: number
+  /** Altitude / hauteur en mètres (axe Z). Permet de calculer les rampes et pentes. */
+  z?: number
 }
 
 export interface RailNode {
   id: NodeId
   pos: Point
+  /** Altitude / hauteur absolue en mètres (axe Z). */
+  z?: number
 }
 
 export type SegmentKind = 'straight' | 'curve'

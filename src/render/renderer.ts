@@ -603,6 +603,31 @@ export function renderNetwork(
       ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
       ctx.fill()
     }
+
+    // Altitude indicator badge for nodes with non-zero altitude (or selected node)
+    const nodeZ = node.z ?? node.pos.z ?? 0
+    if ((Math.abs(nodeZ) >= 0.01 || selected) && cam.scale >= 1.2) {
+      const altText = `Z ${nodeZ >= 0 ? '+' : ''}${nodeZ.toFixed(1)}m`
+      ctx.save()
+      ctx.font = '600 9px Archivo, system-ui, sans-serif'
+      const m = ctx.measureText(altText)
+      const pw = m.width + 6
+      const ph = 13
+      const px = sx + 8
+      const py = sy - 8
+      ctx.fillStyle = selected ? 'rgba(37, 99, 235, 0.9)' : 'rgba(30, 41, 59, 0.85)'
+      ctx.beginPath()
+      ctx.roundRect(px, py - ph / 2, pw, ph, 3)
+      ctx.fill()
+      ctx.strokeStyle = selected ? '#60a5fa' : '#64748b'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(altText, px + pw / 2, py)
+      ctx.restore()
+    }
   }
 
   // 6. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)

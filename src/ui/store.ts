@@ -66,6 +66,8 @@ export class EditorStore {
 
   // Niveau d'élévation actif pour la pose (0 = Sol, +1 / +2 = Pont / Ouvrage, -1 = Tunnel / Tranchée)
   activePlacementLayer: number = 0
+  // Hauteur / altitude absolue active pour la pose de nouveaux nœuds (en mètres)
+  activePlacementAltitude: number = 0
 
 
   // Track selection and mode: freeform by default
@@ -331,6 +333,16 @@ export class EditorStore {
 
   adjustActivePlacementLayer = (delta: number): void => {
     this.activePlacementLayer = Math.max(-3, Math.min(3, this.activePlacementLayer + delta))
+    this.notify()
+  }
+
+  setActivePlacementAltitude = (alt: number): void => {
+    this.activePlacementAltitude = alt
+    this.notify()
+  }
+
+  adjustActivePlacementAltitude = (delta: number): void => {
+    this.activePlacementAltitude = Math.round((this.activePlacementAltitude + delta) * 10) / 10
     this.notify()
   }
 

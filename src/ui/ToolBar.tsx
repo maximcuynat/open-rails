@@ -409,6 +409,79 @@ export function ToolBar({ store }: { store: EditorStore }) {
         </button>
       </div>
 
+      {/* Contrôle d'altitude Z (en mètres) pour pentes et rampes */}
+      <div
+        style={{
+          margin: '6px 2px 0',
+          padding: '4px 2px',
+          background: store.activePlacementAltitude !== 0 ? 'rgba(99, 102, 241, 0.15)' : 'var(--panel-2, rgba(255,255,255,0.03))',
+          border: `1px solid ${store.activePlacementAltitude !== 0 ? '#6366f1' : 'var(--border, #334155)'}`,
+          borderRadius: '6px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '2px',
+        }}
+        title={`Hauteur Z de pose active : ${store.activePlacementAltitude}m. Permet de créer des pentes et rampes lors de la pose des voies.`}
+      >
+        <div style={{ fontSize: '9px', fontWeight: 700, color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase' }}>Z</div>
+        <button
+          style={{
+            width: '24px',
+            height: '18px',
+            lineHeight: '1',
+            fontSize: '11px',
+            fontWeight: 700,
+            border: '1px solid var(--border, #334155)',
+            borderRadius: '3px',
+            background: 'var(--panel, #1e293b)',
+            color: 'var(--ink, #f8fafc)',
+            cursor: 'pointer',
+            padding: 0,
+          }}
+          onClick={() => store.adjustActivePlacementAltitude(0.5)}
+          title="Augmenter la hauteur Z (+0.5m)"
+        >
+          +
+        </button>
+
+        <div
+          style={{
+            fontSize: '9px',
+            fontWeight: 800,
+            color: store.activePlacementAltitude !== 0 ? '#818cf8' : 'var(--muted, #94a3b8)',
+            padding: '2px 0',
+            textAlign: 'center',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+          onClick={() => store.setActivePlacementAltitude(0)}
+          title="Cliquer pour réinitialiser la hauteur Z à 0m"
+        >
+          {store.activePlacementAltitude > 0 ? `+${store.activePlacementAltitude}` : store.activePlacementAltitude}m
+        </div>
+
+        <button
+          style={{
+            width: '24px',
+            height: '18px',
+            lineHeight: '1',
+            fontSize: '11px',
+            fontWeight: 700,
+            border: '1px solid var(--border, #334155)',
+            borderRadius: '3px',
+            background: 'var(--panel, #1e293b)',
+            color: 'var(--ink, #f8fafc)',
+            cursor: 'pointer',
+            padding: 0,
+          }}
+          onClick={() => store.adjustActivePlacementAltitude(-0.5)}
+          title="Diminuer la hauteur Z (-0.5m)"
+        >
+          -
+        </button>
+      </div>
+
       {store.parallelMode && (
         <div
           style={{
