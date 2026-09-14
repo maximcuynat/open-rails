@@ -64,6 +64,9 @@ export class EditorStore {
   parallelOffset: number = 3.3 // metres entre les 2 axes de voie (voie double standard)
   parallelLastNodeId: string | null = null // noeud courant sur la voie secondaire
 
+  // Niveau d'élévation actif pour la pose (0 = Sol, +1 / +2 = Pont / Ouvrage, -1 = Tunnel / Tranchée)
+  activePlacementLayer: number = 0
+
 
   // Track selection and mode: freeform by default
   trackMode: TrackMode = 'freeform'
@@ -319,6 +322,16 @@ export class EditorStore {
       this.parallelOffset = offset
       this.notify()
     }
+  }
+
+  setActivePlacementLayer = (layer: number): void => {
+    this.activePlacementLayer = layer
+    this.notify()
+  }
+
+  adjustActivePlacementLayer = (delta: number): void => {
+    this.activePlacementLayer = Math.max(-3, Math.min(3, this.activePlacementLayer + delta))
+    this.notify()
   }
 
   setSnap = (v: boolean): void => {

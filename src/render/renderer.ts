@@ -135,6 +135,28 @@ export const MIN_RADIUS = 150.0
 /** Below this scale (pixels per meter), render as a single simplified line. */
 export const SIMPLIFY_THRESHOLD = 0.05
 
+/** Visual styling per elevation layer (+/- levels) */
+export const LAYER_PALETTE: Record<number, { name: string; rail: string; head: string; deck: string; parapet: string; badge: string }> = {
+  [-2]: { name: 'Niveau -2 (Tunnel profond)', rail: '#334155', head: '#64748b', deck: '#020617', parapet: '#1e293b', badge: '#475569' },
+  [-1]: { name: 'Niveau -1 (Tranchée / Tunnel)', rail: '#475569', head: '#94a3b8', deck: '#090d16', parapet: '#334155', badge: '#64748b' },
+  [0]:  { name: 'Niveau 0 (Sol standard)', rail: '#526071', head: '#ffffff', deck: '#1e293b', parapet: '#64748b', badge: '#3b82f6' },
+  [1]:  { name: 'Niveau +1 (Pont / Ouvrage)', rail: '#0284c7', head: '#7dd3fc', deck: '#0c4a6e', parapet: '#38bdf8', badge: '#0284c7' },
+  [2]:  { name: 'Niveau +2 (Viaduc supérieur)', rail: '#d97706', head: '#fde68a', deck: '#78350f', parapet: '#fbbf24', badge: '#f59e0b' },
+  [3]:  { name: 'Niveau +3 (Ouvrage aérien haut)', rail: '#e11d48', head: '#fecdd3', deck: '#881337', parapet: '#fb7185', badge: '#f43f5e' },
+}
+
+export function getSegmentLayer(seg: Segment): number {
+  if (typeof seg.layer === 'number') return seg.layer
+  return seg.overpass ? 1 : 0
+}
+
+export function getLayerInfo(layer: number) {
+  return LAYER_PALETTE[layer] ?? (layer > 0
+    ? { name: `Niveau +${layer}`, rail: '#d97706', head: '#fde68a', deck: '#78350f', parapet: '#fbbf24', badge: '#f59e0b' }
+    : { name: `Niveau ${layer}`, rail: '#334155', head: '#64748b', deck: '#020617', parapet: '#1e293b', badge: '#475569' }
+  )
+}
+
 export interface ViewportBounds {
   minX: number
   maxX: number
@@ -230,19 +252,28 @@ export function renderNetwork(
 
   if (simplified) {
     // Draw simplified single-line representation for low zoom levels
-    // Render ground segments first, then overpass segments on top
-    const simpGround = visibleSegments.filter((s) => !s.overpass)
-    const simpOverpass = visibleSegments.filter((s) => !!s.overpass)
-    const renderSimpSeg = (seg: Segment) => {
+    // Group and sort by elevation layer (tunnels < ground < bridges)
+    const simpLayers = new Map<number, Segment[]>()
+    for (const seg of visibleSegments) {
+      const l = getSegmentLayer(seg)
+      if (!simpLayers.has(l)) simpLayers.set(l, [])
+      simpLayers.get(l)!.push(seg)
+    }
+
+    const sortedSimpLevels = Array.from(simpLayers.keys()).sort((a, b) => a - b)
+
+    const renderSimpSeg = (seg: Segment, layerLevel: number) => {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
       if (!a || !b) return
 
       const selected = selection.segments.has(seg.id)
       const isInactive = isInactiveBranch(net, seg.id)
+      const lStyle = getLayerInfo(layerLevel)
 
       ctx.save()
       if (isInactive) ctx.globalAlpha = 0.4
+      if (layerLevel < 0) ctx.globalAlpha = 0.55
 
       const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
       const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
@@ -250,13 +281,13 @@ export function renderNetwork(
       const by = (b.pos.y - cam.y) * cam.scale + vh / 2
 
       const sec = findSectionBySegment(trackSections, seg.id)
-      const secColor = sec?.color ?? ink
+      const secColor = selected ? accent : layerLevel !== 0 ? lStyle.rail : (sec?.color ?? ink)
 
-      // If overpass, draw a thicker background mask to break crossing lines below
-      if (seg.overpass) {
+      // If elevated, draw a background mask to break crossing lines below
+      if (layerLevel > 0) {
         ctx.save()
         ctx.strokeStyle = '#0f172a'
-        ctx.lineWidth = Math.max(5, 1.4 * cam.scale)
+        ctx.lineWidth = Math.max(5, (1.4 + (layerLevel - 1) * 0.3) * cam.scale)
         ctx.beginPath()
         ctx.moveTo(ax, ay)
         if (seg.kind === 'curve' && seg.via) {
@@ -270,7 +301,7 @@ export function renderNetwork(
         ctx.restore()
       }
 
-      ctx.strokeStyle = selected ? accent : secColor
+      ctx.strokeStyle = secColor
       ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
       ctx.lineCap = 'round'
       if (isInactive) ctx.setLineDash([5, 4])
@@ -288,8 +319,11 @@ export function renderNetwork(
       ctx.restore()
     }
 
-    for (const seg of simpGround) renderSimpSeg(seg)
-    for (const seg of simpOverpass) renderSimpSeg(seg)
+    for (const lvl of sortedSimpLevels) {
+      for (const seg of simpLayers.get(lvl)!) {
+        renderSimpSeg(seg, lvl)
+      }
+    }
   } else {
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
@@ -328,102 +362,101 @@ export function renderNetwork(
       ctx.restore()
     }
 
-    // 2. PURE RAIL RENDERING (2 parallel rails at GAUGE = 1.435m + dynamic miter joints)
-    // Separate ground segments and overpass segments so overpass segments render above
-    const groundSegments = visibleSegments.filter((s) => !s.overpass)
-    const overpassSegments = visibleSegments.filter((s) => !!s.overpass)
-
-    for (const seg of groundSegments) {
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-
-      const selected = selection.segments.has(seg.id)
-      const isInactive = isInactiveBranch(net, seg.id)
-
-      ctx.save()
-      if (isInactive) ctx.globalAlpha = 0.4
-      if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
-      } else {
-        renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
-      }
-      ctx.restore()
+    // 2. PURE RAIL RENDERING (Multi-level layers sorted ascending: tunnels < ground < bridges)
+    // Group segments by distinct layer levels
+    const layerMap = new Map<number, Segment[]>()
+    for (const seg of visibleSegments) {
+      const l = getSegmentLayer(seg)
+      if (!layerMap.has(l)) layerMap.set(l, [])
+      layerMap.get(l)!.push(seg)
     }
 
-    // Overpass (Pont / Ouvrage 2D) deck underlay: creates a bridge structure cutting across underlying tracks
-    if (overpassSegments.length > 0) {
-      const deckWidth = (GAUGE + 1.2) * cam.scale
-      ctx.save()
-      ctx.lineCap = 'butt'
-      for (const seg of overpassSegments) {
-        const a = net.nodes.get(seg.from)
-        const b = net.nodes.get(seg.to)
-        if (!a || !b) continue
-        const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
-        const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
-        const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
-        const by = (b.pos.y - cam.y) * cam.scale + vh / 2
+    const sortedLayers = Array.from(layerMap.keys()).sort((a, b) => a - b)
 
-        // Bridge shadow
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)'
-        ctx.lineWidth = deckWidth + 4
-        ctx.beginPath()
-        ctx.moveTo(ax, ay + 2)
-        if (seg.kind === 'curve' && seg.via) {
-          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-          ctx.quadraticCurveTo(vx, vy + 2, bx, by + 2)
-        } else {
-          ctx.lineTo(bx, by + 2)
-        }
-        ctx.stroke()
+    for (const layer of sortedLayers) {
+      const segs = layerMap.get(layer) ?? []
+      const style = getLayerInfo(layer)
+      const isElevated = layer > 0
 
-        // Bridge deck base (solid mask that hides the track underneath)
-        ctx.strokeStyle = '#1e293b'
-        ctx.lineWidth = deckWidth
-        ctx.beginPath()
-        ctx.moveTo(ax, ay)
-        if (seg.kind === 'curve' && seg.via) {
-          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-          ctx.quadraticCurveTo(vx, vy, bx, by)
-        } else {
-          ctx.lineTo(bx, by)
-        }
-        ctx.stroke()
+      // If elevated, draw deck, shadow and parapets for this layer level first
+      if (isElevated) {
+        const deckWidth = (GAUGE + 1.2 + (layer - 1) * 0.3) * cam.scale
+        ctx.save()
+        ctx.lineCap = 'butt'
 
-        // Bridge parapets / bordures
-        ctx.strokeStyle = '#64748b'
-        ctx.lineWidth = 1.5
-        ctx.beginPath()
-        ctx.moveTo(ax, ay)
-        if (seg.kind === 'curve' && seg.via) {
-          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-          ctx.quadraticCurveTo(vx, vy, bx, by)
-        } else {
-          ctx.lineTo(bx, by)
+        for (const seg of segs) {
+          const a = net.nodes.get(seg.from)
+          const b = net.nodes.get(seg.to)
+          if (!a || !b) continue
+          const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
+          const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
+          const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
+          const by = (b.pos.y - cam.y) * cam.scale + vh / 2
+
+          // Shadow
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)'
+          ctx.lineWidth = deckWidth + 4 * layer
+          ctx.beginPath()
+          ctx.moveTo(ax, ay + 2 * layer)
+          if (seg.kind === 'curve' && seg.via) {
+            const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+            const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+            ctx.quadraticCurveTo(vx, vy + 2 * layer, bx, by + 2 * layer)
+          } else {
+            ctx.lineTo(bx, by + 2 * layer)
+          }
+          ctx.stroke()
+
+          // Deck base
+          ctx.strokeStyle = style.deck
+          ctx.lineWidth = deckWidth
+          ctx.beginPath()
+          ctx.moveTo(ax, ay)
+          if (seg.kind === 'curve' && seg.via) {
+            const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+            const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+            ctx.quadraticCurveTo(vx, vy, bx, by)
+          } else {
+            ctx.lineTo(bx, by)
+          }
+          ctx.stroke()
+
+          // Parapets
+          ctx.strokeStyle = style.parapet
+          ctx.lineWidth = 1.5
+          ctx.beginPath()
+          ctx.moveTo(ax, ay)
+          if (seg.kind === 'curve' && seg.via) {
+            const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+            const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+            ctx.quadraticCurveTo(vx, vy, bx, by)
+          } else {
+            ctx.lineTo(bx, by)
+          }
+          ctx.stroke()
         }
-        ctx.stroke()
+        ctx.restore()
       }
-      ctx.restore()
 
-      // Rails on overpass deck
-      for (const seg of overpassSegments) {
+      // Draw rails for this layer
+      for (const seg of segs) {
         const a = net.nodes.get(seg.from)
         const b = net.nodes.get(seg.to)
         if (!a || !b) continue
 
         const selected = selection.segments.has(seg.id)
         const isInactive = isInactiveBranch(net, seg.id)
+        const curRailColor = layer === 0 ? railColor : style.rail
+        const curHeadColor = layer === 0 ? railHeadColor : style.head
 
         ctx.save()
         if (isInactive) ctx.globalAlpha = 0.4
+        if (layer < 0) ctx.globalAlpha = 0.65 // Underpass / tunnel slightly dimmed
+
         if (seg.kind === 'curve' && seg.via) {
-          renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
+          renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, curRailColor, accent, 0, 0, curHeadColor)
         } else {
-          renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
+          renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, curRailColor, accent, 0, 0, curHeadColor)
         }
         ctx.restore()
       }

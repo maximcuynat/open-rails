@@ -420,7 +420,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
         const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
         const modeLabel = store.parallelMode ? '  | Double voie' : ''
-        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}`
+        const layerLabel = store.activePlacementLayer !== 0
+          ? `  | ${store.activePlacementLayer > 0 ? `Pont (+${store.activePlacementLayer})` : `Tunnel (${store.activePlacementLayer})`}`
+          : ''
+        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}${layerLabel}`
         renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
 
         // Preview de la voie secondaire parallele si mode double voie actif
@@ -674,7 +677,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 endId = addNode(store.network, endPos).id
               }
             }
-            addCurveSegment(store.network, cs.startId, endId, viaPos)
+            const newCurveSeg = addCurveSegment(store.network, cs.startId, endId, viaPos)
+            if (newCurveSeg && store.activePlacementLayer !== 0) {
+              newCurveSeg.layer = store.activePlacementLayer
+              if (store.activePlacementLayer > 0) newCurveSeg.overpass = true
+            }
             reconcileNetworkIntersections(store.network)
             store.markDirty()
             // Finish curve: release cursor so it does not auto-continue
@@ -713,7 +720,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
                   // Voie principale : lastNodeId -> snappedWorld
                   const endNode = addNode(store.network, snappedWorld)
-                  addSegment(store.network, store.lastNodeId, endNode.id)
+                  const sMain = addSegment(store.network, store.lastNodeId, endNode.id)
+                  if (sMain && store.activePlacementLayer !== 0) {
+                    sMain.layer = store.activePlacementLayer
+                    if (store.activePlacementLayer > 0) sMain.overpass = true
+                  }
 
                   // Voie secondaire : startNode+offset -> snappedWorld+offset
                   const startPos2 = { x: startNode.pos.x + nx * off, y: startNode.pos.y + ny * off }
@@ -725,7 +736,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                     startNodeId2 = s2.id
                   }
                   const endNode2 = addNode(store.network, endPos2)
-                  addSegment(store.network, startNodeId2, endNode2.id)
+                  const sSec = addSegment(store.network, startNodeId2, endNode2.id)
+                  if (sSec && store.activePlacementLayer !== 0) {
+                    sSec.layer = store.activePlacementLayer
+                    if (store.activePlacementLayer > 0) sSec.overpass = true
+                  }
 
                   store.parallelMode = true
                   store.lastNodeId = endNode.id
@@ -770,12 +785,20 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
                   // Voie principale
                   const endNode = addNode(store.network, snappedWorld)
-                  addSegment(store.network, store.lastNodeId, endNode.id)
+                  const sMain = addSegment(store.network, store.lastNodeId, endNode.id)
+                  if (sMain && store.activePlacementLayer !== 0) {
+                    sMain.layer = store.activePlacementLayer
+                    if (store.activePlacementLayer > 0) sMain.overpass = true
+                  }
 
                   // Voie secondaire (meme direction, decalee)
                   const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
                   const endNode2 = addNode(store.network, endPos2)
-                  addSegment(store.network, store.parallelLastNodeId, endNode2.id)
+                  const sSec = addSegment(store.network, store.parallelLastNodeId, endNode2.id)
+                  if (sSec && store.activePlacementLayer !== 0) {
+                    sSec.layer = store.activePlacementLayer
+                    if (store.activePlacementLayer > 0) sSec.overpass = true
+                  }
 
                   store.lastNodeId = endNode.id
                   store.parallelLastNodeId = endNode2.id
@@ -866,7 +889,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 endId = addNode(store.network, endPos).id
               }
             }
-            addSegment(store.network, store.lastNodeId, endId)
+            const newSeg = addSegment(store.network, store.lastNodeId, endId)
+            if (newSeg && store.activePlacementLayer !== 0) {
+              newSeg.layer = store.activePlacementLayer
+              if (store.activePlacementLayer > 0) newSeg.overpass = true
+            }
             reconcileNetworkIntersections(store.network)
             store.markDirty()
             // Finish straight segment: release cursor so it does not auto-continue

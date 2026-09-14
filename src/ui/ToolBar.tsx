@@ -337,6 +337,78 @@ export function ToolBar({ store }: { store: EditorStore }) {
   return (
     <div className="toolbar-vert">
       {items}
+
+      {/* Contrôle de niveau d'élévation (+/- pour ponts / tunnels) */}
+      <div
+        style={{
+          margin: '8px 2px 0',
+          padding: '4px 2px',
+          background: store.activePlacementLayer !== 0 ? 'rgba(2, 132, 199, 0.15)' : 'var(--panel-2, rgba(255,255,255,0.03))',
+          border: `1px solid ${store.activePlacementLayer > 0 ? '#0284c7' : store.activePlacementLayer < 0 ? '#64748b' : 'var(--border, #334155)'}`,
+          borderRadius: '6px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '2px',
+        }}
+        title={`Niveau de pose actif : ${store.activePlacementLayer === 0 ? 'Sol (0)' : store.activePlacementLayer > 0 ? `Pont (+${store.activePlacementLayer})` : `Tunnel (${store.activePlacementLayer})`}. Utilisez + / - pour changer d'étage.`}
+      >
+        <button
+          style={{
+            width: '24px',
+            height: '18px',
+            lineHeight: '1',
+            fontSize: '12px',
+            fontWeight: 700,
+            border: '1px solid var(--border, #334155)',
+            borderRadius: '3px',
+            background: 'var(--panel, #1e293b)',
+            color: 'var(--ink, #f8fafc)',
+            cursor: 'pointer',
+            padding: 0,
+          }}
+          onClick={() => store.adjustActivePlacementLayer(1)}
+          title="Monter d'un niveau (+)"
+        >
+          +
+        </button>
+
+        <div
+          style={{
+            fontSize: '10px',
+            fontWeight: 800,
+            color: store.activePlacementLayer > 0 ? '#38bdf8' : store.activePlacementLayer < 0 ? '#94a3b8' : 'var(--muted, #94a3b8)',
+            padding: '2px 0',
+            textAlign: 'center',
+            cursor: 'pointer',
+          }}
+          onClick={() => store.setActivePlacementLayer(0)}
+          title="Cliquer pour revenir au niveau du sol (0)"
+        >
+          {store.activePlacementLayer > 0 ? `+${store.activePlacementLayer}` : store.activePlacementLayer}
+        </div>
+
+        <button
+          style={{
+            width: '24px',
+            height: '18px',
+            lineHeight: '1',
+            fontSize: '12px',
+            fontWeight: 700,
+            border: '1px solid var(--border, #334155)',
+            borderRadius: '3px',
+            background: 'var(--panel, #1e293b)',
+            color: 'var(--ink, #f8fafc)',
+            cursor: 'pointer',
+            padding: 0,
+          }}
+          onClick={() => store.adjustActivePlacementLayer(-1)}
+          title="Descendre d'un niveau (-)"
+        >
+          -
+        </button>
+      </div>
+
       {store.parallelMode && (
         <div
           style={{

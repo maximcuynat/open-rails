@@ -20,6 +20,7 @@ export interface SerializedSegment {
   kind: SegmentKind
   via?: { x: number; y: number }
   overpass?: boolean
+  layer?: number
 }
 
 export interface SerializedJunction {
@@ -102,6 +103,7 @@ export function serializeNetwork(
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
       overpass: s.overpass || undefined,
+      layer: typeof s.layer === 'number' && s.layer !== 0 ? s.layer : undefined,
     })
   }
 
@@ -229,6 +231,7 @@ export function deserializeNetwork(data: SerializedProject): {
             ? { x: s.via.x, y: s.via.y }
             : undefined,
         overpass: s.overpass === true ? true : undefined,
+        layer: typeof s.layer === 'number' ? s.layer : undefined,
       }
       net.segments.set(seg.id, seg)
       net.adjacency.get(s.from)?.push(seg.id)

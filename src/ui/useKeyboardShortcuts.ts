@@ -70,6 +70,38 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         store.cycleCurveProfile(-1)
       } else if (e.key === ']') {
         store.cycleCurveProfile(1)
+      } else if (e.key === '+' || e.key === '=') {
+        // Monter de niveau : si un coupon/section est sélectionné, on monte sa couche, sinon on monte la couche de pose
+        if (store.selection.segments.size > 0) {
+          for (const sid of store.selection.segments) {
+            const seg = store.network.segments.get(sid)
+            if (seg) {
+              const cur = seg.layer ?? (seg.overpass ? 1 : 0)
+              seg.layer = Math.min(3, cur + 1)
+              seg.overpass = seg.layer > 0
+            }
+          }
+          store.markDirty()
+          store.notify()
+        } else {
+          store.adjustActivePlacementLayer(1)
+        }
+      } else if (e.key === '-' || e.key === '_') {
+        // Descendre de niveau : si sélection, on descend sa couche, sinon couche de pose
+        if (store.selection.segments.size > 0) {
+          for (const sid of store.selection.segments) {
+            const seg = store.network.segments.get(sid)
+            if (seg) {
+              const cur = seg.layer ?? (seg.overpass ? 1 : 0)
+              seg.layer = Math.max(-3, cur - 1)
+              seg.overpass = seg.layer > 0
+            }
+          }
+          store.markDirty()
+          store.notify()
+        } else {
+          store.adjustActivePlacementLayer(-1)
+        }
       }
     }
     window.addEventListener('keydown', onKey)

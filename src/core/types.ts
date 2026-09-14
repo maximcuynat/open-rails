@@ -22,6 +22,8 @@ export interface Segment {
   via?: Point
   /** If true, this segment passes over intersecting tracks (2D overpass / pont). */
   overpass?: boolean
+  /** Elevation layer level (0 = ground, +1, +2 = bridges/viaducts, -1, -2 = tunnels/underpasses) */
+  layer?: number
 }
 
 export type JunctionId = string

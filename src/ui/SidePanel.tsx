@@ -403,27 +403,69 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
           </>
         )}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
-          <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Ouvrage / Pont (2D)</span>
-          <button
-            style={{
-              fontSize: '11px',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              border: '1px solid var(--border)',
-              background: seg.overpass ? 'rgba(59, 130, 246, 0.2)' : 'var(--panel-2)',
-              color: seg.overpass ? 'var(--accent, #3b82f6)' : 'var(--ink)',
-              fontWeight: seg.overpass ? 700 : 500,
-              cursor: 'pointer',
-            }}
-            onClick={() => {
-              seg.overpass = !seg.overpass
-              store.markDirty()
-              store.notify()
-            }}
-            title="Définit si cette portion passe au-dessus des autres voies (pont)"
-          >
-            {seg.overpass ? 'Passe dessus (Pont)' : 'Niveau du sol'}
-          </button>
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Étage / Niveau (Z)</div>
+            <div style={{ fontSize: '10px', fontWeight: 600, color: (seg.layer ?? (seg.overpass ? 1 : 0)) > 0 ? '#38bdf8' : (seg.layer ?? 0) < 0 ? '#94a3b8' : 'var(--ink)' }}>
+              {(seg.layer ?? (seg.overpass ? 1 : 0)) === 0
+                ? 'Sol standard (0)'
+                : (seg.layer ?? (seg.overpass ? 1 : 0)) > 0
+                ? `Pont (+${seg.layer ?? 1})`
+                : `Tunnel (${seg.layer})`}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <button
+              style={{
+                width: '24px',
+                height: '24px',
+                lineHeight: '1',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--panel-2)',
+                color: 'var(--ink)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                const cur = seg.layer ?? (seg.overpass ? 1 : 0)
+                const next = cur - 1
+                seg.layer = next
+                seg.overpass = next > 0
+                store.markDirty()
+                store.notify()
+              }}
+              title="Descendre d'un étage (-)"
+            >
+              -
+            </button>
+            <span style={{ fontSize: '12px', fontWeight: 800, minWidth: '22px', textAlign: 'center' }}>
+              {(seg.layer ?? (seg.overpass ? 1 : 0)) > 0 ? `+${seg.layer ?? 1}` : (seg.layer ?? (seg.overpass ? 1 : 0))}
+            </span>
+            <button
+              style={{
+                width: '24px',
+                height: '24px',
+                lineHeight: '1',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--panel-2)',
+                color: 'var(--ink)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                const cur = seg.layer ?? (seg.overpass ? 1 : 0)
+                const next = cur + 1
+                seg.layer = next
+                seg.overpass = next > 0
+                store.markDirty()
+                store.notify()
+              }}
+              title="Monter d'un étage (+)"
+            >
+              +
+            </button>
+          </div>
         </div>
       </div>
 
@@ -750,39 +792,87 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
         <Field label="Coupons de rail" value={section.segmentIds.length} />
         <Field label="Nœuds" value={section.nodeIds.length} />
 
-        {/* Niveau / Ouvrage d'art (Pont 2D) */}
+        {/* Niveau / Ouvrage d'art (Pont 2D / Tunnels) avec stepper +/- */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', margin: '8px 0' }}>
           <div>
-            <div style={{ fontSize: '11px', fontWeight: 600 }}>Niveau de la voie</div>
+            <div style={{ fontSize: '11px', fontWeight: 600 }}>Étage / Niveau de voie</div>
             <div style={{ fontSize: '10px', color: 'var(--muted)' }}>
-              {section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? 'Passe par-dessus (Pont)' : 'Niveau du sol'}
+              {(() => {
+                const first = store.network.segments.get(section.segmentIds[0])
+                const l = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
+                return l === 0 ? 'Niveau du sol (0)' : l > 0 ? `Pont aérien (+${l})` : `Tunnel / Tranchée (${l})`
+              })()}
             </div>
           </div>
-          <button
-            style={{
-              fontSize: '11px',
-              padding: '4px 10px',
-              borderRadius: '5px',
-              border: section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? '1.5px solid var(--accent, #3b82f6)' : '1px solid var(--border)',
-              background: section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? 'rgba(59, 130, 246, 0.2)' : 'var(--panel-2)',
-              color: section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? 'var(--accent, #3b82f6)' : 'var(--ink)',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-            onClick={() => {
-              const currentOverpass = section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass)
-              const nextState = !currentOverpass
-              for (const sid of section.segmentIds) {
-                const seg = store.network.segments.get(sid)
-                if (seg) seg.overpass = nextState
-              }
-              store.markDirty()
-              store.notify()
-            }}
-            title="Définit si toute cette voie passe au-dessus des autres voies (pont 2D sans croisement à niveau)"
-          >
-            {section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? '🌉 Passe dessus (Pont)' : 'Au sol'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <button
+              style={{
+                width: '26px',
+                height: '24px',
+                lineHeight: '1',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--panel-2)',
+                color: 'var(--ink)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                const first = store.network.segments.get(section.segmentIds[0])
+                const cur = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
+                const next = cur - 1
+                for (const sid of section.segmentIds) {
+                  const s = store.network.segments.get(sid)
+                  if (s) {
+                    s.layer = next
+                    s.overpass = next > 0
+                  }
+                }
+                store.markDirty()
+                store.notify()
+              }}
+              title="Descendre toute la voie d'un étage (-)"
+            >
+              -
+            </button>
+            <span style={{ fontSize: '12px', fontWeight: 800, minWidth: '24px', textAlign: 'center' }}>
+              {(() => {
+                const first = store.network.segments.get(section.segmentIds[0])
+                const l = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
+                return l > 0 ? `+${l}` : l
+              })()}
+            </span>
+            <button
+              style={{
+                width: '26px',
+                height: '24px',
+                lineHeight: '1',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: 'var(--panel-2)',
+                color: 'var(--ink)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                const first = store.network.segments.get(section.segmentIds[0])
+                const cur = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
+                const next = cur + 1
+                for (const sid of section.segmentIds) {
+                  const s = store.network.segments.get(sid)
+                  if (s) {
+                    s.layer = next
+                    s.overpass = next > 0
+                  }
+                }
+                store.markDirty()
+                store.notify()
+              }}
+              title="Monter toute la voie d'un étage (+)"
+            >
+              +
+            </button>
+          </div>
         </div>
 
         <div style={{ marginTop: '6px' }}>
