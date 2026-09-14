@@ -1,7 +1,7 @@
 import { generateId, addNode, addSegment, addCurveSegment, removeSegment } from './network'
-import { computeCurvePiece, computeStraightPiece } from './profiles'
-import { bezierPoint } from './curve'
-import { segmentTangentAt } from './tangent'
+import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
+import { bezierPoint } from '../geometry/curve'
+import { segmentTangentAt } from '../geometry/tangent'
 import type { Junction, JunctionId, Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
 
 export interface TurnoutSpec {

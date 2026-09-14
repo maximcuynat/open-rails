@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createCamera } from './camera'
-import { createNetwork, addNode, addSegment } from '../core/network'
+import { createNetwork, addNode, addSegment } from '@domain/models/network'
 import {
   getViewportBounds,
   isPointInBounds,

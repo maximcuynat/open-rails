@@ -1,6 +1,6 @@
 import type { Network, Point, Segment } from './types'
-import { discretizeCurve } from './curve'
-import { GAUGE } from '../render/renderer'
+import { discretizeCurve } from '../geometry/curve'
+import { GAUGE } from '../profiles/profiles'
 
 export interface DiamondCrossing {
   id: string

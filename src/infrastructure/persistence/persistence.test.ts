@@ -5,8 +5,8 @@ import {
   addSegment,
   addCurveSegment,
   resetIdCounter,
-} from './network'
-import { placeTurnout, toggleJunction } from './junction'
+} from '../../domain/models/network'
+import { placeTurnout, toggleJunction } from '../../domain/models/junction'
 import {
   serializeNetwork,
   deserializeNetwork,
@@ -16,7 +16,7 @@ import {
   resetMemoryStorage,
   STORAGE_KEY,
 } from './persistence'
-import { createCamera } from '../render/camera'
+import { createCamera } from '../../render/camera'
 
 describe('persistence module', () => {
   beforeEach(() => {

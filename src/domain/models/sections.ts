@@ -1,6 +1,6 @@
 import type { Network, NodeId, SegmentId, Segment, Point } from './types'
-import { curveLength } from './curve'
-import { segmentTangentAt } from './tangent'
+import { curveLength } from '../geometry/curve'
+import { segmentTangentAt } from '../geometry/tangent'
 
 export type SectionType = 'circulation' | 'station_stop' | 'siding' | 'yard'
 

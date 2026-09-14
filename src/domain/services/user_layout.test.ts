@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { deserializeNetwork } from './persistence'
-import { generateRealisticSVG } from '../render/exportSvg'
+import { deserializeNetwork } from '../../infrastructure/persistence/persistence'
+import { generateRealisticSVG } from '../../render/exportSvg'
 
 const userJson = `{
   "version": 1,

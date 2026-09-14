@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Menu, MenuBar, type MenuItem } from './Menu'
 import type { EditorStore } from './store'
 import { exportSVG } from '../render/exportSvg'
-import { serializeNetwork } from '../core/persistence'
-import { computeTrackSections } from '../core/sections'
+import { serializeNetwork } from '@infrastructure/persistence/persistence'
+import { computeTrackSections } from '@domain/models/sections'
 
 interface TopBarProps {
   store: EditorStore

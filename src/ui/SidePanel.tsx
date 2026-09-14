@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { curveLength } from '../core/curve'
-import { arcRadius, arcDeflectionDeg } from '../core/tangent'
-import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '../core/junction'
-import { detectCrossings } from '../core/crossing'
-import { detectDeadEnds, detectLoops, detectConnectedComponents } from '../core/pathfinding'
+import { curveLength } from '@domain/geometry/curve'
+import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
+import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '@domain/models/junction'
+import { detectCrossings } from '@domain/models/crossing'
+import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
   computeTrackSections,
   findSectionBySegment,
@@ -12,7 +12,7 @@ import {
   type SectionType,
   type SectionDirection,
   SECTION_COLORS,
-} from '../core/sections'
+} from '@domain/models/sections'
 import type { EditorStore } from './store'
 
 function PanelHeader({ children }: { children: ReactNode }) {

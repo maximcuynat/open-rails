@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, type Camera } from '../render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment } from '../core/network'
-import { CURVE_RADII } from '../core/profiles'
-import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '../core/junction'
-import { reconcileNetworkIntersections } from '../core/reconcile'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment } from '@domain/models/network'
+import { CURVE_RADII } from '@domain/profiles/profiles'
+import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
+import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import {
   saveNetworkToStorage,
   loadNetworkFromStorage,
@@ -11,10 +11,10 @@ import {
   deserializeNetwork,
   serializeNetwork,
   type SerializedProject,
-} from '../core/persistence'
-import type { JunctionId, Network, Point, Selection } from '../core/types'
-import type { SectionMetadata } from '../core/sections'
-import { computeTrackSections } from '../core/sections'
+} from '@infrastructure/persistence/persistence'
+import type { JunctionId, Network, Point, Selection } from '@domain/models/types'
+import type { SectionMetadata } from '@domain/models/sections'
+import { computeTrackSections } from '@domain/models/sections'
 
 export type Tool = 'select' | 'place' | 'curve' | 'pan'
 

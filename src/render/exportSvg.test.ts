@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createNetwork, addNode, addSegment, addCurveSegment } from '../core/network'
-import { autoDetectJunctions } from '../core/junction'
+import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
+import { autoDetectJunctions } from '@domain/models/junction'
 import { generateRealisticSVG } from './exportSvg'
 
 describe('generateRealisticSVG', () => {

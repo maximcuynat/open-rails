@@ -1,4 +1,4 @@
-import type { Network, NodeId, Point, Segment, SegmentId } from './types'
+import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
 
 export interface PathResult {
   found: boolean

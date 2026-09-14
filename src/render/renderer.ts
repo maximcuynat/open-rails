@@ -1,11 +1,11 @@
 export type { Camera } from './camera'
 import type { Camera } from './camera'
-export type { Selection } from '../core/types'
-import type { Network, Point, Selection, RailNode, Segment, NodeId } from '../core/types'
-import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '../core/curve'
-import { lineLineIntersection, type DiamondCrossing } from '../core/crossing'
-import { segmentTangentAt } from '../core/tangent'
-import { computeTrackSections, findSectionBySegment, detectDirectionConflicts } from '../core/sections'
+export type { Selection } from '@domain/models/types'
+import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
+import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
+import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
+import { segmentTangentAt } from '@domain/geometry/tangent'
+import { computeTrackSections, findSectionBySegment, detectDirectionConflicts } from '@domain/models/sections'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {

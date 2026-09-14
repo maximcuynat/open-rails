@@ -1,3 +1,7 @@
+/** Standard track gauge in meters (1435 mm). */
+export const STANDARD_GAUGE = 1.435
+export const GAUGE = STANDARD_GAUGE
+
 /** French / UIC standard curve radii in real meters (LGV / TER / Intercités).
  *  Ordered from tightest (yard/depot) to widest (LGV high speed).
  */

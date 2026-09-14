@@ -9,7 +9,7 @@ import {
   arcRadius,
   arcDeflectionDeg,
 } from './tangent'
-import { addNode, addSegment, addCurveSegment, createNetwork } from './network'
+import { addNode, addSegment, addCurveSegment, createNetwork } from '../models/network'
 
 describe('bezierStartTangent', () => {
   it('returns direction from start to via', () => {

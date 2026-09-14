@@ -9,7 +9,7 @@ import {
   curveRadiusAt,
   minCurveRadius,
   clampVia,
-} from './curve'
+} from '../geometry/curve'
 
 describe('bezierPoint', () => {
   it('returns p0 at t=0', () => {

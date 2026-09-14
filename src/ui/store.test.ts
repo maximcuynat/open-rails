@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from './store'
-import { addNode, addSegment, resetIdCounter } from '../core/network'
-import { resetMemoryStorage } from '../core/persistence'
+import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
+import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 
 describe('EditorStore persistence', () => {
   beforeEach(() => {

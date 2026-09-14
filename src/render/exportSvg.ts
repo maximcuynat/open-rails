@@ -1,9 +1,9 @@
-import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '../core/curve'
+import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
 import type { EditorStore } from '../ui/store'
-import type { Network, Point, Selection } from '../core/types'
+import type { Network, Point, Selection } from '@domain/models/types'
 import type { Camera } from './camera'
-import { detectCrossings, lineLineIntersection } from '../core/crossing'
-import { segmentTangentAt } from '../core/tangent'
+import { detectCrossings, lineLineIntersection } from '@domain/models/crossing'
+import { segmentTangentAt } from '@domain/geometry/tangent'
 import {
   GAUGE,
   SLEEPER_SPACING,

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { createNetwork, addNode, addSegment, addCurveSegment } from './network'
+import { createNetwork, addNode, addSegment, addCurveSegment } from '../models/network'
 import { reconcileNetworkIntersections } from './reconcile'
-import { deserializeNetwork } from './persistence'
+import { deserializeNetwork } from '../../infrastructure/persistence/persistence'
 
 describe('Network Topology Reconciler', () => {
   it('splits straight segment at an intermediate node and creates a turnout', () => {

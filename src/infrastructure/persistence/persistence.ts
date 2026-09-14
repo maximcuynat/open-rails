@@ -1,9 +1,9 @@
-import type { Camera } from '../render/camera'
-import { createNetwork, syncIdCounter } from './network'
-import { findJunctionAtNode } from './junction'
-import { reconcileNetworkIntersections } from './reconcile'
-import type { Junction, Network, RailNode, Segment, SegmentKind } from './types'
-import type { TrackSection } from './sections'
+import type { Camera } from '../../render/camera'
+import { createNetwork, syncIdCounter } from '../../domain/models/network'
+import { findJunctionAtNode } from '../../domain/models/junction'
+import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
+import type { Junction, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
+import type { TrackSection } from '../../domain/models/sections'
 
 export const STORAGE_KEY = 'open-rail:network'
 

@@ -1,4 +1,4 @@
-import type { Point, Network, Segment, NodeId } from './types'
+import type { Point, Network, Segment, NodeId } from '../models/types'
 
 /** Outgoing tangent direction (normalized) at the end of a straight segment. */
 function straightTangent(from: Point, to: Point): Point {

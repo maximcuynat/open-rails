@@ -1,5 +1,5 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
-import { distToCurve } from './curve'
+import { distToCurve } from '../geometry/curve'
 
 let idCounter = 0
 

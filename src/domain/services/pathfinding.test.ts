@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createNetwork, addNode, addSegment } from './network'
-import { placeTurnout, toggleJunction } from './junction'
+import { createNetwork, addNode, addSegment } from '../models/network'
+import { placeTurnout, toggleJunction } from '../models/junction'
 import {
   findPath,
   reachableFrom,

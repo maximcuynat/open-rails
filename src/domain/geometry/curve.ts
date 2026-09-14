@@ -1,4 +1,4 @@
-import type { Point } from './types'
+import type { Point } from '../models/types'
 
 /** Point on a quadratic Bezier curve at parameter t. */
 export function bezierPoint(t: number, p0: Point, p1: Point, p2: Point): Point {

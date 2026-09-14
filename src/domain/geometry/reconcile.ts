@@ -1,8 +1,8 @@
-import type { Network, NodeId, Point, Segment, SegmentId } from './types'
+import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
 import { bezierPoint, discretizeCurve } from './curve'
-import { intersectSegments } from './crossing'
-import { autoDetectJunctions, weldNodes } from './junction'
-import { addNode, addSegment, addCurveSegment, removeSegment } from './network'
+import { intersectSegments } from '../models/crossing'
+import { autoDetectJunctions, weldNodes } from '../models/junction'
+import { addNode, addSegment, addCurveSegment, removeSegment } from '../models/network'
 
 /**
  * Split an existing segment at an existing node that lies on it.

@@ -17,23 +17,23 @@ import {
   hitSegment,
   snapToGrid,
   getStepPointsAlongSegment,
-} from '../core/network'
-import type { Point, Network, RailNode } from '../core/types'
-import { curveLength, bezierPoint } from '../core/curve'
-import { getTangentForPlacement } from '../core/tangent'
+} from '@domain/models/network'
+import type { Point, Network, RailNode } from '@domain/models/types'
+import { curveLength, bezierPoint } from '@domain/geometry/curve'
+import { getTangentForPlacement } from '@domain/geometry/tangent'
 import {
   snapStraightLength,
   computeStraightPiece,
   computeCurvePiece,
   computeFreeformCurve,
-} from '../core/profiles'
+} from '@domain/profiles/profiles'
 import {
   splitSegment,
   findJunctionAtNode,
   toggleJunction,
-} from '../core/junction'
-import { reconcileNetworkIntersections } from '../core/reconcile'
-import { computeTrackSections, findSectionBySegment } from '../core/sections'
+} from '@domain/models/junction'
+import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
 import type { EditorStore } from './store'
 
 /** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
