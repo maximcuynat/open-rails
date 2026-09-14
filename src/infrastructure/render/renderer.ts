@@ -5,7 +5,8 @@ import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@doma
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
-import { computeTrackSections, findSectionBySegment, detectDirectionConflicts } from '@domain/models/sections'
+import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, type SectionMetadata } from '@domain/models/sections'
+import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -228,7 +229,7 @@ export function renderNetwork(
   vh: number,
   net: Network,
   selection: Selection,
-  sectionMeta?: Record<string, any>,
+  sectionMeta?: Record<string, SectionMetadata>,
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
@@ -748,6 +749,67 @@ export function renderNetwork(
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(warnText, sx, textY)
+
+    ctx.restore()
+  }
+
+  // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
+  const kinematicIssues = analyzeKinematics(net)
+  for (const issue of kinematicIssues) {
+    const node = net.nodes.get(issue.nodeId)
+    if (!node || !isPointInBounds(node.pos, bounds)) continue
+
+    const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
+    const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+
+    ctx.save()
+    const isErr = issue.severity === 'error'
+    const badgeColor = isErr ? '#ef4444' : '#f59e0b'
+    const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
+
+    // Pulse halo
+    ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
+    ctx.beginPath()
+    ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+    ctx.fillStyle = badgeColor
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(sx, sy - signR)
+    ctx.lineTo(sx + signR, sy)
+    ctx.lineTo(sx, sy + signR)
+    ctx.lineTo(sx - signR, sy)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+
+    // Exclamation point or angle
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '900 11px Archivo, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText('!', sx, sy)
+
+    // Label badge above if zoom is reasonable
+    if (cam.scale >= 0.9) {
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      const label = issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
+      const tw = ctx.measureText(label).width
+      const ty = sy - signR - 10
+
+      ctx.fillStyle = badgeColor
+      ctx.beginPath()
+      ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
+      ctx.fill()
+
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, sx, ty)
+    }
 
     ctx.restore()
   }

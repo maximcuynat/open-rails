@@ -1,4 +1,6 @@
 import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
+import { segmentTangentAt } from '../geometry/tangent'
+import type { SectionMetadata } from '../models/sections'
 
 export interface PathResult {
   found: boolean
@@ -10,6 +12,10 @@ export interface PathResult {
 export interface PathfindingOptions {
   /** Respect switch directions (default: true). If false, all branches can be traversed. */
   respectSwitches?: boolean
+  /** Enforce physical geometry at diamond crossings (default: true, trains cannot turn at sharp crossings). */
+  enforceCrossings?: boolean
+  /** Section metadata to respect traffic flow directions (sens unique). */
+  sectionMeta?: Record<string, SectionMetadata>
 }
 
 /** Compute the physical length of a segment in millimeters. */
@@ -37,6 +43,28 @@ export function segmentLength(net: Network, seg: Segment): number {
   return len
 }
 
+/** Helper: compute outgoing ray direction from a node along a segment */
+function getOutgoingRay(net: Network, seg: Segment, nodeId: NodeId): Point {
+  const tan = segmentTangentAt(net, seg, nodeId)
+  if (tan) {
+    const isFrom = seg.from === nodeId
+    const rx = isFrom ? tan.x : -tan.x
+    const ry = isFrom ? tan.y : -tan.y
+    const len = Math.hypot(rx, ry)
+    if (len > 1e-5) return { x: rx / len, y: ry / len }
+  }
+  const otherId = seg.from === nodeId ? seg.to : seg.from
+  const nA = net.nodes.get(nodeId)
+  const nB = net.nodes.get(otherId)
+  if (nA && nB) {
+    const dx = nB.pos.x - nA.pos.x
+    const dy = nB.pos.y - nA.pos.y
+    const len = Math.hypot(dx, dy)
+    if (len > 1e-5) return { x: dx / len, y: dy / len }
+  }
+  return { x: 1, y: 0 }
+}
+
 /** Find segment between two nodes if one exists. */
 export function getSegmentBetween(net: Network, u: NodeId, v: NodeId): Segment | undefined {
   const segIds = net.adjacency.get(u)
@@ -50,43 +78,83 @@ export function getSegmentBetween(net: Network, u: NodeId, v: NodeId): Segment |
   return undefined
 }
 
-/** Check if transition prev -> curr -> next is allowed under junction switch settings. */
+/** Check if transition prev -> curr -> next is allowed under junction switch, crossing and traffic settings. */
 export function isTransitionAllowed(
   net: Network,
   prevNodeId: NodeId | null,
   currNodeId: NodeId,
   nextNodeId: NodeId,
-  respectSwitches = true,
+  options: PathfindingOptions = {},
 ): boolean {
-  if (!respectSwitches) return true
+  const respectSwitches = options.respectSwitches ?? true
+  const enforceCrossings = options.enforceCrossings ?? true
 
-  // Check if currNode is apex of any junction
-  for (const junc of net.junctions.values()) {
-    if (junc.nodeId === currNodeId) {
-      const activeBranchNode = junc.activeBranch === 'straight' ? junc.straightNodeId : junc.divergingNodeId
-      const inactiveBranchNode = junc.activeBranch === 'straight' ? junc.divergingNodeId : junc.straightNodeId
+  // 1. Junction Switch Rules
+  if (respectSwitches) {
+    for (const junc of net.junctions.values()) {
+      if (junc.nodeId === currNodeId) {
+        const activeBranchNode = junc.activeBranch === 'straight' ? junc.straightNodeId : junc.divergingNodeId
+        const inactiveBranchNode = junc.activeBranch === 'straight' ? junc.divergingNodeId : junc.straightNodeId
 
-      // 1. Cannot exit toward inactive branch
-      if (nextNodeId === inactiveBranchNode) {
-        return false
+        // Cannot exit toward inactive branch
+        if (nextNodeId === inactiveBranchNode) return false
+
+        // Cannot enter from inactive branch into apex
+        if (prevNodeId === inactiveBranchNode) return false
+
+        // If entering from stem, must exit via active branch
+        if (junc.stemNodeId && prevNodeId === junc.stemNodeId) {
+          if (nextNodeId !== activeBranchNode) return false
+        }
+
+        // If entering from active branch, must exit toward stem if defined
+        if (junc.stemNodeId && prevNodeId === activeBranchNode) {
+          if (nextNodeId !== junc.stemNodeId) return false
+        }
       }
+    }
+  }
 
-      // 2. Cannot enter from inactive branch into apex (trailing point set against)
-      if (prevNodeId === inactiveBranchNode) {
-        return false
-      }
+  // 2. Diamond Crossing (X) Geometric Constraint
+  // At a diamond crossing / grade intersection without movable blades (degree 4, not a junction),
+  // trains arriving on line A MUST continue on line A (facing directly ahead, dot < -0.7).
+  // A train CANNOT turn at sharp crossing angles onto line B.
+  if (enforceCrossings && prevNodeId !== null) {
+    const adj = net.adjacency.get(currNodeId) ?? []
+    const isJunction = Array.from(net.junctions.values()).some((j) => j.nodeId === currNodeId)
 
-      // 3. If entering from stem, must exit via active branch
-      if (junc.stemNodeId && prevNodeId === junc.stemNodeId) {
-        if (nextNodeId !== activeBranchNode) {
+    // A diamond crossing is typically a node with degree 4 that is NOT a movable switch
+    if (adj.length === 4 && !isJunction) {
+      const inSeg = getSegmentBetween(net, prevNodeId, currNodeId)
+      const outSeg = getSegmentBetween(net, currNodeId, nextNodeId)
+      if (inSeg && outSeg) {
+        const rayIn = getOutgoingRay(net, inSeg, currNodeId)
+        const rayOut = getOutgoingRay(net, outSeg, currNodeId)
+        // rayIn points away from currNodeId towards prevNodeId.
+        // rayOut points away from currNodeId towards nextNodeId.
+        // A straight continuation through the crossing means rayIn and rayOut are opposite:
+        // dot(rayIn, rayOut) must be close to -1 (e.g. < -0.65).
+        const dot = rayIn.x * rayOut.x + rayIn.y * rayOut.y
+        if (dot > -0.65) {
+          // Sharp diversion at a fixed diamond crossing is physically impossible!
           return false
         }
       }
+    }
+  }
 
-      // 4. If entering from active branch, must exit toward stem if defined
-      if (junc.stemNodeId && prevNodeId === activeBranchNode) {
-        if (nextNodeId !== junc.stemNodeId) {
-          return false
+  // 3. Traffic direction constraints (Sens unique / circulation)
+  if (options.sectionMeta) {
+    const outSeg = getSegmentBetween(net, currNodeId, nextNodeId)
+    if (outSeg) {
+      const meta = options.sectionMeta[outSeg.id]
+      if (meta && meta.direction && meta.direction !== 'two_way') {
+        const isForwardTransit = outSeg.from === currNodeId && outSeg.to === nextNodeId
+        if (meta.direction === 'forward' && !isForwardTransit) {
+          return false // Sens interdit (trying to run backward on forward-only track)
+        }
+        if (meta.direction === 'backward' && isForwardTransit) {
+          return false // Sens interdit (trying to run forward on backward-only track)
         }
       }
     }
@@ -105,8 +173,6 @@ export function findPath(
   targetNodeId: NodeId,
   options: PathfindingOptions = {},
 ): PathResult {
-  const respect = options.respectSwitches ?? true
-
   if (!net.nodes.has(startNodeId) || !net.nodes.has(targetNodeId)) {
     return { found: false, nodes: [], segments: [], totalDistance: 0 }
   }
@@ -156,7 +222,7 @@ export function findPath(
       const nextNodeId = seg.from === current.node ? seg.to : seg.from
       if (nextNodeId === current.prev) continue // Don't instantly reverse along same track
 
-      if (!isTransitionAllowed(net, current.prev, current.node, nextNodeId, respect)) {
+      if (!isTransitionAllowed(net, current.prev, current.node, nextNodeId, options)) {
         continue
       }
 
@@ -205,7 +271,6 @@ export function reachableFrom(
   startNodeId: NodeId,
   options: PathfindingOptions = {},
 ): { nodes: Set<NodeId>; segments: Set<SegmentId> } {
-  const respect = options.respectSwitches ?? true
   const visitedNodes = new Set<NodeId>()
   const visitedSegments = new Set<SegmentId>()
 
@@ -231,7 +296,7 @@ export function reachableFrom(
       const nextNodeId = seg.from === node ? seg.to : seg.from
       if (nextNodeId === prev) continue
 
-      if (!isTransitionAllowed(net, prev, node, nextNodeId, respect)) {
+      if (!isTransitionAllowed(net, prev, node, nextNodeId, options)) {
         continue
       }
 

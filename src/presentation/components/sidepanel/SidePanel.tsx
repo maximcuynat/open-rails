@@ -13,6 +13,7 @@ import {
   type SectionDirection,
   SECTION_COLORS,
 } from '@domain/models/sections'
+import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import type { EditorStore } from '@application/state/editorStore'
 
 function PanelHeader({ children }: { children: ReactNode }) {
@@ -135,11 +136,39 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   }
 
   const isDeadEnd = adj.length === 1
+  const kinematicIssues = analyzeKinematics(store.network).filter((i) => i.nodeId === nodeId)
 
   return (
     <>
       <PanelHeader>{isDeadEnd ? 'Fin de voie (Heurtoir)' : 'Nœud de jonction'}</PanelHeader>
       <div className="sp-section">
+        {kinematicIssues.map((issue) => (
+          <div
+            key={issue.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 10px',
+              marginBottom: '10px',
+              backgroundColor: issue.severity === 'error' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+              border: `1px solid ${issue.severity === 'error' ? '#ef4444' : '#f59e0b'}`,
+              borderRadius: '6px',
+              color: issue.severity === 'error' ? '#dc2626' : '#b45309',
+              fontSize: '11px',
+              fontWeight: 600,
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ flexShrink: 0 }}>
+              <path
+                d="M12 2L2 22h20L12 2z"
+                fill={issue.severity === 'error' ? '#ef4444' : '#f59e0b'}
+              />
+              <path d="M12 9v5m0 3h.01" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <span>{issue.message}</span>
+          </div>
+        ))}
         {isDeadEnd && (
           <div
             style={{

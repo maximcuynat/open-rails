@@ -153,6 +153,14 @@ export function autoDetectJunctions(net: Network): Junction[] {
         divIdx = 0
       }
 
+      // In a real turnout, the through route has minDot close to -1 (at least < -0.8, i.e. deflection <= 36°)
+      if (minDot > -0.7) {
+        // No through route exists! This is not a valid turnout, do not register it
+        const existing = findJunctionAtNode(net, node.id)
+        if (existing) removeJunction(net, existing.id)
+        continue
+      }
+
       // Between throughA and throughB: the diverging route branches forward from stem.
       // u_div . u_straight > 0, u_div . u_stem < 0.
       const dotA_div = u[throughA].x * u[divIdx].x + u[throughA].y * u[divIdx].y

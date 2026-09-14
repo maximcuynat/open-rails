@@ -50,25 +50,39 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
       {isPlacing && activeNode && (
         <div className="hud-realtime-card">
           <span className="hud-pill hud-pill-accent">
-            📐 {currentDist.toFixed(1)} m
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+              <path d="M21 21L3 3v18h18z" />
+            </svg>
+            {currentDist.toFixed(1)} m
           </span>
           <span className="hud-sep" />
           {store.tool === 'curve' && (
             <>
               <span className="hud-pill hud-pill-amber">
-                🔄 {store.trackMode === 'freeform' ? 'Flex' : `R${store.selectedCurveRadius}m (${store.selectedCurveAngle}°)`}
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+                  <path d="M4 20C4 20 7 8 20 5" />
+                </svg>
+                {store.trackMode === 'freeform' ? 'Flex' : `R${store.selectedCurveRadius}m (${store.selectedCurveAngle}°)`}
               </span>
               <span className="hud-sep" />
             </>
           )}
           <span className="hud-pill hud-pill-emerald">
-            ⛰️ Z: {currentZ.toFixed(1)}m {Math.abs(currentSlope) >= 0.5 && `(${currentSlope > 0 ? '+' : ''}${currentSlope.toFixed(1)}‰)`}
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+              <path d="M3 20h18L12 4z" />
+            </svg>
+            Z: {currentZ.toFixed(1)}m {Math.abs(currentSlope) >= 0.5 && `(${currentSlope > 0 ? '+' : ''}${currentSlope.toFixed(1)}‰)`}
           </span>
           {store.parallelMode && (
             <>
               <span className="hud-sep" />
-              <span className="hud-pill" style={{ color: '#c084fc' }}>
-                🛤️ Voie double ({store.parallelOffset}m)
+              <span className="hud-pill" style={{ color: '#60a5fa' }}>
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+                  <line x1="4" y1="4" x2="4" y2="20" />
+                  <line x1="12" y1="4" x2="12" y2="20" />
+                  <line x1="20" y1="4" x2="20" y2="20" />
+                </svg>
+                Voie double ({store.parallelOffset}m)
               </span>
             </>
           )}
@@ -98,7 +112,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
             gap: '6px',
           }}
         >
-          <span>{layer > 0 ? `🌉 Mode Pont (+${layer})` : `🚇 Mode Tunnel (${layer})`}</span>
+          <span>{layer > 0 ? `Pont (+${layer})` : `Tunnel (${layer})`}</span>
           <span style={{ fontSize: '10px', opacity: 0.8 }}>(Touches + / -)</span>
         </div>
       )}

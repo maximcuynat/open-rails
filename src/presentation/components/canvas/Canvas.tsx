@@ -157,6 +157,27 @@ function renderPlacePreview(
   ctx.fill()
   ctx.globalAlpha = 1
 
+  // Tangent sightline guide (Axe directeur projeté non intrusif)
+  const previewDirX = snappedEnd.x - start.x
+  const previewDirY = snappedEnd.y - start.y
+  const previewLen = Math.hypot(previewDirX, previewDirY)
+  if (previewLen > 1) {
+    const uX = previewDirX / previewLen
+    const uY = previewDirY / previewLen
+    ctx.save()
+    ctx.strokeStyle = accent
+    ctx.globalAlpha = 0.2
+    ctx.lineWidth = 1
+    ctx.setLineDash([3, 5])
+    ctx.beginPath()
+    // Project sightline forward beyond snapped end
+    const sightLen = Math.max(150, 400 / cam.scale)
+    ctx.moveTo(w2sX(snappedEnd.x), w2sY(snappedEnd.y))
+    ctx.lineTo(w2sX(snappedEnd.x + uX * sightLen), w2sY(snappedEnd.y + uY * sightLen))
+    ctx.stroke()
+    ctx.restore()
+  }
+
   // Rail preview to snapped end
   if (cam.scale < SIMPLIFY_THRESHOLD) {
     ctx.strokeStyle = accent
@@ -282,6 +303,7 @@ interface CanvasProps {
 
 export function Canvas({ store, onViewport }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const isModifierDownRef = useRef(false)
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -433,8 +455,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}${layerLabel}${slopeLabel}`
         renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
 
-        // Preview de la voie secondaire parallele si mode double voie actif
-        if (store.parallelMode) {
+        // Preview de la voie secondaire parallele si mode double voie actif ou touche Shift/Ctrl maintenue
+        const showParallelPreview = store.parallelMode || isModifierDownRef.current
+        if (showParallelPreview) {
           const dxp = candidateEnd.x - startNode.pos.x
           const dyp = candidateEnd.y - startNode.pos.y
           const lenp = Math.hypot(dxp, dyp)
@@ -454,7 +477,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secEnd = { x: candidateEnd.x + nxp * off, y: candidateEnd.y + nyp * off }
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, '', false)
+            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, 'Voie 2', false)
             ctx.restore()
           }
         }
@@ -606,17 +629,29 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     let lastX = 0
     let lastY = 0
 
+    const handleKeyChange = (e: KeyboardEvent) => {
+      const active = e.shiftKey || e.ctrlKey || e.metaKey
+      if (active !== isModifierDownRef.current) {
+        isModifierDownRef.current = active
+        draw()
+      }
+    }
+    window.addEventListener('keydown', handleKeyChange)
+    window.addEventListener('keyup', handleKeyChange)
+
     const onDown = (e: PointerEvent) => {
       if (e.button === 2) {
         // Right click: cancel placement chain or curve
         store.lastNodeId = null
         store.curveState = { phase: 0, startId: null }
+        store.parallelMode = false
+        store.parallelLastNodeId = null
         redraw()
         return
       }
 
-      if (e.button === 1 || (e.button === 0 && (e.shiftKey || store.tool === 'pan'))) {
-        // Middle click, shift+click, or pan tool: pan
+      if (e.button === 1 || (e.button === 0 && store.tool === 'pan')) {
+        // Middle click or pan tool: pan
         store.panning = true
         lastX = e.clientX
         lastY = e.clientY
@@ -723,9 +758,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       if (e.button === 0 && store.tool === 'place') {
         const world = getWorldPos(e.clientX, e.clientY)
+        const isParallelKey = e.shiftKey || e.ctrlKey || store.parallelMode
 
-        // Shift+Click: mode double-voie parallele
-        if (e.shiftKey) {
+        // Shift+Click ou Ctrl+Click ou mode double-voie : pose de voie double continue
+        if (isParallelKey) {
           const spacing = getSnapSpacing()
           const snappedWorld = store.snap ? snapToGrid(world, spacing) : world
 
@@ -784,21 +820,26 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 }
               }
             } else {
-              // Pas de lastNodeId : poser le premier noeud (ou splitter la voie si on clique sur un pas de voie)
+              // Pas de lastNodeId : poser le premier noeud (ou réutiliser le nœud cliqué)
+              const clickedNode = findNearestNode(store.network, world, 16, store.camera)
               let startNodeId: string
-              const targetPos = store.hoverSegSteps?.nearest ?? snappedWorld
-              const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, targetPos, 16 / store.camera.scale)
-              if (hitSegId) {
-                const splitRes = splitSegment(store.network, hitSegId, targetPos)
-                startNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, targetPos).id
+              if (clickedNode) {
+                startNodeId = clickedNode.id
               } else {
-                const n = addNode(store.network, targetPos)
-                n.z = store.activePlacementAltitude
-                n.pos.z = store.activePlacementAltitude
-                startNodeId = n.id
+                const targetPos = store.hoverSegSteps?.nearest ?? snappedWorld
+                const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, targetPos, 16 / store.camera.scale)
+                if (hitSegId) {
+                  const splitRes = splitSegment(store.network, hitSegId, targetPos)
+                  startNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, targetPos).id
+                } else {
+                  const n = addNode(store.network, targetPos)
+                  n.z = store.activePlacementAltitude
+                  n.pos.z = store.activePlacementAltitude
+                  startNodeId = n.id
+                }
               }
               store.lastNodeId = startNodeId
-              store.parallelMode = false // attend le prochain shift+click pour creer le 2e noeud
+              store.parallelMode = false // attend le prochain point pour créer la paire parallèle
               store.selection = { nodes: new Set([startNodeId]), segments: new Set() }
               reconcileNetworkIntersections(store.network)
               store.markDirty()
@@ -853,9 +894,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           return
         }
 
-        // Click normal (sans shift) : quitter le mode double-voie si actif
-        if (store.parallelMode) {
-          store.parallelMode = false
+        // Click normal : si parallelMode n'est pas activé, nettoyer l'état temporaire
+        if (!store.parallelMode) {
           store.parallelLastNodeId = null
         }
 
@@ -1306,6 +1346,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     canvas.addEventListener('contextmenu', onContextMenu)
     canvas.addEventListener('dblclick', onDblClick)
     return () => {
+      window.removeEventListener('keydown', handleKeyChange)
+      window.removeEventListener('keyup', handleKeyChange)
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)

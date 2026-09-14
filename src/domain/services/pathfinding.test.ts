@@ -167,3 +167,63 @@ describe('detectConnectedComponents', () => {
     expect(comps.length).toBe(2)
   })
 })
+
+describe('diamond crossing and traffic direction routing constraints', () => {
+  it('enforces that trains continue straight through a diamond crossing and cannot turn 90 degrees', () => {
+    const net = createNetwork()
+    // Diamond crossing at center (100, 100)
+    // Horizontal Line 1: West -> Center -> East
+    const west = addNode(net, { x: 0, y: 100 })
+    const center = addNode(net, { x: 100, y: 100 })
+    const east = addNode(net, { x: 200, y: 100 })
+    addSegment(net, west.id, center.id)
+    addSegment(net, center.id, east.id)
+
+    // Vertical Line 2: South -> Center -> North
+    const south = addNode(net, { x: 100, y: 0 })
+    const north = addNode(net, { x: 100, y: 200 })
+    addSegment(net, south.id, center.id)
+    addSegment(net, center.id, north.id)
+
+    // 1. Train on Horizontal Line 1 travelling West to East can go straight through
+    const straightPath = findPath(net, west.id, east.id)
+    expect(straightPath.found).toBe(true)
+    expect(straightPath.nodes).toEqual([west.id, center.id, east.id])
+
+    // 2. Train on Horizontal Line 1 arriving at center CANNOT turn 90° towards North or South
+    const turnNorth = findPath(net, west.id, north.id)
+    expect(turnNorth.found).toBe(false)
+
+    const turnSouth = findPath(net, west.id, south.id)
+    expect(turnSouth.found).toBe(false)
+
+    // 3. Train on Vertical Line 2 travelling South to North can go straight through
+    const verticalPath = findPath(net, south.id, north.id)
+    expect(verticalPath.found).toBe(true)
+    expect(verticalPath.nodes).toEqual([south.id, center.id, north.id])
+  })
+
+  it('respects one-way traffic direction (sens unique) on sections', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    const c = addNode(net, { x: 200, y: 0 })
+    addSegment(net, a.id, b.id)
+    const seg2 = addSegment(net, b.id, c.id)!
+
+    // Define seg2 as one-way backward (C -> B only, forward B -> C is forbidden)
+    const sectionMeta = {
+      [seg2.id]: { direction: 'backward' as const },
+    }
+
+    // Path from A to C tries to enter seg2 in forward direction (B -> C) -> blocked!
+    const forwardPath = findPath(net, a.id, c.id, { sectionMeta })
+    expect(forwardPath.found).toBe(false)
+
+    // Path from C to A travels backward on seg2 (C -> B) -> allowed!
+    const backwardPath = findPath(net, c.id, a.id, { sectionMeta })
+    expect(backwardPath.found).toBe(true)
+    expect(backwardPath.nodes).toEqual([c.id, b.id, a.id])
+  })
+})
+
