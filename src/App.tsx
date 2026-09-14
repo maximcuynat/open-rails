@@ -7,7 +7,6 @@ import { ToolBar } from '@presentation/components/toolbar/ToolBar'
 import { SidePanel } from '@presentation/components/sidepanel/SidePanel'
 import { CanvasOverlay } from '@presentation/components/canvas/CanvasOverlay'
 import { MiniMap } from '@presentation/components/minimap/MiniMap'
-import { StatusBar } from '@presentation/components/statusbar/StatusBar'
 import { ToastContainer } from '@presentation/components/common/Toast'
 
 export default function App() {
@@ -78,7 +77,6 @@ export default function App() {
           {store.showMinimap && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
         </div>
       </div>
-      <StatusBar store={store} />
       <ToastContainer />
     </div>
   )
