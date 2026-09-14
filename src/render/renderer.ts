@@ -230,10 +230,13 @@ export function renderNetwork(
 
   if (simplified) {
     // Draw simplified single-line representation for low zoom levels
-    for (const seg of visibleSegments) {
+    // Render ground segments first, then overpass segments on top
+    const simpGround = visibleSegments.filter((s) => !s.overpass)
+    const simpOverpass = visibleSegments.filter((s) => !!s.overpass)
+    const renderSimpSeg = (seg: Segment) => {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
+      if (!a || !b) return
 
       const selected = selection.segments.has(seg.id)
       const isInactive = isInactiveBranch(net, seg.id)
@@ -248,6 +251,25 @@ export function renderNetwork(
 
       const sec = findSectionBySegment(trackSections, seg.id)
       const secColor = sec?.color ?? ink
+
+      // If overpass, draw a thicker background mask to break crossing lines below
+      if (seg.overpass) {
+        ctx.save()
+        ctx.strokeStyle = '#0f172a'
+        ctx.lineWidth = Math.max(5, 1.4 * cam.scale)
+        ctx.beginPath()
+        ctx.moveTo(ax, ay)
+        if (seg.kind === 'curve' && seg.via) {
+          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+          ctx.quadraticCurveTo(vx, vy, bx, by)
+        } else {
+          ctx.lineTo(bx, by)
+        }
+        ctx.stroke()
+        ctx.restore()
+      }
+
       ctx.strokeStyle = selected ? accent : secColor
       ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
       ctx.lineCap = 'round'
@@ -265,6 +287,9 @@ export function renderNetwork(
       if (isInactive) ctx.setLineDash([])
       ctx.restore()
     }
+
+    for (const seg of simpGround) renderSimpSeg(seg)
+    for (const seg of simpOverpass) renderSimpSeg(seg)
   } else {
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section

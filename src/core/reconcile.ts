@@ -217,6 +217,8 @@ export function reconcileNetworkIntersections(
         const s2 = segList[j]
         if (!net.segments.has(s1.id) || !net.segments.has(s2.id)) continue
         if (s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to) continue
+        // Si l'un des deux segments est un pont (overpass), ils ne se coupent pas à niveau !
+        if (s1.overpass || s2.overpass) continue
 
         const n1A = net.nodes.get(s1.from)
         const n1B = net.nodes.get(s1.to)

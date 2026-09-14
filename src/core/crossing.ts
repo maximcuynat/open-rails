@@ -196,8 +196,9 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
       const s1 = segList[i]
       const s2 = segList[j]
 
-      // Skip segments sharing an endpoint
+      // Skip segments sharing an endpoint or if either segment is an overpass (bridge)
       if (s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to) continue
+      if (s1.overpass || s2.overpass) continue
 
       const n1A = net.nodes.get(s1.from)
       const n1B = net.nodes.get(s1.to)

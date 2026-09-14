@@ -750,6 +750,41 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
         <Field label="Coupons de rail" value={section.segmentIds.length} />
         <Field label="Nœuds" value={section.nodeIds.length} />
 
+        {/* Niveau / Ouvrage d'art (Pont 2D) */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', margin: '8px 0' }}>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 600 }}>Niveau de la voie</div>
+            <div style={{ fontSize: '10px', color: 'var(--muted)' }}>
+              {section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? 'Passe par-dessus (Pont)' : 'Niveau du sol'}
+            </div>
+          </div>
+          <button
+            style={{
+              fontSize: '11px',
+              padding: '4px 10px',
+              borderRadius: '5px',
+              border: section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? '1.5px solid var(--accent, #3b82f6)' : '1px solid var(--border)',
+              background: section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? 'rgba(59, 130, 246, 0.2)' : 'var(--panel-2)',
+              color: section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? 'var(--accent, #3b82f6)' : 'var(--ink)',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+            onClick={() => {
+              const currentOverpass = section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass)
+              const nextState = !currentOverpass
+              for (const sid of section.segmentIds) {
+                const seg = store.network.segments.get(sid)
+                if (seg) seg.overpass = nextState
+              }
+              store.markDirty()
+              store.notify()
+            }}
+            title="Définit si toute cette voie passe au-dessus des autres voies (pont 2D sans croisement à niveau)"
+          >
+            {section.segmentIds.some((sid) => store.network.segments.get(sid)?.overpass) ? '🌉 Passe dessus (Pont)' : 'Au sol'}
+          </button>
+        </div>
+
         <div style={{ marginTop: '6px' }}>
           <span className="sp-field-label" style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 600 }}>
             Couleur de canton
@@ -816,17 +851,16 @@ export function SidePanel({ store }: { store: EditorStore }) {
     : null
 
   let content: ReactNode
-  if (matchingSection) {
+  if (sel.segments.size === 1 && sel.nodes.size === 0) {
+    const id = [...sel.segments][0]
+    content = <SegmentPanel key={id} store={store} segId={id} />
+  } else if (matchingSection) {
     content = <SectionPanel key={matchingSection.id} store={store} section={matchingSection} />
   } else if (singleSegSection) {
-    // When clicking a track segment, directly show the SectionPanel to rename & set direction
     content = <SectionPanel key={singleSegSection.id} store={store} section={singleSegSection} />
   } else if (sel.nodes.size === 1 && sel.segments.size === 0) {
     const id = [...sel.nodes][0]
     content = <NodePanel key={id} store={store} nodeId={id} />
-  } else if (sel.segments.size === 1 && sel.nodes.size === 0) {
-    const id = [...sel.segments][0]
-    content = <SegmentPanel key={id} store={store} segId={id} />
   } else {
     content = <NetworkPanel store={store} />
   }
