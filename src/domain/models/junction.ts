@@ -102,6 +102,23 @@ export function findJunctionBySegment(net: Network, segId: SegmentId): Junction 
 export function autoDetectJunctions(net: Network): Junction[] {
   const detected: Junction[] = []
 
+  // Helper to compute normalized tangent directions entering each segment from node.pos
+  const getDir = (node: RailNode, seg: Segment): Point => {
+    const otherId = seg.from === node.id ? seg.to : seg.from
+    const other = net.nodes.get(otherId)
+    const tan = segmentTangentAt(net, seg, node.id)
+    if (tan) {
+      return seg.to === node.id ? { x: -tan.x, y: -tan.y } : tan
+    }
+    if (other) {
+      const dx = other.pos.x - node.pos.x
+      const dy = other.pos.y - node.pos.y
+      const len = Math.hypot(dx, dy)
+      return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
+    }
+    return { x: 1, y: 0 }
+  }
+
   for (const node of net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length === 3) {
@@ -110,24 +127,7 @@ export function autoDetectJunctions(net: Network): Junction[] {
       const s2 = net.segments.get(adj[2])
       if (!s0 || !s1 || !s2) continue
 
-      // Compute normalized tangent directions entering each segment from node.pos
-      const getDir = (seg: Segment): Point => {
-        const otherId = seg.from === node.id ? seg.to : seg.from
-        const other = net.nodes.get(otherId)
-        const tan = segmentTangentAt(net, seg, node.id)
-        if (tan) {
-          return seg.to === node.id ? { x: -tan.x, y: -tan.y } : tan
-        }
-        if (other) {
-          const dx = other.pos.x - node.pos.x
-          const dy = other.pos.y - node.pos.y
-          const len = Math.hypot(dx, dy)
-          return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-        }
-        return { x: 1, y: 0 }
-      }
-
-      const u = [getDir(s0), getDir(s1), getDir(s2)]
+      const u = [getDir(node, s0), getDir(node, s1), getDir(node, s2)]
       const segs = [s0, s1, s2]
 
       // Find pair with minimal dot product (closest to -1, through route)
@@ -211,8 +211,70 @@ export function autoDetectJunctions(net: Network): Junction[] {
         })
       }
       detected.push(junc)
+    } else if (adj.length === 2) {
+      const s0 = net.segments.get(adj[0])
+      const s1 = net.segments.get(adj[1])
+      if (!s0 || !s1) continue
+
+      const u0 = getDir(node, s0)
+      const u1 = getDir(node, s1)
+      const dot01 = Math.max(-1, Math.min(1, u0.x * u1.x + u0.y * u1.y))
+
+      // In an incomplete turnout / fork apex, both branches depart on the same side:
+      // dot01 > 0.8 (relative angle <= 36°).
+      if (dot01 > 0.8) {
+        let straightSeg = s0
+        let divSeg = s1
+        let uStraight = u0
+        let uDiv = u1
+
+        if (s0.kind === 'curve' && s1.kind === 'straight') {
+          straightSeg = s1
+          divSeg = s0
+          uStraight = u1
+          uDiv = u0
+        }
+
+        const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
+        const divNodeId = divSeg.from === node.id ? divSeg.to : divSeg.from
+
+        const cross = uStraight.x * uDiv.y - uStraight.y * uDiv.x
+        const hand: 'left' | 'right' = cross >= 0 ? 'left' : 'right'
+
+        const angleDeg = (Math.acos(dot01) * 180) / Math.PI
+        const frogNumber: 4 | 6 = angleDeg <= 12.5 ? 6 : 4
+
+        let junc = findJunctionAtNode(net, node.id)
+        if (junc) {
+          junc.stemNodeId = undefined
+          junc.straightNodeId = straightNodeId
+          junc.divergingNodeId = divNodeId
+          junc.straightSegmentId = straightSeg.id
+          junc.divergingSegmentId = divSeg.id
+          junc.hand = hand
+          junc.frogNumber = frogNumber
+        } else {
+          junc = addJunction(net, {
+            nodeId: node.id,
+            stemNodeId: undefined,
+            straightNodeId,
+            divergingNodeId: divNodeId,
+            straightSegmentId: straightSeg.id,
+            divergingSegmentId: divSeg.id,
+            hand,
+            frogNumber,
+            activeBranch: 'straight',
+          })
+        }
+        detected.push(junc)
+      } else {
+        const junc = findJunctionAtNode(net, node.id)
+        if (junc) {
+          removeJunction(net, junc.id)
+        }
+      }
     } else {
-      // If node is no longer degree 3, remove any registered junction
+      // If node is not degree 2 or 3, remove any registered junction
       const junc = findJunctionAtNode(net, node.id)
       if (junc) {
         removeJunction(net, junc.id)

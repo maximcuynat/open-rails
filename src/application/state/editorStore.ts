@@ -16,7 +16,18 @@ import type { JunctionId, Network, Point, Selection } from '@domain/models/types
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
 
-export type Tool = 'select' | 'place' | 'curve' | 'pan'
+export type Tool =
+  | 'select'
+  | 'place'
+  | 'curve'
+  | 'turnout'
+  | 'autoconnect'
+  | 'crossover'
+  | 'siding'
+  | 'loop'
+  | 'split'
+  | 'measure'
+  | 'pan'
 
 export type TrackMode = 'catalog' | 'freeform'
 
@@ -77,6 +88,28 @@ export class EditorStore {
   // Crossing / Intersection configuration
   selectedCrossingAngle = 15 // degrees (15, 30, 45, 60, 90)
   selectedCrossingLength = 124 // mm (standard Kato/Peco crossing length)
+
+  // --- New Construction Tools State ---
+  autoConnectStartId: string | null = null
+
+  crossoverFirstSegId: string | null = null
+  crossoverAngle = 12
+
+  sidingLength = 80
+  sidingOffset = 3.8
+  sidingSide: 1 | -1 = 1
+
+  loopRadius = 40
+  loopSide: 1 | -1 = 1
+
+  turnoutStartId: string | null = null
+  turnoutOffset = 4.0
+  turnoutRadius = 40.0
+  turnoutSide: 1 | -1 = 1
+
+  measureStart: Point | null = null
+  measureEnd: Point | null = null
+  isMeasuring = false
 
   // Dragging nodes (Select tool)
   isDraggingNode = false
@@ -279,6 +312,13 @@ export class EditorStore {
 
   setTool = (t: Tool): void => {
     this.tool = t
+    // Reset intermediate tool states
+    this.autoConnectStartId = null
+    this.crossoverFirstSegId = null
+    this.measureStart = null
+    this.measureEnd = null
+    this.isMeasuring = false
+
     if (t === 'select') {
       this.lastNodeId = null
       this.curveState = { phase: 0, startId: null }
@@ -300,10 +340,61 @@ export class EditorStore {
       } else if (this.lastNodeId) {
         this.curveState = { phase: 1, startId: this.lastNodeId }
       }
+    } else if (t === 'turnout') {
+      this.parallelMode = false
+      this.parallelLastNodeId = null
+      if (this.selection.nodes.size === 1) {
+        const [singleId] = this.selection.nodes
+        this.turnoutStartId = singleId
+      } else if (this.lastNodeId) {
+        this.turnoutStartId = this.lastNodeId
+      } else {
+        this.turnoutStartId = null
+      }
     } else {
       this.parallelMode = false
       this.parallelLastNodeId = null
+      this.turnoutStartId = null
     }
+    this.notify()
+  }
+
+  toggleSidingSide = (): void => {
+    this.sidingSide = this.sidingSide === 1 ? -1 : 1
+    this.notify()
+  }
+
+  toggleLoopSide = (): void => {
+    this.loopSide = this.loopSide === 1 ? -1 : 1
+    this.notify()
+  }
+
+  setSidingLength = (len: number): void => {
+    if (len > 0) {
+      this.sidingLength = len
+      this.notify()
+    }
+  }
+
+  setLoopRadius = (r: number): void => {
+    if (r > 0) {
+      this.loopRadius = r
+      this.notify()
+    }
+  }
+
+  toggleTurnoutSide = (): void => {
+    this.turnoutSide = this.turnoutSide === 1 ? -1 : 1
+    this.notify()
+  }
+
+  setTurnoutOffset = (val: number): void => {
+    this.turnoutOffset = Math.max(1.5, Math.min(20, val))
+    this.notify()
+  }
+
+  setTurnoutRadius = (val: number): void => {
+    this.turnoutRadius = Math.max(15, Math.min(200, val))
     this.notify()
   }
 

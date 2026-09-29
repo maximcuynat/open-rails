@@ -11,6 +11,26 @@ function hintText(store: EditorStore): string {
       return store.curveState.phase === 1
         ? 'Clic pour poser le coupon · Tab pour inverser côté · Échap pour annuler'
         : 'Clic pour définir le point de départ de la courbe'
+    case 'turnout':
+      return store.turnoutStartId
+        ? 'Déplacez le curseur pour fixer la fin et l’espacement · Clic pour poser · Échap pour annuler'
+        : 'Clic pour définir le point de départ de l’aiguillage sur une voie'
+    case 'autoconnect':
+      return store.autoConnectStartId
+        ? 'Clic sur le second bout de voie pour relier automatiquement · Échap pour annuler'
+        : 'Clic sur le premier bout de voie à relier'
+    case 'crossover':
+      return 'Survolez 2 voies parallèles pour insérer une bretelle courbe en S · Échap pour annuler'
+    case 'siding':
+      return 'Survolez une voie pour positionner l’évitement · Tab pour inverser côté · Clic pour poser'
+    case 'loop':
+      return 'Survolez une fin de voie pour générer une raquette · Tab pour inverser côté · Clic pour poser'
+    case 'split':
+      return 'Cliquez sur un rail pour le découper ou sur un nœud pour le détacher'
+    case 'measure':
+      return store.measureStart
+        ? 'Clic pour fixer la mesure · Échap pour réinitialiser'
+        : 'Clic pour fixer le point de départ de la mesure'
     case 'select':
       return 'Clic pour sélectionner · Ctrl/Shift+Clic pour multi-sélection · Suppr pour effacer'
     case 'pan':
@@ -26,9 +46,10 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
 
   // Live placement stats (Clarity & Feedback)
   const isPlacing = (store.tool === 'place' && store.lastNodeId !== null) ||
-                    (store.tool === 'curve' && store.curveState.phase === 1 && store.curveState.startId !== null)
+                    (store.tool === 'curve' && store.curveState.phase === 1 && store.curveState.startId !== null) ||
+                    (store.tool === 'turnout' && store.turnoutStartId !== null)
 
-  const activeNodeId = store.tool === 'place' ? store.lastNodeId : store.curveState.startId
+  const activeNodeId = store.tool === 'turnout' ? store.turnoutStartId : store.tool === 'place' ? store.lastNodeId : store.curveState.startId
   const activeNode = activeNodeId ? store.network.nodes.get(activeNodeId) : null
   const cursor = store.snap ? store.snappedCursor : store.cursorWorld
 
@@ -58,6 +79,18 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
                   <path d="M4 20C4 20 7 8 20 5" />
                 </svg>
                 {store.trackMode === 'freeform' ? 'Flex' : `R${store.selectedCurveRadius}m (${store.selectedCurveAngle}°)`}
+              </span>
+            </>
+          )}
+          {store.tool === 'turnout' && (
+            <>
+              <span className="hud-sep" />
+              <span className="hud-pill" style={{ color: '#10b981' }}>
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+                  <line x1="2" y1="18" x2="22" y2="18" />
+                  <path d="M5 18c3-4 6-10 11-10h6" />
+                </svg>
+                Aiguillage parallèle
               </span>
             </>
           )}

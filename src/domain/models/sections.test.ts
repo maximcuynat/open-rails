@@ -115,4 +115,61 @@ describe('isEndOfTrackNode', () => {
     // n2 has degree 3 (turnout) -> not a dead end
     expect(isEndOfTrackNode(net, n2.id)).toBe(false)
   })
+
+  it('separates two co-directional branches sharing an apex into two distinct track sections', () => {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const diverging = addNode(net, { x: 100, y: 17.6 })
+
+    const s1 = addSegment(net, apex.id, straight.id)!
+    const s2 = addSegment(net, apex.id, diverging.id)!
+
+    const sections = computeTrackSections(net)
+    expect(sections).toHaveLength(2)
+
+    const sec1 = sections.find((s) => s.segmentIds.includes(s1.id))
+    const sec2 = sections.find((s) => s.segmentIds.includes(s2.id))
+    expect(sec1).toBeDefined()
+    expect(sec2).toBeDefined()
+    expect(sec1!.id).not.toBe(sec2!.id)
+  })
+
+  it('preserves continuous track sections across a diamond crossing (degree 4) without cutting them into fragments', () => {
+    const net = createNetwork()
+    // Center diamond crossing node at (0, 0)
+    const center = addNode(net, { x: 0, y: 0 })
+    // Horizontal Line 1: West -> Center -> East
+    const west = addNode(net, { x: -100, y: 0 })
+    const east = addNode(net, { x: 100, y: 0 })
+    const sW = addSegment(net, west.id, center.id)!
+    const sE = addSegment(net, center.id, east.id)!
+
+    // Vertical Line 2: South -> Center -> North
+    const south = addNode(net, { x: 0, y: -100 })
+    const north = addNode(net, { x: 0, y: 100 })
+    const sS = addSegment(net, south.id, center.id)!
+    const sN = addSegment(net, center.id, north.id)!
+
+    const sections = computeTrackSections(net)
+    // Exactly 2 continuous sections (Line 1 and Line 2), NOT 4 fragmented pieces!
+    expect(sections).toHaveLength(2)
+
+    const line1 = sections.find((s) => s.segmentIds.includes(sW.id))!
+    const line2 = sections.find((s) => s.segmentIds.includes(sS.id))!
+
+    expect(line1).toBeDefined()
+    expect(line2).toBeDefined()
+    expect(line1.id).not.toBe(line2.id)
+
+    // Line 1 contains both sW and sE
+    expect(line1.segmentIds).toContain(sW.id)
+    expect(line1.segmentIds).toContain(sE.id)
+    expect(line1.crossingNodeIds).toContain(center.id)
+
+    // Line 2 contains both sS and sN
+    expect(line2.segmentIds).toContain(sS.id)
+    expect(line2.segmentIds).toContain(sN.id)
+    expect(line2.crossingNodeIds).toContain(center.id)
+  })
 })

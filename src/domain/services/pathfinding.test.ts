@@ -225,5 +225,19 @@ describe('diamond crossing and traffic direction routing constraints', () => {
     expect(backwardPath.found).toBe(true)
     expect(backwardPath.nodes).toEqual([c.id, b.id, a.id])
   })
+
+  it('forbids 180-degree hairpin U-turn transit across a 2-rail turnout apex', () => {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const diverging = addNode(net, { x: 100, y: 17.6 })
+
+    addSegment(net, apex.id, straight.id)
+    addSegment(net, apex.id, diverging.id)
+
+    // Train traveling from straight branch cannot do a 180° hairpin flip at apex into diverging branch
+    const path = findPath(net, straight.id, diverging.id)
+    expect(path.found).toBe(false)
+  })
 })
 

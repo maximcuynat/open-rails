@@ -11,8 +11,21 @@ interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
+    id: 'pan',
+    label: 'Déplacer la vue',
+    shortcut: 'H',
+    group: 0,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2v6M9 5l3-3 3 3" />
+        <path d="M5 9l-3 3 3 3M19 9l3 3-3 3" />
+        <path d="M12 22v-6M9 19l3 3 3-3" />
+      </svg>
+    ),
+  },
+  {
     id: 'select',
-    label: 'Sélection / Déplacement',
+    label: 'Sélection',
     shortcut: 'V',
     group: 0,
     icon: (
@@ -49,15 +62,93 @@ const TOOLS: ToolDef[] = [
     ),
   },
   {
-    id: 'pan',
-    label: 'Déplacer la vue',
-    shortcut: 'H',
+    id: 'turnout',
+    label: 'Aiguillage parallèle',
+    shortcut: 'P',
     group: 2,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 2v6M9 5l3-3 3 3" />
-        <path d="M5 9l-3 3 3 3M19 9l3 3-3 3" />
-        <path d="M12 22v-6M9 19l3 3 3-3" />
+        <line x1="2" y1="18" x2="22" y2="18" />
+        <path d="M5 18c3-4 6-10 11-10h6" />
+      </svg>
+    ),
+  },
+  {
+    id: 'autoconnect',
+    label: 'Raccordement automatique',
+    shortcut: 'J',
+    group: 2,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 18C8 18 10 6 15 6h6" />
+        <circle cx="3" cy="18" r="2" fill="currentColor" />
+        <circle cx="21" cy="6" r="2" fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
+    id: 'crossover',
+    label: 'Bretelle de liaison (Crossover)',
+    shortcut: 'X',
+    group: 2,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="3" y1="7" x2="21" y2="7" />
+        <line x1="3" y1="17" x2="21" y2="17" />
+        <line x1="6" y1="17" x2="18" y2="7" strokeWidth="2.5" />
+      </svg>
+    ),
+  },
+  {
+    id: 'siding',
+    label: 'Voie d’évitement (Siding)',
+    shortcut: 'B',
+    group: 2,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="2" y1="17" x2="22" y2="17" />
+        <path d="M5 17c2-5 4-9 7-9h6c2 0 3 4 4 9" />
+      </svg>
+    ),
+  },
+  {
+    id: 'loop',
+    label: 'Boucle de retournement',
+    shortcut: 'L',
+    group: 2,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="2" y1="12" x2="8" y2="12" />
+        <path d="M8 12c3-4 6-6 10-6a5 5 0 0 1 0 12c-4 0-7-2-10-6" />
+      </svg>
+    ),
+  },
+  {
+    id: 'split',
+    label: 'Ciseaux / Découpe',
+    shortcut: 'K',
+    group: 3,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="6" cy="6" r="3" />
+        <circle cx="6" cy="18" r="3" />
+        <line x1="20" y1="4" x2="8.12" y2="15.88" />
+        <line x1="14.47" y1="14.48" x2="20" y2="20" />
+        <line x1="8.12" y1="8.12" x2="12" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: 'measure',
+    label: 'Règle / Mesureur',
+    shortcut: 'M',
+    group: 3,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21l18-18" />
+        <path d="M7 5l2 2M11 9l2 2M15 13l2 2M19 17l2 2" />
+        <circle cx="3" cy="21" r="2" fill="currentColor" />
+        <circle cx="21" cy="3" r="2" fill="currentColor" />
       </svg>
     ),
   },

@@ -34,7 +34,29 @@ import {
 } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
+import {
+  computeAutoConnectGeometry,
+  applyAutoConnect,
+  computeCrossoverPreview,
+  applyCrossover,
+  computeFreeformParallelTurnout,
+  applyFreeformParallelTurnout,
+  computePassingSidingPreview,
+  applyPassingSiding,
+  computeBalloonLoopPreview,
+  applyBalloonLoop,
+  performTrackCut,
+} from '@domain/geometry/constructionTemplates'
 import type { EditorStore } from '@application/state/editorStore'
+
+function distToSeg(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len2 = dx * dx + dy * dy
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y)
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
 
 /** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
 function findNearestNode(net: Network, worldPos: Point, maxScreenPx: number, cam: Camera): RailNode | null {
@@ -346,8 +368,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.restore()
     }
 
-    // Snap indicator (Place and Curve tools)
-    if (store.tool === 'place' || store.tool === 'curve') {
+    // Snap indicator (all construction tools)
+    const isSnapTool =
+      store.tool === 'place' ||
+      store.tool === 'curve' ||
+      store.tool === 'turnout' ||
+      store.tool === 'autoconnect' ||
+      store.tool === 'crossover' ||
+      store.tool === 'siding' ||
+      store.tool === 'loop' ||
+      store.tool === 'split' ||
+      store.tool === 'measure'
+    if (isSnapTool) {
       const isNode = store.hoverNodeId !== null
       if (isNode || store.snap) {
         renderSnapIndicator(ctx, cam, rect.width, rect.height, store.snappedCursor, isNode)
@@ -542,6 +574,369 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
+    const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+    const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
+
+    // 1. Auto-Connect tool preview
+    if (store.tool === 'autoconnect') {
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      if (store.autoConnectStartId) {
+        const startNode = store.network.nodes.get(store.autoConnectStartId)
+        if (startNode) {
+          ctx.save()
+          ctx.strokeStyle = '#10b981'
+          ctx.lineWidth = 2.5
+          ctx.beginPath()
+          ctx.arc((startNode.pos.x - cam.x) * cam.scale + rect.width / 2, (startNode.pos.y - cam.y) * cam.scale + rect.height / 2, 8, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.restore()
+
+          const targetNode = findNearestNode(store.network, cursor, 20, cam)
+          if (targetNode && targetNode.id !== store.autoConnectStartId) {
+            const geom = computeAutoConnectGeometry(store.network, store.autoConnectStartId, targetNode.id)
+            if (geom) {
+              ctx.save()
+              ctx.globalAlpha = 0.85
+              for (const seg of geom.segments) {
+                if (seg.kind === 'curve' && seg.via) {
+                  renderDetailedCurveRails(ctx, cam, seg.from, seg.via, seg.to, rect.width, rect.height, false, railColor, accent)
+                } else {
+                  renderDetailedRailLines(ctx, cam, seg.from, seg.to, rect.width, rect.height, false, railColor, accent)
+                }
+              }
+              ctx.globalAlpha = 1
+              ctx.strokeStyle = '#10b981'
+              ctx.lineWidth = 2.5
+              ctx.beginPath()
+              ctx.arc((targetNode.pos.x - cam.x) * cam.scale + rect.width / 2, (targetNode.pos.y - cam.y) * cam.scale + rect.height / 2, 8, 0, Math.PI * 2)
+              ctx.stroke()
+
+              const tx = (targetNode.pos.x - cam.x) * cam.scale + rect.width / 2
+              const ty = (targetNode.pos.y - cam.y) * cam.scale + rect.height / 2
+              ctx.font = '600 11px Archivo, system-ui, sans-serif'
+              ctx.fillStyle = '#2563eb'
+              ctx.fillText(`Raccordement (${geom.kind === 'straight' ? 'Droit' : geom.kind === 'single-curve' ? 'Courbe' : 'S-Courbe'})`, tx + 12, ty - 8)
+              ctx.restore()
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Parallel Turnout preview (Branchement avec contre-courbe intégrée - pose libre par la fin)
+    if (store.tool === 'turnout') {
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      if (store.turnoutStartId) {
+        const startNode = store.network.nodes.get(store.turnoutStartId)
+        if (startNode) {
+          const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
+          const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
+          if (geom && geom.valid) {
+            ctx.save()
+            ctx.globalAlpha = 0.85
+            // Real double steel rails for the 2 curved segments:
+            renderDetailedCurveRails(ctx, cam, geom.startPos, geom.via1, geom.midPos, rect.width, rect.height, false, railColor, accent)
+            renderDetailedCurveRails(ctx, cam, geom.midPos, geom.via2, geom.endPos, rect.width, rect.height, false, railColor, accent)
+            ctx.globalAlpha = 1
+
+            const p0x = (geom.startPos.x - cam.x) * cam.scale + rect.width / 2
+            const p0y = (geom.startPos.y - cam.y) * cam.scale + rect.height / 2
+            const pex = (geom.endPos.x - cam.x) * cam.scale + rect.width / 2
+            const pey = (geom.endPos.y - cam.y) * cam.scale + rect.height / 2
+
+            // Start turnout node & end node markers
+            ctx.fillStyle = '#10b981'
+            ctx.beginPath()
+            ctx.arc(p0x, p0y, 5, 0, Math.PI * 2)
+            ctx.arc(pex, pey, 5, 0, Math.PI * 2)
+            ctx.fill()
+
+            // Forward sightline along parallel direction
+            const sightLen = Math.max(100, 300 / cam.scale)
+            ctx.strokeStyle = accent
+            ctx.globalAlpha = 0.35
+            ctx.lineWidth = 1.5
+            ctx.setLineDash([4, 4])
+            ctx.beginPath()
+            ctx.moveTo(pex, pey)
+            ctx.lineTo(
+              (geom.endPos.x + geom.tangent.x * sightLen - cam.x) * cam.scale + rect.width / 2,
+              (geom.endPos.y + geom.tangent.y * sightLen - cam.y) * cam.scale + rect.height / 2,
+            )
+            ctx.stroke()
+            ctx.setLineDash([])
+            ctx.globalAlpha = 1
+
+            // Floating label badge near end
+            const labelTxt = `Espacement: ${Math.abs(geom.offset).toFixed(2)} m · Longueur: ${geom.dx.toFixed(2)} m (R${geom.radius.toFixed(0)} m)`
+            ctx.font = '600 11px Archivo, system-ui, sans-serif'
+            const labelW = ctx.measureText(labelTxt).width
+            const lx = pex + 14
+            const ly = pey - 10
+            ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+            ctx.beginPath()
+            ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
+            ctx.fill()
+            ctx.fillStyle = '#fff'
+            ctx.textBaseline = 'middle'
+            ctx.textAlign = 'left'
+            ctx.fillText(labelTxt, lx, ly - 4)
+            ctx.restore()
+          }
+        }
+      } else {
+        // Phase A: hovering to select start node or start rail
+        const nearNode = findNearestNode(store.network, cursor, 20, cam)
+        if (nearNode) {
+          const nx = (nearNode.pos.x - cam.x) * cam.scale + rect.width / 2
+          const ny = (nearNode.pos.y - cam.y) * cam.scale + rect.height / 2
+          ctx.save()
+          ctx.strokeStyle = '#10b981'
+          ctx.lineWidth = 2.5
+          ctx.beginPath()
+          ctx.arc(nx, ny, 8, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.font = '600 11px Archivo, system-ui, sans-serif'
+          ctx.fillStyle = '#10b981'
+          ctx.fillText('Départ aiguillage', nx + 12, ny - 6)
+          ctx.restore()
+        } else {
+          const hitTol = 18 / cam.scale
+          const hitSegId = hitSegment(store.network, cursor, hitTol)
+          if (hitSegId) {
+            const cx = (cursor.x - cam.x) * cam.scale + rect.width / 2
+            const cy = (cursor.y - cam.y) * cam.scale + rect.height / 2
+            ctx.save()
+            ctx.fillStyle = '#10b981'
+            ctx.beginPath()
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.font = '600 11px Archivo, system-ui, sans-serif'
+            ctx.fillStyle = '#10b981'
+            ctx.fillText('Insérer aiguillage ici', cx + 12, cy - 6)
+            ctx.restore()
+          }
+        }
+      }
+    }
+
+    // 3. Crossover preview (Bretelle de liaison en S courbe)
+    if (store.tool === 'crossover') {
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      const hitTol = 24 / cam.scale
+      const nearbySegs: string[] = []
+      for (const seg of store.network.segments.values()) {
+        const from = store.network.nodes.get(seg.from)
+        const to = store.network.nodes.get(seg.to)
+        if (!from || !to) continue
+        const d = distToSeg(cursor, from.pos, to.pos)
+        if (d < hitTol * 2) {
+          nearbySegs.push(seg.id)
+        }
+      }
+
+      let seg1Id = nearbySegs[0]
+      let seg2Id = nearbySegs[1]
+      if (seg1Id && !seg2Id) {
+        for (const seg of store.network.segments.values()) {
+          if (seg.id !== seg1Id) {
+            const preview = computeCrossoverPreview(store.network, seg1Id, seg.id, cursor, store.crossoverAngle)
+            if (preview && preview.valid) {
+              seg2Id = seg.id
+              break
+            }
+          }
+        }
+      }
+
+      if (seg1Id && seg2Id) {
+        const preview = computeCrossoverPreview(store.network, seg1Id, seg2Id, cursor, store.crossoverAngle)
+        if (preview && preview.valid) {
+          ctx.save()
+          ctx.globalAlpha = 0.85
+          // Real steel double rails for the S-curve:
+          renderDetailedCurveRails(ctx, cam, preview.track1Pos, preview.via1, preview.midPos, rect.width, rect.height, false, railColor, accent)
+          renderDetailedCurveRails(ctx, cam, preview.midPos, preview.via2, preview.track2Pos, rect.width, rect.height, false, railColor, accent)
+          ctx.globalAlpha = 1
+
+          const p1x = (preview.track1Pos.x - cam.x) * cam.scale + rect.width / 2
+          const p1y = (preview.track1Pos.y - cam.y) * cam.scale + rect.height / 2
+          const p2x = (preview.track2Pos.x - cam.x) * cam.scale + rect.width / 2
+          const p2y = (preview.track2Pos.y - cam.y) * cam.scale + rect.height / 2
+          const pmx = (preview.midPos.x - cam.x) * cam.scale + rect.width / 2
+          const pmy = (preview.midPos.y - cam.y) * cam.scale + rect.height / 2
+
+          // Junction points indicators
+          ctx.fillStyle = '#10b981'
+          ctx.beginPath()
+          ctx.arc(p1x, p1y, 5, 0, Math.PI * 2)
+          ctx.arc(p2x, p2y, 5, 0, Math.PI * 2)
+          ctx.fill()
+
+          ctx.font = '600 11px Archivo, system-ui, sans-serif'
+          ctx.fillStyle = '#2563eb'
+          ctx.fillText(`Bretelle S-Courbe R${preview.radius.toFixed(0)}m (${preview.distance.toFixed(1)}m)`, pmx + 10, pmy - 10)
+          ctx.restore()
+        }
+      }
+    }
+
+    // 4. Passing Siding preview (Évitement avec entrées/sorties en courbes)
+    if (store.tool === 'siding') {
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      const hitTol = 20 / cam.scale
+      const segId = hitSegment(store.network, cursor, hitTol)
+      if (segId) {
+        const preview = computePassingSidingPreview(store.network, segId, cursor, store.sidingLength, store.sidingOffset, store.sidingSide)
+        if (preview && preview.valid) {
+          ctx.save()
+          ctx.globalAlpha = 0.85
+          // Entry S-curve rails:
+          renderDetailedCurveRails(ctx, cam, preview.entryTurnoutPos, preview.entryVia1, preview.entryMidPos, rect.width, rect.height, false, railColor, accent)
+          renderDetailedCurveRails(ctx, cam, preview.entryMidPos, preview.entryVia2, preview.sidingStartPos, rect.width, rect.height, false, railColor, accent)
+          // Siding body rails:
+          renderDetailedRailLines(ctx, cam, preview.sidingStartPos, preview.sidingEndPos, rect.width, rect.height, false, railColor, accent)
+          // Exit S-curve rails:
+          renderDetailedCurveRails(ctx, cam, preview.sidingEndPos, preview.exitVia1, preview.exitMidPos, rect.width, rect.height, false, railColor, accent)
+          renderDetailedCurveRails(ctx, cam, preview.exitMidPos, preview.exitVia2, preview.exitTurnoutPos, rect.width, rect.height, false, railColor, accent)
+          ctx.globalAlpha = 1
+
+          const e1x = (preview.entryTurnoutPos.x - cam.x) * cam.scale + rect.width / 2
+          const e1y = (preview.entryTurnoutPos.y - cam.y) * cam.scale + rect.height / 2
+          const e2x = (preview.exitTurnoutPos.x - cam.x) * cam.scale + rect.width / 2
+          const e2y = (preview.exitTurnoutPos.y - cam.y) * cam.scale + rect.height / 2
+          const s1x = (preview.sidingStartPos.x - cam.x) * cam.scale + rect.width / 2
+          const s1y = (preview.sidingStartPos.y - cam.y) * cam.scale + rect.height / 2
+          const s2x = (preview.sidingEndPos.x - cam.x) * cam.scale + rect.width / 2
+          const s2y = (preview.sidingEndPos.y - cam.y) * cam.scale + rect.height / 2
+
+          ctx.fillStyle = '#10b981'
+          ctx.beginPath()
+          ctx.arc(e1x, e1y, 5, 0, Math.PI * 2)
+          ctx.arc(e2x, e2y, 5, 0, Math.PI * 2)
+          ctx.fill()
+
+          ctx.font = '600 11px Archivo, system-ui, sans-serif'
+          ctx.fillStyle = '#2563eb'
+          ctx.fillText(`Évitement ${preview.length}m [Tab: Côté]`, (s1x + s2x) / 2 + 10, (s1y + s2y) / 2 - 10)
+          ctx.restore()
+        }
+      }
+    }
+
+    // 5. Balloon Loop preview
+    if (store.tool === 'loop') {
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      const nearNode = findNearestNode(store.network, cursor, 24, cam)
+      if (nearNode) {
+        const preview = computeBalloonLoopPreview(store.network, nearNode.id, store.loopRadius, store.loopSide)
+        if (preview && preview.valid && preview.loopNodes.length > 0) {
+          ctx.save()
+          ctx.globalAlpha = 0.85
+          for (let i = 0; i < preview.loopNodes.length - 1; i++) {
+            renderDetailedRailLines(ctx, cam, preview.loopNodes[i], preview.loopNodes[i + 1], rect.width, rect.height, false, railColor, accent)
+          }
+          ctx.globalAlpha = 1
+
+          const nx = (nearNode.pos.x - cam.x) * cam.scale + rect.width / 2
+          const ny = (nearNode.pos.y - cam.y) * cam.scale + rect.height / 2
+          ctx.fillStyle = '#10b981'
+          ctx.beginPath()
+          ctx.arc(nx, ny, 6, 0, Math.PI * 2)
+          ctx.fill()
+
+          ctx.font = '600 11px Archivo, system-ui, sans-serif'
+          ctx.fillStyle = '#2563eb'
+          ctx.fillText(`Boucle R${preview.radius}m [Tab: Côté]`, nx + 12, ny - 10)
+          ctx.restore()
+        }
+      }
+    }
+
+    // 5. Track Cut / Split preview
+    if (store.tool === 'split') {
+      const cursor = store.cursorWorld
+      const hitTol = 18 / cam.scale
+      const segId = hitSegment(store.network, cursor, hitTol)
+      const nearNode = findNearestNode(store.network, cursor, 18, cam)
+      const targetPos = nearNode ? nearNode.pos : (segId ? store.snappedCursor : null)
+
+      if (targetPos) {
+        ctx.save()
+        const sx = (targetPos.x - cam.x) * cam.scale + rect.width / 2
+        const sy = (targetPos.y - cam.y) * cam.scale + rect.height / 2
+
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(sx, sy, 8, 0, Math.PI * 2)
+        ctx.stroke()
+
+        ctx.beginPath()
+        ctx.moveTo(sx - 6, sy - 6)
+        ctx.lineTo(sx + 6, sy + 6)
+        ctx.moveTo(sx + 6, sy - 6)
+        ctx.lineTo(sx - 6, sy + 6)
+        ctx.stroke()
+
+        ctx.font = '600 11px Archivo, system-ui, sans-serif'
+        ctx.fillStyle = '#ef4444'
+        ctx.fillText(nearNode ? 'Détacher nœud (Clic)' : 'Couper le rail (Clic)', sx + 12, sy - 8)
+        ctx.restore()
+      }
+    }
+
+    // 6. Measure Tape preview
+    if (store.tool === 'measure' && store.measureStart) {
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      const endPoint = store.measureEnd ?? cursor
+      const start = store.measureStart
+
+      const sX = (start.x - cam.x) * cam.scale + rect.width / 2
+      const sY = (start.y - cam.y) * cam.scale + rect.height / 2
+      const eX = (endPoint.x - cam.x) * cam.scale + rect.width / 2
+      const eY = (endPoint.y - cam.y) * cam.scale + rect.height / 2
+
+      const dist = Math.hypot(endPoint.x - start.x, endPoint.y - start.y)
+      const dx = endPoint.x - start.x
+      const dy = endPoint.y - start.y
+      let angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI
+      if (angleDeg < 0) angleDeg += 360
+
+      ctx.save()
+      ctx.strokeStyle = '#f59e0b'
+      ctx.lineWidth = 2
+      ctx.setLineDash([4, 4])
+      ctx.beginPath()
+      ctx.moveTo(sX, sY)
+      ctx.lineTo(eX, eY)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      ctx.fillStyle = '#f59e0b'
+      ctx.beginPath()
+      ctx.arc(sX, sY, 4, 0, Math.PI * 2)
+      ctx.arc(eX, eY, 4, 0, Math.PI * 2)
+      ctx.fill()
+
+      const labelText = `${dist.toFixed(2)} m · ${angleDeg.toFixed(1)}° (ΔX: ${Math.abs(dx).toFixed(1)}m, ΔY: ${Math.abs(dy).toFixed(1)}m)`
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const lw = ctx.measureText(labelText).width
+      const mx = (sX + eX) / 2
+      const my = (sY + eY) / 2 - 12
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.9)'
+      ctx.beginPath()
+      ctx.roundRect(mx - lw / 2 - 6, my - 8, lw + 12, 18, 4)
+      ctx.fill()
+
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(labelText, mx, my + 1)
+      ctx.restore()
+    }
+
     renderScaleBar(ctx, cam, rect.width, rect.height)
   }, [store])
 
@@ -639,11 +1034,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     const onDown = (e: PointerEvent) => {
       if (e.button === 2) {
-        // Right click: cancel placement chain or curve
+        // Right click: cancel placement chain, curve, or any construction tool
         store.lastNodeId = null
         store.curveState = { phase: 0, startId: null }
         store.parallelMode = false
         store.parallelLastNodeId = null
+        store.autoConnectStartId = null
+        store.crossoverFirstSegId = null
+        store.turnoutStartId = null
+        store.measureStart = null
+        store.measureEnd = null
+        store.isMeasuring = false
         redraw()
         return
       }
@@ -981,6 +1382,153 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      if (e.button === 0 && store.tool === 'autoconnect') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const nearNode = findNearestNode(store.network, world, 20, store.camera)
+        if (!store.autoConnectStartId) {
+          if (nearNode) {
+            store.autoConnectStartId = nearNode.id
+          }
+        } else if (nearNode && nearNode.id !== store.autoConnectStartId) {
+          applyAutoConnect(store.network, store.autoConnectStartId, nearNode.id)
+          store.autoConnectStartId = null
+          store.markDirty()
+        }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'turnout') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const cursor = store.snap ? store.snappedCursor : world
+
+        if (store.turnoutStartId) {
+          const startNode = store.network.nodes.get(store.turnoutStartId)
+          if (startNode) {
+            const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
+            const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
+            if (geom && geom.valid) {
+              const res = applyFreeformParallelTurnout(store.network, startNode.id, geom)
+              store.lastNodeId = res.endNode.id
+              store.turnoutStartId = null
+              store.markDirty()
+            }
+          }
+        } else {
+          const nearNode = findNearestNode(store.network, cursor, 20, store.camera)
+          if (nearNode) {
+            store.turnoutStartId = nearNode.id
+          } else {
+            const hitTol = 18 / store.camera.scale
+            const hitSegId = hitSegment(store.network, cursor, hitTol)
+            if (hitSegId) {
+              const split = splitSegment(store.network, hitSegId, cursor)
+              if (split) {
+                store.turnoutStartId = split.midNode.id
+                store.markDirty()
+              }
+            }
+          }
+        }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'crossover') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const cursor = store.snap ? store.snappedCursor : world
+        const hitTol = 24 / store.camera.scale
+        const nearbySegs: string[] = []
+        for (const seg of store.network.segments.values()) {
+          const from = store.network.nodes.get(seg.from)
+          const to = store.network.nodes.get(seg.to)
+          if (!from || !to) continue
+          const d = distToSeg(cursor, from.pos, to.pos)
+          if (d < hitTol * 2) {
+            nearbySegs.push(seg.id)
+          }
+        }
+        let seg1Id = nearbySegs[0]
+        let seg2Id = nearbySegs[1]
+        if (seg1Id && !seg2Id) {
+          for (const seg of store.network.segments.values()) {
+            if (seg.id !== seg1Id) {
+              const preview = computeCrossoverPreview(store.network, seg1Id, seg.id, cursor, store.crossoverAngle)
+              if (preview && preview.valid) {
+                seg2Id = seg.id
+                break
+              }
+            }
+          }
+        }
+        if (seg1Id && seg2Id) {
+          const preview = computeCrossoverPreview(store.network, seg1Id, seg2Id, cursor, store.crossoverAngle)
+          if (preview && preview.valid) {
+            applyCrossover(store.network, preview)
+            store.markDirty()
+          }
+        }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'siding') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const cursor = store.snap ? store.snappedCursor : world
+        const hitTol = 20 / store.camera.scale
+        const segId = hitSegment(store.network, cursor, hitTol)
+        if (segId) {
+          const preview = computePassingSidingPreview(store.network, segId, cursor, store.sidingLength, store.sidingOffset, store.sidingSide)
+          if (preview && preview.valid) {
+            applyPassingSiding(store.network, preview)
+            store.markDirty()
+          }
+        }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'loop') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const cursor = store.snap ? store.snappedCursor : world
+        const nearNode = findNearestNode(store.network, cursor, 24, store.camera)
+        if (nearNode) {
+          const preview = computeBalloonLoopPreview(store.network, nearNode.id, store.loopRadius, store.loopSide)
+          if (preview && preview.valid) {
+            applyBalloonLoop(store.network, preview)
+            store.markDirty()
+          }
+        }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'split') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const success = performTrackCut(store.network, world, 18 / store.camera.scale)
+        if (success) {
+          reconcileNetworkIntersections(store.network)
+          store.markDirty()
+        }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'measure') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const pt = store.snap ? store.snappedCursor : world
+        if (!store.measureStart || (store.measureStart && store.measureEnd)) {
+          store.measureStart = pt
+          store.measureEnd = null
+          store.isMeasuring = true
+        } else {
+          store.measureEnd = pt
+          store.isMeasuring = false
+        }
+        redraw()
+        return
+      }
+
       if (e.button === 0 && store.tool === 'select') {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
@@ -1116,7 +1664,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         // Priority 2: Magnetic track snap when using place, curve, turnout, crossing
         const hitTol = 18 / store.camera.scale
         const hitSegId = hitSegment(store.network, rawWorld, hitTol)
-        if (hitSegId && (store.tool === 'place' || store.tool === 'curve')) {
+        const isTrackSnapTool =
+          store.tool === 'place' ||
+          store.tool === 'curve' ||
+          store.tool === 'turnout' ||
+          store.tool === 'autoconnect' ||
+          store.tool === 'crossover' ||
+          store.tool === 'siding' ||
+          store.tool === 'loop' ||
+          store.tool === 'split' ||
+          store.tool === 'measure'
+        if (hitSegId && isTrackSnapTool) {
           const seg = store.network.segments.get(hitSegId)
           const nodeA = seg ? store.network.nodes.get(seg.from) : null
           const nodeB = seg ? store.network.nodes.get(seg.to) : null
@@ -1181,7 +1739,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       if (!store.panning) {
-        if (store.tool === 'place' || store.tool === 'curve' || store.hoverSegSteps !== null) {
+        if (
+          store.tool === 'place' ||
+          store.tool === 'curve' ||
+          store.tool === 'turnout' ||
+          store.tool === 'autoconnect' ||
+          store.tool === 'crossover' ||
+          store.tool === 'siding' ||
+          store.tool === 'loop' ||
+          store.tool === 'split' ||
+          store.tool === 'measure' ||
+          store.hoverSegSteps !== null
+        ) {
           draw()
         }
         if (store.isBoxSelecting) {

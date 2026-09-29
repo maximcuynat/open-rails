@@ -230,5 +230,30 @@ describe('autoDetectJunctions', () => {
     expect(detected.length).toBe(0)
     expect(net.junctions.size).toBe(0)
   })
+
+  it('detects an incomplete 2-rail turnout apex and upgrades it when stem is added', () => {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 246, y: 0 })
+    const div = addNode(net, { x: 240, y: 40 })
+
+    addSegment(net, apex.id, straight.id)
+    addSegment(net, apex.id, div.id)
+
+    // 1. Incomplete turnout (apex + 2 co-directional branches, no stem)
+    const detected = autoDetectJunctions(net)
+    expect(detected.length).toBe(1)
+    expect(detected[0].nodeId).toBe(apex.id)
+    expect(detected[0].stemNodeId).toBeUndefined()
+    expect(detected[0].hand).toBe('left')
+
+    // 2. Add stem from left
+    const stem = addNode(net, { x: -100, y: 0 })
+    addSegment(net, stem.id, apex.id)
+
+    const upgraded = autoDetectJunctions(net)
+    expect(upgraded.length).toBe(1)
+    expect(upgraded[0].stemNodeId).toBe(stem.id)
+  })
 })
 

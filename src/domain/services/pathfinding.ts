@@ -107,10 +107,27 @@ export function isTransitionAllowed(
           if (nextNodeId !== activeBranchNode) return false
         }
 
-        // If entering from active branch, must exit toward stem if defined
-        if (junc.stemNodeId && prevNodeId === activeBranchNode) {
-          if (nextNodeId !== junc.stemNodeId) return false
+        // If entering from active branch, must exit toward stem if defined. If stem is not defined, cannot exit!
+        if (prevNodeId === activeBranchNode) {
+          if (!junc.stemNodeId || nextNodeId !== junc.stemNodeId) return false
         }
+      }
+    }
+  }
+
+  // 1b. Kinematic Reversal Constraint
+  // Trains cannot execute sharp hairpin U-turns through a node without reversing gear (rebroussement).
+  if (prevNodeId !== null) {
+    const inSeg = getSegmentBetween(net, prevNodeId, currNodeId)
+    const outSeg = getSegmentBetween(net, currNodeId, nextNodeId)
+    if (inSeg && outSeg) {
+      const rayIn = getOutgoingRay(net, inSeg, currNodeId)
+      const rayOut = getOutgoingRay(net, outSeg, currNodeId)
+      // rayIn points towards prevNodeId, rayOut points towards nextNodeId.
+      // If rayIn · rayOut > 0.7, the two tracks leave on the same side (deflection > 135°): hairpin reversal impossible!
+      const dot = rayIn.x * rayOut.x + rayIn.y * rayOut.y
+      if (dot > 0.7) {
+        return false
       }
     }
   }

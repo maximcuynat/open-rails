@@ -384,6 +384,24 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             <Field label="P3 (Sud)" value={`(${crossing.frogs.p3.x.toFixed(1)}, ${crossing.frogs.p3.y.toFixed(1)})`} />
             <Field label="P4 (Ouest)" value={`(${crossing.frogs.p4.x.toFixed(1)}, ${crossing.frogs.p4.y.toFixed(1)})`} />
           </div>
+          {(() => {
+            const trackSections = computeTrackSections(store.network, store.sectionMeta)
+            const crossingSecs = trackSections.filter((s) => s.nodeIds.includes(nodeId))
+            if (crossingSecs.length >= 2) {
+              return (
+                <div style={{ margin: '8px 14px 0', padding: '8px 10px', background: 'rgba(56, 189, 248, 0.08)', borderRadius: '6px', border: '1px solid rgba(56, 189, 248, 0.25)', fontSize: '11px' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--ink)' }}>Voies logiques en croisement :</div>
+                  <div style={{ marginTop: '4px', color: '#0284c7', fontWeight: 600 }}>
+                    {crossingSecs.map((s) => s.name).join(' ✕ ')}
+                  </div>
+                  <div style={{ marginTop: '2px', fontSize: '10px', color: 'var(--text-muted)' }}>
+                    Zone de cisaillement protégée (anti-collision)
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })()}
         </>
       )}
 
@@ -890,6 +908,18 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
           </div>
         </div>
       </div>
+
+      {section.crossingNodeIds && section.crossingNodeIds.length > 0 && (
+        <>
+          <div className="sp-subheader">Croisements traversés ({section.crossingNodeIds.length})</div>
+          <div style={{ margin: '0 14px 10px', padding: '8px 10px', background: 'rgba(56, 189, 248, 0.08)', borderRadius: '6px', border: '1px solid rgba(56, 189, 248, 0.25)', fontSize: '11px' }}>
+            <div style={{ fontWeight: 600, color: 'var(--ink)' }}>Traversée directe continue</div>
+            <div style={{ marginTop: '2px', color: 'var(--text-muted)' }}>
+              Cette voie franchit {section.crossingNodeIds.length} croisement(s) à niveau en ligne droite (zones de conflit partagées avec protection anti-collision).
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="sp-subheader">Sélection des rails du canton</div>
       <div className="sp-list">

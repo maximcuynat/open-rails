@@ -469,6 +469,22 @@ export function renderNetwork(
       ctx.fill()
     } else if (connectionCount <= 1) {
       // Dead end already rendered with clean Sens Interdit sign
+    } else if (connectionCount === 4) {
+      // Diamond crossing intersection node (zone de cisaillement / conflit logique)
+      const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale))
+      ctx.save()
+      ctx.fillStyle = '#0f172a'
+      ctx.strokeStyle = '#38bdf8'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(sx, sy - dSize)
+      ctx.lineTo(sx + dSize, sy)
+      ctx.lineTo(sx, sy + dSize)
+      ctx.lineTo(sx - dSize, sy)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+      ctx.restore()
     } else {
       // Intermediate joint or junction: neat white dot
       ctx.fillStyle = '#334155'

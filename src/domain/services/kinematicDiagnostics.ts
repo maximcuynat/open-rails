@@ -95,6 +95,27 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
       const d2 = getOutgoingTangent(net, s2, node.id)
       if (!d1 || !d2) continue
 
+      const dot = Math.max(-1, Math.min(1, d1.x * d2.x + d1.y * d2.y))
+
+      // Check if both rails depart on the SAME side of the node (fork / incomplete turnout)
+      if (dot > 0.7) {
+        // Relative angle between the two departing branches
+        const angleBetweenDeg = (Math.acos(dot) * 180) / Math.PI
+        if (angleBetweenDeg > 35) {
+          issues.push({
+            id: `turnout-sharp-${node.id}`,
+            nodeId: node.id,
+            kind: 'sharp_turn',
+            severity: 'warning',
+            angleDeg: Math.round(angleBetweenDeg),
+            message: `Bifurcation avec angle de déviation excessif (${Math.round(angleBetweenDeg)}°)`,
+            involvedSegmentIds: [s1.id, s2.id],
+          })
+        }
+        // Valid railway fork / turnout apex (e.g. 5° to 30°): NO issue, perfectly normal!
+        continue
+      }
+
       const deflection = computeTransitionAngleDeg(d1, d2)
       // If deflection > 30°, this is an impossible railway curve without turnout/diamond crossing
       if (deflection > 30) {

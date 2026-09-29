@@ -32,6 +32,8 @@ export interface TrackSection {
   color: string
   /** Whether this section ends at an open dead-end (heurtoir / fin de voie) */
   hasDeadEnd?: boolean
+  /** Any diamond crossing nodes traversed in through-route by this section */
+  crossingNodeIds?: NodeId[]
 }
 
 export interface DirectionConflict {
@@ -61,13 +63,35 @@ export const SECTION_TYPE_LABELS: Record<SectionType, string> = {
   yard: 'Voie de manœuvre / triage',
 }
 
+/** Helper to compute a normalized ray pointing away from a node into a connected segment */
+export function getRayFromNode(net: Network, seg: Segment, nodeId: NodeId): Point {
+  const tan = segmentTangentAt(net, seg, nodeId)
+  if (tan) {
+    const isFrom = seg.from === nodeId
+    const ray = isFrom ? tan : { x: -tan.x, y: -tan.y }
+    const len = Math.hypot(ray.x, ray.y)
+    if (len > 1e-5) return { x: ray.x / len, y: ray.y / len }
+  }
+  const otherId = seg.from === nodeId ? seg.to : seg.from
+  const node = net.nodes.get(nodeId)
+  const other = net.nodes.get(otherId)
+  if (node && other) {
+    const dx = other.pos.x - node.pos.x
+    const dy = other.pos.y - node.pos.y
+    const len = Math.hypot(dx, dy)
+    if (len > 1e-5) return { x: dx / len, y: dy / len }
+  }
+  return { x: 1, y: 0 }
+}
+
 /**
  * Computes connected track sections (cantons / tronçons continus).
  * A section boundary occurs at:
  * - Dead ends / endpoints (degree <= 1)
  * - Switch / junction nodes (degree >= 3)
+ * - Fork / bifurcation apex nodes (degree 2 where rails leave on the same side)
  *
- * Intermediate nodes (degree 2) continue the same track section.
+ * Intermediate nodes (degree 2 with continuous through-route) continue the same track section.
  * Merges user-customized metadata (names, types, colors, directions) persisted in customMeta.
  */
 export function computeTrackSections(
@@ -88,10 +112,47 @@ export function computeTrackSections(
     return Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
   }
 
-  // Helper: is this node a section boundary?
-  const isBoundaryNode = (nodeId: NodeId): boolean => {
-    const deg = net.adjacency.get(nodeId)?.length ?? 0
-    return deg !== 2
+  /**
+   * Find the through-route continuation of prevSegId across currNode, if one exists.
+   * - At degree 2: continues if the two segments form a smooth through-route (dot < -0.7).
+   * - At degree 4 (diamond crossing): continues along the opposite aligned through-segment (dot < -0.7).
+   * - At switches, forks, dead-ends, or sharp kinks: returns null (boundary).
+   */
+  const getNextThroughSegment = (currNode: NodeId, prevSegId: SegmentId): SegmentId | null => {
+    const adj = net.adjacency.get(currNode) ?? []
+    const prevSeg = net.segments.get(prevSegId)
+    if (!prevSeg) return null
+
+    // Dead end or single connection
+    if (adj.length <= 1) return null
+
+    // Turnouts with 3 branches are always routing decision junctions (boundaries)
+    if (adj.length === 3) return null
+
+    const rPrev = getRayFromNode(net, prevSeg, currNode)
+
+    // For degree 2 or degree 4: look for a segment continuing directly in the opposite direction
+    const candidates = adj.filter((id) => id !== prevSegId)
+    let bestCand: SegmentId | null = null
+    let minDot = 0
+
+    for (const cid of candidates) {
+      const cSeg = net.segments.get(cid)
+      if (!cSeg) continue
+      const rCand = getRayFromNode(net, cSeg, currNode)
+      const dot = rPrev.x * rCand.x + rPrev.y * rCand.y
+      if (dot < minDot) {
+        minDot = dot
+        bestCand = cid
+      }
+    }
+
+    // Must be a smooth through continuation (deflection < 45°, dot < -0.7)
+    if (bestCand && minDot < -0.7) {
+      return bestCand
+    }
+
+    return null
   }
 
   // Iterate over all segments
@@ -104,9 +165,8 @@ export function computeTrackSections(
     // Expand forwards from startSeg.to
     let currNode = startSeg.to
     let prevSegId = segId
-    while (!isBoundaryNode(currNode)) {
-      const adjacent = net.adjacency.get(currNode) ?? []
-      const nextSegId = adjacent.find((id) => id !== prevSegId)
+    while (true) {
+      const nextSegId = getNextThroughSegment(currNode, prevSegId)
       if (!nextSegId || visitedSegments.has(nextSegId)) break
 
       const nextSeg = net.segments.get(nextSegId)
@@ -121,9 +181,8 @@ export function computeTrackSections(
     // Expand backwards from startSeg.from
     currNode = startSeg.from
     prevSegId = segId
-    while (!isBoundaryNode(currNode)) {
-      const adjacent = net.adjacency.get(currNode) ?? []
-      const nextSegId = adjacent.find((id) => id !== prevSegId)
+    while (true) {
+      const nextSegId = getNextThroughSegment(currNode, prevSegId)
       if (!nextSegId || visitedSegments.has(nextSegId)) break
 
       const nextSeg = net.segments.get(nextSegId)
@@ -183,6 +242,13 @@ export function computeTrackSections(
     const endNodeId = orderedNodes[orderedNodes.length - 1]
     const hasDeadEnd = isEndOfTrackNode(net, startNodeId) || isEndOfTrackNode(net, endNodeId)
 
+    // Identify any diamond crossing nodes traversed in through-route by this section
+    const crossingNodeIds = orderedNodes.filter((nid, idx) => {
+      if (idx === 0 || idx === orderedNodes.length - 1) return false
+      const deg = net.adjacency.get(nid)?.length ?? 0
+      return deg === 4
+    })
+
     sections.push({
       id: sortedSegKey,
       name: userMeta?.name || fallbackName,
@@ -194,6 +260,7 @@ export function computeTrackSections(
       totalLength: totalLen,
       color: userMeta?.color || (userMeta?.type === 'station_stop' ? '#06b6d4' : fallbackColor),
       hasDeadEnd,
+      crossingNodeIds: crossingNodeIds.length > 0 ? crossingNodeIds : undefined,
     })
   }
 
@@ -212,27 +279,6 @@ export function findSectionBySegment(sections: TrackSection[], segId: SegmentId)
     if (sec.segmentIds.includes(segId)) return sec
   }
   return null
-}
-
-/** Helper to compute a normalized ray pointing away from a node into a connected segment */
-function getRayFromNode(net: Network, seg: Segment, nodeId: NodeId): Point {
-  const tan = segmentTangentAt(net, seg, nodeId)
-  if (tan) {
-    const isFrom = seg.from === nodeId
-    const ray = isFrom ? tan : { x: -tan.x, y: -tan.y }
-    const len = Math.hypot(ray.x, ray.y)
-    if (len > 1e-5) return { x: ray.x / len, y: ray.y / len }
-  }
-  const otherId = seg.from === nodeId ? seg.to : seg.from
-  const node = net.nodes.get(nodeId)
-  const other = net.nodes.get(otherId)
-  if (node && other) {
-    const dx = other.pos.x - node.pos.x
-    const dy = other.pos.y - node.pos.y
-    const len = Math.hypot(dx, dy)
-    if (len > 1e-5) return { x: dx / len, y: dy / len }
-  }
-  return { x: 1, y: 0 }
 }
 
 interface SectionEndpoint {

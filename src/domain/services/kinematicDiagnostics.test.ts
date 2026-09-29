@@ -100,4 +100,20 @@ describe('kinematicDiagnostics', () => {
     // Both lines continue straight ahead, crossing is valid and traversable!
     expect(issues).toHaveLength(0)
   })
+
+  it('validates an incomplete 2-rail turnout apex (co-directional branches without stem) without false 180° sharp_turn error', () => {
+    const net = createNetwork()
+    // Apex at (0, 0), two tracks going right: straight (100, 0) and diverging ~10° (100, 17.6)
+    // The stem from the left has NOT been constructed yet.
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const diverging = addNode(net, { x: 100, y: 17.6 })
+
+    addSegment(net, apex.id, straight.id)
+    addSegment(net, apex.id, diverging.id)
+
+    const issues = analyzeKinematics(net)
+    // Must NOT flag a 180° hairpin cassure!
+    expect(issues).toHaveLength(0)
+  })
 })
