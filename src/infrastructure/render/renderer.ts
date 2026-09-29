@@ -49,7 +49,17 @@ export function renderGrid(
   const minor = getCanvasStyle(ctx.canvas, '--grid', 'rgba(0,0,0,0.06)')
   const major = getCanvasStyle(ctx.canvas, '--grid-major', 'rgba(0,0,0,0.12)')
 
-  const spacing = customSpacing && customSpacing > 0 ? customSpacing : pickSpacing(cam.scale)
+  const rawSpacing = customSpacing && customSpacing > 0 ? customSpacing : pickSpacing(cam.scale)
+  
+  // Calculate effective spacing on screen to avoid overdraw / performance drops when zoomed out
+  let stepMult = 1
+  while (rawSpacing * stepMult * cam.scale < 8) {
+    if (stepMult === 1) stepMult = 5
+    else if (stepMult === 5) stepMult = 10
+    else stepMult *= 5
+  }
+  const spacing = rawSpacing * stepMult
+
   const halfW = vw / 2 / cam.scale
   const halfH = vh / 2 / cam.scale
 

@@ -42,7 +42,7 @@ export class EditorStore {
   tool: Tool = 'select'
   snap = true
   showGrid = true
-  gridMode: 'auto' | 'fixed' = 'auto'
+  gridMode: 'auto' | 'fixed' = 'fixed'
   gridSpacing: number = 5 // meters in fixed mode (e.g. 1m, 2m, 5m, 10m, 25m, 50m)
   lastNodeId: string | null = null
   curveState: CurveState = { phase: 0, startId: null }

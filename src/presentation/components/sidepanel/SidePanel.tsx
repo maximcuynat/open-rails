@@ -76,6 +76,116 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Réseaux disjoints" value={components} />
       </div>
 
+      <div className="sp-subheader">Grille & Accrochage</div>
+      <div className="sp-section">
+        <Field
+          label="Grille visible"
+          value={
+            <button
+              onClick={() => store.toggleGrid()}
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: store.showGrid ? 'var(--accent)' : 'var(--panel-2)',
+                color: store.showGrid ? 'var(--accent-fg)' : 'inherit',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              {store.showGrid ? 'Oui' : 'Non'}
+            </button>
+          }
+        />
+        <Field
+          label="Mode grille"
+          value={
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <button
+                onClick={() => store.setGridMode('fixed')}
+                style={{
+                  fontSize: '10px',
+                  padding: '2px 6px',
+                  borderRadius: '3px',
+                  border: store.gridMode === 'fixed' ? '1px solid var(--accent)' : '1px solid var(--border)',
+                  background: store.gridMode === 'fixed' ? 'var(--accent)' : 'transparent',
+                  color: store.gridMode === 'fixed' ? 'var(--accent-fg)' : 'inherit',
+                  cursor: 'pointer',
+                  fontWeight: store.gridMode === 'fixed' ? 700 : 500,
+                }}
+              >
+                Statique
+              </button>
+              <button
+                onClick={() => store.setGridMode('auto')}
+                style={{
+                  fontSize: '10px',
+                  padding: '2px 6px',
+                  borderRadius: '3px',
+                  border: store.gridMode === 'auto' ? '1px solid var(--accent)' : '1px solid var(--border)',
+                  background: store.gridMode === 'auto' ? 'var(--accent)' : 'transparent',
+                  color: store.gridMode === 'auto' ? 'var(--accent-fg)' : 'inherit',
+                  cursor: 'pointer',
+                  fontWeight: store.gridMode === 'auto' ? 700 : 500,
+                }}
+              >
+                Auto
+              </button>
+            </div>
+          }
+        />
+        <Field
+          label="Pas statique"
+          value={
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <input
+                type="number"
+                min="0.1"
+                step="0.5"
+                value={store.gridSpacing}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value)
+                  if (!isNaN(val) && val > 0) store.setGridSpacing(val)
+                }}
+                style={{
+                  width: '54px',
+                  padding: '2px 4px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--paper)',
+                  color: 'var(--ink)',
+                  textAlign: 'right',
+                }}
+              />
+              <span style={{ fontSize: '11px' }}>m</span>
+            </div>
+          }
+        />
+        <Field
+          label="Aimantation (Snap)"
+          value={
+            <button
+              onClick={() => store.toggleSnap()}
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                border: '1px solid var(--border)',
+                background: store.snap ? 'var(--accent)' : 'var(--panel-2)',
+                color: store.snap ? 'var(--accent-fg)' : 'inherit',
+                cursor: 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              {store.snap ? 'Actif (G)' : 'Inactif'}
+            </button>
+          }
+        />
+      </div>
+
       <div className="sp-hint">
         Cliquez sur une section de voie sur le plan pour la renommer, choisir son sens de circulation ou modifier son type.
       </div>
