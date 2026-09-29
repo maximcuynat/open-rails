@@ -4,15 +4,11 @@ export type SegmentId = string
 export interface Point {
   x: number
   y: number
-  /** Altitude / hauteur en mètres (axe Z). Permet de calculer les rampes et pentes. */
-  z?: number
 }
 
 export interface RailNode {
   id: NodeId
   pos: Point
-  /** Altitude / hauteur absolue en mètres (axe Z). */
-  z?: number
 }
 
 export type SegmentKind = 'straight' | 'curve'
@@ -24,10 +20,6 @@ export interface Segment {
   kind: SegmentKind
   /** Control point for curved segments (midpoint arc definition). */
   via?: Point
-  /** If true, this segment passes over intersecting tracks (2D overpass / pont). */
-  overpass?: boolean
-  /** Elevation layer level (0 = ground, +1, +2 = bridges/viaducts, -1, -2 = tunnels/underpasses) */
-  layer?: number
 }
 
 export type JunctionId = string

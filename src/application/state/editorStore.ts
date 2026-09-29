@@ -64,12 +64,6 @@ export class EditorStore {
   parallelOffset: number = 3.3 // metres entre les 2 axes de voie (voie double standard)
   parallelLastNodeId: string | null = null // noeud courant sur la voie secondaire
 
-  // Niveau d'élévation actif pour la pose (0 = Sol, +1 / +2 = Pont / Ouvrage, -1 = Tunnel / Tranchée)
-  activePlacementLayer: number = 0
-  // Hauteur / altitude absolue active pour la pose de nouveaux nœuds (en mètres)
-  activePlacementAltitude: number = 0
-
-
   // Track selection and mode: freeform by default
   trackMode: TrackMode = 'freeform'
   selectedStraightLength: number | 'auto' = 'auto'
@@ -361,31 +355,16 @@ export class EditorStore {
     }
     if (!mainSeg) {
       mainSeg = addSegment(this.network, idA, idB)
-      if (mainSeg && this.activePlacementLayer !== 0) {
-        mainSeg.layer = this.activePlacementLayer
-        if (this.activePlacementLayer > 0) mainSeg.overpass = true
-      }
     }
 
     // Créer les 2 nouveaux nœuds parallèles
-    const zA = nodeA.z ?? nodeA.pos.z ?? this.activePlacementAltitude
-    const zB = nodeB.z ?? nodeB.pos.z ?? this.activePlacementAltitude
-    const p2A = { x: nodeA.pos.x + nx * off, y: nodeA.pos.y + ny * off, z: zA }
-    const p2B = { x: nodeB.pos.x + nx * off, y: nodeB.pos.y + ny * off, z: zB }
+    const p2A = { x: nodeA.pos.x + nx * off, y: nodeA.pos.y + ny * off }
+    const p2B = { x: nodeB.pos.x + nx * off, y: nodeB.pos.y + ny * off }
 
     const newNodeA = addNode(this.network, p2A)
-    newNodeA.z = zA
-    newNodeA.pos.z = zA
-
     const newNodeB = addNode(this.network, p2B)
-    newNodeB.z = zB
-    newNodeB.pos.z = zB
 
     const secSeg = addSegment(this.network, newNodeA.id, newNodeB.id)
-    if (secSeg && this.activePlacementLayer !== 0) {
-      secSeg.layer = this.activePlacementLayer
-      if (this.activePlacementLayer > 0) secSeg.overpass = true
-    }
 
     // Sélectionner les 2 nouveaux nœuds pour permettre d'enchaîner la pose ou les visualiser
     this.selection = { nodes: new Set([newNodeA.id, newNodeB.id]), segments: new Set(secSeg ? [secSeg.id] : []) }
@@ -402,34 +381,10 @@ export class EditorStore {
     if (this.selection.nodes.size !== 2) return false
     const [idA, idB] = [...this.selection.nodes]
     const s = addSegment(this.network, idA, idB)
-    if (s && this.activePlacementLayer !== 0) {
-      s.layer = this.activePlacementLayer
-      if (this.activePlacementLayer > 0) s.overpass = true
-    }
     reconcileNetworkIntersections(this.network)
     this.markDirty()
     this.notify()
     return !!s
-  }
-
-  setActivePlacementLayer = (layer: number): void => {
-    this.activePlacementLayer = layer
-    this.notify()
-  }
-
-  adjustActivePlacementLayer = (delta: number): void => {
-    this.activePlacementLayer = Math.max(-3, Math.min(3, this.activePlacementLayer + delta))
-    this.notify()
-  }
-
-  setActivePlacementAltitude = (alt: number): void => {
-    this.activePlacementAltitude = alt
-    this.notify()
-  }
-
-  adjustActivePlacementAltitude = (delta: number): void => {
-    this.activePlacementAltitude = Math.round((this.activePlacementAltitude + delta) * 10) / 10
-    this.notify()
   }
 
   setSnap = (v: boolean): void => {

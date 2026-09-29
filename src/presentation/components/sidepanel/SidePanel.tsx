@@ -98,13 +98,11 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
   const [x, setX] = useState(node.pos.x)
   const [y, setY] = useState(node.pos.y)
-  const [z, setZ] = useState(node.z ?? node.pos.z ?? 0)
 
   useEffect(() => {
     setX(node.pos.x)
     setY(node.pos.y)
-    setZ(node.z ?? node.pos.z ?? 0)
-  }, [node.pos.x, node.pos.y, node.z, node.pos.z, nodeId])
+  }, [node.pos.x, node.pos.y, nodeId])
 
   const applyX = (v: number) => {
     setX(v)
@@ -115,13 +113,6 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   const applyY = (v: number) => {
     setY(v)
     node.pos.y = v
-    store.markDirty()
-    store.notify()
-  }
-  const applyZ = (v: number) => {
-    setZ(v)
-    node.z = v
-    node.pos.z = v
     store.markDirty()
     store.notify()
   }
@@ -210,16 +201,6 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             value={y}
             onChange={(e) => setY(parseFloat(e.target.value) || 0)}
             onBlur={(e) => applyY(parseFloat(e.target.value) || 0)}
-          />
-        </label>
-        <label className="sp-input-row">
-          <span>Hauteur Z (m)</span>
-          <input
-            type="number"
-            step="0.1"
-            value={z}
-            onChange={(e) => setZ(parseFloat(e.target.value) || 0)}
-            onBlur={(e) => applyZ(parseFloat(e.target.value) || 0)}
           />
         </label>
       </div>
@@ -430,33 +411,6 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
-        {(() => {
-          const za = a.z ?? a.pos.z ?? 0
-          const zb = b.z ?? b.pos.z ?? 0
-          const deltaZ = zb - za
-          const slopePct = len > 0 ? (deltaZ / len) * 100 : 0
-          const slopePermil = len > 0 ? (deltaZ / len) * 1000 : 0
-          return (
-            <>
-              <Field
-                label="Dénivelé (ΔZ)"
-                value={`${deltaZ >= 0 ? '+' : ''}${deltaZ.toFixed(2)} m (${za.toFixed(1)}m → ${zb.toFixed(1)}m)`}
-              />
-              <Field
-                label="Pente / Rampe"
-                value={
-                  Math.abs(slopePermil) < 0.1 ? (
-                    'Voie de niveau (0 ‰)'
-                  ) : (
-                    <span style={{ fontWeight: 700, color: Math.abs(slopePermil) > 35 ? '#ef4444' : Math.abs(slopePermil) > 20 ? '#f59e0b' : 'var(--accent)' }}>
-                      {slopePermil > 0 ? '▲ Rampe' : '▼ Pente'} {Math.abs(slopePermil).toFixed(1)} ‰ ({Math.abs(slopePct).toFixed(2)} %)
-                    </span>
-                  )
-                }
-              />
-            </>
-          )
-        })()}
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
@@ -477,71 +431,6 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
             />
           </>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid var(--border)' }}>
-          <div>
-            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Étage / Niveau (Z)</div>
-            <div style={{ fontSize: '10px', fontWeight: 600, color: (seg.layer ?? (seg.overpass ? 1 : 0)) > 0 ? '#38bdf8' : (seg.layer ?? 0) < 0 ? '#94a3b8' : 'var(--ink)' }}>
-              {(seg.layer ?? (seg.overpass ? 1 : 0)) === 0
-                ? 'Sol standard (0)'
-                : (seg.layer ?? (seg.overpass ? 1 : 0)) > 0
-                ? `Pont (+${seg.layer ?? 1})`
-                : `Tunnel (${seg.layer})`}
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <button
-              style={{
-                width: '24px',
-                height: '24px',
-                lineHeight: '1',
-                borderRadius: '4px',
-                border: '1px solid var(--border)',
-                background: 'var(--panel-2)',
-                color: 'var(--ink)',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                const cur = seg.layer ?? (seg.overpass ? 1 : 0)
-                const next = cur - 1
-                seg.layer = next
-                seg.overpass = next > 0
-                store.markDirty()
-                store.notify()
-              }}
-              title="Descendre d'un étage (-)"
-            >
-              -
-            </button>
-            <span style={{ fontSize: '12px', fontWeight: 800, minWidth: '22px', textAlign: 'center' }}>
-              {(seg.layer ?? (seg.overpass ? 1 : 0)) > 0 ? `+${seg.layer ?? 1}` : (seg.layer ?? (seg.overpass ? 1 : 0))}
-            </span>
-            <button
-              style={{
-                width: '24px',
-                height: '24px',
-                lineHeight: '1',
-                borderRadius: '4px',
-                border: '1px solid var(--border)',
-                background: 'var(--panel-2)',
-                color: 'var(--ink)',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                const cur = seg.layer ?? (seg.overpass ? 1 : 0)
-                const next = cur + 1
-                seg.layer = next
-                seg.overpass = next > 0
-                store.markDirty()
-                store.notify()
-              }}
-              title="Monter d'un étage (+)"
-            >
-              +
-            </button>
-          </div>
-        </div>
       </div>
 
       {junction && (
@@ -570,11 +459,11 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
       <div className="sp-list">
         <button className="sp-list-item" onClick={() => selectNode(seg.from)}>
           <span className="sp-tag from">Départ</span>
-          ({a.pos.x.toFixed(0)}, {a.pos.y.toFixed(0)}) · Z: {(a.z ?? a.pos.z ?? 0).toFixed(1)}m
+          ({a.pos.x.toFixed(1)} m, {a.pos.y.toFixed(1)} m)
         </button>
         <button className="sp-list-item" onClick={() => selectNode(seg.to)}>
           <span className="sp-tag to">Arrivée</span>
-          ({b.pos.x.toFixed(0)}, {b.pos.y.toFixed(0)}) · Z: {(b.z ?? b.pos.z ?? 0).toFixed(1)}m
+          ({b.pos.x.toFixed(1)} m, {b.pos.y.toFixed(1)} m)
         </button>
       </div>
       <button className="sp-danger" onClick={onDelete}>
@@ -866,120 +755,6 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
         <Field label="Longueur totale" value={`${section.totalLength.toFixed(2)} m`} />
         <Field label="Coupons de rail" value={section.segmentIds.length} />
         <Field label="Nœuds" value={section.nodeIds.length} />
-        {(() => {
-          if (section.orderedNodeIds.length < 2) return null
-          const startN = store.network.nodes.get(section.orderedNodeIds[0])
-          const endN = store.network.nodes.get(section.orderedNodeIds[section.orderedNodeIds.length - 1])
-          if (!startN || !endN) return null
-          const zStart = startN.z ?? startN.pos.z ?? 0
-          const zEnd = endN.z ?? endN.pos.z ?? 0
-          const deltaZ = zEnd - zStart
-          const slopePermil = section.totalLength > 0 ? (deltaZ / section.totalLength) * 1000 : 0
-          return (
-            <>
-              <Field
-                label="Dénivelé total (ΔZ)"
-                value={`${deltaZ >= 0 ? '+' : ''}${deltaZ.toFixed(2)} m (${zStart.toFixed(1)}m → ${zEnd.toFixed(1)}m)`}
-              />
-              <Field
-                label="Pente moyenne"
-                value={
-                  Math.abs(slopePermil) < 0.1 ? (
-                    'Voie de niveau (0 ‰)'
-                  ) : (
-                    <span style={{ fontWeight: 700, color: Math.abs(slopePermil) > 35 ? '#ef4444' : Math.abs(slopePermil) > 20 ? '#f59e0b' : 'var(--accent)' }}>
-                      {slopePermil > 0 ? '▲ Rampe' : '▼ Pente'} {Math.abs(slopePermil).toFixed(1)} ‰
-                    </span>
-                  )
-                }
-              />
-            </>
-          )
-        })()}
-
-        {/* Niveau / Ouvrage d'art (Pont 2D / Tunnels) avec stepper +/- */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', margin: '8px 0' }}>
-          <div>
-            <div style={{ fontSize: '11px', fontWeight: 600 }}>Étage / Niveau de voie</div>
-            <div style={{ fontSize: '10px', color: 'var(--muted)' }}>
-              {(() => {
-                const first = store.network.segments.get(section.segmentIds[0])
-                const l = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
-                return l === 0 ? 'Niveau du sol (0)' : l > 0 ? `Pont aérien (+${l})` : `Tunnel / Tranchée (${l})`
-              })()}
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <button
-              style={{
-                width: '26px',
-                height: '24px',
-                lineHeight: '1',
-                borderRadius: '4px',
-                border: '1px solid var(--border)',
-                background: 'var(--panel-2)',
-                color: 'var(--ink)',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                const first = store.network.segments.get(section.segmentIds[0])
-                const cur = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
-                const next = cur - 1
-                for (const sid of section.segmentIds) {
-                  const s = store.network.segments.get(sid)
-                  if (s) {
-                    s.layer = next
-                    s.overpass = next > 0
-                  }
-                }
-                store.markDirty()
-                store.notify()
-              }}
-              title="Descendre toute la voie d'un étage (-)"
-            >
-              -
-            </button>
-            <span style={{ fontSize: '12px', fontWeight: 800, minWidth: '24px', textAlign: 'center' }}>
-              {(() => {
-                const first = store.network.segments.get(section.segmentIds[0])
-                const l = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
-                return l > 0 ? `+${l}` : l
-              })()}
-            </span>
-            <button
-              style={{
-                width: '26px',
-                height: '24px',
-                lineHeight: '1',
-                borderRadius: '4px',
-                border: '1px solid var(--border)',
-                background: 'var(--panel-2)',
-                color: 'var(--ink)',
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                const first = store.network.segments.get(section.segmentIds[0])
-                const cur = first ? (first.layer ?? (first.overpass ? 1 : 0)) : 0
-                const next = cur + 1
-                for (const sid of section.segmentIds) {
-                  const s = store.network.segments.get(sid)
-                  if (s) {
-                    s.layer = next
-                    s.overpass = next > 0
-                  }
-                }
-                store.markDirty()
-                store.notify()
-              }}
-              title="Monter toute la voie d'un étage (+)"
-            >
-              +
-            </button>
-          </div>
-        </div>
-
         <div style={{ marginTop: '6px' }}>
           <span className="sp-field-label" style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 600 }}>
             Couleur de canton
@@ -1037,10 +812,6 @@ function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStor
   const dx = nodeB.pos.x - nodeA.pos.x
   const dy = nodeB.pos.y - nodeA.pos.y
   const dist = Math.hypot(dx, dy)
-  const zA = nodeA.z ?? nodeA.pos.z ?? 0
-  const zB = nodeB.z ?? nodeB.pos.z ?? 0
-  const deltaZ = zB - zA
-  const slopePermil = dist > 0 ? (deltaZ / dist) * 1000 : 0
 
   // Vérifier s'ils sont déjà reliés par un rail
   const adjA = store.network.adjacency.get(nodeAId) ?? []
@@ -1066,22 +837,9 @@ function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStor
           </span>
         </div>
 
-        <Field label="Nœud A" value={`(${nodeA.pos.x.toFixed(1)}m, ${nodeA.pos.y.toFixed(1)}m) · Z: ${zA.toFixed(1)}m`} />
-        <Field label="Nœud B" value={`(${nodeB.pos.x.toFixed(1)}m, ${nodeB.pos.y.toFixed(1)}m) · Z: ${zB.toFixed(1)}m`} />
+        <Field label="Nœud A" value={`(${nodeA.pos.x.toFixed(1)} m, ${nodeA.pos.y.toFixed(1)} m)`} />
+        <Field label="Nœud B" value={`(${nodeB.pos.x.toFixed(1)} m, ${nodeB.pos.y.toFixed(1)} m)`} />
         <Field label="Distance" value={`${dist.toFixed(2)} m`} />
-        <Field label="Dénivelé (ΔZ)" value={`${deltaZ >= 0 ? '+' : ''}${deltaZ.toFixed(2)} m`} />
-        <Field
-          label="Pente"
-          value={
-            Math.abs(slopePermil) < 0.1 ? (
-              '0 ‰ (De niveau)'
-            ) : (
-              <span style={{ fontWeight: 700, color: Math.abs(slopePermil) > 35 ? '#ef4444' : Math.abs(slopePermil) > 20 ? '#f59e0b' : 'var(--accent)' }}>
-                {slopePermil > 0 ? '▲ Rampe' : '▼ Pente'} {Math.abs(slopePermil).toFixed(1)} ‰
-              </span>
-            )
-          }
-        />
         <Field label="Reliés par voie" value={connectingSeg ? 'Oui (voie existante)' : 'Non (non connectés)'} />
       </div>
 

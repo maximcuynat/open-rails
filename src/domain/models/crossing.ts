@@ -196,11 +196,8 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
       const s1 = segList[i]
       const s2 = segList[j]
 
-      // Skip segments sharing an endpoint or if either segment is at a different elevation layer
+      // Skip segments sharing an endpoint
       if (s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to) continue
-      const l1 = s1.layer ?? (s1.overpass ? 1 : 0)
-      const l2 = s2.layer ?? (s2.overpass ? 1 : 0)
-      if (l1 !== l2) continue
 
       const n1A = net.nodes.get(s1.from)
       const n1B = net.nodes.get(s1.to)
