@@ -10,6 +10,7 @@ import {
   computeCurvePiece,
   computeStraightPiece,
   computeFreeformCurve,
+  computeReverseFreeformCurve,
 } from './profiles'
 
 describe('CURVE_RADII', () => {
@@ -256,3 +257,42 @@ describe('computeFreeformCurve', () => {
     expect(res.angle).toBe(0)
   })
 })
+
+describe('computeReverseFreeformCurve', () => {
+  it('arrives strictly tangent to the target rail', () => {
+    // Start at (0, 0) and join a horizontal rail at (100, 100) heading right (1, 0)
+    const start = { x: 0, y: 0 }
+    const target = { x: 100, y: 100 }
+    const railTangent = { x: 1, y: 0 }
+
+    const res = computeReverseFreeformCurve(start, target, railTangent)
+    expect(res.radius).toBeCloseTo(100, 1)
+    expect(res.angle).toBeCloseTo(90, 1)
+    expect(res.end).toEqual(target)
+
+    // The arrival tangent 2*(end - via) must be strictly along +X (1, 0)
+    const arrivalTanX = res.end.x - res.via.x
+    const arrivalTanY = res.end.y - res.via.y
+    expect(arrivalTanY).toBeCloseTo(0, 4)
+    expect(arrivalTanX).toBeGreaterThan(0)
+  })
+
+  it('handles backwards rail tangent gracefully by choosing forward progression', () => {
+    const start = { x: 0, y: 0 }
+    const target = { x: 100, y: 100 }
+    // Passed opposite direction (-1, 0)
+    const res = computeReverseFreeformCurve(start, target, { x: -1, y: 0 })
+    expect(res.radius).toBeCloseTo(100, 1)
+    expect(res.angle).toBeCloseTo(90, 1)
+    expect(res.via.y).toBeCloseTo(100, 4)
+  })
+
+  it('handles straight alignment safely', () => {
+    const start = { x: 0, y: 0 }
+    const target = { x: 200, y: 0 }
+    const res = computeReverseFreeformCurve(start, target, { x: 1, y: 0 })
+    expect(res.radius).toBe(Infinity)
+    expect(res.angle).toBe(0)
+  })
+})
+

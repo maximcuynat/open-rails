@@ -20,12 +20,13 @@ import {
 } from '@domain/models/network'
 import type { Point, Network, RailNode } from '@domain/models/types'
 import { curveLength, bezierPoint, computeParallelCurve } from '@domain/geometry/curve'
-import { getTangentForPlacement } from '@domain/geometry/tangent'
+import { getTangentForPlacement, getTrackTangentAt } from '@domain/geometry/tangent'
 import {
   snapStraightLength,
   computeStraightPiece,
   computeCurvePiece,
   computeFreeformCurve,
+  computeReverseFreeformCurve,
 } from '@domain/profiles/profiles'
 import {
   splitSegment,
@@ -253,9 +254,12 @@ function renderCurvePreview(
   end: Point,
   labelText: string,
   isClosedToNode = false,
+  colorOverride?: string,
 ): void {
-  const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-  const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
+  const defaultAccent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+  const accent = colorOverride ?? defaultAccent
+  const isGreen = colorOverride === '#10b981' || isClosedToNode
+  const railColor = isGreen ? '#10b981' : (getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071')
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
   const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
@@ -264,7 +268,7 @@ function renderCurvePreview(
 
   // Start node marker
   ctx.fillStyle = accent
-  ctx.globalAlpha = 0.6
+  ctx.globalAlpha = 0.8
   ctx.beginPath()
   ctx.arc(w2sX(start.x), w2sY(start.y), 6, 0, Math.PI * 2)
   ctx.fill()
@@ -277,26 +281,28 @@ function renderCurvePreview(
   // Curve preview
   if (cam.scale < SIMPLIFY_THRESHOLD) {
     ctx.strokeStyle = accent
-    ctx.lineWidth = 2
-    ctx.setLineDash([6, 4])
+    ctx.lineWidth = 2.5
+    ctx.setLineDash(isGreen ? [] : [6, 4])
     ctx.beginPath()
     ctx.moveTo(w2sX(start.x), w2sY(start.y))
     ctx.quadraticCurveTo(w2sX(via.x), w2sY(via.y), w2sX(end.x), w2sY(end.y))
     ctx.stroke()
     ctx.setLineDash([])
   } else {
-    ctx.globalAlpha = 0.85
-    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, false, railColor, accent)
+    ctx.globalAlpha = 0.95
+    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, isGreen, railColor, accent)
     ctx.globalAlpha = 1
   }
 
   // End node marker / snap indicator
-  if (isClosedToNode) {
-    ctx.strokeStyle = '#10b981'
-    ctx.lineWidth = 2.5
-    ctx.beginPath()
-    ctx.arc(w2sX(end.x), w2sY(end.y), 8, 0, Math.PI * 2)
-    ctx.stroke()
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 2.5
+  ctx.beginPath()
+  ctx.arc(w2sX(end.x), w2sY(end.y), 8, 0, Math.PI * 2)
+  ctx.stroke()
+  if (isGreen) {
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.4)'
+    ctx.fill()
   }
 
   // Label near end
@@ -305,7 +311,7 @@ function renderCurvePreview(
   const lx = w2sX(end.x) + 14
   const ly = w2sY(end.y) - 10
 
-  ctx.fillStyle = isClosedToNode ? 'rgba(16, 185, 129, 0.9)' : 'rgba(37, 99, 235, 0.85)'
+  ctx.fillStyle = isGreen ? 'rgba(16, 185, 129, 0.95)' : 'rgba(37, 99, 235, 0.85)'
   ctx.beginPath()
   ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
   ctx.fill()
@@ -386,75 +392,42 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    // Affichage des pas de grille sur la voie survolée (fenêtre de 5 avant et 5 après le point visé)
-    if (store.hoverSegSteps) {
-      const { points, nearest } = store.hoverSegSteps
+    // Point de snap sur la voie survolée (point le plus proche uniquement, aucun point parasite avant/après)
+    if (store.hoverSegSteps && store.hoverSegSteps.nearest) {
+      const nearest = store.hoverSegSteps.nearest
       const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
       const w2sX = (wx: number) => (wx - cam.x) * cam.scale + rect.width / 2
       const w2sY = (wy: number) => (wy - cam.y) * cam.scale + rect.height / 2
       ctx.save()
 
-      let visiblePoints = points
-      if (nearest && points.length > 0) {
-        let nearestIdx = points.findIndex(
-          (p) => Math.hypot(p.x - nearest.x, p.y - nearest.y) < 1e-3
-        )
-        if (nearestIdx === -1) {
-          let minD = Infinity
-          for (let i = 0; i < points.length; i++) {
-            const d = Math.hypot(points[i].x - nearest.x, points[i].y - nearest.y)
-            if (d < minD) {
-              minD = d
-              nearestIdx = i
-            }
-          }
-        }
-        if (nearestIdx !== -1) {
-          const start = Math.max(0, nearestIdx - 5)
-          const end = Math.min(points.length, nearestIdx + 6)
-          visiblePoints = points.slice(start, end)
-        }
-      }
-
-      // Pas visibles (5 avant, 5 après) : petits cercles bleus semi-transparents
-      ctx.fillStyle = accent
-      ctx.globalAlpha = 0.35
-      for (const p of visiblePoints) {
-        const r = Math.max(3, Math.min(7, cam.scale * 0.8))
-        ctx.beginPath()
-        ctx.arc(w2sX(p.x), w2sY(p.y), r, 0, Math.PI * 2)
-        ctx.fill()
-      }
       // Pas le plus proche : cercle plein + anneau
-      if (nearest) {
-        ctx.globalAlpha = 1
-        ctx.fillStyle = accent
-        ctx.beginPath()
-        ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 6, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 9, 0, Math.PI * 2)
-        ctx.stroke()
-        // Label distance and coordinates
-        const seg = store.network.segments.get(store.hoverSegSteps.segId)
-        const nodeA = seg ? store.network.nodes.get(seg.from) : null
-        let distFromStart = '0.0'
-        if (nodeA) {
-          const dx = nearest.x - nodeA.pos.x
-          const dy = nearest.y - nodeA.pos.y
-          distFromStart = Math.hypot(dx, dy).toFixed(1)
-        }
-        const isIntCoord = Math.abs(Math.round(nearest.x) - nearest.x) < 1e-3 && Math.abs(Math.round(nearest.y) - nearest.y) < 1e-3
-        const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
-        ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        ctx.fillStyle = accent
-        ctx.globalAlpha = 0.95
-        ctx.textBaseline = 'bottom'
-        ctx.textAlign = 'center'
-        ctx.fillText(`${coordLabel}+${distFromStart} m`, w2sX(nearest.x), w2sY(nearest.y) - 12)
+      ctx.globalAlpha = 1
+      ctx.fillStyle = accent
+      ctx.beginPath()
+      ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 6, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = '#fff'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 9, 0, Math.PI * 2)
+      ctx.stroke()
+      // Label distance and coordinates
+      const seg = store.network.segments.get(store.hoverSegSteps.segId)
+      const nodeA = seg ? store.network.nodes.get(seg.from) : null
+      let distFromStart = '0.0'
+      if (nodeA) {
+        const dx = nearest.x - nodeA.pos.x
+        const dy = nearest.y - nodeA.pos.y
+        distFromStart = Math.hypot(dx, dy).toFixed(1)
       }
+      const isIntCoord = Math.abs(Math.round(nearest.x) - nearest.x) < 1e-3 && Math.abs(Math.round(nearest.y) - nearest.y) < 1e-3
+      const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      ctx.fillStyle = accent
+      ctx.globalAlpha = 0.95
+      ctx.textBaseline = 'bottom'
+      ctx.textAlign = 'center'
+      ctx.fillText(`${coordLabel}+${distFromStart} m`, w2sX(nearest.x), w2sY(nearest.y) - 12)
       ctx.restore()
     }
 
@@ -542,6 +515,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const startNode = store.network.nodes.get(cs.startId)
       if (startNode) {
         const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+        const startAdj = store.network.adjacency.get(cs.startId)
+        const isStartFree = !startAdj || startAdj.length === 0
+        const hitTol = 18 / cam.scale
+        const trackTarget = isStartFree ? getTrackTangentAt(store.network, cursor, hitTol, cs.startId) : null
         const tangent = getTangentForPlacement(store.network, cs.startId, cursor) ?? (() => {
           const dx = cursor.x - startNode.pos.x
           const dy = cursor.y - startNode.pos.y
@@ -551,7 +528,31 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
         const showParallelPreview = store.parallelMode || isModifierDownRef.current
 
-        if (store.trackMode === 'freeform') {
+        if (trackTarget) {
+          const targetPoint = trackTarget.pointOnTrack
+          const { end, via, radius, angle } = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
+          const isJoinNode = trackTarget.nodeId !== undefined
+          const isJoin = true
+          const len = curveLength(startNode.pos, via, end)
+          const initTan = { x: via.x - startNode.pos.x, y: via.y - startNode.pos.y }
+          const side = computeSide(initTan, startNode.pos, end)
+          const sideLabel = side === -1 ? 'Gauche' : 'Droite'
+          const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent'
+          const labelText = radius === Infinity
+            ? `Ligne droite ${len.toFixed(2)} m${joinSuffix}`
+            : `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin, '#10b981')
+
+          if (showParallelPreview) {
+            const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
+            const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
+            const secStart = secStartNode ? secStartNode.pos : par.start
+            ctx.save()
+            ctx.globalAlpha = 0.55
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+            ctx.restore()
+          }
+        } else if (store.trackMode === 'freeform') {
           const closeNode = findNearestNode(store.network, cursor, 16, cam)
           const target = closeNode && closeNode.id !== cs.startId ? closeNode.pos : cursor
           const { end, via, radius, angle } = computeFreeformCurve(startNode.pos, tangent, target)
@@ -1203,25 +1204,41 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         } else if (cs.phase === 1 && cs.startId) {
           const startNode = store.network.nodes.get(cs.startId)
           if (startNode) {
-            const tangent = getTangentForPlacement(store.network, cs.startId, world) ?? (() => {
-              const dx = world.x - startNode.pos.x
-              const dy = world.y - startNode.pos.y
-              const len = Math.hypot(dx, dy)
-              return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
-            })()
+            const cursor = store.snap ? store.snappedCursor : world
+            const startAdj = store.network.adjacency.get(cs.startId)
+            const isStartFree = !startAdj || startAdj.length === 0
+            const hitTol = 18 / store.camera.scale
+            const trackTarget = isStartFree ? getTrackTangentAt(store.network, cursor, hitTol, cs.startId) : null
 
             let endPos: Point
             let viaPos: Point
 
-            if (store.trackMode === 'freeform') {
+            if (trackTarget) {
+              const targetPoint = trackTarget.pointOnTrack
+              const curve = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
+              endPos = curve.end
+              viaPos = curve.via
+            } else if (store.trackMode === 'freeform') {
               const spacing = getSnapSpacing()
               const snappedWorld = store.snap ? snapToGrid(world, spacing) : world
               const closeTarget = findNearestNode(store.network, snappedWorld, 16, store.camera)
               const target = closeTarget && closeTarget.id !== cs.startId ? closeTarget.pos : snappedWorld
+              const tangent = getTangentForPlacement(store.network, cs.startId, world) ?? (() => {
+                const dx = world.x - startNode.pos.x
+                const dy = world.y - startNode.pos.y
+                const len = Math.hypot(dx, dy)
+                return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
+              })()
               const curve = computeFreeformCurve(startNode.pos, tangent, target)
               endPos = curve.end
               viaPos = curve.via
             } else {
+              const tangent = getTangentForPlacement(store.network, cs.startId, world) ?? (() => {
+                const dx = world.x - startNode.pos.x
+                const dy = world.y - startNode.pos.y
+                const len = Math.hypot(dx, dy)
+                return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
+              })()
               const radius = store.selectedCurveRadius
               const angle = store.selectedCurveAngle
               const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, world) : store.curveSide
@@ -1232,22 +1249,25 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
             // Auto-snap destination: connect to existing node if close (closes loops!)
             // Or if close to an existing segment, split that segment and connect to midNode!
-            const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
             let endId: string
-            if (closeNode && closeNode.id !== cs.startId) {
-              endId = closeNode.id
+            if (trackTarget?.nodeId && trackTarget.nodeId !== cs.startId) {
+              endId = trackTarget.nodeId
             } else {
-              const hitTol = 16 / store.camera.scale
-              const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, endPos, hitTol)
-              if (hitSegId) {
-                const targetEnd = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
-                  ? store.hoverSegSteps.nearest
-                  : endPos
-                const splitRes = splitSegment(store.network, hitSegId, targetEnd)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
+              const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
+              if (closeNode && closeNode.id !== cs.startId) {
+                endId = closeNode.id
               } else {
-                const endNode = addNode(store.network, endPos)
-                endId = endNode.id
+                const targetSegId = trackTarget?.segId ?? (store.hoverSegSteps?.segId ?? hitSegment(store.network, endPos, hitTol))
+                if (targetSegId) {
+                  const targetEnd = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === targetSegId)
+                    ? store.hoverSegSteps.nearest
+                    : endPos
+                  const splitRes = splitSegment(store.network, targetSegId, targetEnd)
+                  endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
+                } else {
+                  const endNode = addNode(store.network, endPos)
+                  endId = endNode.id
+                }
               }
             }
             addCurveSegment(store.network, cs.startId, endId, viaPos)
@@ -1862,8 +1882,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.tool === 'select'
+        const isCurvePhase1 = store.tool === 'curve' && store.curveState.phase === 1
         if (hitSegId && isTrackSnapTool) {
-          if (store.snap || e.shiftKey) {
+          if (!isCurvePhase1 && (store.snap || e.shiftKey)) {
             const spacing = getSnapSpacing()
             const { points, nearest } = getStepPointsAlongSegment(hitSegId, store.network, spacing, rawWorld)
             store.hoverSegSteps = { segId: hitSegId, points, nearest }

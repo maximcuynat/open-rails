@@ -8,6 +8,7 @@ import {
   segmentTangentAt,
   arcRadius,
   arcDeflectionDeg,
+  getTrackTangentAt,
 } from './tangent'
 import { addNode, addSegment, addCurveSegment, createNetwork } from '../models/network'
 
@@ -247,3 +248,42 @@ describe('outgoingTangent', () => {
     expect(t).not.toBeNull()
   })
 })
+
+describe('getTrackTangentAt', () => {
+  it('detects straight track tangent and projected point', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 50 })
+    const b = addNode(net, { x: 100, y: 50 })
+    addSegment(net, a.id, b.id)
+
+    const res = getTrackTangentAt(net, { x: 40, y: 52 }, 10)
+    expect(res).not.toBeNull()
+    expect(res?.tangent.x).toBeCloseTo(1)
+    expect(res?.tangent.y).toBeCloseTo(0)
+    expect(res?.pointOnTrack.y).toBeCloseTo(50)
+  })
+
+  it('detects tangent near a connected node', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 })
+    addSegment(net, a.id, b.id)
+
+    const res = getTrackTangentAt(net, { x: 9.8, y: 0.2 }, 5)
+    expect(res).not.toBeNull()
+    expect(res?.nodeId).toBe(b.id)
+    expect(res?.pointOnTrack.x).toBe(10)
+    expect(res?.pointOnTrack.y).toBe(0)
+  })
+
+  it('returns null when far from any track', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 })
+    addSegment(net, a.id, b.id)
+
+    const res = getTrackTangentAt(net, { x: 50, y: 50 }, 5)
+    expect(res).toBeNull()
+  })
+})
+

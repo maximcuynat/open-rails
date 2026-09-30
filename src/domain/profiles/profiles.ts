@@ -146,6 +146,78 @@ export function computeFreeformCurve(
   return { end: target, via, radius, angle: angleDeg }
 }
 
+/**
+ * Compute a freeform circular arc from start point arriving at target point
+ * such that the curve's arrival tangent is collinear with targetTangent (G1 continuity at target).
+ * Returns the computed via point, radius, deflection angle, and end point.
+ */
+export function computeReverseFreeformCurve(
+  start: { x: number; y: number },
+  target: { x: number; y: number },
+  targetTangent: { x: number; y: number },
+): { end: { x: number; y: number }; via: { x: number; y: number }; radius: number; angle: number } {
+  const dx = target.x - start.x
+  const dy = target.y - start.y
+  const chordLen = Math.hypot(dx, dy)
+
+  if (chordLen < 5) {
+    return {
+      end: target,
+      via: { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 },
+      radius: Infinity,
+      angle: 0,
+    }
+  }
+
+  // Chord unit vector from start to target
+  const cdx = dx / chordLen
+  const cdy = dy / chordLen
+
+  // Ensure targetTangent is normalized
+  const tLen = Math.hypot(targetTangent.x, targetTangent.y)
+  const tx = tLen > 1e-6 ? targetTangent.x / tLen : 1
+  const ty = tLen > 1e-6 ? targetTangent.y / tLen : 0
+
+  // Dot product between chord and targetTangent gives cos(alpha)
+  // If dot is negative, flip targetTangent so the curve merges forward along the track
+  let dot = cdx * tx + cdy * ty
+  let effTx = tx
+  let effTy = ty
+  if (dot < 0) {
+    dot = -dot
+    effTx = -tx
+    effTy = -ty
+  }
+
+  const rawAlpha = Math.acos(Math.max(0, Math.min(1, dot)))
+  // Clamp alpha to avoid singularity when curve deflects > 170°
+  const alpha = Math.min(rawAlpha, (85 * Math.PI) / 180)
+
+  if (alpha < 0.005) {
+    return {
+      end: target,
+      via: { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 },
+      radius: Infinity,
+      angle: 0,
+    }
+  }
+
+  const sinAlpha = Math.sin(alpha)
+  const cosAlpha = Math.cos(alpha)
+  const radius = chordLen / (2 * sinAlpha)
+  const tDist = chordLen / (2 * cosAlpha)
+
+  // For a circular arc ending at target with arrival tangent (effTx, effTy):
+  // The control point via satisfies: target - via = tDist * (effTx, effTy)
+  const via = {
+    x: target.x - effTx * tDist,
+    y: target.y - effTy * tDist,
+  }
+  const angleDeg = (alpha * 2 * 180) / Math.PI
+
+  return { end: target, via, radius, angle: angleDeg }
+}
+
 /** Compute the end point of a standard straight piece.
  *  Given a start point, direction, and the snapped length. */
 export function computeStraightPiece(

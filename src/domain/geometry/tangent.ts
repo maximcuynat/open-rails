@@ -1,4 +1,6 @@
-import type { Point, Network, Segment, NodeId } from '../models/types'
+import type { Point, Network, Segment, NodeId, RailNode, SegmentId } from '../models/types'
+import { hitSegment } from '../models/network'
+import { bezierPoint, bezierDerivative1 } from './curve'
 
 /** Outgoing tangent direction (normalized) at the end of a straight segment. */
 function straightTangent(from: Point, to: Point): Point {
@@ -279,3 +281,101 @@ export function viaFromTwoTangents(
     y: start.y + k * incomingDir.y,
   }
 }
+
+/**
+ * Find the rail tangent direction at a given point in the network.
+ * Checks for a nearby node with connected tracks, or a nearby segment.
+ * Returns the unit tangent vector of the rail, the actual point on the track, and metadata.
+ */
+export function getTrackTangentAt(
+  net: Network,
+  point: Point,
+  tol: number,
+  excludeNodeId?: NodeId | null,
+): { tangent: Point; pointOnTrack: Point; segId?: SegmentId; nodeId?: NodeId } | null {
+  // Priority 1: near an existing node (excluding excludeNodeId) that has connected segments
+  let bestNode: RailNode | null = null
+  let bestDist = tol
+  for (const node of net.nodes.values()) {
+    if (excludeNodeId && node.id === excludeNodeId) continue
+    const adj = net.adjacency.get(node.id)
+    if (!adj || adj.length === 0) continue
+    const d = Math.hypot(node.pos.x - point.x, node.pos.y - point.y)
+    if (d < bestDist) {
+      bestDist = d
+      bestNode = node
+    }
+  }
+
+  if (bestNode) {
+    const adj = net.adjacency.get(bestNode.id)!
+    const seg = net.segments.get(adj[0])
+    if (seg) {
+      const tan = segmentTangentAt(net, seg, bestNode.id)
+      if (tan) {
+        return {
+          tangent: tan,
+          pointOnTrack: { ...bestNode.pos },
+          nodeId: bestNode.id,
+        }
+      }
+    }
+  }
+
+  // Priority 2: near an existing segment
+  const segId = hitSegment(net, point, tol)
+  if (segId) {
+    const seg = net.segments.get(segId)
+    if (seg) {
+      const nodeA = net.nodes.get(seg.from)
+      const nodeB = net.nodes.get(seg.to)
+      if (nodeA && nodeB) {
+        if (seg.kind === 'straight') {
+          const dx = nodeB.pos.x - nodeA.pos.x
+          const dy = nodeB.pos.y - nodeA.pos.y
+          const lenSq = dx * dx + dy * dy
+          if (lenSq > 0.001) {
+            const len = Math.sqrt(lenSq)
+            const ux = dx / len
+            const uy = dy / len
+            const t = Math.max(0, Math.min(1, ((point.x - nodeA.pos.x) * dx + (point.y - nodeA.pos.y) * dy) / lenSq))
+            return {
+              tangent: { x: ux, y: uy },
+              pointOnTrack: { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy },
+              segId,
+            }
+          }
+        } else if (seg.kind === 'curve' && seg.via) {
+          const p0 = nodeA.pos
+          const p1 = seg.via
+          const p2 = nodeB.pos
+          let bestT = 0.5
+          let bestDistSq = Infinity
+          const SAMPLES = 32
+          for (let i = 0; i <= SAMPLES; i++) {
+            const s = i / SAMPLES
+            const pt = bezierPoint(s, p0, p1, p2)
+            const dSq = (pt.x - point.x) ** 2 + (pt.y - point.y) ** 2
+            if (dSq < bestDistSq) {
+              bestDistSq = dSq
+              bestT = s
+            }
+          }
+          const d1 = bezierDerivative1(bestT, p0, p1, p2)
+          const dLen = Math.hypot(d1.x, d1.y)
+          if (dLen > 0.001) {
+            const pt = bezierPoint(bestT, p0, p1, p2)
+            return {
+              tangent: { x: d1.x / dLen, y: d1.y / dLen },
+              pointOnTrack: pt,
+              segId,
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
