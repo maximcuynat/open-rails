@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createNetwork, addNode, addSegment } from './network'
+import { autoDetectJunctions } from './junction'
 import {
   computeTrackSections,
   detectDirectionConflicts,
@@ -171,5 +172,39 @@ describe('isEndOfTrackNode', () => {
     expect(line2.segmentIds).toContain(sS.id)
     expect(line2.segmentIds).toContain(sN.id)
     expect(line2.crossingNodeIds).toContain(center.id)
+  })
+
+  it('separates a 3-way turnout into 4 distinct track sections (stem + 3 branches) and excludes from diamond crossing nodes', () => {
+    const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const left = addNode(net, { x: 98, y: 17 })
+    const right = addNode(net, { x: 98, y: -17 })
+
+    const sStem = addSegment(net, stem.id, apex.id)!
+    const sStraight = addSegment(net, apex.id, straight.id)!
+    const sLeft = addSegment(net, apex.id, left.id)!
+    const sRight = addSegment(net, apex.id, right.id)!
+
+    autoDetectJunctions(net)
+
+    const sections = computeTrackSections(net)
+    // Exactly 4 sections: stem, straight, left, and right branches
+    expect(sections).toHaveLength(4)
+
+    // None of the sections treat the 3-way turnout apex as a diamond crossing
+    for (const sec of sections) {
+      expect(sec.crossingNodeIds ?? []).not.toContain(apex.id)
+    }
+
+    const secStem = sections.find((s) => s.segmentIds.includes(sStem.id))!
+    const secStraight = sections.find((s) => s.segmentIds.includes(sStraight.id))!
+    const secLeft = sections.find((s) => s.segmentIds.includes(sLeft.id))!
+    const secRight = sections.find((s) => s.segmentIds.includes(sRight.id))!
+
+    expect(secStem.id).not.toBe(secStraight.id)
+    expect(secLeft.id).not.toBe(secRight.id)
+    expect(secStraight.id).not.toBe(secLeft.id)
   })
 })

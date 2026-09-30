@@ -116,4 +116,54 @@ describe('kinematicDiagnostics', () => {
     // Must NOT flag a 180° hairpin cassure!
     expect(issues).toHaveLength(0)
   })
+
+  it('validates a complete 3-way turnout (degree 4) without false excess-rails or invalid_turnout error', () => {
+    const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const left = addNode(net, { x: 98, y: 17 })
+    const right = addNode(net, { x: 98, y: -17 })
+
+    addSegment(net, stem.id, apex.id)
+    addSegment(net, apex.id, straight.id)
+    addSegment(net, apex.id, left.id)
+    addSegment(net, apex.id, right.id)
+
+    const issues = analyzeKinematics(net)
+    expect(issues).toHaveLength(0)
+  })
+
+  it('flags an incomplete 3-branch fan without stem as invalid_turnout', () => {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const left = addNode(net, { x: 98, y: 17 })
+    const right = addNode(net, { x: 98, y: -17 })
+
+    addSegment(net, apex.id, straight.id)
+    addSegment(net, apex.id, left.id)
+    addSegment(net, apex.id, right.id)
+
+    const issues = analyzeKinematics(net)
+    expect(issues.some(i => i.kind === 'invalid_turnout')).toBe(true)
+  })
+
+  it('flags an incoherent 4-rail node as excess-rails when it is neither crossing nor 3-way turnout', () => {
+    const net = createNetwork()
+    const center = addNode(net, { x: 0, y: 0 })
+    // 4 branches: 0°, 60°, 120°, 200° (no collinear pairs, not co-directional)
+    const n1 = addNode(net, { x: 100, y: 0 })
+    const n2 = addNode(net, { x: 50, y: 86 })
+    const n3 = addNode(net, { x: -50, y: 86 })
+    const n4 = addNode(net, { x: -94, y: -34 })
+
+    addSegment(net, center.id, n1.id)
+    addSegment(net, center.id, n2.id)
+    addSegment(net, center.id, n3.id)
+    addSegment(net, center.id, n4.id)
+
+    const issues = analyzeKinematics(net)
+    expect(issues.some(i => i.id.startsWith('excess-rails'))).toBe(true)
+  })
 })

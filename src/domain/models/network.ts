@@ -119,6 +119,33 @@ export function removeSegment(net: Network, id: SegmentId, cleanOrphans = true):
   }
 }
 
+/**
+ * Remove all orphan nodes (nodes with 0 connected segments) from the network.
+ * Optionally preserve a whitelist of active node IDs.
+ */
+export function pruneOrphanNodes(
+  net: Network,
+  preserveNodeIds?: Set<NodeId> | Array<NodeId>,
+): number {
+  const preserve = preserveNodeIds ? new Set(preserveNodeIds) : null
+  let pruned = 0
+  for (const [nid, adj] of net.adjacency) {
+    if (adj.length === 0 && (!preserve || !preserve.has(nid))) {
+      net.nodes.delete(nid)
+      net.adjacency.delete(nid)
+      pruned++
+    }
+  }
+  // Also clean up any node in net.nodes that has no adjacency entry
+  for (const nid of net.nodes.keys()) {
+    if (!net.adjacency.has(nid) && (!preserve || !preserve.has(nid))) {
+      net.nodes.delete(nid)
+      pruned++
+    }
+  }
+  return pruned
+}
+
 /** Snap a point to the nearest grid intersection. */
 export function snapToGrid(pos: Point, spacing: number): Point {
   if (spacing <= 0) return pos
@@ -194,51 +221,151 @@ export function getStepPointsAlongSegment(
   const b = net.nodes.get(seg.to)
   if (!a || !b) return { points: [], nearest: null, nearestT: 0 }
 
-  const SUBDIV = 32
-  const len = seg.kind === 'curve' && seg.via
-    ? (() => {
-        let total = 0
-        let prev = a.pos
-        for (let i = 1; i <= SUBDIV; i++) {
-          const t = i / SUBDIV
-          const mt = 1 - t
-          const px = mt * mt * a.pos.x + 2 * mt * t * seg.via!.x + t * t * b.pos.x
-          const py = mt * mt * a.pos.y + 2 * mt * t * seg.via!.y + t * t * b.pos.y
-          total += Math.hypot(px - prev.x, py - prev.y)
-          prev = { x: px, y: py }
-        }
-        return total
-      })()
-    : Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
-
-  if (len < spacing * 0.1) return { points: [], nearest: null, nearestT: 0 }
-
   const points: Point[] = []
-  const count = Math.floor(len / spacing)
-  for (let i = 1; i <= count; i++) {
-    const t = (i * spacing) / len
-    let p: Point
-    if (seg.kind === 'curve' && seg.via) {
-      const mt = 1 - t
-      p = {
-        x: mt * mt * a.pos.x + 2 * mt * t * seg.via.x + t * t * b.pos.x,
-        y: mt * mt * a.pos.y + 2 * mt * t * seg.via.y + t * t * b.pos.y,
-      }
-    } else {
-      p = { x: a.pos.x + t * (b.pos.x - a.pos.x), y: a.pos.y + t * (b.pos.y - a.pos.y) }
+  const tSet = new Set<number>()
+
+  if (seg.kind === 'straight') {
+    const dx = b.pos.x - a.pos.x
+    const dy = b.pos.y - a.pos.y
+    const len = Math.hypot(dx, dy)
+    if (len < 0.2) return { points: [], nearest: null, nearestT: 0 }
+
+    // 1. Regular metric increments along the segment from Node A
+    const count = Math.floor((len - 0.2) / spacing)
+    for (let i = 1; i <= count; i++) {
+      const t = (i * spacing) / len
+      if (t > 0.01 && t < 0.99) tSet.add(t)
     }
-    points.push(p)
+
+    // 2. Regular metric increments along the segment from Node B
+    for (let i = 1; i <= count; i++) {
+      const t = 1 - (i * spacing) / len
+      if (t > 0.01 && t < 0.99) tSet.add(t)
+    }
+
+    // 3. Grid line intersections (X coordinate = k * spacing)
+    if (Math.abs(dx) > 1e-4) {
+      const minX = Math.min(a.pos.x, b.pos.x)
+      const maxX = Math.max(a.pos.x, b.pos.x)
+      const kMin = Math.ceil((minX + 0.1) / spacing)
+      const kMax = Math.floor((maxX - 0.1) / spacing)
+      for (let k = kMin; k <= kMax; k++) {
+        const gx = k * spacing
+        const t = (gx - a.pos.x) / dx
+        if (t > 0.01 && t < 0.99) tSet.add(t)
+      }
+    }
+
+    // 4. Grid line intersections (Y coordinate = m * spacing)
+    if (Math.abs(dy) > 1e-4) {
+      const minY = Math.min(a.pos.y, b.pos.y)
+      const maxY = Math.max(a.pos.y, b.pos.y)
+      const mMin = Math.ceil((minY + 0.1) / spacing)
+      const mMax = Math.floor((maxY - 0.1) / spacing)
+      for (let m = mMin; m <= mMax; m++) {
+        const gy = m * spacing
+        const t = (gy - a.pos.y) / dy
+        if (t > 0.01 && t < 0.99) tSet.add(t)
+      }
+    }
+
+    // 5. Projected cursor position rounded to nearest spacing or integer
+    const projT = ((cursorPos.x - a.pos.x) * dx + (cursorPos.y - a.pos.y) * dy) / (len * len)
+    const projDist = projT * len
+    const roundedDist = Math.round(projDist / spacing) * spacing
+    const roundedT = roundedDist / len
+    if (roundedT > 0.01 && roundedT < 0.99) tSet.add(roundedT)
+
+    const sortedT = Array.from(tSet).sort((u, v) => u - v)
+    for (const t of sortedT) {
+      let px = a.pos.x + t * dx
+      let py = a.pos.y + t * dy
+      if (Math.abs(Math.round(px) - px) < 1e-3) px = Math.round(px)
+      if (Math.abs(Math.round(py) - py) < 1e-3) py = Math.round(py)
+      const pt = { x: px, y: py }
+      if (!points.some((existing) => Math.hypot(existing.x - pt.x, existing.y - pt.y) < Math.min(0.2, spacing * 0.1))) {
+        points.push(pt)
+      }
+    }
+  } else if (seg.kind === 'curve' && seg.via) {
+    const p0 = a.pos
+    const p1 = seg.via
+    const p2 = b.pos
+    const SUBDIV = 64
+    const cumDist: number[] = [0]
+    let totalLen = 0
+    let prev = p0
+    for (let i = 1; i <= SUBDIV; i++) {
+      const t = i / SUBDIV
+      const mt = 1 - t
+      const px = mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x
+      const py = mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
+      totalLen += Math.hypot(px - prev.x, py - prev.y)
+      cumDist.push(totalLen)
+      prev = { x: px, y: py }
+    }
+
+    if (totalLen >= 0.2) {
+      const count = Math.floor((totalLen - 0.2) / spacing)
+      for (let s = 1; s <= count; s++) {
+        const targetDist = s * spacing
+        let idx = 0
+        while (idx < SUBDIV && cumDist[idx + 1] < targetDist) idx++
+        const segLen = cumDist[idx + 1] - cumDist[idx]
+        const frac = segLen > 0 ? (targetDist - cumDist[idx]) / segLen : 0
+        const t = (idx + frac) / SUBDIV
+        if (t > 0.01 && t < 0.99) tSet.add(t)
+      }
+
+      const sortedT = Array.from(tSet).sort((u, v) => u - v)
+      for (const t of sortedT) {
+        const mt = 1 - t
+        let px = mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x
+        let py = mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
+        if (Math.abs(Math.round(px) - px) < 1e-3) px = Math.round(px)
+        if (Math.abs(Math.round(py) - py) < 1e-3) py = Math.round(py)
+        const pt = { x: px, y: py }
+        if (!points.some((existing) => Math.hypot(existing.x - pt.x, existing.y - pt.y) < Math.min(0.2, spacing * 0.1))) {
+          points.push(pt)
+        }
+      }
+    }
   }
 
   let nearest: Point | null = null
   let nearestDist = Infinity
-  let nearestT = 0
+  let nearestT = 0.5
+
   for (let i = 0; i < points.length; i++) {
     const d = Math.hypot(points[i].x - cursorPos.x, points[i].y - cursorPos.y)
     if (d < nearestDist) {
       nearestDist = d
       nearest = points[i]
-      nearestT = (i + 1) * spacing / len
+    }
+  }
+
+  if (nearest) {
+    if (seg.kind === 'straight') {
+      const dx = b.pos.x - a.pos.x
+      const dy = b.pos.y - a.pos.y
+      const lenSq = dx * dx + dy * dy
+      nearestT = lenSq > 0 ? ((nearest.x - a.pos.x) * dx + (nearest.y - a.pos.y) * dy) / lenSq : 0.5
+    } else {
+      const p0 = a.pos
+      const p1 = seg.via!
+      const p2 = b.pos
+      let bestDist = Infinity
+      for (let s = 1; s < 64; s++) {
+        const t = s / 64
+        const mt = 1 - t
+        const px = mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x
+        const py = mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
+        const d = Math.hypot(px - nearest.x, py - nearest.y)
+        if (d < bestDist) {
+          bestDist = d
+          nearestT = t
+        }
+      }
     }
   }
 

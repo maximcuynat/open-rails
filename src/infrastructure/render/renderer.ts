@@ -467,8 +467,22 @@ export function renderNetwork(
       ctx.beginPath()
       ctx.arc(sx, sy, 4, 0, Math.PI * 2)
       ctx.fill()
-    } else if (connectionCount <= 1) {
+    } else if (connectionCount === 1) {
       // Dead end already rendered with clean Sens Interdit sign
+    } else if (connectionCount === 0) {
+      // Isolated / orphan node (0 connected tracks): render clear visible indicator so it is never an invisible ghost
+      ctx.save()
+      ctx.strokeStyle = '#f59e0b'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      ctx.arc(sx, sy, 6, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.fillStyle = '#f59e0b'
+      ctx.beginPath()
+      ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
     } else if (connectionCount === 4) {
       // Diamond crossing intersection node (zone de cisaillement / conflit logique)
       const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale))
@@ -1233,11 +1247,22 @@ function roundRect(
 /** Connect rail lines and ballast seamlessly at nodes where 2 or more segments meet. */
 export function isInactiveBranch(net: Network, segId: string): boolean {
   for (const junc of net.junctions.values()) {
-    if (
-      (junc.activeBranch === 'straight' && segId === junc.divergingSegmentId) ||
-      (junc.activeBranch === 'diverging' && segId === junc.straightSegmentId)
-    ) {
-      return true
+    if (junc.hand === 'three_way') {
+      if (junc.activeBranch === 'straight') {
+        if (segId === junc.divergingSegmentId || segId === junc.divergingRightSegmentId) return true
+      } else if (junc.activeBranch === 'right') {
+        if (segId === junc.straightSegmentId || segId === junc.divergingSegmentId) return true
+      } else {
+        // 'left' or 'diverging'
+        if (segId === junc.straightSegmentId || segId === junc.divergingRightSegmentId) return true
+      }
+    } else {
+      if (
+        (junc.activeBranch === 'straight' && segId === junc.divergingSegmentId) ||
+        (junc.activeBranch === 'diverging' && segId === junc.straightSegmentId)
+      ) {
+        return true
+      }
     }
   }
   return false
@@ -1822,8 +1847,8 @@ export function renderTurnoutMechanicalDetails(
           ? Math.max(straightOuterD, hg + 5 + divOffset)
           : Math.max(straightOuterD, hg + 5 + divOffset)
 
-        const leftD = side > 0 ? sideExtent : (hg + 5)
-        const rightD = side > 0 ? (hg + 5) : sideExtent
+        const leftD = (junc.hand === 'three_way' || side > 0) ? sideExtent : (hg + 5)
+        const rightD = (junc.hand === 'three_way' || side < 0) ? sideExtent : (hg + 5)
 
         const p1 = worldToScreen(t, leftD)
         const p2 = worldToScreen(t, -rightD)

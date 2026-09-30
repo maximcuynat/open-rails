@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment } from '../models/network'
 import { placeTurnout, toggleJunction } from '../models/junction'
+import type { Junction } from '../models/types'
 import {
   findPath,
   reachableFrom,
@@ -238,6 +239,56 @@ describe('diamond crossing and traffic direction routing constraints', () => {
     // Train traveling from straight branch cannot do a 180° hairpin flip at apex into diverging branch
     const path = findPath(net, straight.id, diverging.id)
     expect(path.found).toBe(false)
+  })
+
+  it('routes trains through 3-way turnout respecting straight, left, and right active branches', () => {
+    const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const left = addNode(net, { x: 98, y: 17 })
+    const right = addNode(net, { x: 98, y: -17 })
+
+    addSegment(net, stem.id, apex.id)
+    const sStraight = addSegment(net, apex.id, straight.id)!
+    const sLeft = addSegment(net, apex.id, left.id)!
+    const sRight = addSegment(net, apex.id, right.id)!
+
+    const junc: Junction = {
+      id: 'j_3way',
+      nodeId: apex.id,
+      stemNodeId: stem.id,
+      straightNodeId: straight.id,
+      divergingNodeId: left.id,
+      divergingRightNodeId: right.id,
+      straightSegmentId: sStraight.id,
+      divergingSegmentId: sLeft.id,
+      divergingRightSegmentId: sRight.id,
+      hand: 'three_way',
+      activeBranch: 'straight',
+    }
+    net.junctions.set(junc.id, junc)
+
+    // 1. activeBranch = 'straight'
+    expect(findPath(net, stem.id, straight.id).found).toBe(true)
+    expect(findPath(net, stem.id, left.id).found).toBe(false)
+    expect(findPath(net, stem.id, right.id).found).toBe(false)
+
+    // 2. activeBranch = 'left'
+    junc.activeBranch = 'left'
+    expect(findPath(net, stem.id, straight.id).found).toBe(false)
+    expect(findPath(net, stem.id, left.id).found).toBe(true)
+    expect(findPath(net, stem.id, right.id).found).toBe(false)
+
+    // 3. activeBranch = 'right'
+    junc.activeBranch = 'right'
+    expect(findPath(net, stem.id, straight.id).found).toBe(false)
+    expect(findPath(net, stem.id, left.id).found).toBe(false)
+    expect(findPath(net, stem.id, right.id).found).toBe(true)
+
+    // 4. Branch-to-branch U-turns are forbidden
+    expect(findPath(net, left.id, right.id).found).toBe(false)
+    expect(findPath(net, straight.id, left.id).found).toBe(false)
   })
 })
 

@@ -11,21 +11,13 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         return
       }
 
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (e.code === 'Space') {
+        e.preventDefault()
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         store.deleteSelection()
       } else if (e.key === 'Escape') {
-        store.lastNodeId = null
-        store.curveState = { phase: 0, startId: null }
-        store.parallelMode = false
-        store.parallelLastNodeId = null
-        store.autoConnectStartId = null
-        store.crossoverFirstSegId = null
-        store.turnoutStartId = null
-        store.measureStart = null
-        store.measureEnd = null
-        store.isMeasuring = false
-        store.clearSelection()
+        store.cancelInteraction()
       } else if (e.key === 'v' || e.key === 'V') {
         store.setTool('select')
       } else if (e.key === 'n' || e.key === 'N') {

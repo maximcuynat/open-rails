@@ -1,6 +1,7 @@
 import type { Network, NodeId, SegmentId, Segment, Point } from './types'
 import { curveLength } from '../geometry/curve'
 import { segmentTangentAt } from '../geometry/tangent'
+import { findJunctionAtNode } from './junction'
 
 export type SectionType = 'circulation' | 'station_stop' | 'siding' | 'yard'
 
@@ -129,6 +130,10 @@ export function computeTrackSections(
     // Turnouts with 3 branches are always routing decision junctions (boundaries)
     if (adj.length === 3) return null
 
+    // A 3-way turnout (degree 4) is also a routing decision junction (boundary)
+    const junc = findJunctionAtNode(net, currNode)
+    if (junc && junc.hand === 'three_way') return null
+
     const rPrev = getRayFromNode(net, prevSeg, currNode)
 
     // For degree 2 or degree 4: look for a segment continuing directly in the opposite direction
@@ -246,7 +251,8 @@ export function computeTrackSections(
     const crossingNodeIds = orderedNodes.filter((nid, idx) => {
       if (idx === 0 || idx === orderedNodes.length - 1) return false
       const deg = net.adjacency.get(nid)?.length ?? 0
-      return deg === 4
+      const junc = findJunctionAtNode(net, nid)
+      return deg === 4 && (!junc || junc.hand !== 'three_way')
     })
 
     sections.push({

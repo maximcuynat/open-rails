@@ -255,5 +255,73 @@ describe('autoDetectJunctions', () => {
     expect(upgraded.length).toBe(1)
     expect(upgraded[0].stemNodeId).toBe(stem.id)
   })
+
+  it('detects a 3-way turnout with 1 stem and 3 diverging branches and cycles branches', () => {
+    const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const left = addNode(net, { x: 98, y: 17 })
+    const right = addNode(net, { x: 98, y: -17 })
+
+    addSegment(net, stem.id, apex.id)
+    const sStraight = addSegment(net, apex.id, straight.id)!
+    const sLeft = addSegment(net, apex.id, left.id)!
+    const sRight = addSegment(net, apex.id, right.id)!
+
+    const detected = autoDetectJunctions(net)
+    expect(detected.length).toBe(1)
+    const junc = detected[0]
+    expect(junc.hand).toBe('three_way')
+    expect(junc.nodeId).toBe(apex.id)
+    expect(junc.stemNodeId).toBe(stem.id)
+    expect(junc.straightNodeId).toBe(straight.id)
+    expect(junc.divergingNodeId).toBe(left.id)
+    expect(junc.divergingRightNodeId).toBe(right.id)
+
+    // findJunctionBySegment works for all 3 branches
+    expect(findJunctionBySegment(net, sStraight.id)?.id).toBe(junc.id)
+    expect(findJunctionBySegment(net, sLeft.id)?.id).toBe(junc.id)
+    expect(findJunctionBySegment(net, sRight.id)?.id).toBe(junc.id)
+
+    // Branch toggling cycles: straight -> left -> right -> straight
+    expect(junc.activeBranch).toBe('straight')
+    expect(toggleJunction(junc)).toBe('left')
+    expect(junc.activeBranch).toBe('left')
+    expect(toggleJunction(junc)).toBe('right')
+    expect(junc.activeBranch).toBe('right')
+    expect(toggleJunction(junc)).toBe('straight')
+    expect(junc.activeBranch).toBe('straight')
+  })
+
+  it('detects an incomplete 3-way turnout (3 branches at apex, no stem) and upgrades when stem is added', () => {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const left = addNode(net, { x: 98, y: 17 })
+    const right = addNode(net, { x: 98, y: -17 })
+
+    addSegment(net, apex.id, straight.id)
+    addSegment(net, apex.id, left.id)
+    addSegment(net, apex.id, right.id)
+
+    // 1. Incomplete 3-way turnout
+    const detected = autoDetectJunctions(net)
+    expect(detected.length).toBe(1)
+    expect(detected[0].hand).toBe('three_way')
+    expect(detected[0].stemNodeId).toBeUndefined()
+    expect(detected[0].straightNodeId).toBe(straight.id)
+    expect(detected[0].divergingNodeId).toBe(left.id)
+    expect(detected[0].divergingRightNodeId).toBe(right.id)
+
+    // 2. Add stem
+    const stem = addNode(net, { x: -100, y: 0 })
+    addSegment(net, stem.id, apex.id)
+
+    const upgraded = autoDetectJunctions(net)
+    expect(upgraded.length).toBe(1)
+    expect(upgraded[0].hand).toBe('three_way')
+    expect(upgraded[0].stemNodeId).toBe(stem.id)
+  })
 })
 

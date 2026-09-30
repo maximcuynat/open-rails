@@ -37,11 +37,13 @@ export function addJunction(
     stemNodeId?: NodeId
     straightNodeId: NodeId
     divergingNodeId: NodeId
+    divergingRightNodeId?: NodeId
     straightSegmentId: SegmentId
     divergingSegmentId: SegmentId
-    hand: 'left' | 'right'
+    divergingRightSegmentId?: SegmentId
+    hand: 'left' | 'right' | 'three_way'
     frogNumber?: number
-    activeBranch?: 'straight' | 'diverging'
+    activeBranch?: 'straight' | 'diverging' | 'left' | 'right'
   },
 ): Junction {
   const junc: Junction = {
@@ -50,8 +52,10 @@ export function addJunction(
     stemNodeId: params.stemNodeId,
     straightNodeId: params.straightNodeId,
     divergingNodeId: params.divergingNodeId,
+    divergingRightNodeId: params.divergingRightNodeId,
     straightSegmentId: params.straightSegmentId,
     divergingSegmentId: params.divergingSegmentId,
+    divergingRightSegmentId: params.divergingRightSegmentId,
     hand: params.hand,
     frogNumber: params.frogNumber,
     activeBranch: params.activeBranch ?? 'straight',
@@ -66,13 +70,23 @@ export function removeJunction(net: Network, id: JunctionId): void {
 }
 
 /** Toggle active branch of a junction. */
-export function toggleJunction(junction: Junction): 'straight' | 'diverging' {
-  junction.activeBranch = junction.activeBranch === 'straight' ? 'diverging' : 'straight'
+export function toggleJunction(junction: Junction): 'straight' | 'diverging' | 'left' | 'right' {
+  if (junction.hand === 'three_way') {
+    if (junction.activeBranch === 'straight') {
+      junction.activeBranch = 'left'
+    } else if (junction.activeBranch === 'left' || junction.activeBranch === 'diverging') {
+      junction.activeBranch = 'right'
+    } else {
+      junction.activeBranch = 'straight'
+    }
+  } else {
+    junction.activeBranch = junction.activeBranch === 'straight' ? 'diverging' : 'straight'
+  }
   return junction.activeBranch
 }
 
 /** Set active branch of a junction. */
-export function setJunctionBranch(junction: Junction, branch: 'straight' | 'diverging'): void {
+export function setJunctionBranch(junction: Junction, branch: 'straight' | 'diverging' | 'left' | 'right'): void {
   junction.activeBranch = branch
 }
 
@@ -87,7 +101,11 @@ export function findJunctionAtNode(net: Network, nodeId: NodeId): Junction | und
 /** Find if a segment belongs to any junction. */
 export function findJunctionBySegment(net: Network, segId: SegmentId): Junction | undefined {
   for (const junc of net.junctions.values()) {
-    if (junc.straightSegmentId === segId || junc.divergingSegmentId === segId) {
+    if (
+      junc.straightSegmentId === segId ||
+      junc.divergingSegmentId === segId ||
+      (junc.hand === 'three_way' && junc.divergingRightSegmentId === segId)
+    ) {
       return junc
     }
   }
@@ -151,6 +169,66 @@ export function autoDetectJunctions(net: Network): Junction[] {
         throughA = 1
         throughB = 2
         divIdx = 0
+      }
+
+      // Check if this is an incomplete 3-way turnout (all 3 branches depart on the same side)
+      if (dot01 > 0.5 && dot02 > 0.5 && dot12 > 0.5) {
+        const avgDir = {
+          x: (u[0].x + u[1].x + u[2].x) / 3,
+          y: (u[0].y + u[1].y + u[2].y) / 3,
+        }
+        const len = Math.hypot(avgDir.x, avgDir.y)
+        if (len > 0) {
+          avgDir.x /= len
+          avgDir.y /= len
+        }
+        const branchCrosses = [0, 1, 2]
+          .map((idx) => ({
+            idx,
+            cross: avgDir.x * u[idx].y - avgDir.y * u[idx].x,
+          }))
+          .sort((a, b) => b.cross - a.cross)
+
+        const leftIdx = branchCrosses[0].idx
+        const straightIdx = branchCrosses[1].idx
+        const rightIdx = branchCrosses[2].idx
+
+        const straightSeg = segs[straightIdx]
+        const leftSeg = segs[leftIdx]
+        const rightSeg = segs[rightIdx]
+
+        const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
+        const leftNodeId = leftSeg.from === node.id ? leftSeg.to : leftSeg.from
+        const rightNodeId = rightSeg.from === node.id ? rightSeg.to : rightSeg.from
+
+        let junc = findJunctionAtNode(net, node.id)
+        if (junc) {
+          junc.stemNodeId = undefined
+          junc.straightNodeId = straightNodeId
+          junc.divergingNodeId = leftNodeId
+          junc.divergingRightNodeId = rightNodeId
+          junc.straightSegmentId = straightSeg.id
+          junc.divergingSegmentId = leftSeg.id
+          junc.divergingRightSegmentId = rightSeg.id
+          junc.hand = 'three_way'
+          junc.frogNumber = 6
+        } else {
+          junc = addJunction(net, {
+            nodeId: node.id,
+            stemNodeId: undefined,
+            straightNodeId,
+            divergingNodeId: leftNodeId,
+            divergingRightNodeId: rightNodeId,
+            straightSegmentId: straightSeg.id,
+            divergingSegmentId: leftSeg.id,
+            divergingRightSegmentId: rightSeg.id,
+            hand: 'three_way',
+            frogNumber: 6,
+            activeBranch: 'straight',
+          })
+        }
+        detected.push(junc)
+        continue
       }
 
       // In a real turnout, the through route has minDot close to -1 (at least < -0.8, i.e. deflection <= 36°)
@@ -273,8 +351,107 @@ export function autoDetectJunctions(net: Network): Junction[] {
           removeJunction(net, junc.id)
         }
       }
+    } else if (adj.length === 4) {
+      const s0 = net.segments.get(adj[0])
+      const s1 = net.segments.get(adj[1])
+      const s2 = net.segments.get(adj[2])
+      const s3 = net.segments.get(adj[3])
+      if (!s0 || !s1 || !s2 || !s3) continue
+
+      const segs = [s0, s1, s2, s3]
+      const u = [getDir(node, s0), getDir(node, s1), getDir(node, s2), getDir(node, s3)]
+
+      // Check for 3-way turnout (aiguillage triple) : 1 stem opposing 3 co-directional branches
+      let stemIdx = -1
+      for (let i = 0; i < 4; i++) {
+        const otherIndices = [0, 1, 2, 3].filter((k) => k !== i)
+        const allOpposite = otherIndices.every((k) => {
+          const dot = u[i].x * u[k].x + u[i].y * u[k].y
+          return dot < -0.65
+        })
+        if (allOpposite) {
+          const [b0, b1, b2] = otherIndices
+          const d01 = u[b0].x * u[b1].x + u[b0].y * u[b1].y
+          const d02 = u[b0].x * u[b2].x + u[b0].y * u[b2].y
+          const d12 = u[b1].x * u[b2].x + u[b1].y * u[b2].y
+          if (d01 > 0.5 && d02 > 0.5 && d12 > 0.5) {
+            stemIdx = i
+            break
+          }
+        }
+      }
+
+      if (stemIdx !== -1) {
+        const branchIndices = [0, 1, 2, 3].filter((k) => k !== stemIdx)
+        const approachX = -u[stemIdx].x
+        const approachY = -u[stemIdx].y
+
+        const branchCrosses = branchIndices
+          .map((idx) => ({
+            idx,
+            cross: approachX * u[idx].y - approachY * u[idx].x,
+          }))
+          .sort((a, b) => b.cross - a.cross)
+
+        const leftIdx = branchCrosses[0].idx
+        const straightIdx = branchCrosses[1].idx
+        const rightIdx = branchCrosses[2].idx
+
+        const stemSeg = segs[stemIdx]
+        const straightSeg = segs[straightIdx]
+        const leftSeg = segs[leftIdx]
+        const rightSeg = segs[rightIdx]
+
+        const stemNodeId = stemSeg.from === node.id ? stemSeg.to : stemSeg.from
+        const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
+        const leftNodeId = leftSeg.from === node.id ? leftSeg.to : leftSeg.from
+        const rightNodeId = rightSeg.from === node.id ? rightSeg.to : rightSeg.from
+
+        const angleLeft =
+          (Math.acos(Math.max(-1, Math.min(1, approachX * u[leftIdx].x + approachY * u[leftIdx].y))) * 180) / Math.PI
+        const angleRight =
+          (Math.acos(Math.max(-1, Math.min(1, approachX * u[rightIdx].x + approachY * u[rightIdx].y))) * 180) / Math.PI
+        const maxAngle = Math.max(angleLeft, angleRight)
+        const frogNumber: 4 | 6 = maxAngle <= 12.5 ? 6 : 4
+
+        let junc = findJunctionAtNode(net, node.id)
+        if (junc) {
+          junc.stemNodeId = stemNodeId
+          junc.straightNodeId = straightNodeId
+          junc.divergingNodeId = leftNodeId
+          junc.divergingRightNodeId = rightNodeId
+          junc.straightSegmentId = straightSeg.id
+          junc.divergingSegmentId = leftSeg.id
+          junc.divergingRightSegmentId = rightSeg.id
+          junc.hand = 'three_way'
+          junc.frogNumber = frogNumber
+          if (junc.activeBranch !== 'straight' && junc.activeBranch !== 'left' && junc.activeBranch !== 'right') {
+            junc.activeBranch = 'straight'
+          }
+        } else {
+          junc = addJunction(net, {
+            nodeId: node.id,
+            stemNodeId,
+            straightNodeId,
+            divergingNodeId: leftNodeId,
+            divergingRightNodeId: rightNodeId,
+            straightSegmentId: straightSeg.id,
+            divergingSegmentId: leftSeg.id,
+            divergingRightSegmentId: rightSeg.id,
+            hand: 'three_way',
+            frogNumber,
+            activeBranch: 'straight',
+          })
+        }
+        detected.push(junc)
+      } else {
+        const junc = findJunctionAtNode(net, node.id)
+        if (junc) {
+          removeJunction(net, junc.id)
+        }
+      }
     } else {
-      // If node is not degree 2 or 3, remove any registered junction
+      // If node is not degree 2, 3 or 4-way turnout, remove any registered junction
       const junc = findJunctionAtNode(net, node.id)
       if (junc) {
         removeJunction(net, junc.id)
@@ -482,7 +659,7 @@ export function toggleTurnoutHand(net: Network, junctionId: JunctionId): boolean
   const divNode = net.nodes.get(junc.divergingNodeId)
   const divSeg = net.segments.get(junc.divergingSegmentId)
 
-  if (!apex || !straightNode || !divNode) return false
+  if (!apex || !straightNode || !divNode || junc.hand === 'three_way') return false
 
   // Straight axis vector A -> B
   const ax = straightNode.pos.x - apex.pos.x

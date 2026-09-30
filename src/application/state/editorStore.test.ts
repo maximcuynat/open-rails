@@ -74,4 +74,32 @@ describe('EditorStore persistence', () => {
     expect(store2.camera.y).toBe(-80)
     expect(store2.camera.scale).toBe(5)
   })
+
+  it('cancelInteraction removes degree 0 placement nodes created on first click', () => {
+    const store = new EditorStore()
+    // Simulate user clicking once in empty space with place tool
+    const n1 = addNode(store.network, { x: 50, y: 50 })
+    store.lastNodeId = n1.id
+    expect(store.network.nodes.size).toBe(1)
+
+    // User presses Escape or right-clicks
+    store.cancelInteraction()
+
+    expect(store.network.nodes.size).toBe(0)
+    expect(store.lastNodeId).toBeNull()
+  })
+
+  it('setTool cleans up degree 0 node if previous tool was abandoned mid-placement', () => {
+    const store = new EditorStore()
+    store.setTool('curve')
+    const n1 = addNode(store.network, { x: 100, y: 100 })
+    store.curveState = { phase: 1, startId: n1.id }
+    expect(store.network.nodes.size).toBe(1)
+
+    // User switches to select tool without finishing curve
+    store.setTool('select')
+
+    expect(store.network.nodes.size).toBe(0)
+    expect(store.curveState.startId).toBeNull()
+  })
 })

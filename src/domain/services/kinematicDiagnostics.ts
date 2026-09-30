@@ -143,6 +143,23 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
       const d1 = dirs[1]!
       const d2 = dirs[2]!
 
+      // Check if all 3 rails depart on the same side (fan with no stem or continuous route)
+      const dot01 = d0.x * d1.x + d0.y * d1.y
+      const dot02 = d0.x * d2.x + d0.y * d2.y
+      const dot12 = d1.x * d2.x + d1.y * d2.y
+      if (dot01 > 0.5 && dot02 > 0.5 && dot12 > 0.5) {
+        issues.push({
+          id: `turnout-inval-${node.id}`,
+          nodeId: node.id,
+          kind: 'invalid_turnout',
+          severity: 'error',
+          angleDeg: 0,
+          message: `Jonction à 3 voies incohérente : aucune voie continue ou tronc commun traversant`,
+          involvedSegmentIds: segIds,
+        })
+        continue
+      }
+
       const def01 = computeTransitionAngleDeg(d0, d1)
       const def02 = computeTransitionAngleDeg(d0, d2)
       const def12 = computeTransitionAngleDeg(d1, d2)
@@ -185,12 +202,13 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
       }
     }
 
-    // Case 3: 4-rail intersection (croisement / traversée à niveau en X ou convergence)
+    // Case 3: 4-rail intersection (croisement / traversée à niveau en X ou aiguillage triple)
     else if (segIds.length === 4) {
       const segs = segIds.map(id => net.segments.get(id)).filter((s): s is Segment => !!s)
       if (segs.length === 4) {
         const dirs = segs.map(s => getOutgoingTangent(net, s, node.id))
         if (!dirs.some(d => !d)) {
+          // 1. Check for Diamond Crossing (traversée en X : 2 paires opposées)
           let pairA2 = -1, minDotA = 1
           for (let j = 1; j < 4; j++) {
             const dj = dirs[j]!
@@ -209,6 +227,60 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
               // chaque ligne continue tout droit sans changer de voie. C'est parfaitement franchissable !
               continue
             }
+          }
+
+          // 2. Check for 3-way turnout (aiguillage triple : 1 tronc commun face à 3 branches déviées)
+          let stemIdx = -1
+          for (let i = 0; i < 4; i++) {
+            const otherIndices = [0, 1, 2, 3].filter(k => k !== i)
+            const allOpposite = otherIndices.every(k => {
+              const dot = dirs[i]!.x * dirs[k]!.x + dirs[i]!.y * dirs[k]!.y
+              return dot < -0.65
+            })
+            if (allOpposite) {
+              const [b0, b1, b2] = otherIndices
+              const d01 = dirs[b0]!.x * dirs[b1]!.x + dirs[b0]!.y * dirs[b1]!.y
+              const d02 = dirs[b0]!.x * dirs[b2]!.x + dirs[b0]!.y * dirs[b2]!.y
+              const d12 = dirs[b1]!.x * dirs[b2]!.x + dirs[b1]!.y * dirs[b2]!.y
+              if (d01 > 0.5 && d02 > 0.5 && d12 > 0.5) {
+                stemIdx = i
+                break
+              }
+            }
+          }
+
+          if (stemIdx !== -1) {
+            const otherIndices = [0, 1, 2, 3].filter(k => k !== stemIdx)
+            const defs = otherIndices
+              .map(k => computeTransitionAngleDeg(dirs[stemIdx]!, dirs[k]!))
+              .sort((a, b) => a - b)
+
+            const bestThrough = defs[0]
+            const maxDeviation = defs[defs.length - 1]
+
+            if (bestThrough > 25) {
+              issues.push({
+                id: `turnout-inval-${node.id}`,
+                nodeId: node.id,
+                kind: 'invalid_turnout',
+                severity: 'error',
+                angleDeg: Math.round(bestThrough),
+                message: `Aiguillage triple incohérent : aucun axe traversant naturel (déviation minimale ${Math.round(bestThrough)}°)`,
+                involvedSegmentIds: segIds,
+              })
+            } else if (maxDeviation > 35) {
+              issues.push({
+                id: `turnout-sharp-${node.id}`,
+                nodeId: node.id,
+                kind: 'sharp_turn',
+                severity: 'warning',
+                angleDeg: Math.round(maxDeviation),
+                message: `Aiguillage triple avec déviation excessive (${Math.round(maxDeviation)}°)`,
+                involvedSegmentIds: segIds,
+              })
+            }
+            // Valid 3-way turnout!
+            continue
           }
         }
       }

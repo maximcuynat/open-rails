@@ -32,16 +32,20 @@ export interface Junction {
   stemNodeId?: NodeId
   /** The straight route branch endpoint node */
   straightNodeId: NodeId
-  /** The diverging route branch endpoint node */
+  /** The diverging route branch endpoint node (left branch for 3-way turnouts) */
   divergingNodeId: NodeId
   /** Segment for the straight branch */
   straightSegmentId: SegmentId
-  /** Segment for the diverging branch */
+  /** Segment for the diverging branch (left branch for 3-way turnouts) */
   divergingSegmentId: SegmentId
+  /** For 3-way turnouts: the right diverging route branch endpoint node */
+  divergingRightNodeId?: NodeId
+  /** For 3-way turnouts: segment for the right diverging branch */
+  divergingRightSegmentId?: SegmentId
   /** Which branch is currently set */
-  activeBranch: 'straight' | 'diverging'
-  /** Divergence direction: left or right */
-  hand: 'left' | 'right'
+  activeBranch: 'straight' | 'diverging' | 'left' | 'right'
+  /** Divergence direction: left or right, or three_way */
+  hand: 'left' | 'right' | 'three_way'
   /** Frog number: e.g. 4 or 6 */
   frogNumber?: number
 }

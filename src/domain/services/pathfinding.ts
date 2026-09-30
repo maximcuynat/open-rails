@@ -93,14 +93,34 @@ export function isTransitionAllowed(
   if (respectSwitches) {
     for (const junc of net.junctions.values()) {
       if (junc.nodeId === currNodeId) {
-        const activeBranchNode = junc.activeBranch === 'straight' ? junc.straightNodeId : junc.divergingNodeId
-        const inactiveBranchNode = junc.activeBranch === 'straight' ? junc.divergingNodeId : junc.straightNodeId
+        let activeBranchNode: NodeId | undefined
+        const inactiveBranchNodes: NodeId[] = []
+
+        if (junc.hand === 'three_way') {
+          if (junc.activeBranch === 'straight') {
+            activeBranchNode = junc.straightNodeId
+            inactiveBranchNodes.push(junc.divergingNodeId)
+            if (junc.divergingRightNodeId) inactiveBranchNodes.push(junc.divergingRightNodeId)
+          } else if (junc.activeBranch === 'right') {
+            activeBranchNode = junc.divergingRightNodeId ?? junc.divergingNodeId
+            inactiveBranchNodes.push(junc.straightNodeId)
+            inactiveBranchNodes.push(junc.divergingNodeId)
+          } else {
+            // 'left' or 'diverging'
+            activeBranchNode = junc.divergingNodeId
+            inactiveBranchNodes.push(junc.straightNodeId)
+            if (junc.divergingRightNodeId) inactiveBranchNodes.push(junc.divergingRightNodeId)
+          }
+        } else {
+          activeBranchNode = junc.activeBranch === 'straight' ? junc.straightNodeId : junc.divergingNodeId
+          inactiveBranchNodes.push(junc.activeBranch === 'straight' ? junc.divergingNodeId : junc.straightNodeId)
+        }
 
         // Cannot exit toward inactive branch
-        if (nextNodeId === inactiveBranchNode) return false
+        if (inactiveBranchNodes.includes(nextNodeId)) return false
 
         // Cannot enter from inactive branch into apex
-        if (prevNodeId === inactiveBranchNode) return false
+        if (prevNodeId && inactiveBranchNodes.includes(prevNodeId)) return false
 
         // If entering from stem, must exit via active branch
         if (junc.stemNodeId && prevNodeId === junc.stemNodeId) {

@@ -317,12 +317,25 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
       {junction && (
         <>
-          <div className="sp-subheader">Aiguillage #{junction.frogNumber ?? 6}</div>
+          <div className="sp-subheader">
+            {junction.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${junction.frogNumber ?? 6}`}
+          </div>
           <div className="sp-section">
-            <Field label="Déviation" value={junction.hand === 'left' ? 'Gauche' : 'Droite'} />
+            <Field
+              label="Déviation"
+              value={junction.hand === 'three_way' ? 'Triple (G / Directe / D)' : junction.hand === 'left' ? 'Gauche' : 'Droite'}
+            />
             <Field
               label="Voie active"
-              value={junction.activeBranch === 'straight' ? 'Directe' : 'Déviée'}
+              value={
+                junction.activeBranch === 'straight'
+                  ? 'Directe (centre)'
+                  : junction.activeBranch === 'left'
+                    ? 'Gauche'
+                    : junction.activeBranch === 'right'
+                      ? 'Droite'
+                      : 'Déviée'
+              }
             />
           </div>
           <div style={{ display: 'flex', gap: '6px', padding: '0 14px 10px' }}>
@@ -344,28 +357,30 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             >
               Aiguiller (T)
             </button>
-            <button
-              className="sp-btn-compact"
-              style={{
-                flex: 1,
-                padding: '4px 8px',
-                fontSize: '11px',
-                fontWeight: 500,
-                borderRadius: '4px',
-                border: '1px solid var(--border)',
-                background: 'transparent',
-                color: 'var(--ink)',
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                toggleTurnoutHand(store.network, junction.id)
-                store.markDirty()
-                store.notify()
-              }}
-              title="Inverser le côté de déviation"
-            >
-              Inverser {junction.hand === 'left' ? 'D' : 'G'}
-            </button>
+            {junction.hand !== 'three_way' && (
+              <button
+                className="sp-btn-compact"
+                style={{
+                  flex: 1,
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  background: 'transparent',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  toggleTurnoutHand(store.network, junction.id)
+                  store.markDirty()
+                  store.notify()
+                }}
+                title="Inverser le côté de déviation"
+              >
+                Inverser {junction.hand === 'left' ? 'D' : 'G'}
+              </button>
+            )}
           </div>
         </>
       )}
@@ -441,9 +456,15 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
 
   const junction = findJunctionBySegment(store.network, segId)
   const isStraightBranch = junction?.straightSegmentId === segId
+  const isLeftBranch = junction?.divergingSegmentId === segId
+  const isRightBranch = junction?.divergingRightSegmentId === segId
   const isBranchActive = junction
-    ? (isStraightBranch && junction.activeBranch === 'straight') ||
-      (!isStraightBranch && junction.activeBranch === 'diverging')
+    ? junction.hand === 'three_way'
+      ? (isStraightBranch && junction.activeBranch === 'straight') ||
+        (isLeftBranch && (junction.activeBranch === 'left' || junction.activeBranch === 'diverging')) ||
+        (isRightBranch && junction.activeBranch === 'right')
+      : (isStraightBranch && junction.activeBranch === 'straight') ||
+        (!isStraightBranch && junction.activeBranch === 'diverging')
     : true
 
   let len = 0
@@ -551,7 +572,17 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
           <>
             <Field
               label="Aiguillage"
-              value={isStraightBranch ? 'Branche directe' : 'Branche déviée'}
+              value={
+                junction.hand === 'three_way'
+                  ? isStraightBranch
+                    ? 'Branche directe (centre)'
+                    : isLeftBranch
+                      ? 'Branche déviée gauche'
+                      : 'Branche déviée droite'
+                  : isStraightBranch
+                    ? 'Branche directe'
+                    : 'Branche déviée'
+              }
             />
             <Field
               label="Position de voie"

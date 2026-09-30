@@ -29,8 +29,10 @@ export interface SerializedJunction {
   divergingNodeId: string
   straightSegmentId: string
   divergingSegmentId: string
-  activeBranch: 'straight' | 'diverging'
-  hand: 'left' | 'right'
+  divergingRightNodeId?: string
+  divergingRightSegmentId?: string
+  activeBranch: 'straight' | 'diverging' | 'left' | 'right'
+  hand: 'left' | 'right' | 'three_way'
   frogNumber?: number
 }
 
@@ -115,8 +117,10 @@ export function serializeNetwork(
       stemNodeId: j.stemNodeId,
       straightNodeId: j.straightNodeId,
       divergingNodeId: j.divergingNodeId,
+      divergingRightNodeId: j.divergingRightNodeId,
       straightSegmentId: j.straightSegmentId,
       divergingSegmentId: j.divergingSegmentId,
+      divergingRightSegmentId: j.divergingRightSegmentId,
       activeBranch: j.activeBranch,
       hand: j.hand,
       frogNumber: j.frogNumber,
@@ -254,10 +258,12 @@ export function deserializeNetwork(data: SerializedProject): {
         stemNodeId: j.stemNodeId,
         straightNodeId: j.straightNodeId,
         divergingNodeId: j.divergingNodeId,
+        divergingRightNodeId: j.divergingRightNodeId,
         straightSegmentId: j.straightSegmentId,
         divergingSegmentId: j.divergingSegmentId,
-        activeBranch: j.activeBranch === 'diverging' ? 'diverging' : 'straight',
-        hand: j.hand === 'right' ? 'right' : 'left',
+        divergingRightSegmentId: j.divergingRightSegmentId,
+        activeBranch: j.activeBranch ?? 'straight',
+        hand: j.hand ?? 'left',
         frogNumber: j.frogNumber,
       }
       net.junctions.set(junction.id, junction)

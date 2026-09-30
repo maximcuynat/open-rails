@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addCurveSegment,
   addNode,
   addSegment,
   createNetwork,
   dist,
   distToSegment,
   generateId,
+  getStepPointsAlongSegment,
   hitNode,
   hitSegment,
+  pruneOrphanNodes,
   removeNode,
   removeSegment,
   resetIdCounter,
@@ -141,6 +144,29 @@ describe('removeSegment', () => {
     expect(net.nodes.has(a.id)).toBe(true)
     expect(net.nodes.has(b.id)).toBe(true)
   })
+
+  it('pruneOrphanNodes cleans up nodes with degree 0 while preserving whitelisted and connected nodes', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 100, y: 0 })
+    addSegment(net, n1.id, n2.id)
+
+    const orphan1 = addNode(net, { x: 200, y: 200 })
+    const orphan2 = addNode(net, { x: 300, y: 300 })
+
+    // Whitelist orphan2 (active placement node)
+    const count = pruneOrphanNodes(net, [orphan2.id])
+    expect(count).toBe(1)
+    expect(net.nodes.has(orphan1.id)).toBe(false)
+    expect(net.nodes.has(orphan2.id)).toBe(true)
+    expect(net.nodes.has(n1.id)).toBe(true)
+    expect(net.nodes.has(n2.id)).toBe(true)
+
+    // Full prune without whitelist
+    const count2 = pruneOrphanNodes(net)
+    expect(count2).toBe(1)
+    expect(net.nodes.has(orphan2.id)).toBe(false)
+  })
 })
 
 describe('snapToGrid', () => {
@@ -212,3 +238,66 @@ describe('hitSegment', () => {
     expect(hitSegment(net, { x: 5, y: 20 }, 2)).toBeNull()
   })
 })
+
+describe('getStepPointsAlongSegment', () => {
+  it('calculates regular grid and integer snap points along a straight segment', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 0 })
+    const seg = addSegment(net, a.id, b.id)!
+
+    const res = getStepPointsAlongSegment(seg.id, net, 10, { x: 21.2, y: 1.5 })
+    expect(res.points.length).toBeGreaterThan(0)
+    // Points should contain x = 10, 20, 30, 40 at y = 0
+    expect(res.points.some((p) => Math.abs(p.x - 10) < 1e-3 && Math.abs(p.y) < 1e-3)).toBe(true)
+    expect(res.points.some((p) => Math.abs(p.x - 20) < 1e-3 && Math.abs(p.y) < 1e-3)).toBe(true)
+    expect(res.points.some((p) => Math.abs(p.x - 30) < 1e-3 && Math.abs(p.y) < 1e-3)).toBe(true)
+    expect(res.points.some((p) => Math.abs(p.x - 40) < 1e-3 && Math.abs(p.y) < 1e-3)).toBe(true)
+
+    // Nearest point to (21.2, 1.5) should be (20, 0)
+    expect(res.nearest).toBeDefined()
+    expect(res.nearest?.x).toBe(20)
+    expect(res.nearest?.y).toBe(0)
+    expect(Math.abs(res.nearestT - 0.4)).toBeLessThan(0.01)
+  })
+
+  it('calculates snap points along a diagonal segment intersecting grid lines', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 40, y: 40 })
+    const seg = addSegment(net, a.id, b.id)!
+
+    const res = getStepPointsAlongSegment(seg.id, net, 10, { x: 9.8, y: 10.2 })
+    expect(res.points.length).toBeGreaterThan(0)
+    // Nearest to (9.8, 10.2) should snap to (10, 10)
+    expect(res.nearest).toBeDefined()
+    expect(res.nearest?.x).toBe(10)
+    expect(res.nearest?.y).toBe(10)
+  })
+
+  it('calculates step points along a curved segment', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 50 })
+    const seg = addCurveSegment(net, a.id, b.id, { x: 50, y: 0 })!
+
+    const res = getStepPointsAlongSegment(seg.id, net, 10, { x: 25, y: 5 })
+    expect(res.points.length).toBeGreaterThan(0)
+    expect(res.nearest).not.toBeNull()
+  })
+
+  it('handles invalid segment or zero spacing safely', () => {
+    const net = createNetwork()
+    const res1 = getStepPointsAlongSegment('invalid_id', net, 10, { x: 0, y: 0 })
+    expect(res1.points).toEqual([])
+    expect(res1.nearest).toBeNull()
+
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 })
+    const seg = addSegment(net, a.id, b.id)!
+    const res2 = getStepPointsAlongSegment(seg.id, net, 0, { x: 0, y: 0 })
+    expect(res2.points).toEqual([])
+    expect(res2.nearest).toBeNull()
+  })
+})
+

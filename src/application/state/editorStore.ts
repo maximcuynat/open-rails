@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, type Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment } from '@domain/models/network'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, pruneOrphanNodes } from '@domain/models/network'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
@@ -311,6 +311,21 @@ export class EditorStore {
   }
 
   setTool = (t: Tool): void => {
+    // If transitioning away from an active creation without finishing, clean up abandoned degree 0 nodes
+    const activeCandidates = [
+      this.lastNodeId,
+      this.curveState.startId,
+      this.turnoutStartId,
+      this.parallelLastNodeId,
+    ].filter(Boolean) as string[]
+    for (const nid of activeCandidates) {
+      const adj = this.network.adjacency.get(nid) ?? []
+      if (adj.length === 0) {
+        this.network.nodes.delete(nid)
+        this.network.adjacency.delete(nid)
+      }
+    }
+
     this.tool = t
     // Reset intermediate tool states
     this.autoConnectStartId = null
@@ -319,43 +334,11 @@ export class EditorStore {
     this.measureEnd = null
     this.isMeasuring = false
 
-    if (t === 'select') {
-      this.lastNodeId = null
-      this.curveState = { phase: 0, startId: null }
-      this.parallelMode = false
-      this.parallelLastNodeId = null
-    } else if (t === 'place') {
-      this.curveState = { phase: 0, startId: null }
-      // Auto-arm from selected node if exactly 1 node selected
-      if (!this.lastNodeId && this.selection.nodes.size === 1) {
-        const [singleId] = this.selection.nodes
-        this.lastNodeId = singleId
-      }
-    } else if (t === 'curve') {
-      this.parallelMode = false
-      this.parallelLastNodeId = null
-      if (this.selection.nodes.size === 1) {
-        const [singleId] = this.selection.nodes
-        this.curveState = { phase: 1, startId: singleId }
-      } else if (this.lastNodeId) {
-        this.curveState = { phase: 1, startId: this.lastNodeId }
-      }
-    } else if (t === 'turnout') {
-      this.parallelMode = false
-      this.parallelLastNodeId = null
-      if (this.selection.nodes.size === 1) {
-        const [singleId] = this.selection.nodes
-        this.turnoutStartId = singleId
-      } else if (this.lastNodeId) {
-        this.turnoutStartId = this.lastNodeId
-      } else {
-        this.turnoutStartId = null
-      }
-    } else {
-      this.parallelMode = false
-      this.parallelLastNodeId = null
-      this.turnoutStartId = null
-    }
+    this.lastNodeId = null
+    this.curveState = { phase: 0, startId: null }
+    this.parallelMode = false
+    this.parallelLastNodeId = null
+    this.turnoutStartId = null
     this.notify()
   }
 
@@ -561,6 +544,63 @@ export class EditorStore {
     this.notify()
   }
 
+  /**
+   * Prune all disconnected/orphan nodes (degree 0) from the network,
+   * optionally preserving active nodes currently involved in a tool interaction.
+   */
+  pruneOrphans = (preserveActive = false): number => {
+    const keep = new Set<string>()
+    if (preserveActive) {
+      if (this.lastNodeId) keep.add(this.lastNodeId)
+      if (this.curveState.startId) keep.add(this.curveState.startId)
+      if (this.turnoutStartId) keep.add(this.turnoutStartId)
+      if (this.autoConnectStartId) keep.add(this.autoConnectStartId)
+      if (this.parallelLastNodeId) keep.add(this.parallelLastNodeId)
+    }
+    const pruned = pruneOrphanNodes(this.network, keep)
+    if (pruned > 0) {
+      this.markDirty()
+      this.notify()
+    }
+    return pruned
+  }
+
+  /**
+   * Cancel active tool interaction (Escape / Right click),
+   * pruning any abandoned placement node that was created on click 1 with 0 connections.
+   */
+  cancelInteraction = (): void => {
+    const activeCandidates = [
+      this.lastNodeId,
+      this.curveState.startId,
+      this.turnoutStartId,
+      this.autoConnectStartId,
+      this.parallelLastNodeId,
+    ].filter(Boolean) as string[]
+
+    this.lastNodeId = null
+    this.curveState = { phase: 0, startId: null }
+    this.parallelMode = false
+    this.parallelLastNodeId = null
+    this.autoConnectStartId = null
+    this.crossoverFirstSegId = null
+    this.turnoutStartId = null
+    this.measureStart = null
+    this.measureEnd = null
+    this.isMeasuring = false
+
+    // Clean up any candidate nodes that have 0 connections
+    for (const nid of activeCandidates) {
+      const adj = this.network.adjacency.get(nid) ?? []
+      if (adj.length === 0) {
+        this.network.nodes.delete(nid)
+        this.network.adjacency.delete(nid)
+      }
+    }
+    this.pruneOrphans(false)
+    this.clearSelection()
+  }
+
   selectAll = (): void => {
     const nodes = new Set<string>()
     const segments = new Set<string>()
@@ -689,7 +729,8 @@ export class EditorStore {
    */
   reconcileTopology = (tolerance = 3.5): { splitCount: number; weldedCount: number } => {
     const res = reconcileNetworkIntersections(this.network, tolerance)
-    if (res.splitCount > 0 || res.weldedCount > 0) {
+    const pruned = this.pruneOrphans(false)
+    if (res.splitCount > 0 || res.weldedCount > 0 || pruned > 0) {
       this.markDirty()
       this.notify()
     }

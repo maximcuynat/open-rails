@@ -386,17 +386,40 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    // Shift+Survol : affichage des pas de grille sur la voie survole
+    // Affichage des pas de grille sur la voie survolée (fenêtre de 5 avant et 5 après le point visé)
     if (store.hoverSegSteps) {
       const { points, nearest } = store.hoverSegSteps
       const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
       const w2sX = (wx: number) => (wx - cam.x) * cam.scale + rect.width / 2
       const w2sY = (wy: number) => (wy - cam.y) * cam.scale + rect.height / 2
       ctx.save()
-      // Tous les pas : petits cercles bleus semi-transparents
+
+      let visiblePoints = points
+      if (nearest && points.length > 0) {
+        let nearestIdx = points.findIndex(
+          (p) => Math.hypot(p.x - nearest.x, p.y - nearest.y) < 1e-3
+        )
+        if (nearestIdx === -1) {
+          let minD = Infinity
+          for (let i = 0; i < points.length; i++) {
+            const d = Math.hypot(points[i].x - nearest.x, points[i].y - nearest.y)
+            if (d < minD) {
+              minD = d
+              nearestIdx = i
+            }
+          }
+        }
+        if (nearestIdx !== -1) {
+          const start = Math.max(0, nearestIdx - 5)
+          const end = Math.min(points.length, nearestIdx + 6)
+          visiblePoints = points.slice(start, end)
+        }
+      }
+
+      // Pas visibles (5 avant, 5 après) : petits cercles bleus semi-transparents
       ctx.fillStyle = accent
       ctx.globalAlpha = 0.35
-      for (const p of points) {
+      for (const p of visiblePoints) {
         const r = Math.max(3, Math.min(7, cam.scale * 0.8))
         ctx.beginPath()
         ctx.arc(w2sX(p.x), w2sY(p.y), r, 0, Math.PI * 2)
@@ -414,16 +437,23 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         ctx.beginPath()
         ctx.arc(w2sX(nearest.x), w2sY(nearest.y), 9, 0, Math.PI * 2)
         ctx.stroke()
-        // Label distance
-        const dx = nearest.x - (store.network.nodes.get(store.network.segments.get(store.hoverSegSteps.segId)?.from ?? '')?.pos.x ?? 0)
-        const dy = nearest.y - (store.network.nodes.get(store.network.segments.get(store.hoverSegSteps.segId)?.from ?? '')?.pos.y ?? 0)
-        const distFromStart = Math.hypot(dx, dy).toFixed(1)
+        // Label distance and coordinates
+        const seg = store.network.segments.get(store.hoverSegSteps.segId)
+        const nodeA = seg ? store.network.nodes.get(seg.from) : null
+        let distFromStart = '0.0'
+        if (nodeA) {
+          const dx = nearest.x - nodeA.pos.x
+          const dy = nearest.y - nodeA.pos.y
+          distFromStart = Math.hypot(dx, dy).toFixed(1)
+        }
+        const isIntCoord = Math.abs(Math.round(nearest.x) - nearest.x) < 1e-3 && Math.abs(Math.round(nearest.y) - nearest.y) < 1e-3
+        const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
         ctx.fillStyle = accent
-        ctx.globalAlpha = 0.9
+        ctx.globalAlpha = 0.95
         ctx.textBaseline = 'bottom'
         ctx.textAlign = 'center'
-        ctx.fillText(`+${distFromStart} m`, w2sX(nearest.x), w2sY(nearest.y) - 12)
+        ctx.fillText(`${coordLabel}+${distFromStart} m`, w2sX(nearest.x), w2sY(nearest.y) - 12)
       }
       ctx.restore()
     }
@@ -1021,6 +1051,73 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     let lastX = 0
     let lastY = 0
+    let isSpaceDown = false
+
+    let edgePanRafId: number | null = null
+    let lastEdgePanTime = 0
+    let edgePanVelocity = { x: 0, y: 0 }
+    const lastPointerClient = { x: 0, y: 0 }
+
+    const stopEdgePan = () => {
+      edgePanVelocity = { x: 0, y: 0 }
+      if (edgePanRafId !== null) {
+        cancelAnimationFrame(edgePanRafId)
+        edgePanRafId = null
+      }
+      lastEdgePanTime = 0
+    }
+
+    const stepEdgePan = (time: number) => {
+      if (lastEdgePanTime === 0) lastEdgePanTime = time
+      const dt = Math.min((time - lastEdgePanTime) / 1000, 0.1)
+      lastEdgePanTime = time
+
+      if (edgePanVelocity.x !== 0 || edgePanVelocity.y !== 0) {
+        const cam = store.camera
+        cam.x += (edgePanVelocity.x * dt) / cam.scale
+        cam.y += (edgePanVelocity.y * dt) / cam.scale
+
+        const rawWorld = getWorldPos(lastPointerClient.x, lastPointerClient.y)
+        store.cursorWorld = rawWorld
+
+        if (store.isDraggingNode && store.dragStartWorld) {
+          const dx = rawWorld.x - store.dragStartWorld.x
+          const dy = rawWorld.y - store.dragStartWorld.y
+          const spacing = getSnapSpacing()
+          for (const [nid, initPos] of store.draggedNodeInitialPositions) {
+            const node = store.network.nodes.get(nid)
+            if (node) {
+              let nx = initPos.x + dx
+              let ny = initPos.y + dy
+              if (store.snap) {
+                const snapped = snapToGrid({ x: nx, y: ny }, spacing)
+                nx = snapped.x
+                ny = snapped.y
+              }
+              node.pos.x = nx
+              node.pos.y = ny
+            }
+          }
+        } else if (store.snap) {
+          const spacing = getSnapSpacing()
+          store.snappedCursor = snapToGrid(rawWorld, spacing)
+        } else {
+          store.snappedCursor = rawWorld
+        }
+
+        if (store.isBoxSelecting) {
+          store.boxSelectEnd = rawWorld
+        }
+
+        draw()
+        store.notify()
+
+        edgePanRafId = requestAnimationFrame(stepEdgePan)
+      } else {
+        edgePanRafId = null
+        lastEdgePanTime = 0
+      }
+    }
 
     const handleKeyChange = (e: KeyboardEvent) => {
       const active = e.shiftKey || e.ctrlKey || e.metaKey
@@ -1028,34 +1125,47 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         isModifierDownRef.current = active
         draw()
       }
+
+      if (e.code === 'Space') {
+        const target = e.target as HTMLElement | null
+        if (!target || (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA' && !target.isContentEditable)) {
+          if (e.type === 'keydown') {
+            if (!isSpaceDown) {
+              isSpaceDown = true
+              if (!store.panning) {
+                canvas.style.cursor = 'grab'
+              }
+            }
+          } else if (e.type === 'keyup') {
+            isSpaceDown = false
+            if (!store.panning) {
+              canvas.style.cursor = ''
+            }
+          }
+        }
+      }
     }
     window.addEventListener('keydown', handleKeyChange)
     window.addEventListener('keyup', handleKeyChange)
 
     const onDown = (e: PointerEvent) => {
       if (e.button === 2) {
-        // Right click: cancel placement chain, curve, or any construction tool
-        store.lastNodeId = null
-        store.curveState = { phase: 0, startId: null }
-        store.parallelMode = false
-        store.parallelLastNodeId = null
-        store.autoConnectStartId = null
-        store.crossoverFirstSegId = null
-        store.turnoutStartId = null
-        store.measureStart = null
-        store.measureEnd = null
-        store.isMeasuring = false
+        // Right click: cancel placement chain, curve, or any construction tool and prune orphans
+        store.cancelInteraction()
+        stopEdgePan()
         redraw()
         return
       }
 
-      if (e.button === 1 || (e.button === 0 && store.tool === 'pan')) {
-        // Middle click or pan tool: pan
+      if (e.button === 1 || (e.button === 0 && (store.tool === 'pan' || isSpaceDown))) {
+        // Middle click, pan tool, or spacebar pan: pan
         store.panning = true
         lastX = e.clientX
         lastY = e.clientY
         store.moved = false
         canvas.setPointerCapture(e.pointerId)
+        canvas.style.cursor = 'grabbing'
+        stopEdgePan()
         return
       }
 
@@ -1071,10 +1181,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             startId = clickedNode.id
           } else {
             const hitTol = 16 / store.camera.scale
-            const hitSegId = hitSegment(store.network, world, hitTol)
+            const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, world, hitTol)
             if (hitSegId) {
-              const splitRes = splitSegment(store.network, hitSegId, world)
-              startId = splitRes ? splitRes.midNode.id : addNode(store.network, world).id
+              const targetPos = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
+                ? store.hoverSegSteps.nearest
+                : (store.snap ? store.snappedCursor : world)
+              const splitRes = splitSegment(store.network, hitSegId, targetPos)
+              startId = splitRes ? splitRes.midNode.id : addNode(store.network, targetPos).id
             } else {
               const spacing = getSnapSpacing()
               const pos = store.snap ? snapToGrid(world, spacing) : world
@@ -1125,10 +1238,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               endId = closeNode.id
             } else {
               const hitTol = 16 / store.camera.scale
-              const hitSegId = hitSegment(store.network, endPos, hitTol)
+              const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, endPos, hitTol)
               if (hitSegId) {
-                const splitRes = splitSegment(store.network, hitSegId, endPos)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+                const targetEnd = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
+                  ? store.hoverSegSteps.nearest
+                  : endPos
+                const splitRes = splitSegment(store.network, hitSegId, targetEnd)
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
               } else {
                 const endNode = addNode(store.network, endPos)
                 endId = endNode.id
@@ -1137,7 +1253,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             addCurveSegment(store.network, cs.startId, endId, viaPos)
 
             const isParallelKey = e.shiftKey || e.ctrlKey || store.parallelMode
-            let secEndId: string | null = null
 
             if (isParallelKey) {
               const par = computeParallelCurve(startNode.pos, viaPos, endPos, store.parallelOffset)
@@ -1147,7 +1262,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 secStartId = s2.id
               }
               const endNode2 = addNode(store.network, par.end)
-              secEndId = endNode2.id
 
               addCurveSegment(store.network, secStartId, endNode2.id, par.via)
 
@@ -1159,8 +1273,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             store.markDirty()
             // Finish curve: release cursor so it does not auto-continue
             store.curveState = { phase: 0, startId: null }
-            store.lastNodeId = endId
-            store.selection = { nodes: new Set(secEndId ? [endId, secEndId] : [endId]), segments: new Set() }
+            store.lastNodeId = null
+            store.selection = { nodes: new Set(), segments: new Set() }
           }
           redraw()
         }
@@ -1291,7 +1405,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             reconcileNetworkIntersections(store.network)
             store.markDirty()
             store.lastNodeId = null
-            store.selection = { nodes: new Set([clickedNode.id]), segments: new Set() }
+            store.selection = { nodes: new Set(), segments: new Set() }
           } else {
             // First click on an existing node: set as start node
             store.lastNodeId = clickedNode.id
@@ -1344,10 +1458,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               endId = closeNode.id
             } else {
               const hitTol = 16 / store.camera.scale
-              const hitSegId = hitSegment(store.network, endPos, hitTol)
+              const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, endPos, hitTol)
               if (hitSegId) {
-                const splitRes = splitSegment(store.network, hitSegId, endPos)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+                const targetEnd = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
+                  ? store.hoverSegSteps.nearest
+                  : endPos
+                const splitRes = splitSegment(store.network, hitSegId, targetEnd)
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
               } else {
                 const endNode = addNode(store.network, endPos)
                 endId = endNode.id
@@ -1358,16 +1475,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             store.markDirty()
             // Finish straight segment: release cursor so it does not auto-continue
             store.lastNodeId = null
-            store.selection = { nodes: new Set([endId]), segments: new Set() }
+            store.selection = { nodes: new Set(), segments: new Set() }
           }
         } else {
           // First node placement: if clicked on an existing segment, split it to start from it!
           const hitTol = 16 / store.camera.scale
-          const hitSegId = hitSegment(store.network, world, hitTol)
+          const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, world, hitTol)
           let startNodeId: string
           if (hitSegId) {
-            const splitRes = splitSegment(store.network, hitSegId, world)
-            startNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, world).id
+            const targetPos = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
+              ? store.hoverSegSteps.nearest
+              : (store.snap ? store.snappedCursor : world)
+            const splitRes = splitSegment(store.network, hitSegId, targetPos)
+            startNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, targetPos).id
           } else {
             const spacing = getSnapSpacing()
             const pos = store.snap ? snapToGrid(world, spacing) : world
@@ -1420,9 +1540,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             store.turnoutStartId = nearNode.id
           } else {
             const hitTol = 18 / store.camera.scale
-            const hitSegId = hitSegment(store.network, cursor, hitTol)
+            const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, cursor, hitTol)
             if (hitSegId) {
-              const split = splitSegment(store.network, hitSegId, cursor)
+              const targetPos = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
+                ? store.hoverSegSteps.nearest
+                : cursor
+              const split = splitSegment(store.network, hitSegId, targetPos)
               if (split) {
                 store.turnoutStartId = split.midNode.id
                 store.markDirty()
@@ -1505,7 +1628,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       if (e.button === 0 && store.tool === 'split') {
         const world = getWorldPos(e.clientX, e.clientY)
-        const success = performTrackCut(store.network, world, 18 / store.camera.scale)
+        const targetPos = (store.snap && store.hoverSegSteps?.nearest)
+          ? store.hoverSegSteps.nearest
+          : (store.snap ? store.snappedCursor : world)
+        const success = performTrackCut(store.network, targetPos, 18 / store.camera.scale)
         if (success) {
           reconcileNetworkIntersections(store.network)
           store.markDirty()
@@ -1569,11 +1695,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const splitPt = store.hoverSegSteps.nearest
           const splitSegId = store.hoverSegSteps.segId
           const splitRes = splitSegment(store.network, splitSegId, splitPt)
-          const newNodeId = splitRes ? splitRes.midNode.id : addNode(store.network, splitPt).id
-          store.selection = { nodes: new Set([newNodeId]), segments: new Set() }
-          reconcileNetworkIntersections(store.network)
-          store.markDirty()
-          redraw()
+          if (splitRes) {
+            const newNodeId = splitRes.midNode.id
+            store.selection = { nodes: new Set([newNodeId]), segments: new Set() }
+            reconcileNetworkIntersections(store.network)
+            store.markDirty()
+            redraw()
+          }
           return
         }
 
@@ -1627,6 +1755,64 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     const onMove = (e: PointerEvent) => {
+      lastPointerClient.x = e.clientX
+      lastPointerClient.y = e.clientY
+
+      const rect = canvas.getBoundingClientRect()
+      const px = e.clientX - rect.left
+      const py = e.clientY - rect.top
+      const vw = rect.width
+      const vh = rect.height
+
+      // Edge auto-panning: smoothly glide when cursor approaches canvas borders during active construction or dragging
+      const isInteracting =
+        store.lastNodeId !== null ||
+        store.curveState.phase !== 0 ||
+        store.autoConnectStartId !== null ||
+        store.isBoxSelecting ||
+        store.isDraggingNode ||
+        store.tool === 'place' ||
+        store.tool === 'curve' ||
+        store.tool === 'turnout' ||
+        store.tool === 'crossover' ||
+        store.tool === 'siding' ||
+        store.tool === 'loop'
+
+      if (!store.panning && isInteracting && px >= 0 && px <= vw && py >= 0 && py <= vh) {
+        const EDGE_MARGIN = 55
+        const MAX_PAN_SPEED = 380
+
+        let vx = 0
+        let vy = 0
+
+        if (px < EDGE_MARGIN) {
+          const t = (EDGE_MARGIN - px) / EDGE_MARGIN
+          vx = -t * t * MAX_PAN_SPEED
+        } else if (px > vw - EDGE_MARGIN) {
+          const t = (px - (vw - EDGE_MARGIN)) / EDGE_MARGIN
+          vx = t * t * MAX_PAN_SPEED
+        }
+
+        if (py < EDGE_MARGIN) {
+          const t = (EDGE_MARGIN - py) / EDGE_MARGIN
+          vy = -t * t * MAX_PAN_SPEED
+        } else if (py > vh - EDGE_MARGIN) {
+          const t = (py - (vh - EDGE_MARGIN)) / EDGE_MARGIN
+          vy = t * t * MAX_PAN_SPEED
+        }
+
+        edgePanVelocity = { x: vx, y: vy }
+
+        if ((vx !== 0 || vy !== 0) && edgePanRafId === null) {
+          lastEdgePanTime = 0
+          edgePanRafId = requestAnimationFrame(stepEdgePan)
+        } else if (vx === 0 && vy === 0 && edgePanRafId !== null) {
+          stopEdgePan()
+        }
+      } else if (!store.panning) {
+        stopEdgePan()
+      }
+
       const rawWorld = getWorldPos(e.clientX, e.clientY)
       store.cursorWorld = rawWorld
 
@@ -1659,9 +1845,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (nearNode) {
         store.snappedCursor = { ...nearNode.pos }
         store.hoverNodeId = nearNode.id
+        store.hoverSegSteps = null
       } else {
         store.hoverNodeId = null
-        // Priority 2: Magnetic track snap when using place, curve, turnout, crossing
+        // Priority 2: Magnetic track snap when using place, curve, turnout, crossing, split, etc.
         const hitTol = 18 / store.camera.scale
         const hitSegId = hitSegment(store.network, rawWorld, hitTol)
         const isTrackSnapTool =
@@ -1673,69 +1860,66 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'siding' ||
           store.tool === 'loop' ||
           store.tool === 'split' ||
-          store.tool === 'measure'
+          store.tool === 'measure' ||
+          store.tool === 'select'
         if (hitSegId && isTrackSnapTool) {
-          const seg = store.network.segments.get(hitSegId)
-          const nodeA = seg ? store.network.nodes.get(seg.from) : null
-          const nodeB = seg ? store.network.nodes.get(seg.to) : null
-          if (seg && nodeA && nodeB) {
-            if (seg.kind === 'straight') {
-              const dx = nodeB.pos.x - nodeA.pos.x
-              const dy = nodeB.pos.y - nodeA.pos.y
-              const lenSq = dx * dx + dy * dy
-              if (lenSq > 0) {
-                const t = Math.max(0.02, Math.min(0.98, ((rawWorld.x - nodeA.pos.x) * dx + (rawWorld.y - nodeA.pos.y) * dy) / lenSq))
-                store.snappedCursor = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
-              } else {
-                store.snappedCursor = rawWorld
-              }
-            } else if (seg.kind === 'curve' && seg.via) {
-              const p0 = nodeA.pos
-              const p1 = seg.via
-              const p2 = nodeB.pos
-              let bestT = 0.5
-              let bestDistSq = Infinity
-              for (let i = 1; i < 32; i++) {
-                const s = i / 32
-                const pt = bezierPoint(s, p0, p1, p2)
-                const dSq = (pt.x - rawWorld.x) ** 2 + (pt.y - rawWorld.y) ** 2
-                if (dSq < bestDistSq) {
-                  bestDistSq = dSq
-                  bestT = s
-                }
-              }
-              store.snappedCursor = bezierPoint(bestT, p0, p1, p2)
+          if (store.snap || e.shiftKey) {
+            const spacing = getSnapSpacing()
+            const { points, nearest } = getStepPointsAlongSegment(hitSegId, store.network, spacing, rawWorld)
+            store.hoverSegSteps = { segId: hitSegId, points, nearest }
+            if (nearest) {
+              store.snappedCursor = { ...nearest }
             } else {
               store.snappedCursor = rawWorld
             }
           } else {
-            store.snappedCursor = rawWorld
-          }
-        } else if (store.snap) {
-          const spacing = getSnapSpacing()
-          store.snappedCursor = snapToGrid(rawWorld, spacing)
-        } else {
-          store.snappedCursor = rawWorld
-        }
-      }
-
-      // Shift+survol : calcul des points de pas sur la voie
-      if (e.shiftKey && (store.tool === 'place' || store.tool === 'select')) {
-        const hitTol2 = 20 / store.camera.scale
-        const nearSeg = hitSegment(store.network, rawWorld, hitTol2)
-        if (nearSeg) {
-          const spacing = getSnapSpacing()
-          const { points, nearest } = getStepPointsAlongSegment(nearSeg, store.network, spacing, rawWorld)
-          store.hoverSegSteps = { segId: nearSeg, points, nearest }
-          // Snapper le curseur sur le point le plus proche
-          if (nearest) {
-            store.snappedCursor = { ...nearest }
+            store.hoverSegSteps = null
+            const seg = store.network.segments.get(hitSegId)
+            const nodeA = seg ? store.network.nodes.get(seg.from) : null
+            const nodeB = seg ? store.network.nodes.get(seg.to) : null
+            if (seg && nodeA && nodeB) {
+              if (seg.kind === 'straight') {
+                const dx = nodeB.pos.x - nodeA.pos.x
+                const dy = nodeB.pos.y - nodeA.pos.y
+                const lenSq = dx * dx + dy * dy
+                if (lenSq > 0) {
+                  const t = Math.max(0.02, Math.min(0.98, ((rawWorld.x - nodeA.pos.x) * dx + (rawWorld.y - nodeA.pos.y) * dy) / lenSq))
+                  store.snappedCursor = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
+                } else {
+                  store.snappedCursor = rawWorld
+                }
+              } else if (seg.kind === 'curve' && seg.via) {
+                const p0 = nodeA.pos
+                const p1 = seg.via
+                const p2 = nodeB.pos
+                let bestT = 0.5
+                let bestDistSq = Infinity
+                for (let i = 1; i < 32; i++) {
+                  const s = i / 32
+                  const pt = bezierPoint(s, p0, p1, p2)
+                  const dSq = (pt.x - rawWorld.x) ** 2 + (pt.y - rawWorld.y) ** 2
+                  if (dSq < bestDistSq) {
+                    bestDistSq = dSq
+                    bestT = s
+                  }
+                }
+                store.snappedCursor = bezierPoint(bestT, p0, p1, p2)
+              } else {
+                store.snappedCursor = rawWorld
+              }
+            } else {
+              store.snappedCursor = rawWorld
+            }
           }
         } else {
           store.hoverSegSteps = null
+          if (store.snap) {
+            const spacing = getSnapSpacing()
+            store.snappedCursor = snapToGrid(rawWorld, spacing)
+          } else {
+            store.snappedCursor = rawWorld
+          }
         }
-      } else {
-        store.hoverSegSteps = null
       }
 
       if (!store.panning) {
@@ -1829,14 +2013,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      stopEdgePan()
       store.panning = false
       if (canvas.hasPointerCapture(e.pointerId)) {
         canvas.releasePointerCapture(e.pointerId)
       }
+      canvas.style.cursor = isSpaceDown ? 'grab' : ''
     }
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      stopEdgePan()
+
       const cam = store.camera
       const rect = canvas.getBoundingClientRect()
       const px = e.clientX - rect.left
@@ -1844,14 +2032,36 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const vw = rect.width
       const vh = rect.height
 
-      const worldX = cam.x + (px - vw / 2) / cam.scale
-      const worldY = cam.y + (py - vh / 2) / cam.scale
+      // When pinching on a trackpad or holding Ctrl/Cmd, browser triggers wheel with ctrlKey: true
+      if (e.ctrlKey || e.metaKey) {
+        const worldX = cam.x + (px - vw / 2) / cam.scale
+        const worldY = cam.y + (py - vh / 2) / cam.scale
 
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
-      cam.scale = clampScale(cam.scale * factor)
+        // Smooth exponential zoom for pinch gesture
+        const zoomDelta = -e.deltaY * 0.01
+        const factor = Math.exp(Math.max(-0.4, Math.min(0.4, zoomDelta)))
+        cam.scale = clampScale(cam.scale * factor)
 
-      cam.x = worldX - (px - vw / 2) / cam.scale
-      cam.y = worldY - (py - vh / 2) / cam.scale
+        cam.x = worldX - (px - vw / 2) / cam.scale
+        cam.y = worldY - (py - vh / 2) / cam.scale
+      } else {
+        // Natural 2-finger scroll on trackpad (or mouse wheel scroll):
+        // Horizontal trackpad gesture sets deltaX, vertical sets deltaY
+        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX
+        const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY
+
+        cam.x += dx / cam.scale
+        cam.y += dy / cam.scale
+      }
+
+      const world = getWorldPos(e.clientX, e.clientY)
+      if (store.snap) {
+        const spacing = getSnapSpacing()
+        store.snappedCursor = snapToGrid(world, spacing)
+      } else {
+        store.snappedCursor = world
+      }
+
       draw()
       store.notify()
     }
@@ -1885,15 +2095,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     canvas.addEventListener('pointerdown', onDown)
     canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp)
+    canvas.addEventListener('pointerleave', stopEdgePan)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContextMenu)
     canvas.addEventListener('dblclick', onDblClick)
     return () => {
+      stopEdgePan()
       window.removeEventListener('keydown', handleKeyChange)
       window.removeEventListener('keyup', handleKeyChange)
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
+      canvas.removeEventListener('pointerleave', stopEdgePan)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContextMenu)
       canvas.removeEventListener('dblclick', onDblClick)
