@@ -24,16 +24,6 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         store.setTool('place')
       } else if (e.key === 'c' || e.key === 'C') {
         store.setTool('curve')
-      } else if (e.key === 'p' || e.key === 'P') {
-        store.setTool('turnout')
-      } else if (e.key === 'j' || e.key === 'J') {
-        store.setTool('autoconnect')
-      } else if (e.key === 'x' || e.key === 'X') {
-        store.setTool('crossover')
-      } else if (e.key === 'b' || e.key === 'B') {
-        store.setTool('siding')
-      } else if (e.key === 'l' || e.key === 'L') {
-        store.setTool('loop')
       } else if (e.key === 'k' || e.key === 'K') {
         store.setTool('split')
       } else if (e.key === 'm' || e.key === 'M') {
@@ -68,15 +58,6 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         if (store.tool === 'curve') {
           e.preventDefault()
           store.flipCurveSide()
-        } else if (store.tool === 'turnout') {
-          e.preventDefault()
-          store.toggleTurnoutSide()
-        } else if (store.tool === 'siding') {
-          e.preventDefault()
-          store.toggleSidingSide()
-        } else if (store.tool === 'loop') {
-          e.preventDefault()
-          store.toggleLoopSide()
         }
       } else if (e.key === 'd' || e.key === 'D') {
         if (!e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -94,14 +75,8 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         }
       } else if (e.key === '[') {
         if (store.tool === 'curve') store.cycleCurveProfile(-1)
-        else if (store.tool === 'turnout') store.setTurnoutRadius(Math.max(20, store.turnoutRadius - 5))
-        else if (store.tool === 'siding') store.setSidingLength(Math.max(20, store.sidingLength - 10))
-        else if (store.tool === 'loop') store.setLoopRadius(Math.max(15, store.loopRadius - 5))
       } else if (e.key === ']') {
         if (store.tool === 'curve') store.cycleCurveProfile(1)
-        else if (store.tool === 'turnout') store.setTurnoutRadius(store.turnoutRadius + 5)
-        else if (store.tool === 'siding') store.setSidingLength(store.sidingLength + 10)
-        else if (store.tool === 'loop') store.setLoopRadius(store.loopRadius + 5)
       }
     }
     window.addEventListener('keydown', onKey)

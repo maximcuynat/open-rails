@@ -1,5 +1,4 @@
 import type { Point, Network, Segment, NodeId, RailNode, SegmentId } from '../models/types'
-import { hitSegment } from '../models/network'
 import { bezierPoint, bezierDerivative1 } from './curve'
 
 /** Outgoing tangent direction (normalized) at the end of a straight segment. */
@@ -322,55 +321,91 @@ export function getTrackTangentAt(
     }
   }
 
-  // Priority 2: near an existing segment
-  const segId = hitSegment(net, point, tol)
-  if (segId) {
-    const seg = net.segments.get(segId)
-    if (seg) {
-      const nodeA = net.nodes.get(seg.from)
-      const nodeB = net.nodes.get(seg.to)
-      if (nodeA && nodeB) {
-        if (seg.kind === 'straight') {
-          const dx = nodeB.pos.x - nodeA.pos.x
-          const dy = nodeB.pos.y - nodeA.pos.y
-          const lenSq = dx * dx + dy * dy
-          if (lenSq > 0.001) {
-            const len = Math.sqrt(lenSq)
-            const ux = dx / len
-            const uy = dy / len
-            const t = Math.max(0, Math.min(1, ((point.x - nodeA.pos.x) * dx + (point.y - nodeA.pos.y) * dy) / lenSq))
-            return {
-              tangent: { x: ux, y: uy },
-              pointOnTrack: { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy },
-              segId,
-            }
-          }
-        } else if (seg.kind === 'curve' && seg.via) {
-          const p0 = nodeA.pos
-          const p1 = seg.via
-          const p2 = nodeB.pos
-          let bestT = 0.5
-          let bestDistSq = Infinity
-          const SAMPLES = 32
-          for (let i = 0; i <= SAMPLES; i++) {
-            const s = i / SAMPLES
-            const pt = bezierPoint(s, p0, p1, p2)
-            const dSq = (pt.x - point.x) ** 2 + (pt.y - point.y) ** 2
-            if (dSq < bestDistSq) {
-              bestDistSq = dSq
-              bestT = s
-            }
-          }
-          const d1 = bezierDerivative1(bestT, p0, p1, p2)
-          const dLen = Math.hypot(d1.x, d1.y)
-          if (dLen > 0.001) {
-            const pt = bezierPoint(bestT, p0, p1, p2)
-            return {
-              tangent: { x: d1.x / dLen, y: d1.y / dLen },
-              pointOnTrack: pt,
-              segId,
-            }
-          }
+  // Priority 2: near an existing segment (excluding segments connected to excludeNodeId)
+  let bestSeg: { id: SegmentId; seg: any } | null = null
+  let bestSegDist = tol
+
+  for (const [id, seg] of net.segments.entries()) {
+    if (excludeNodeId && (seg.from === excludeNodeId || seg.to === excludeNodeId)) {
+      continue
+    }
+    const nodeA = net.nodes.get(seg.from)
+    const nodeB = net.nodes.get(seg.to)
+    if (!nodeA || !nodeB) continue
+
+    if (seg.kind === 'straight') {
+      const dx = nodeB.pos.x - nodeA.pos.x
+      const dy = nodeB.pos.y - nodeA.pos.y
+      const lenSq = dx * dx + dy * dy
+      if (lenSq > 0.001) {
+        const t = Math.max(0, Math.min(1, ((point.x - nodeA.pos.x) * dx + (point.y - nodeA.pos.y) * dy) / lenSq))
+        const projX = nodeA.pos.x + t * dx
+        const projY = nodeA.pos.y + t * dy
+        const d = Math.hypot(projX - point.x, projY - point.y)
+        if (d < bestSegDist) {
+          bestSegDist = d
+          bestSeg = { id, seg }
+        }
+      }
+    } else if (seg.kind === 'curve' && seg.via) {
+      const p0 = nodeA.pos
+      const p1 = seg.via
+      const p2 = nodeB.pos
+      const SAMPLES = 32
+      for (let i = 0; i <= SAMPLES; i++) {
+        const s = i / SAMPLES
+        const pt = bezierPoint(s, p0, p1, p2)
+        const d = Math.hypot(pt.x - point.x, pt.y - point.y)
+        if (d < bestSegDist) {
+          bestSegDist = d
+          bestSeg = { id, seg }
+        }
+      }
+    }
+  }
+
+  if (bestSeg) {
+    const seg = bestSeg.seg
+    const nodeA = net.nodes.get(seg.from)!
+    const nodeB = net.nodes.get(seg.to)!
+    if (seg.kind === 'straight') {
+      const dx = nodeB.pos.x - nodeA.pos.x
+      const dy = nodeB.pos.y - nodeA.pos.y
+      const len = Math.hypot(dx, dy)
+      if (len > 0.001) {
+        const ux = dx / len
+        const uy = dy / len
+        const t = Math.max(0, Math.min(1, ((point.x - nodeA.pos.x) * dx + (point.y - nodeA.pos.y) * dy) / (len * len)))
+        return {
+          tangent: { x: ux, y: uy },
+          pointOnTrack: { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy },
+          segId: bestSeg.id,
+        }
+      }
+    } else if (seg.kind === 'curve' && seg.via) {
+      const p0 = nodeA.pos
+      const p1 = seg.via
+      const p2 = nodeB.pos
+      let bestT = 0.5
+      let bestDistSq = Infinity
+      const SAMPLES = 32
+      for (let i = 0; i <= SAMPLES; i++) {
+        const s = i / SAMPLES
+        const pt = bezierPoint(s, p0, p1, p2)
+        const dSq = (pt.x - point.x) ** 2 + (pt.y - point.y) ** 2
+        if (dSq < bestDistSq) {
+          bestDistSq = dSq
+          bestT = s
+        }
+      }
+      const d1 = bezierDerivative1(bestT, p0, p1, p2)
+      const dLen = Math.hypot(d1.x, d1.y)
+      if (dLen > 0.001) {
+        const pt = bezierPoint(bestT, p0, p1, p2)
+        return {
+          tangent: { x: d1.x / dLen, y: d1.y / dLen },
+          pointOnTrack: pt,
+          segId: bestSeg.id,
         }
       }
     }
@@ -378,4 +413,153 @@ export function getTrackTangentAt(
 
   return null
 }
+
+/**
+ * Compute the exact mathematical intersection and tangent locking point
+ * when connecting a track from startNode (with tangent startTan) to a target rail (with tangent railTan).
+ * At the lock point, the circular arc has G1 continuity at BOTH ends:
+ * 0° angle with startNode's track, and 0° angle with target rail.
+ */
+export function computeTurnoutIntersectionLock(
+  startPos: Point,
+  startTan: Point,
+  railPoint: Point,
+  railTan: Point,
+): { lockPoint: Point; via: Point; radius: number; angleDeg: number; valid: boolean } | null {
+  const tLen = Math.hypot(startTan.x, startTan.y)
+  const rLen = Math.hypot(railTan.x, railTan.y)
+  if (tLen < 1e-4 || rLen < 1e-4) return null
+
+  const t0 = { x: startTan.x / tLen, y: startTan.y / tLen }
+  const tr = { x: railTan.x / rLen, y: railTan.y / rLen }
+
+  // Vector from startPos to railPoint
+  const dx = railPoint.x - startPos.x
+  const dy = railPoint.y - startPos.y
+
+  // Determinant between t0 and tr
+  const det = t0.y * tr.x - t0.x * tr.y
+  if (Math.abs(det) < 1e-4) {
+    // Parallel tracks: cannot connect with a single circular arc without counter-curve
+    return null
+  }
+
+  // Parameter along startTan to intersection point V
+  const t = (dx * (-tr.y) - dy * (-tr.x)) / det
+  if (t < 0.5) {
+    // Intersection is behind startPos or too close
+    return null
+  }
+
+  const V = {
+    x: startPos.x + t * t0.x,
+    y: startPos.y + t * t0.y,
+  }
+
+  const d0 = t // Distance from startPos to V
+
+  // Determine effective forward direction along the rail
+  // If cursor is to one side of V along the rail line, follow cursor; otherwise follow forward deflection
+  const dotCursor = (railPoint.x - V.x) * tr.x + (railPoint.y - V.y) * tr.y
+  const dotForward = (V.x - startPos.x) * tr.x + (V.y - startPos.y) * tr.y
+  const trEff = Math.abs(dotCursor) > 1 ? (dotCursor >= 0 ? tr : { x: -tr.x, y: -tr.y }) : (dotForward >= 0 ? tr : { x: -tr.x, y: -tr.y })
+
+  // In any circular arc tangent to both lines, the distance from V to both tangency points is equal
+  const lockPoint = {
+    x: V.x + d0 * trEff.x,
+    y: V.y + d0 * trEff.y,
+  }
+
+  // Deflection angle between t0 and trEff
+  const cosTheta = Math.max(-1, Math.min(1, t0.x * trEff.x + t0.y * trEff.y))
+  const theta = Math.acos(cosTheta)
+  const angleDeg = (theta * 180) / Math.PI
+
+  if (theta < 0.01 || theta > (150 * Math.PI) / 180) {
+    return null
+  }
+
+  const halfTan = Math.tan(theta / 2)
+  const radius = halfTan > 1e-4 ? d0 / halfTan : Infinity
+
+  return {
+    lockPoint,
+    via: V,
+    radius,
+    angleDeg,
+    valid: radius >= 15 && angleDeg <= 120,
+  }
+}
+
+/**
+ * Compute the tangent lock point when connecting a free canvas point (no incoming tangent)
+ * into a target rail line with a desired radius R.
+ * Returns the lockPoint on the rail, the via apex, deflection angle, and radius.
+ */
+export function computeReverseFreeNodeLock(
+  startPos: Point,
+  railPoint: Point,
+  railTan: Point,
+  preferredRadius = 300,
+): { lockPoint: Point; via: Point; radius: number; angleDeg: number; valid: boolean } | null {
+  const rLen = Math.hypot(railTan.x, railTan.y)
+  if (rLen < 1e-4) return null
+  const u = { x: railTan.x / rLen, y: railTan.y / rLen }
+  const n = { x: -u.y, y: u.x }
+
+  // Vector from railPoint to startPos
+  const dx = startPos.x - railPoint.x
+  const dy = startPos.y - railPoint.y
+
+  // Perpendicular signed distance from startPos to rail line
+  const h = dx * n.x + dy * n.y
+  const dPerp = Math.abs(h)
+
+  if (dPerp < 0.2) return null
+
+  // Clamp radius so that dPerp <= 1.9 * R
+  const R = Math.max(preferredRadius, dPerp / 1.8, 20)
+
+  // Projection of startPos onto the rail line
+  const pProj = {
+    x: startPos.x - h * n.x,
+    y: startPos.y - h * n.y,
+  }
+
+  // Distance along the rail from pProj to tangency point
+  const deltaS = Math.sqrt(Math.max(0, dPerp * (2 * R - dPerp)))
+
+  // Determine direction along the rail toward railPoint (cursor)
+  const dotCursor = (railPoint.x - pProj.x) * u.x + (railPoint.y - pProj.y) * u.y
+  const dirAlong = dotCursor >= 0 ? 1 : -1
+  const uEff = { x: dirAlong * u.x, y: dirAlong * u.y }
+
+  const lockPoint = {
+    x: pProj.x + dirAlong * deltaS * u.x,
+    y: pProj.y + dirAlong * deltaS * u.y,
+  }
+
+  const cosAlpha = Math.max(-1, Math.min(1, 1 - dPerp / R))
+  const alpha = Math.acos(cosAlpha)
+  const angleDeg = (alpha * 180) / Math.PI
+
+  const halfTan = Math.tan(alpha / 2)
+  const d0 = halfTan > 1e-4 ? R * halfTan : deltaS
+
+  // Apex V is back along uEff from lockPoint
+  const V = {
+    x: lockPoint.x - d0 * uEff.x,
+    y: lockPoint.y - d0 * uEff.y,
+  }
+
+  return {
+    lockPoint,
+    via: V,
+    radius: R,
+    angleDeg,
+    valid: angleDeg <= 120,
+  }
+}
+
+
 

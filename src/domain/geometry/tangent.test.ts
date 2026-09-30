@@ -9,6 +9,8 @@ import {
   arcRadius,
   arcDeflectionDeg,
   getTrackTangentAt,
+  computeTurnoutIntersectionLock,
+  computeReverseFreeNodeLock,
 } from './tangent'
 import { addNode, addSegment, addCurveSegment, createNetwork } from '../models/network'
 
@@ -286,4 +288,41 @@ describe('getTrackTangentAt', () => {
     expect(res).toBeNull()
   })
 })
+
+describe('computeTurnoutIntersectionLock', () => {
+  it('computes exact 0-degree tangency lock point on target rail from incoming track', () => {
+    // Target rail along horizontal x-axis at y=0, direction (1, 0)
+    // Branch track starts at (0, 10), heading down-right towards rail at 45°
+    const startPos = { x: 0, y: 10 }
+    const startTan = { x: 1 / Math.SQRT2, y: -1 / Math.SQRT2 }
+    const railPoint = { x: 25, y: 0 }
+    const railTan = { x: 1, y: 0 }
+
+    const lock = computeTurnoutIntersectionLock(startPos, startTan, railPoint, railTan)
+    expect(lock).not.toBeNull()
+    expect(lock!.valid).toBe(true)
+    // Intersection V should be at (10, 0), distance d0 = 10 * sqrt(2) ≈ 14.14
+    // lockPoint should be at (10 + 14.14, 0) = (24.14, 0)
+    expect(lock!.lockPoint.x).toBeCloseTo(10 + 10 * Math.SQRT2, 1)
+    expect(lock!.lockPoint.y).toBeCloseTo(0, 1)
+    expect(lock!.angleDeg).toBeCloseTo(45, 1)
+  })
+})
+
+describe('computeReverseFreeNodeLock', () => {
+  it('computes tangent circle from free canvas point arriving with 0° angle on rail', () => {
+    const startPos = { x: 0, y: 20 }
+    const railPoint = { x: 100, y: 0 }
+    const railTan = { x: 1, y: 0 }
+
+    const lock = computeReverseFreeNodeLock(startPos, railPoint, railTan, 300)
+    expect(lock).not.toBeNull()
+    expect(lock!.valid).toBe(true)
+    expect(lock!.radius).toBe(300)
+    expect(lock!.lockPoint.y).toBeCloseTo(0, 1)
+    // Tangent at lockPoint is along (1, 0), apex via has y=0
+    expect(lock!.via.y).toBeCloseTo(0, 1)
+  })
+})
+
 

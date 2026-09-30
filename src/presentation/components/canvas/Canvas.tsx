@@ -20,7 +20,12 @@ import {
 } from '@domain/models/network'
 import type { Point, Network, RailNode } from '@domain/models/types'
 import { curveLength, bezierPoint, computeParallelCurve } from '@domain/geometry/curve'
-import { getTangentForPlacement, getTrackTangentAt } from '@domain/geometry/tangent'
+import {
+  getTangentForPlacement,
+  getTrackTangentAt,
+  computeTurnoutIntersectionLock,
+  computeReverseFreeNodeLock,
+} from '@domain/geometry/tangent'
 import {
   snapStraightLength,
   computeStraightPiece,
@@ -35,29 +40,9 @@ import {
 } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
-import {
-  computeAutoConnectGeometry,
-  applyAutoConnect,
-  computeCrossoverPreview,
-  applyCrossover,
-  computeFreeformParallelTurnout,
-  applyFreeformParallelTurnout,
-  computePassingSidingPreview,
-  applyPassingSiding,
-  computeBalloonLoopPreview,
-  applyBalloonLoop,
-  performTrackCut,
-} from '@domain/geometry/constructionTemplates'
+import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import type { EditorStore } from '@application/state/editorStore'
 
-function distToSeg(p: Point, a: Point, b: Point): number {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const len2 = dx * dx + dy * dy
-  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y)
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2))
-  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
-}
 
 /** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
 function findNearestNode(net: Network, worldPos: Point, maxScreenPx: number, cam: Camera): RailNode | null {
@@ -378,11 +363,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const isSnapTool =
       store.tool === 'place' ||
       store.tool === 'curve' ||
-      store.tool === 'turnout' ||
-      store.tool === 'autoconnect' ||
-      store.tool === 'crossover' ||
-      store.tool === 'siding' ||
-      store.tool === 'loop' ||
       store.tool === 'split' ||
       store.tool === 'measure'
     if (isSnapTool) {
@@ -515,11 +495,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const startNode = store.network.nodes.get(cs.startId)
       if (startNode) {
         const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-        const startAdj = store.network.adjacency.get(cs.startId)
-        const isStartFree = !startAdj || startAdj.length === 0
-        const hitTol = 18 / cam.scale
-        const trackTarget = isStartFree ? getTrackTangentAt(store.network, cursor, hitTol, cs.startId) : null
-        const tangent = getTangentForPlacement(store.network, cs.startId, cursor) ?? (() => {
+        const hitTol = 24 / cam.scale
+        const trackTarget = getTrackTangentAt(store.network, cursor, hitTol, cs.startId)
+        const startTan = getTangentForPlacement(store.network, cs.startId, cursor)
+        const fallbackTangent = startTan ?? (() => {
           const dx = cursor.x - startNode.pos.x
           const dy = cursor.y - startNode.pos.y
           const len = Math.hypot(dx, dy)
@@ -530,29 +509,53 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
         if (trackTarget) {
           const targetPoint = trackTarget.pointOnTrack
-          const { end, via, radius, angle } = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
-          const isJoinNode = trackTarget.nodeId !== undefined
-          const isJoin = true
-          const len = curveLength(startNode.pos, via, end)
-          const initTan = { x: via.x - startNode.pos.x, y: via.y - startNode.pos.y }
-          const side = computeSide(initTan, startNode.pos, end)
-          const sideLabel = side === -1 ? 'Gauche' : 'Droite'
-          const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent'
-          const labelText = radius === Infinity
-            ? `Ligne droite ${len.toFixed(2)} m${joinSuffix}`
-            : `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin, '#10b981')
+          const lock = startTan
+            ? computeTurnoutIntersectionLock(startNode.pos, startTan, targetPoint, trackTarget.tangent)
+            : (store.trackMode === 'catalog'
+                ? computeReverseFreeNodeLock(startNode.pos, targetPoint, trackTarget.tangent, store.selectedCurveRadius)
+                : null)
 
-          if (showParallelPreview) {
-            const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
-            const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
-            const secStart = secStartNode ? secStartNode.pos : par.start
-            ctx.save()
-            ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
-            ctx.restore()
+          if (lock && lock.valid) {
+            const end = lock.lockPoint
+            const via = lock.via
+            const len = curveLength(startNode.pos, via, end)
+            const labelText = `Aiguillage verrouillé (0°)  R${lock.radius.toFixed(0)} m  ${lock.angleDeg.toFixed(1)}° (${len.toFixed(1)} m)  → Jonction tangente`
+            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
+
+            if (showParallelPreview) {
+              const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
+              const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
+              const secStart = secStartNode ? secStartNode.pos : par.start
+              ctx.save()
+              ctx.globalAlpha = 0.55
+              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+              ctx.restore()
+            }
+          } else {
+            const { end, via, radius, angle } = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
+            const isJoinNode = trackTarget.nodeId !== undefined
+            const len = curveLength(startNode.pos, via, end)
+            const initTan = { x: via.x - startNode.pos.x, y: via.y - startNode.pos.y }
+            const side = computeSide(initTan, startNode.pos, end)
+            const sideLabel = side === -1 ? 'Gauche' : 'Droite'
+            const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent (0°)'
+            const labelText = radius === Infinity
+              ? `Ligne droite ${len.toFixed(2)} m${joinSuffix}`
+              : `Courbe ${sideLabel} R${radius.toFixed(0)} m  ${angle.toFixed(1)}° (${len.toFixed(1)} m)${joinSuffix}`
+            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
+
+            if (showParallelPreview) {
+              const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
+              const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
+              const secStart = secStartNode ? secStartNode.pos : par.start
+              ctx.save()
+              ctx.globalAlpha = 0.55
+              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+              ctx.restore()
+            }
           }
         } else if (store.trackMode === 'freeform') {
+          const tangent = fallbackTangent
           const closeNode = findNearestNode(store.network, cursor, 16, cam)
           const target = closeNode && closeNode.id !== cs.startId ? closeNode.pos : cursor
           const { end, via, radius, angle } = computeFreeformCurve(startNode.pos, tangent, target)
@@ -578,6 +581,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             ctx.restore()
           }
         } else {
+          const tangent = fallbackTangent
           const radius = store.selectedCurveRadius
           const angle = store.selectedCurveAngle
           const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, cursor) : store.curveSide
@@ -605,284 +609,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
-    const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
-
-    // 1. Auto-Connect tool preview
-    if (store.tool === 'autoconnect') {
-      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-      if (store.autoConnectStartId) {
-        const startNode = store.network.nodes.get(store.autoConnectStartId)
-        if (startNode) {
-          ctx.save()
-          ctx.strokeStyle = '#10b981'
-          ctx.lineWidth = 2.5
-          ctx.beginPath()
-          ctx.arc((startNode.pos.x - cam.x) * cam.scale + rect.width / 2, (startNode.pos.y - cam.y) * cam.scale + rect.height / 2, 8, 0, Math.PI * 2)
-          ctx.stroke()
-          ctx.restore()
-
-          const targetNode = findNearestNode(store.network, cursor, 20, cam)
-          if (targetNode && targetNode.id !== store.autoConnectStartId) {
-            const geom = computeAutoConnectGeometry(store.network, store.autoConnectStartId, targetNode.id)
-            if (geom) {
-              ctx.save()
-              ctx.globalAlpha = 0.85
-              for (const seg of geom.segments) {
-                if (seg.kind === 'curve' && seg.via) {
-                  renderDetailedCurveRails(ctx, cam, seg.from, seg.via, seg.to, rect.width, rect.height, false, railColor, accent)
-                } else {
-                  renderDetailedRailLines(ctx, cam, seg.from, seg.to, rect.width, rect.height, false, railColor, accent)
-                }
-              }
-              ctx.globalAlpha = 1
-              ctx.strokeStyle = '#10b981'
-              ctx.lineWidth = 2.5
-              ctx.beginPath()
-              ctx.arc((targetNode.pos.x - cam.x) * cam.scale + rect.width / 2, (targetNode.pos.y - cam.y) * cam.scale + rect.height / 2, 8, 0, Math.PI * 2)
-              ctx.stroke()
-
-              const tx = (targetNode.pos.x - cam.x) * cam.scale + rect.width / 2
-              const ty = (targetNode.pos.y - cam.y) * cam.scale + rect.height / 2
-              ctx.font = '600 11px Archivo, system-ui, sans-serif'
-              ctx.fillStyle = '#2563eb'
-              ctx.fillText(`Raccordement (${geom.kind === 'straight' ? 'Droit' : geom.kind === 'single-curve' ? 'Courbe' : 'S-Courbe'})`, tx + 12, ty - 8)
-              ctx.restore()
-            }
-          }
-        }
-      }
-    }
-
-    // 2. Parallel Turnout preview (Branchement avec contre-courbe intégrée - pose libre par la fin)
-    if (store.tool === 'turnout') {
-      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-      if (store.turnoutStartId) {
-        const startNode = store.network.nodes.get(store.turnoutStartId)
-        if (startNode) {
-          const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
-          const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
-          if (geom && geom.valid) {
-            ctx.save()
-            ctx.globalAlpha = 0.85
-            // Real double steel rails for the 2 curved segments:
-            renderDetailedCurveRails(ctx, cam, geom.startPos, geom.via1, geom.midPos, rect.width, rect.height, false, railColor, accent)
-            renderDetailedCurveRails(ctx, cam, geom.midPos, geom.via2, geom.endPos, rect.width, rect.height, false, railColor, accent)
-            ctx.globalAlpha = 1
-
-            const p0x = (geom.startPos.x - cam.x) * cam.scale + rect.width / 2
-            const p0y = (geom.startPos.y - cam.y) * cam.scale + rect.height / 2
-            const pex = (geom.endPos.x - cam.x) * cam.scale + rect.width / 2
-            const pey = (geom.endPos.y - cam.y) * cam.scale + rect.height / 2
-
-            // Start turnout node & end node markers
-            ctx.fillStyle = '#10b981'
-            ctx.beginPath()
-            ctx.arc(p0x, p0y, 5, 0, Math.PI * 2)
-            ctx.arc(pex, pey, 5, 0, Math.PI * 2)
-            ctx.fill()
-
-            // Forward sightline along parallel direction
-            const sightLen = Math.max(100, 300 / cam.scale)
-            ctx.strokeStyle = accent
-            ctx.globalAlpha = 0.35
-            ctx.lineWidth = 1.5
-            ctx.setLineDash([4, 4])
-            ctx.beginPath()
-            ctx.moveTo(pex, pey)
-            ctx.lineTo(
-              (geom.endPos.x + geom.tangent.x * sightLen - cam.x) * cam.scale + rect.width / 2,
-              (geom.endPos.y + geom.tangent.y * sightLen - cam.y) * cam.scale + rect.height / 2,
-            )
-            ctx.stroke()
-            ctx.setLineDash([])
-            ctx.globalAlpha = 1
-
-            // Floating label badge near end
-            const labelTxt = `Espacement: ${Math.abs(geom.offset).toFixed(2)} m · Longueur: ${geom.dx.toFixed(2)} m (R${geom.radius.toFixed(0)} m)`
-            ctx.font = '600 11px Archivo, system-ui, sans-serif'
-            const labelW = ctx.measureText(labelTxt).width
-            const lx = pex + 14
-            const ly = pey - 10
-            ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
-            ctx.beginPath()
-            ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
-            ctx.fill()
-            ctx.fillStyle = '#fff'
-            ctx.textBaseline = 'middle'
-            ctx.textAlign = 'left'
-            ctx.fillText(labelTxt, lx, ly - 4)
-            ctx.restore()
-          }
-        }
-      } else {
-        // Phase A: hovering to select start node or start rail
-        const nearNode = findNearestNode(store.network, cursor, 20, cam)
-        if (nearNode) {
-          const nx = (nearNode.pos.x - cam.x) * cam.scale + rect.width / 2
-          const ny = (nearNode.pos.y - cam.y) * cam.scale + rect.height / 2
-          ctx.save()
-          ctx.strokeStyle = '#10b981'
-          ctx.lineWidth = 2.5
-          ctx.beginPath()
-          ctx.arc(nx, ny, 8, 0, Math.PI * 2)
-          ctx.stroke()
-          ctx.font = '600 11px Archivo, system-ui, sans-serif'
-          ctx.fillStyle = '#10b981'
-          ctx.fillText('Départ aiguillage', nx + 12, ny - 6)
-          ctx.restore()
-        } else {
-          const hitTol = 18 / cam.scale
-          const hitSegId = hitSegment(store.network, cursor, hitTol)
-          if (hitSegId) {
-            const cx = (cursor.x - cam.x) * cam.scale + rect.width / 2
-            const cy = (cursor.y - cam.y) * cam.scale + rect.height / 2
-            ctx.save()
-            ctx.fillStyle = '#10b981'
-            ctx.beginPath()
-            ctx.arc(cx, cy, 6, 0, Math.PI * 2)
-            ctx.fill()
-            ctx.font = '600 11px Archivo, system-ui, sans-serif'
-            ctx.fillStyle = '#10b981'
-            ctx.fillText('Insérer aiguillage ici', cx + 12, cy - 6)
-            ctx.restore()
-          }
-        }
-      }
-    }
-
-    // 3. Crossover preview (Bretelle de liaison en S courbe)
-    if (store.tool === 'crossover') {
-      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-      const hitTol = 24 / cam.scale
-      const nearbySegs: string[] = []
-      for (const seg of store.network.segments.values()) {
-        const from = store.network.nodes.get(seg.from)
-        const to = store.network.nodes.get(seg.to)
-        if (!from || !to) continue
-        const d = distToSeg(cursor, from.pos, to.pos)
-        if (d < hitTol * 2) {
-          nearbySegs.push(seg.id)
-        }
-      }
-
-      let seg1Id = nearbySegs[0]
-      let seg2Id = nearbySegs[1]
-      if (seg1Id && !seg2Id) {
-        for (const seg of store.network.segments.values()) {
-          if (seg.id !== seg1Id) {
-            const preview = computeCrossoverPreview(store.network, seg1Id, seg.id, cursor, store.crossoverAngle)
-            if (preview && preview.valid) {
-              seg2Id = seg.id
-              break
-            }
-          }
-        }
-      }
-
-      if (seg1Id && seg2Id) {
-        const preview = computeCrossoverPreview(store.network, seg1Id, seg2Id, cursor, store.crossoverAngle)
-        if (preview && preview.valid) {
-          ctx.save()
-          ctx.globalAlpha = 0.85
-          // Real steel double rails for the S-curve:
-          renderDetailedCurveRails(ctx, cam, preview.track1Pos, preview.via1, preview.midPos, rect.width, rect.height, false, railColor, accent)
-          renderDetailedCurveRails(ctx, cam, preview.midPos, preview.via2, preview.track2Pos, rect.width, rect.height, false, railColor, accent)
-          ctx.globalAlpha = 1
-
-          const p1x = (preview.track1Pos.x - cam.x) * cam.scale + rect.width / 2
-          const p1y = (preview.track1Pos.y - cam.y) * cam.scale + rect.height / 2
-          const p2x = (preview.track2Pos.x - cam.x) * cam.scale + rect.width / 2
-          const p2y = (preview.track2Pos.y - cam.y) * cam.scale + rect.height / 2
-          const pmx = (preview.midPos.x - cam.x) * cam.scale + rect.width / 2
-          const pmy = (preview.midPos.y - cam.y) * cam.scale + rect.height / 2
-
-          // Junction points indicators
-          ctx.fillStyle = '#10b981'
-          ctx.beginPath()
-          ctx.arc(p1x, p1y, 5, 0, Math.PI * 2)
-          ctx.arc(p2x, p2y, 5, 0, Math.PI * 2)
-          ctx.fill()
-
-          ctx.font = '600 11px Archivo, system-ui, sans-serif'
-          ctx.fillStyle = '#2563eb'
-          ctx.fillText(`Bretelle S-Courbe R${preview.radius.toFixed(0)}m (${preview.distance.toFixed(1)}m)`, pmx + 10, pmy - 10)
-          ctx.restore()
-        }
-      }
-    }
-
-    // 4. Passing Siding preview (Évitement avec entrées/sorties en courbes)
-    if (store.tool === 'siding') {
-      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-      const hitTol = 20 / cam.scale
-      const segId = hitSegment(store.network, cursor, hitTol)
-      if (segId) {
-        const preview = computePassingSidingPreview(store.network, segId, cursor, store.sidingLength, store.sidingOffset, store.sidingSide)
-        if (preview && preview.valid) {
-          ctx.save()
-          ctx.globalAlpha = 0.85
-          // Entry S-curve rails:
-          renderDetailedCurveRails(ctx, cam, preview.entryTurnoutPos, preview.entryVia1, preview.entryMidPos, rect.width, rect.height, false, railColor, accent)
-          renderDetailedCurveRails(ctx, cam, preview.entryMidPos, preview.entryVia2, preview.sidingStartPos, rect.width, rect.height, false, railColor, accent)
-          // Siding body rails:
-          renderDetailedRailLines(ctx, cam, preview.sidingStartPos, preview.sidingEndPos, rect.width, rect.height, false, railColor, accent)
-          // Exit S-curve rails:
-          renderDetailedCurveRails(ctx, cam, preview.sidingEndPos, preview.exitVia1, preview.exitMidPos, rect.width, rect.height, false, railColor, accent)
-          renderDetailedCurveRails(ctx, cam, preview.exitMidPos, preview.exitVia2, preview.exitTurnoutPos, rect.width, rect.height, false, railColor, accent)
-          ctx.globalAlpha = 1
-
-          const e1x = (preview.entryTurnoutPos.x - cam.x) * cam.scale + rect.width / 2
-          const e1y = (preview.entryTurnoutPos.y - cam.y) * cam.scale + rect.height / 2
-          const e2x = (preview.exitTurnoutPos.x - cam.x) * cam.scale + rect.width / 2
-          const e2y = (preview.exitTurnoutPos.y - cam.y) * cam.scale + rect.height / 2
-          const s1x = (preview.sidingStartPos.x - cam.x) * cam.scale + rect.width / 2
-          const s1y = (preview.sidingStartPos.y - cam.y) * cam.scale + rect.height / 2
-          const s2x = (preview.sidingEndPos.x - cam.x) * cam.scale + rect.width / 2
-          const s2y = (preview.sidingEndPos.y - cam.y) * cam.scale + rect.height / 2
-
-          ctx.fillStyle = '#10b981'
-          ctx.beginPath()
-          ctx.arc(e1x, e1y, 5, 0, Math.PI * 2)
-          ctx.arc(e2x, e2y, 5, 0, Math.PI * 2)
-          ctx.fill()
-
-          ctx.font = '600 11px Archivo, system-ui, sans-serif'
-          ctx.fillStyle = '#2563eb'
-          ctx.fillText(`Évitement ${preview.length}m [Tab: Côté]`, (s1x + s2x) / 2 + 10, (s1y + s2y) / 2 - 10)
-          ctx.restore()
-        }
-      }
-    }
-
-    // 5. Balloon Loop preview
-    if (store.tool === 'loop') {
-      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-      const nearNode = findNearestNode(store.network, cursor, 24, cam)
-      if (nearNode) {
-        const preview = computeBalloonLoopPreview(store.network, nearNode.id, store.loopRadius, store.loopSide)
-        if (preview && preview.valid && preview.loopNodes.length > 0) {
-          ctx.save()
-          ctx.globalAlpha = 0.85
-          for (let i = 0; i < preview.loopNodes.length - 1; i++) {
-            renderDetailedRailLines(ctx, cam, preview.loopNodes[i], preview.loopNodes[i + 1], rect.width, rect.height, false, railColor, accent)
-          }
-          ctx.globalAlpha = 1
-
-          const nx = (nearNode.pos.x - cam.x) * cam.scale + rect.width / 2
-          const ny = (nearNode.pos.y - cam.y) * cam.scale + rect.height / 2
-          ctx.fillStyle = '#10b981'
-          ctx.beginPath()
-          ctx.arc(nx, ny, 6, 0, Math.PI * 2)
-          ctx.fill()
-
-          ctx.font = '600 11px Archivo, system-ui, sans-serif'
-          ctx.fillStyle = '#2563eb'
-          ctx.fillText(`Boucle R${preview.radius}m [Tab: Côté]`, nx + 12, ny - 10)
-          ctx.restore()
-        }
-      }
-    }
 
     // 5. Track Cut / Split preview
     if (store.tool === 'split') {
@@ -1205,40 +931,46 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const startNode = store.network.nodes.get(cs.startId)
           if (startNode) {
             const cursor = store.snap ? store.snappedCursor : world
-            const startAdj = store.network.adjacency.get(cs.startId)
-            const isStartFree = !startAdj || startAdj.length === 0
-            const hitTol = 18 / store.camera.scale
-            const trackTarget = isStartFree ? getTrackTangentAt(store.network, cursor, hitTol, cs.startId) : null
+            const hitTol = 24 / store.camera.scale
+            const trackTarget = getTrackTangentAt(store.network, cursor, hitTol, cs.startId)
+            const startTan = getTangentForPlacement(store.network, cs.startId, cursor)
+            const fallbackTangent = startTan ?? (() => {
+              const dx = world.x - startNode.pos.x
+              const dy = world.y - startNode.pos.y
+              const len = Math.hypot(dx, dy)
+              return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
+            })()
 
             let endPos: Point
             let viaPos: Point
 
             if (trackTarget) {
               const targetPoint = trackTarget.pointOnTrack
-              const curve = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
-              endPos = curve.end
-              viaPos = curve.via
+              const lock = startTan
+                ? computeTurnoutIntersectionLock(startNode.pos, startTan, targetPoint, trackTarget.tangent)
+                : (store.trackMode === 'catalog'
+                    ? computeReverseFreeNodeLock(startNode.pos, targetPoint, trackTarget.tangent, store.selectedCurveRadius)
+                    : null)
+
+              if (lock && lock.valid) {
+                endPos = lock.lockPoint
+                viaPos = lock.via
+              } else {
+                const curve = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
+                endPos = curve.end
+                viaPos = curve.via
+              }
             } else if (store.trackMode === 'freeform') {
               const spacing = getSnapSpacing()
               const snappedWorld = store.snap ? snapToGrid(world, spacing) : world
               const closeTarget = findNearestNode(store.network, snappedWorld, 16, store.camera)
               const target = closeTarget && closeTarget.id !== cs.startId ? closeTarget.pos : snappedWorld
-              const tangent = getTangentForPlacement(store.network, cs.startId, world) ?? (() => {
-                const dx = world.x - startNode.pos.x
-                const dy = world.y - startNode.pos.y
-                const len = Math.hypot(dx, dy)
-                return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
-              })()
+              const tangent = fallbackTangent
               const curve = computeFreeformCurve(startNode.pos, tangent, target)
               endPos = curve.end
               viaPos = curve.via
             } else {
-              const tangent = getTangentForPlacement(store.network, cs.startId, world) ?? (() => {
-                const dx = world.x - startNode.pos.x
-                const dy = world.y - startNode.pos.y
-                const len = Math.hypot(dx, dy)
-                return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
-              })()
+              const tangent = fallbackTangent
               const radius = store.selectedCurveRadius
               const angle = store.selectedCurveAngle
               const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, world) : store.curveSide
@@ -1257,13 +989,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               if (closeNode && closeNode.id !== cs.startId) {
                 endId = closeNode.id
               } else {
-                const targetSegId = trackTarget?.segId ?? (store.hoverSegSteps?.segId ?? hitSegment(store.network, endPos, hitTol))
+                const targetSegId = trackTarget?.segId ?? hitSegment(store.network, endPos, hitTol)
                 if (targetSegId) {
-                  const targetEnd = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === targetSegId)
-                    ? store.hoverSegSteps.nearest
-                    : endPos
-                  const splitRes = splitSegment(store.network, targetSegId, targetEnd)
-                  endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
+                  const splitRes = splitSegment(store.network, targetSegId, endPos)
+                  endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
                 } else {
                   const endNode = addNode(store.network, endPos)
                   endId = endNode.id
@@ -1522,129 +1251,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
-      if (e.button === 0 && store.tool === 'autoconnect') {
-        const world = getWorldPos(e.clientX, e.clientY)
-        const nearNode = findNearestNode(store.network, world, 20, store.camera)
-        if (!store.autoConnectStartId) {
-          if (nearNode) {
-            store.autoConnectStartId = nearNode.id
-          }
-        } else if (nearNode && nearNode.id !== store.autoConnectStartId) {
-          applyAutoConnect(store.network, store.autoConnectStartId, nearNode.id)
-          store.autoConnectStartId = null
-          store.markDirty()
-        }
-        redraw()
-        return
-      }
-
-      if (e.button === 0 && store.tool === 'turnout') {
-        const world = getWorldPos(e.clientX, e.clientY)
-        const cursor = store.snap ? store.snappedCursor : world
-
-        if (store.turnoutStartId) {
-          const startNode = store.network.nodes.get(store.turnoutStartId)
-          if (startNode) {
-            const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
-            const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
-            if (geom && geom.valid) {
-              const res = applyFreeformParallelTurnout(store.network, startNode.id, geom)
-              store.lastNodeId = res.endNode.id
-              store.turnoutStartId = null
-              store.markDirty()
-            }
-          }
-        } else {
-          const nearNode = findNearestNode(store.network, cursor, 20, store.camera)
-          if (nearNode) {
-            store.turnoutStartId = nearNode.id
-          } else {
-            const hitTol = 18 / store.camera.scale
-            const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, cursor, hitTol)
-            if (hitSegId) {
-              const targetPos = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
-                ? store.hoverSegSteps.nearest
-                : cursor
-              const split = splitSegment(store.network, hitSegId, targetPos)
-              if (split) {
-                store.turnoutStartId = split.midNode.id
-                store.markDirty()
-              }
-            }
-          }
-        }
-        redraw()
-        return
-      }
-
-      if (e.button === 0 && store.tool === 'crossover') {
-        const world = getWorldPos(e.clientX, e.clientY)
-        const cursor = store.snap ? store.snappedCursor : world
-        const hitTol = 24 / store.camera.scale
-        const nearbySegs: string[] = []
-        for (const seg of store.network.segments.values()) {
-          const from = store.network.nodes.get(seg.from)
-          const to = store.network.nodes.get(seg.to)
-          if (!from || !to) continue
-          const d = distToSeg(cursor, from.pos, to.pos)
-          if (d < hitTol * 2) {
-            nearbySegs.push(seg.id)
-          }
-        }
-        let seg1Id = nearbySegs[0]
-        let seg2Id = nearbySegs[1]
-        if (seg1Id && !seg2Id) {
-          for (const seg of store.network.segments.values()) {
-            if (seg.id !== seg1Id) {
-              const preview = computeCrossoverPreview(store.network, seg1Id, seg.id, cursor, store.crossoverAngle)
-              if (preview && preview.valid) {
-                seg2Id = seg.id
-                break
-              }
-            }
-          }
-        }
-        if (seg1Id && seg2Id) {
-          const preview = computeCrossoverPreview(store.network, seg1Id, seg2Id, cursor, store.crossoverAngle)
-          if (preview && preview.valid) {
-            applyCrossover(store.network, preview)
-            store.markDirty()
-          }
-        }
-        redraw()
-        return
-      }
-
-      if (e.button === 0 && store.tool === 'siding') {
-        const world = getWorldPos(e.clientX, e.clientY)
-        const cursor = store.snap ? store.snappedCursor : world
-        const hitTol = 20 / store.camera.scale
-        const segId = hitSegment(store.network, cursor, hitTol)
-        if (segId) {
-          const preview = computePassingSidingPreview(store.network, segId, cursor, store.sidingLength, store.sidingOffset, store.sidingSide)
-          if (preview && preview.valid) {
-            applyPassingSiding(store.network, preview)
-            store.markDirty()
-          }
-        }
-        redraw()
-        return
-      }
-
-      if (e.button === 0 && store.tool === 'loop') {
-        const world = getWorldPos(e.clientX, e.clientY)
-        const cursor = store.snap ? store.snappedCursor : world
-        const nearNode = findNearestNode(store.network, cursor, 24, store.camera)
-        if (nearNode) {
-          const preview = computeBalloonLoopPreview(store.network, nearNode.id, store.loopRadius, store.loopSide)
-          if (preview && preview.valid) {
-            applyBalloonLoop(store.network, preview)
-            store.markDirty()
-          }
-        }
-        redraw()
-        return
-      }
 
       if (e.button === 0 && store.tool === 'split') {
         const world = getWorldPos(e.clientX, e.clientY)
@@ -1788,15 +1394,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const isInteracting =
         store.lastNodeId !== null ||
         store.curveState.phase !== 0 ||
-        store.autoConnectStartId !== null ||
         store.isBoxSelecting ||
         store.isDraggingNode ||
         store.tool === 'place' ||
-        store.tool === 'curve' ||
-        store.tool === 'turnout' ||
-        store.tool === 'crossover' ||
-        store.tool === 'siding' ||
-        store.tool === 'loop'
+        store.tool === 'curve'
 
       if (!store.panning && isInteracting && px >= 0 && px <= vw && py >= 0 && py <= vh) {
         const EDGE_MARGIN = 55
@@ -1868,17 +1469,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.hoverSegSteps = null
       } else {
         store.hoverNodeId = null
-        // Priority 2: Magnetic track snap when using place, curve, turnout, crossing, split, etc.
+        // Priority 2: Magnetic track snap when using place, curve, split, measure, select
         const hitTol = 18 / store.camera.scale
         const hitSegId = hitSegment(store.network, rawWorld, hitTol)
         const isTrackSnapTool =
           store.tool === 'place' ||
           store.tool === 'curve' ||
-          store.tool === 'turnout' ||
-          store.tool === 'autoconnect' ||
-          store.tool === 'crossover' ||
-          store.tool === 'siding' ||
-          store.tool === 'loop' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.tool === 'select'
@@ -1895,41 +1491,67 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             }
           } else {
             store.hoverSegSteps = null
-            const seg = store.network.segments.get(hitSegId)
-            const nodeA = seg ? store.network.nodes.get(seg.from) : null
-            const nodeB = seg ? store.network.nodes.get(seg.to) : null
-            if (seg && nodeA && nodeB) {
-              if (seg.kind === 'straight') {
-                const dx = nodeB.pos.x - nodeA.pos.x
-                const dy = nodeB.pos.y - nodeA.pos.y
-                const lenSq = dx * dx + dy * dy
-                if (lenSq > 0) {
-                  const t = Math.max(0.02, Math.min(0.98, ((rawWorld.x - nodeA.pos.x) * dx + (rawWorld.y - nodeA.pos.y) * dy) / lenSq))
-                  store.snappedCursor = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
-                } else {
-                  store.snappedCursor = rawWorld
-                }
-              } else if (seg.kind === 'curve' && seg.via) {
-                const p0 = nodeA.pos
-                const p1 = seg.via
-                const p2 = nodeB.pos
-                let bestT = 0.5
-                let bestDistSq = Infinity
-                for (let i = 1; i < 32; i++) {
-                  const s = i / 32
-                  const pt = bezierPoint(s, p0, p1, p2)
-                  const dSq = (pt.x - rawWorld.x) ** 2 + (pt.y - rawWorld.y) ** 2
-                  if (dSq < bestDistSq) {
-                    bestDistSq = dSq
-                    bestT = s
+            if (isCurvePhase1 && store.curveState.startId) {
+              const csNode = store.network.nodes.get(store.curveState.startId)
+              const hitTolTrack = 24 / store.camera.scale
+              const trTan = getTrackTangentAt(store.network, rawWorld, hitTolTrack, store.curveState.startId)
+              const sTan = csNode ? getTangentForPlacement(store.network, store.curveState.startId, rawWorld) : null
+              if (csNode && trTan) {
+                const lock = sTan
+                  ? computeTurnoutIntersectionLock(csNode.pos, sTan, trTan.pointOnTrack, trTan.tangent)
+                  : (store.trackMode === 'catalog'
+                      ? computeReverseFreeNodeLock(csNode.pos, trTan.pointOnTrack, trTan.tangent, store.selectedCurveRadius)
+                      : null)
+                if (lock && lock.valid) {
+                  const dLock = Math.hypot(rawWorld.x - lock.lockPoint.x, rawWorld.y - lock.lockPoint.y) * store.camera.scale
+                  if (dLock < 120) {
+                    store.snappedCursor = { ...lock.lockPoint }
+                  } else {
+                    store.snappedCursor = { ...trTan.pointOnTrack }
                   }
+                } else {
+                  store.snappedCursor = { ...trTan.pointOnTrack }
                 }
-                store.snappedCursor = bezierPoint(bestT, p0, p1, p2)
               } else {
                 store.snappedCursor = rawWorld
               }
             } else {
-              store.snappedCursor = rawWorld
+              const seg = store.network.segments.get(hitSegId)
+              const nodeA = seg ? store.network.nodes.get(seg.from) : null
+              const nodeB = seg ? store.network.nodes.get(seg.to) : null
+              if (seg && nodeA && nodeB) {
+                if (seg.kind === 'straight') {
+                  const dx = nodeB.pos.x - nodeA.pos.x
+                  const dy = nodeB.pos.y - nodeA.pos.y
+                  const lenSq = dx * dx + dy * dy
+                  if (lenSq > 0) {
+                    const t = Math.max(0.02, Math.min(0.98, ((rawWorld.x - nodeA.pos.x) * dx + (rawWorld.y - nodeA.pos.y) * dy) / lenSq))
+                    store.snappedCursor = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
+                  } else {
+                    store.snappedCursor = rawWorld
+                  }
+                } else if (seg.kind === 'curve' && seg.via) {
+                  const p0 = nodeA.pos
+                  const p1 = seg.via
+                  const p2 = nodeB.pos
+                  let bestT = 0.5
+                  let bestDistSq = Infinity
+                  for (let i = 1; i < 32; i++) {
+                    const s = i / 32
+                    const pt = bezierPoint(s, p0, p1, p2)
+                    const dSq = (pt.x - rawWorld.x) ** 2 + (pt.y - rawWorld.y) ** 2
+                    if (dSq < bestDistSq) {
+                      bestDistSq = dSq
+                      bestT = s
+                    }
+                  }
+                  store.snappedCursor = bezierPoint(bestT, p0, p1, p2)
+                } else {
+                  store.snappedCursor = rawWorld
+                }
+              } else {
+                store.snappedCursor = rawWorld
+              }
             }
           }
         } else {
@@ -1947,11 +1569,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (
           store.tool === 'place' ||
           store.tool === 'curve' ||
-          store.tool === 'turnout' ||
-          store.tool === 'autoconnect' ||
-          store.tool === 'crossover' ||
-          store.tool === 'siding' ||
-          store.tool === 'loop' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.hoverSegSteps !== null
