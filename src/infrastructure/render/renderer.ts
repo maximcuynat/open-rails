@@ -7,6 +7,7 @@ import { lineLineIntersection, type DiamondCrossing } from '@domain/models/cross
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, type SectionMetadata } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
+import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -123,6 +124,130 @@ export function renderGrid(
   ctx.restore()
 }
 
+/**
+ * Render the model railway layout baseboard ("Tableau / Plateau de réseau").
+ * Visualizes the physical boundaries of the table with CAD corner marks, drop shadow,
+ * exterior canvas dimming, and edge dimension indicators.
+ */
+export function renderBaseboard(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  boardWidth: number, // in meters
+  boardHeight: number, // in meters
+  unit: Unit = 'm',
+  scalePreset: ScalePresetId = 'HO',
+): void {
+  if (boardWidth <= 0 || boardHeight <= 0) return
+
+  const halfW = boardWidth / 2
+  const halfH = boardHeight / 2
+
+  const sx1 = (-halfW - cam.x) * cam.scale + vw / 2
+  const sy1 = (-halfH - cam.y) * cam.scale + vh / 2
+  const sx2 = (halfW - cam.x) * cam.scale + vw / 2
+  const sy2 = (halfH - cam.y) * cam.scale + vh / 2
+
+  const bx = Math.min(sx1, sx2)
+  const by = Math.min(sy1, sy2)
+  const bw = Math.abs(sx2 - sx1)
+  const bh = Math.abs(sy2 - sy1)
+
+  ctx.save()
+
+  // 1. Dimming exterior (outside table) so the table clearly pops out
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'
+  if (by > 0) ctx.fillRect(0, 0, vw, Math.min(vh, by))
+  if (by + bh < vh) ctx.fillRect(0, Math.max(0, by + bh), vw, vh - Math.max(0, by + bh))
+  if (bx > 0) ctx.fillRect(0, Math.max(0, by), Math.min(vw, bx), Math.min(vh, bh))
+  if (bx + bw < vw) ctx.fillRect(Math.max(0, bx + bw), Math.max(0, by), vw - Math.max(0, bx + bw), Math.min(vh, bh))
+
+  // 2. Board border & subtle drop shadow
+  ctx.save()
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.22)'
+  ctx.shadowBlur = 10
+  ctx.shadowOffsetY = 3
+
+  const borderColor = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
+  ctx.strokeStyle = borderColor
+  ctx.lineWidth = 2
+  ctx.strokeRect(bx, by, bw, bh)
+  ctx.restore()
+
+  // 3. Technical CAD Corner Brackets
+  const bracketLen = Math.min(32, Math.max(10, 16 * (cam.scale / 100)))
+  ctx.strokeStyle = borderColor
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  // Top-left
+  ctx.moveTo(bx, by + bracketLen)
+  ctx.lineTo(bx, by)
+  ctx.lineTo(bx + bracketLen, by)
+  // Top-right
+  ctx.moveTo(bx + bw - bracketLen, by)
+  ctx.lineTo(bx + bw, by)
+  ctx.lineTo(bx + bw, by + bracketLen)
+  // Bottom-right
+  ctx.moveTo(bx + bw, by + bh - bracketLen)
+  ctx.lineTo(bx + bw, by + bh)
+  ctx.lineTo(bx + bw - bracketLen, by + bh)
+  // Bottom-left
+  ctx.moveTo(bx + bracketLen, by + bh)
+  ctx.lineTo(bx, by + bh)
+  ctx.lineTo(bx, by + bh - bracketLen)
+  ctx.stroke()
+
+  // 4. Dimension Badges along the edges
+  if (bw > 60 && bh > 40) {
+    ctx.font = '600 11px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+
+    // Top edge badge (Width)
+    const topText = `Largeur : ${formatUnitsDistance(boardWidth, unit)}`
+    const topW = ctx.measureText(topText).width + 16
+    const topX = Math.max(topW / 2 + 10, Math.min(vw - topW / 2 - 10, bx + bw / 2))
+    const topY = Math.max(14, Math.min(vh - 14, by - 12))
+
+    ctx.fillStyle = '#1e293b'
+    ctx.beginPath()
+    ctx.roundRect(topX - topW / 2, topY - 9, topW, 18, 4)
+    ctx.fill()
+    ctx.fillStyle = '#f8fafc'
+    ctx.fillText(topText, topX, topY)
+
+    // Left edge badge (Height / Depth)
+    const leftText = `Profondeur : ${formatUnitsDistance(boardHeight, unit)}`
+    const leftW = ctx.measureText(leftText).width + 16
+    const leftX = Math.max(leftW / 2 + 10, Math.min(vw - leftW / 2 - 10, bx - 14))
+    const leftY = Math.max(20, Math.min(vh - 20, by + bh / 2))
+
+    ctx.fillStyle = '#1e293b'
+    ctx.beginPath()
+    ctx.roundRect(leftX - leftW / 2, leftY - 9, leftW, 18, 4)
+    ctx.fill()
+    ctx.fillStyle = '#f8fafc'
+    ctx.fillText(leftText, leftX, leftY)
+
+    // Title badge in corner inside board
+    const titleText = `Plateau ${scalePreset} (${formatUnitsDistance(boardWidth, unit)} × ${formatUnitsDistance(boardHeight, unit)})`
+    const titleW = ctx.measureText(titleText).width + 16
+    const titleX = bx + 12 + titleW / 2
+    const titleY = by + 18
+    if (titleX + titleW / 2 < bx + bw && titleY + 12 < by + bh) {
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.85)'
+      ctx.beginPath()
+      ctx.roundRect(bx + 12, by + 8, titleW, 20, 4)
+      ctx.fill()
+      ctx.fillStyle = '#f8fafc'
+      ctx.fillText(titleText, titleX, titleY)
+    }
+  }
+
+  ctx.restore()
+}
+
 // --- Rail rendering (Real scale UIC / French railway standard: 1 unit = 1 meter) ---
 
 /** Standard UIC gauge: 1.435 m (Voie normale standard: France LGV / TER / Intercités) */
@@ -226,7 +351,8 @@ export function renderNetwork(
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
 
-  const simplified = cam.scale < SIMPLIFY_THRESHOLD
+  const effectiveThreshold = SIMPLIFY_THRESHOLD * (GAUGE / activeGauge)
+  const simplified = cam.scale < effectiveThreshold
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)

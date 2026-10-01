@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { createCamera, type Camera } from '@infrastructure/render/camera'
+import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, pruneOrphanNodes } from '@domain/models/network'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
@@ -94,6 +94,12 @@ export class EditorStore {
   showDimensions: boolean = true // live CAD dimensioning HUD overlay
   isSettingsOpen: boolean = false
 
+  // --- Layout Board / Baseboard (Tableau de modélisme) ---
+  boardEnabled: boolean = false // Active by default for miniature model scales (HO, N, TT, etc.)
+  boardWidth: number = 2.40 // in meters (e.g. 240 cm = 8 ft)
+  boardHeight: number = 1.20 // in meters (e.g. 120 cm = 4 ft)
+  viewport: { w: number; h: number } = { w: 1200, h: 800 }
+
   turnoutStartId: string | null = null
   turnoutOffset = 4.0
   turnoutRadius = 40.0
@@ -145,6 +151,9 @@ export class EditorStore {
       this.gauge,
       this.trackSpacing,
       this.showDimensions,
+      this.boardEnabled,
+      this.boardWidth,
+      this.boardHeight,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
@@ -276,6 +285,17 @@ export class EditorStore {
     if (typeof saved.showDimensions === 'boolean') {
       this.showDimensions = saved.showDimensions
     }
+    if (typeof saved.boardEnabled === 'boolean') {
+      this.boardEnabled = saved.boardEnabled
+    } else if (this.scalePreset !== '1:1') {
+      this.boardEnabled = true
+    }
+    if (typeof saved.boardWidth === 'number' && saved.boardWidth > 0) {
+      this.boardWidth = saved.boardWidth
+    }
+    if (typeof saved.boardHeight === 'number' && saved.boardHeight > 0) {
+      this.boardHeight = saved.boardHeight
+    }
     return true
   }
 
@@ -298,6 +318,17 @@ export class EditorStore {
       this.parallelOffset = res.trackSpacing
     }
     if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
+    if (typeof res.boardEnabled === 'boolean') {
+      this.boardEnabled = res.boardEnabled
+    } else if (this.scalePreset !== '1:1') {
+      this.boardEnabled = true
+    }
+    if (typeof res.boardWidth === 'number' && res.boardWidth > 0) {
+      this.boardWidth = res.boardWidth
+    }
+    if (typeof res.boardHeight === 'number' && res.boardHeight > 0) {
+      this.boardHeight = res.boardHeight
+    }
     this.selection = { nodes: new Set(), segments: new Set() }
     this.lastNodeId = null
     this.curveState = { phase: 0, startId: null }
@@ -323,6 +354,9 @@ export class EditorStore {
       this.gauge,
       this.trackSpacing,
       this.showDimensions,
+      this.boardEnabled,
+      this.boardWidth,
+      this.boardHeight,
     )
   }
 
@@ -558,7 +592,7 @@ export class EditorStore {
     this.notify()
   }
 
-  setScalePreset = (presetId: ScalePresetId): void => {
+  setScalePreset = (presetId: ScalePresetId, autoFit = true): void => {
     this.scalePreset = presetId
     const preset = SCALE_PRESETS[presetId]
     if (preset) {
@@ -566,6 +600,13 @@ export class EditorStore {
       this.gauge = preset.defaultGauge
       this.trackSpacing = preset.defaultTrackSpacing
       this.parallelOffset = preset.defaultTrackSpacing
+      if (preset.defaultBoardWidth && preset.defaultBoardHeight) {
+        this.boardWidth = preset.defaultBoardWidth
+        this.boardHeight = preset.defaultBoardHeight
+        this.boardEnabled = true
+      } else if (presetId === '1:1') {
+        this.boardEnabled = false
+      }
       if (presetId === 'HO' || presetId === 'TT') {
         this.gridSpacing = 0.1
       } else if (presetId === 'N' || presetId === 'Z') {
@@ -575,8 +616,49 @@ export class EditorStore {
       } else if (presetId === '1:1') {
         this.gridSpacing = 5
       }
+
+      if (autoFit) {
+        if (this.boardEnabled) {
+          this.fitBoard()
+        } else if (preset.defaultCameraScale) {
+          this.camera.x = 0
+          this.camera.y = 0
+          this.camera.scale = preset.defaultCameraScale
+        }
+      }
     }
     this.savePersistedState()
+    this.notify()
+  }
+
+  setViewport = (w: number, h: number): void => {
+    if (w > 0 && h > 0) {
+      this.viewport = { w, h }
+    }
+  }
+
+  setBoardEnabled = (enabled: boolean): void => {
+    this.boardEnabled = enabled
+    this.savePersistedState()
+    this.notify()
+  }
+
+  setBoardDimensions = (width: number, height: number): void => {
+    if (width > 0 && height > 0) {
+      this.boardWidth = width
+      this.boardHeight = height
+      this.savePersistedState()
+      this.notify()
+    }
+  }
+
+  fitBoard = (viewportW?: number, viewportH?: number): void => {
+    const vw = viewportW ?? this.viewport.w
+    const vh = viewportH ?? this.viewport.h
+    const fit = fitDimensions(vw, vh, this.boardWidth, this.boardHeight, 0.15)
+    this.camera.x = fit.x
+    this.camera.y = fit.y
+    this.camera.scale = fit.scale
     this.notify()
   }
 
@@ -785,16 +867,24 @@ export class EditorStore {
     this.notify()
   }
 
-  /** Reset the camera to fit all nodes, or origin if empty. */
-  fitView = (viewportW: number, viewportH: number): void => {
+  /** Reset the camera to fit all nodes and board, or board/origin if empty. */
+  fitView = (viewportW?: number, viewportH?: number): void => {
+    const vw = viewportW ?? this.viewport.w
+    const vh = viewportH ?? this.viewport.h
     const nodes = [...this.network.nodes.values()]
+
     if (nodes.length === 0) {
-      this.camera.x = 0
-      this.camera.y = 0
-      this.camera.scale = 3
-      this.notify()
+      if (this.boardEnabled) {
+        this.fitBoard(vw, vh)
+      } else {
+        this.camera.x = 0
+        this.camera.y = 0
+        this.camera.scale = this.scalePreset === '1:1' ? 2.5 : (SCALE_PRESETS[this.scalePreset]?.defaultCameraScale ?? 350)
+        this.notify()
+      }
       return
     }
+
     let minX = Infinity
     let minY = Infinity
     let maxX = -Infinity
@@ -805,22 +895,36 @@ export class EditorStore {
       if (n.pos.x > maxX) maxX = n.pos.x
       if (n.pos.y > maxY) maxY = n.pos.y
     }
-    const pad = 0.1
+
+    if (this.boardEnabled) {
+      const halfBW = this.boardWidth / 2
+      const halfBH = this.boardHeight / 2
+      minX = Math.min(minX, -halfBW)
+      maxX = Math.max(maxX, halfBW)
+      minY = Math.min(minY, -halfBH)
+      maxY = Math.max(maxY, halfBH)
+    }
+
+    const pad = 0.12
     const w = (maxX - minX) || 1
     const h = (maxY - minY) || 1
     const scale = Math.min(
-      viewportW / (w * (1 + pad * 2)),
-      viewportH / (h * (1 + pad * 2)),
+      vw / (w * (1 + pad * 2)),
+      vh / (h * (1 + pad * 2)),
     )
     this.camera.x = (minX + maxX) / 2
     this.camera.y = (minY + maxY) / 2
-    this.camera.scale = Math.max(0.02, Math.min(64, scale))
+    this.camera.scale = clampScale(scale)
     this.notify()
   }
 
   resetZoom = (): void => {
-    this.camera.scale = 3
-    this.notify()
+    if (this.boardEnabled) {
+      this.fitBoard()
+    } else {
+      this.camera.scale = SCALE_PRESETS[this.scalePreset]?.defaultCameraScale ?? 2.5
+      this.notify()
+    }
   }
 
   /**

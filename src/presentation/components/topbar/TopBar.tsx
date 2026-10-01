@@ -7,6 +7,7 @@ import { computeTrackSections } from '@domain/models/sections'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
+import { formatDistance } from '@domain/models/units'
 
 interface TopBarProps {
   store: EditorStore
@@ -50,6 +51,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const viewItems: MenuItem[] = [
     { id: 'fit', label: 'Ajuster à la vue', shortcut: 'F' },
+    { id: 'fit-board', label: 'Cadrer le plateau de réseau', disabled: !store.boardEnabled },
     { id: 'zoom-100', label: 'Zoom 100%', shortcut: 'Ctrl+0', separatorAfter: true },
     { id: 'toggle-grid', label: 'Afficher la grille' },
     { id: 'toggle-snap', label: 'Activer le magnétisme', shortcut: 'G' },
@@ -141,6 +143,10 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       case 'fit':
         onFitView()
         break
+      case 'fit-board':
+        store.fitBoard()
+        showToast('Vue centrée sur le plateau de réseau', 'info')
+        break
       case 'zoom-100':
         store.resetZoom()
         break
@@ -212,6 +218,31 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           <Menu label="Aide" items={helpItems} onSelect={onHelpSelect} />
         </MenuBar>
         <div className="tb-right">
+          <button
+            onClick={store.openSettings}
+            title="Échelle et plateau actifs — Cliquer pour ouvrir les paramètres"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '3px 8px',
+              borderRadius: '4px',
+              background: 'var(--panel)',
+              border: '1px solid var(--border)',
+              color: 'var(--ink)',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              marginRight: '2px',
+            }}
+          >
+            <span>{store.scalePreset}</span>
+            {store.boardEnabled && (
+              <span style={{ opacity: 0.75, fontWeight: 400 }}>
+                {formatDistance(store.boardWidth, store.unit)} × {formatDistance(store.boardHeight, store.unit)}
+              </span>
+            )}
+          </button>
           <button
             className="tb-icon-btn"
             onClick={store.openSettings}

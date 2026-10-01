@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { clampScale, screenToWorld, type Camera } from '@infrastructure/render/camera'
 import {
   renderGrid,
+  renderBaseboard,
   renderNetwork,
   renderScaleBar,
   renderDetailedCurveRails,
   renderDetailedRailLines,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
+  GAUGE,
 } from '@infrastructure/render/renderer'
 import {
   addNode,
@@ -198,7 +200,9 @@ function renderPlacePreview(
   }
 
   // Rail preview to snapped end
-  if (cam.scale < SIMPLIFY_THRESHOLD) {
+  const effectiveGauge = gauge ?? GAUGE
+  const effectiveThreshold = SIMPLIFY_THRESHOLD * (GAUGE / effectiveGauge)
+  if (cam.scale < effectiveThreshold) {
     ctx.strokeStyle = accent
     ctx.lineWidth = 2
     ctx.setLineDash([8, 4])
@@ -276,7 +280,9 @@ function renderCurvePreview(
   ctx.globalAlpha = 1
 
   // Curve preview
-  if (cam.scale < SIMPLIFY_THRESHOLD) {
+  const effectiveGauge = gauge ?? GAUGE
+  const effectiveThreshold = SIMPLIFY_THRESHOLD * (GAUGE / effectiveGauge)
+  if (cam.scale < effectiveThreshold) {
     ctx.strokeStyle = accent
     ctx.lineWidth = 2.5
     ctx.setLineDash(isGreen ? [] : [6, 4])
@@ -345,6 +351,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, rect.width, rect.height)
     }
+    if (store.boardEnabled && store.boardWidth > 0 && store.boardHeight > 0) {
+      renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
+    }
+
     renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { gauge: store.gauge })
 
     // Box selection rectangle
@@ -930,6 +940,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const ctx = canvas.getContext('2d')
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       draw()
+      store.setViewport(rect.width, rect.height)
       onViewport?.(rect.width, rect.height)
     }
     resize()

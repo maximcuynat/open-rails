@@ -12,7 +12,10 @@ describe('Units and Scale System', () => {
   it('has valid scale presets', () => {
     expect(SCALE_PRESETS['1:1'].defaultGauge).toBe(1.435)
     expect(SCALE_PRESETS['HO'].defaultGauge).toBe(0.0165)
+    expect(SCALE_PRESETS['HO'].defaultBoardWidth).toBe(2.40)
+    expect(SCALE_PRESETS['HO'].defaultBoardHeight).toBe(1.20)
     expect(SCALE_PRESETS['N'].defaultGauge).toBe(0.009)
+    expect(SCALE_PRESETS['N'].defaultBoardWidth).toBe(1.60)
     expect(SCALE_PRESETS['TT'].defaultGauge).toBe(0.012)
     expect(SCALE_PRESETS['O'].defaultGauge).toBe(0.032)
     expect(SCALE_PRESETS['Z'].defaultGauge).toBe(0.0065)

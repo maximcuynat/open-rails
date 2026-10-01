@@ -117,6 +117,10 @@ describe('EditorStore persistence', () => {
     expect(store1.trackSpacing).toBe(0.050)
     expect(store1.parallelOffset).toBe(0.050)
     expect(store1.gridSpacing).toBe(0.1)
+    expect(store1.boardEnabled).toBe(true)
+    expect(store1.boardWidth).toBe(2.40)
+    expect(store1.boardHeight).toBe(1.20)
+    expect(store1.camera.scale).toBeGreaterThan(100) // camera adapted to board
 
     // Toggle dimensions
     expect(store1.showDimensions).toBe(true)
@@ -130,6 +134,9 @@ describe('EditorStore persistence', () => {
     expect(store2.gauge).toBe(0.0165)
     expect(store2.trackSpacing).toBe(0.050)
     expect(store2.showDimensions).toBe(false)
+    expect(store2.boardEnabled).toBe(true)
+    expect(store2.boardWidth).toBe(2.40)
+    expect(store2.boardHeight).toBe(1.20)
   })
 
   it('manages turnout state, settings and cleanup on interaction cancel', () => {

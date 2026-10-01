@@ -3,6 +3,7 @@ import { Modal } from '../common/Modal'
 import type { EditorStore } from '@application/state/editorStore'
 import {
   SCALE_PRESETS,
+  BOARD_PRESETS,
   type ScalePresetId,
   type Unit,
   formatDistance,
@@ -27,6 +28,13 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
     toUnitValue(store.trackSpacing, store.unit).toString()
   )
   const [showDimensions, setShowDimensions] = useState<boolean>(store.showDimensions)
+  const [boardEnabled, setBoardEnabled] = useState<boolean>(store.boardEnabled)
+  const [boardWidthVal, setBoardWidthVal] = useState<string>(
+    toUnitValue(store.boardWidth, store.unit).toString()
+  )
+  const [boardHeightVal, setBoardHeightVal] = useState<string>(
+    toUnitValue(store.boardHeight, store.unit).toString()
+  )
 
   // Sync state when modal opens or store changes
   useEffect(() => {
@@ -36,8 +44,11 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setGaugeVal(toUnitValue(store.gauge, store.unit).toString())
       setSpacingVal(toUnitValue(store.trackSpacing, store.unit).toString())
       setShowDimensions(store.showDimensions)
+      setBoardEnabled(store.boardEnabled)
+      setBoardWidthVal(toUnitValue(store.boardWidth, store.unit).toString())
+      setBoardHeightVal(toUnitValue(store.boardHeight, store.unit).toString())
     }
-  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions])
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight])
 
   // When changing scale preset in the modal
   const handleScaleChange = (presetId: ScalePresetId) => {
@@ -47,6 +58,13 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSelectedUnit(preset.defaultUnit)
       setGaugeVal(toUnitValue(preset.defaultGauge, preset.defaultUnit).toString())
       setSpacingVal(toUnitValue(preset.defaultTrackSpacing, preset.defaultUnit).toString())
+      if (preset.defaultBoardWidth && preset.defaultBoardHeight) {
+        setBoardEnabled(true)
+        setBoardWidthVal(toUnitValue(preset.defaultBoardWidth, preset.defaultUnit).toString())
+        setBoardHeightVal(toUnitValue(preset.defaultBoardHeight, preset.defaultUnit).toString())
+      } else if (presetId === '1:1') {
+        setBoardEnabled(false)
+      }
     }
   }
 
@@ -54,9 +72,13 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   const handleUnitChange = (newUnit: Unit) => {
     const currentGaugeMeters = parseDistance(gaugeVal, selectedUnit)
     const currentSpacingMeters = parseDistance(spacingVal, selectedUnit)
+    const currentBWMeters = parseDistance(boardWidthVal, selectedUnit)
+    const currentBHMeters = parseDistance(boardHeightVal, selectedUnit)
     setSelectedUnit(newUnit)
     setGaugeVal(toUnitValue(currentGaugeMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
     setSpacingVal(toUnitValue(currentSpacingMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
+    setBoardWidthVal(toUnitValue(currentBWMeters, newUnit).toFixed(newUnit === 'mm' ? 0 : 2))
+    setBoardHeightVal(toUnitValue(currentBHMeters, newUnit).toFixed(newUnit === 'mm' ? 0 : 2))
   }
 
   const handleSave = () => {
@@ -88,6 +110,13 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
 
     if (store.showDimensions !== showDimensions) {
       store.toggleDimensions()
+    }
+
+    const parsedBW = parseDistance(boardWidthVal, selectedUnit)
+    const parsedBH = parseDistance(boardHeightVal, selectedUnit)
+    store.setBoardEnabled(boardEnabled)
+    if (parsedBW > 0 && parsedBH > 0) {
+      store.setBoardDimensions(parsedBW, parsedBH)
     }
 
     showToast(`Paramètres enregistrés : Échelle ${SCALE_PRESETS[selectedScale]?.name ?? selectedScale}`, 'success')
@@ -197,7 +226,110 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
           </div>
         </div>
 
-        {/* Section 4 : Dessin & Côtes CAO */}
+        {/* Section 4 : Plateau / Table de modélisme (Baseboard) */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Plateau / Table de travail (Baseboard)
+            <span className="settings-hint">Délimite physiquement la surface de votre réseau (ex. 2,40 m × 1,20 m) sur le canvas</span>
+          </label>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={boardEnabled}
+              onChange={(e) => setBoardEnabled(e.target.checked)}
+            />
+            <span className="settings-checkbox-text">
+              Activer le plateau de réseau délimité (cadre et centrage automatique)
+            </span>
+          </label>
+
+          {boardEnabled && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <div className="settings-grid-2">
+                <div className="settings-field">
+                  <label htmlFor="input-board-w" className="settings-sublabel">
+                    Largeur du plateau ({selectedUnit}) :
+                  </label>
+                  <div className="settings-input-wrap">
+                    <input
+                      id="input-board-w"
+                      type="number"
+                      step="any"
+                      min="0.1"
+                      className="settings-input"
+                      value={boardWidthVal}
+                      onChange={(e) => setBoardWidthVal(e.target.value)}
+                    />
+                    <span className="settings-input-unit">{selectedUnit}</span>
+                  </div>
+                </div>
+                <div className="settings-field">
+                  <label htmlFor="input-board-h" className="settings-sublabel">
+                    Profondeur du plateau ({selectedUnit}) :
+                  </label>
+                  <div className="settings-input-wrap">
+                    <input
+                      id="input-board-h"
+                      type="number"
+                      step="any"
+                      min="0.1"
+                      className="settings-input"
+                      value={boardHeightVal}
+                      onChange={(e) => setBoardHeightVal(e.target.value)}
+                    />
+                    <span className="settings-input-unit">{selectedUnit}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick preset board buttons */}
+              <div style={{ marginTop: '0.6rem', display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                {BOARD_PRESETS.map((bp) => (
+                  <button
+                    key={bp.name}
+                    type="button"
+                    className="preset-btn"
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                    onClick={() => {
+                      setBoardWidthVal(toUnitValue(bp.width, selectedUnit).toFixed(selectedUnit === 'mm' ? 0 : 2))
+                      setBoardHeightVal(toUnitValue(bp.height, selectedUnit).toFixed(selectedUnit === 'mm' ? 0 : 2))
+                    }}
+                  >
+                    {bp.name} ({formatDistance(bp.width, selectedUnit)} × {formatDistance(bp.height, selectedUnit)})
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ marginTop: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="preset-btn"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    fontWeight: 600,
+                    padding: '0.4rem 0.8rem',
+                  }}
+                  onClick={() => {
+                    const bw = parseDistance(boardWidthVal, selectedUnit)
+                    const bh = parseDistance(boardHeightVal, selectedUnit)
+                    if (bw > 0 && bh > 0) {
+                      store.setBoardEnabled(true)
+                      store.setBoardDimensions(bw, bh)
+                      store.fitBoard()
+                      showToast('Vue centrée sur le plateau de réseau', 'info')
+                    }
+                  }}
+                >
+                  🎯 Cadrer la vue sur le plateau
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Section 5 : Dessin & Côtes CAO */}
         <div className="settings-section">
           <label className="settings-label">
             Aides de construction CAO
@@ -223,6 +355,12 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
             <span>Écartement : <strong>{formatDistance(parseDistance(gaugeVal, selectedUnit), selectedUnit)}</strong></span>
             <span> • </span>
             <span>Entraxe : <strong>{formatDistance(parseDistance(spacingVal, selectedUnit), selectedUnit)}</strong></span>
+            {boardEnabled && (
+              <>
+                <span> • </span>
+                <span>Plateau : <strong>{formatDistance(parseDistance(boardWidthVal, selectedUnit), selectedUnit)} × {formatDistance(parseDistance(boardHeightVal, selectedUnit), selectedUnit)}</strong></span>
+              </>
+            )}
           </div>
         </div>
       </div>

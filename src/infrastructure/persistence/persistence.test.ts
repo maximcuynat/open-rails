@@ -129,6 +129,42 @@ describe('persistence module', () => {
     expect(loaded?.camera?.scale).toBe(2.5)
   })
 
+  it('serializes and restores scale, units, and layout board dimensions', () => {
+    const net = createNetwork()
+    const serialized = serializeNetwork(
+      net,
+      'HO Layout',
+      undefined,
+      undefined,
+      'fixed',
+      0.1,
+      undefined,
+      'mm',
+      'HO',
+      0.0165,
+      0.050,
+      true,
+      true,
+      2.40,
+      1.20,
+    )
+
+    expect(serialized.unit).toBe('mm')
+    expect(serialized.scalePreset).toBe('HO')
+    expect(serialized.gauge).toBe(0.0165)
+    expect(serialized.boardEnabled).toBe(true)
+    expect(serialized.boardWidth).toBe(2.40)
+    expect(serialized.boardHeight).toBe(1.20)
+
+    const restored = deserializeNetwork(serialized)
+    expect(restored.unit).toBe('mm')
+    expect(restored.scalePreset).toBe('HO')
+    expect(restored.gauge).toBe(0.0165)
+    expect(restored.boardEnabled).toBe(true)
+    expect(restored.boardWidth).toBe(2.40)
+    expect(restored.boardHeight).toBe(1.20)
+  })
+
   it('clears storage properly', () => {
     const net = createNetwork()
     addNode(net, { x: 0, y: 0 })
