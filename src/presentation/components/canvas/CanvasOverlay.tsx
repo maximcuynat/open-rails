@@ -1,4 +1,6 @@
 import type { EditorStore } from '@application/state/editorStore'
+import { getLocomotiveFrontPos } from '@domain/models/locomotive'
+import { TrainBuilderPalette } from '../train-builder/TrainBuilderPalette'
 
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
@@ -27,16 +29,16 @@ function hintText(store: EditorStore): string {
     case 'select':
       return store.selection.nodes.size > 0
         ? 'Glisser les flèches orthogonales (X/Y) pour déplacer le nœud · Glisser le centre pour déplacement libre · Suppr pour effacer'
-        : 'Clic pour sélectionner un nœud · Ctrl/Shift+Clic pour multi-sélection'
+        : 'Clic pour sélectionner un élément · Glissez un train ou un wagon sur les rails'
     case 'pan':
       return store.selection.nodes.size > 0
         ? 'Glisser les flèches (X/Y) pour déplacer le nœud · Glisser le fond pour déplacer la vue'
         : 'Glisser pour déplacer la vue · Clic sur un nœud pour afficher ses flèches de déplacement'
     default:
-      if (store.tool === 'locomotive') {
+      if (store.tool === 'locomotive' || store.isTrainSelected) {
         return store.locomotive
-          ? 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV · D Squelette · Espace pour Conduire'
-          : 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV · D Squelette'
+          ? 'Glissez un wagon sur le train ou cliquez sur la motrice pour Prendre le contrôle (Espace)'
+          : 'Glissez une motrice ou un wagon sur les rails pour poser le train'
       }
       return ''
   }
@@ -60,6 +62,21 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
     const dx = cursor.x - activeNode.pos.x
     const dy = cursor.y - activeNode.pos.y
     currentDist = Math.hypot(dx, dy)
+  }
+
+  // Floating pilot button when locomotive is hovered or train is selected
+  let pilotSx = 0
+  let pilotSy = 0
+  let showPilotBtn = false
+  if (store.locomotive && !store.isPlayMode) {
+    const anchor = store.hoveredTrainAnchor ?? getLocomotiveFrontPos(store.network, store.locomotive)
+    if (anchor && (store.hoveredTrainPart !== null || store.isTrainSelected)) {
+      pilotSx = (anchor.x - store.camera.x) * store.camera.scale + store.viewport.w / 2
+      pilotSy = (anchor.y - store.camera.y) * store.camera.scale + store.viewport.h / 2
+      if (pilotSx >= -80 && pilotSx <= store.viewport.w + 80 && pilotSy >= -80 && pilotSy <= store.viewport.h + 80) {
+        showPilotBtn = true
+      }
+    }
   }
 
   return (
@@ -112,83 +129,63 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
         </div>
       )}
 
-      {/* Locomotive Placement HUD */}
-      {store.tool === 'locomotive' && !store.isPlayMode && (
-        <div className="hud-realtime-card" style={{ pointerEvents: 'auto', gap: '8px' }}>
-          <span className="hud-pill" style={{ color: '#38bdf8', fontWeight: 600 }}>
-            🚄 Rame TGV articulée
-          </span>
-          <span className="hud-sep" />
-          <span style={{ color: '#94a3b8', fontSize: '11px' }}>
-            Voitures :
-          </span>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <button
-              onClick={() => store.setTrainWagonCount(Math.max(0, store.trainWagonCount - 1))}
-              disabled={store.trainWagonCount <= 0}
-              style={{
-                background: 'rgba(30, 41, 59, 0.8)',
-                border: '1px solid #475569',
-                borderRadius: '3px',
-                color: store.trainWagonCount <= 0 ? '#475569' : '#f8fafc',
-                width: '20px',
-                height: '20px',
-                cursor: store.trainWagonCount <= 0 ? 'default' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px',
-                fontWeight: 'bold',
-              }}
-              title="Diminuer le nombre de voitures intermédiaires"
-            >
-              -
-            </button>
-            <span style={{ fontWeight: 700, minWidth: '18px', textAlign: 'center', fontSize: '12px', color: '#f8fafc' }}>
-              {store.trainWagonCount}
-            </span>
-            <button
-              onClick={() => store.setTrainWagonCount(Math.min(8, store.trainWagonCount + 1))}
-              disabled={store.trainWagonCount >= 8}
-              style={{
-                background: 'rgba(30, 41, 59, 0.8)',
-                border: '1px solid #475569',
-                borderRadius: '3px',
-                color: store.trainWagonCount >= 8 ? '#475569' : '#f8fafc',
-                width: '20px',
-                height: '20px',
-                cursor: store.trainWagonCount >= 8 ? 'default' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '12px',
-                fontWeight: 'bold',
-              }}
-              title="Augmenter le nombre de voitures intermédiaires"
-            >
-              +
-            </button>
-          </div>
-          <span className="hud-sep" />
-          <span style={{ color: store.locomotivePreview ? '#10b981' : '#94a3b8', fontSize: '10.5px', fontWeight: store.locomotivePreview ? 600 : 400 }}>
-            {store.locomotivePreview ? '✓ Voie aimantée · Clic pour poser' : 'Survolez une voie ferrée'}
-          </span>
-          <span className="hud-sep" />
+      {/* Floating "Prendre le contrôle" Button above Locomotive on Hover / Select */}
+      {showPilotBtn && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${pilotSx}px`,
+            top: `${pilotSy - 40}px`,
+            transform: 'translate(-50%, -100%)',
+            pointerEvents: 'auto',
+            zIndex: 50,
+            animation: 'hud-pop 160ms cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+        >
           <button
-            onClick={() => store.toggleTrainDebug()}
-            style={{
-              background: store.showTrainDebug ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
-              border: `1px solid ${store.showTrainDebug ? '#38bdf8' : '#475569'}`,
-              borderRadius: '4px',
-              color: store.showTrainDebug ? '#38bdf8' : '#94a3b8',
-              fontSize: '11px',
-              padding: '2px 6px',
-              cursor: 'pointer',
+            onClick={(e) => {
+              e.stopPropagation()
+              store.togglePlayMode()
             }}
-            title="Afficher les points d'attache, liaisons et accordéons en mode squelette (Touche D)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              color: '#ffffff',
+              border: '1.5px solid #34d399',
+              borderRadius: '24px',
+              padding: '7px 16px',
+              fontSize: '12.5px',
+              fontWeight: 800,
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(16, 185, 129, 0.55), 0 2px 6px rgba(0,0,0,0.35)',
+              whiteSpace: 'nowrap',
+              transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+            }}
+            title="Prendre les commandes du train (Espace)"
+            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.06)')}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
           >
-            {store.showTrainDebug ? '⚙ Squelette ON' : '⚙ Squelette'}
+            <span style={{ fontSize: '15px' }}>🎮</span>
+            <span>Prendre le contrôle</span>
           </button>
+        </div>
+      )}
+
+      {/* Train Builder Palette (Drag & drop motrice + wagons + controls) */}
+      {(store.tool === 'locomotive' || store.isTrainSelected) && !store.isPlayMode && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '54px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 40,
+            pointerEvents: 'auto',
+          }}
+        >
+          <TrainBuilderPalette store={store} />
         </div>
       )}
 

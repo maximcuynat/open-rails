@@ -2763,6 +2763,7 @@ export function renderLocomotive(
   loco: Locomotive,
   isGhost = false,
   isDebugSkeleton = false,
+  isSelected = false,
 ): void {
   const train = getFullTGVTrain(net, loco)
   if (!train) return
@@ -2775,6 +2776,45 @@ export function renderLocomotive(
 
   if (isGhost) {
     ctx.globalAlpha = 0.45
+  }
+
+  // Halo de sélection lumineux cyan si le train est sélectionné
+  if (isSelected && !isGhost) {
+    ctx.save()
+    ctx.strokeStyle = '#38bdf8'
+    ctx.lineWidth = Math.max(3, 4.5 * Math.sqrt(cam.scale))
+    ctx.shadowColor = '#38bdf8'
+    ctx.shadowBlur = 12
+    ctx.lineJoin = 'round'
+    // Contour motrice 1
+    ctx.beginPath()
+    ctx.moveTo(toSx(train.leadLoco.polygon[0]), toSy(train.leadLoco.polygon[0]))
+    for (let pi = 1; pi < train.leadLoco.polygon.length; pi++) {
+      ctx.lineTo(toSx(train.leadLoco.polygon[pi]), toSy(train.leadLoco.polygon[pi]))
+    }
+    ctx.closePath()
+    ctx.stroke()
+    // Contour voitures
+    for (const car of train.cars) {
+      ctx.beginPath()
+      ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
+      for (let pi = 1; pi < car.polygon.length; pi++) {
+        ctx.lineTo(toSx(car.polygon[pi]), toSy(car.polygon[pi]))
+      }
+      ctx.closePath()
+      ctx.stroke()
+    }
+    // Contour motrice 2
+    if (train.rearLoco) {
+      ctx.beginPath()
+      ctx.moveTo(toSx(train.rearLoco.polygon[0]), toSy(train.rearLoco.polygon[0]))
+      for (let pi = 1; pi < train.rearLoco.polygon.length; pi++) {
+        ctx.lineTo(toSx(train.rearLoco.polygon[pi]), toSy(train.rearLoco.polygon[pi]))
+      }
+      ctx.closePath()
+      ctx.stroke()
+    }
+    ctx.restore()
   }
 
   // 1. Dessiner tous les bogies sous les caisses (M1, Jacobs partagés, M2)
@@ -3160,7 +3200,7 @@ function renderTrainSkeletonDebug(
     const sx = toSx(bogie.center)
     const sy = toSy(bogie.center)
 
-    // Disque de pivot
+    // Disque de pivot central
     const rOuter = Math.max(6, 6 * Math.sqrt(cam.scale))
     ctx.beginPath()
     ctx.arc(sx, sy, rOuter, 0, Math.PI * 2)
@@ -3170,15 +3210,51 @@ function renderTrainSkeletonDebug(
     ctx.lineWidth = 1.5
     ctx.stroke()
 
-    // Réticule en croix au centre du pivot
-    const crossR = rOuter + 4
+    // 2.2 Axes orientés qui tournent solidairement avec le bogie dans les courbes
+    // (Axe longitudinal = tangent, Axe transversal = normal)
+    const axisMeters = 2.2 // longueur de l'axe orienté en mètres
+    const pFrontAxis = {
+      x: bogie.center.x + bogie.tangent.x * axisMeters,
+      y: bogie.center.y + bogie.tangent.y * axisMeters,
+    }
+    const pRearAxis = {
+      x: bogie.center.x - bogie.tangent.x * axisMeters,
+      y: bogie.center.y - bogie.tangent.y * axisMeters,
+    }
+    const pLeftAxis = {
+      x: bogie.center.x + bogie.normal.x * 1.4,
+      y: bogie.center.y + bogie.normal.y * 1.4,
+    }
+    const pRightAxis = {
+      x: bogie.center.x - bogie.normal.x * 1.4,
+      y: bogie.center.y - bogie.normal.y * 1.4,
+    }
+
+    // Axe transversal orienté (cyan - suit la rotation des essieux)
     ctx.beginPath()
-    ctx.moveTo(sx - crossR, sy)
-    ctx.lineTo(sx + crossR, sy)
-    ctx.moveTo(sx, sy - crossR)
-    ctx.lineTo(sx, sy + crossR)
-    ctx.strokeStyle = '#38bdf8'
-    ctx.lineWidth = 1.5
+    ctx.moveTo(toSx(pLeftAxis), toSy(pLeftAxis))
+    ctx.lineTo(toSx(pRightAxis), toSy(pRightAxis))
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)'
+    ctx.lineWidth = 2
+    ctx.stroke()
+
+    // Axe longitudinal orienté (ambre/orange - suit la direction du bogie)
+    ctx.beginPath()
+    ctx.moveTo(toSx(pRearAxis), toSy(pRearAxis))
+    ctx.lineTo(toSx(pFrontAxis), toSy(pFrontAxis))
+    ctx.strokeStyle = '#f59e0b'
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+
+    // Flèche / point d'orientation vers l'avant du bogie
+    const sxF = toSx(pFrontAxis)
+    const syF = toSy(pFrontAxis)
+    ctx.beginPath()
+    ctx.arc(sxF, syF, 3.5, 0, Math.PI * 2)
+    ctx.fillStyle = '#f59e0b'
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1
     ctx.stroke()
 
     // Nom du bogie
@@ -3198,7 +3274,7 @@ function renderTrainSkeletonDebug(
     ctx.fillText(bName, sx, sy - rOuter - 11)
   }
 
-  // 3. Points logiques d'attache de caisse
+  // 3. Points logiques d'attache et de liaison mécanique centrale
   const drawAttachPoint = (p: Point, label: string, color: string) => {
     const sx = toSx(p)
     const sy = toSy(p)
@@ -3221,6 +3297,19 @@ function renderTrainSkeletonDebug(
     }
   }
 
+  // Bielle / liaison mécanique centrale d'attelage
+  const drawCouplerLink = (pA: Point, pB: Point, label: string) => {
+    ctx.beginPath()
+    ctx.moveTo(toSx(pA), toSy(pA))
+    ctx.lineTo(toSx(pB), toSy(pB))
+    ctx.strokeStyle = '#10b981'
+    ctx.lineWidth = 3.5
+    ctx.stroke()
+
+    const mid = { x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 }
+    drawAttachPoint(mid, label, '#10b981')
+  }
+
   // Motrice M1
   const m1Tail = {
     x: (train.leadLoco.polygon[4].x + train.leadLoco.polygon[5].x) / 2,
@@ -3229,64 +3318,108 @@ function renderTrainSkeletonDebug(
   drawAttachPoint(train.leadLoco.polygon[0], 'Nez M1', '#ef4444')
   drawAttachPoint(m1Tail, 'Attache M1', '#f59e0b')
 
-  // Voitures intermédiaires
-  for (let ci = 0; ci < train.cars.length; ci++) {
-    const car = train.cars[ci]
-    const pFrontAtt = {
-      x: (car.polygon[0].x + car.polygon[1].x) / 2,
-      y: (car.polygon[0].y + car.polygon[1].y) / 2,
+  // Voitures intermédiaires et liaisons centrales
+  if (train.cars.length > 0) {
+    const v0Front = {
+      x: (train.cars[0].polygon[0].x + train.cars[0].polygon[1].x) / 2,
+      y: (train.cars[0].polygon[0].y + train.cars[0].polygon[1].y) / 2,
     }
-    const pRearAtt = {
-      x: (car.polygon[3].x + car.polygon[2].x) / 2,
-      y: (car.polygon[3].y + car.polygon[2].y) / 2,
-    }
-    drawAttachPoint(pFrontAtt, `V${ci + 1} Av`, '#22c55e')
-    drawAttachPoint(pRearAtt, `V${ci + 1} Ar`, '#f59e0b')
-  }
+    drawCouplerLink(m1Tail, v0Front, 'Attelage M1-V1')
 
-  // Motrice M2
-  if (train.rearLoco) {
+    for (let ci = 0; ci < train.cars.length; ci++) {
+      const car = train.cars[ci]
+      const pFrontAtt = {
+        x: (car.polygon[0].x + car.polygon[1].x) / 2,
+        y: (car.polygon[0].y + car.polygon[1].y) / 2,
+      }
+      const pRearAtt = {
+        x: (car.polygon[3].x + car.polygon[2].x) / 2,
+        y: (car.polygon[3].y + car.polygon[2].y) / 2,
+      }
+      drawAttachPoint(pFrontAtt, `V${ci + 1} Av`, '#22c55e')
+      drawAttachPoint(pRearAtt, `V${ci + 1} Ar`, '#f59e0b')
+
+      if (ci < train.cars.length - 1) {
+        const nextCar = train.cars[ci + 1]
+        const nextFrontAtt = {
+          x: (nextCar.polygon[0].x + nextCar.polygon[1].x) / 2,
+          y: (nextCar.polygon[0].y + nextCar.polygon[1].y) / 2,
+        }
+        drawCouplerLink(pRearAtt, nextFrontAtt, `Pivot Jacobs V${ci + 1}-V${ci + 2}`)
+      }
+    }
+
+    if (train.rearLoco) {
+      const vLastRear = {
+        x: (train.cars[train.cars.length - 1].polygon[3].x + train.cars[train.cars.length - 1].polygon[2].x) / 2,
+        y: (train.cars[train.cars.length - 1].polygon[3].y + train.cars[train.cars.length - 1].polygon[2].y) / 2,
+      }
+      const m2Tail = {
+        x: (train.rearLoco.polygon[4].x + train.rearLoco.polygon[5].x) / 2,
+        y: (train.rearLoco.polygon[4].y + train.rearLoco.polygon[5].y) / 2,
+      }
+      drawCouplerLink(vLastRear, m2Tail, 'Attelage V-M2')
+      drawAttachPoint(m2Tail, 'Attache M2', '#f59e0b')
+      drawAttachPoint(train.rearLoco.polygon[0], 'Nez M2', '#ef4444')
+    }
+  } else if (train.rearLoco) {
     const m2Tail = {
       x: (train.rearLoco.polygon[4].x + train.rearLoco.polygon[5].x) / 2,
       y: (train.rearLoco.polygon[4].y + train.rearLoco.polygon[5].y) / 2,
     }
+    drawCouplerLink(m1Tail, m2Tail, 'Attelage M1-M2')
     drawAttachPoint(m2Tail, 'Attache M2', '#f59e0b')
     drawAttachPoint(train.rearLoco.polygon[0], 'Nez M2', '#ef4444')
   }
 
-  // 4. Points d'attache des soufflets accordéons
+  // 4. Parois latérales d'accordéons (Flancs gauche et droit extérieurs distincts de la liaison centrale)
   for (let ai = 0; ai < train.accordions.length; ai++) {
     const acc = train.accordions[ai]
     const [fL, fR] = acc.frontFrame
     const [rL, rR] = acc.rearFrame
 
-    // Marquer les 4 points d'ancrage du soufflet en cyan
-    drawAttachPoint(fL, '', '#06b6d4')
-    drawAttachPoint(fR, '', '#06b6d4')
-    drawAttachPoint(rL, '', '#06b6d4')
-    drawAttachPoint(rR, '', '#06b6d4')
+    // Ligne de paroi latérale GAUCHE
+    ctx.beginPath()
+    ctx.moveTo(toSx(fL), toSy(fL))
+    ctx.lineTo(toSx(rL), toSy(rL))
+    ctx.strokeStyle = '#06b6d4'
+    ctx.lineWidth = 2.5
+    ctx.stroke()
 
-    // Ligne centrale d'intercirculation en pointillé
+    // Ligne de paroi latérale DROITE
+    ctx.beginPath()
+    ctx.moveTo(toSx(fR), toSy(fR))
+    ctx.lineTo(toSx(rR), toSy(rR))
+    ctx.strokeStyle = '#06b6d4'
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+
+    // 4 points d'ancrage sur les parois latérales extérieures
+    drawAttachPoint(fL, 'Paroi G', '#06b6d4')
+    drawAttachPoint(fR, 'Paroi D', '#06b6d4')
+    drawAttachPoint(rL, 'Paroi G', '#06b6d4')
+    drawAttachPoint(rR, 'Paroi D', '#06b6d4')
+
+    // Plis d'accordéons intérieurs reliant les deux parois latérales
+    for (const fold of acc.folds) {
+      ctx.beginPath()
+      ctx.moveTo(toSx(fold.left), toSy(fold.left))
+      ctx.lineTo(toSx(fold.right), toSy(fold.right))
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+
+    // Badge d'écartement soufflet entre parois
     const midF = { x: (fL.x + fR.x) / 2, y: (fL.y + fR.y) / 2 }
     const midR = { x: (rL.x + rR.x) / 2, y: (rL.y + rR.y) / 2 }
     const gapLen = Math.hypot(midF.x - midR.x, midF.y - midR.y)
-
-    ctx.beginPath()
-    ctx.setLineDash([2, 2])
-    ctx.moveTo(toSx(midF), toSy(midF))
-    ctx.lineTo(toSx(midR), toSy(midR))
-    ctx.strokeStyle = '#facc15'
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.setLineDash([])
-
-    // Badge d'écartement soufflet
     const badgeX = (toSx(midF) + toSx(midR)) / 2
-    const badgeY = (toSy(midF) + toSy(midR)) / 2 - 14
-    const accLabel = `Accordéon: ${gapLen.toFixed(2)} m`
+    const badgeY = (toSy(midF) + toSy(midR)) / 2 - 16
+    const accLabel = `Soufflet latéral: ${gapLen.toFixed(2)} m`
     const tw = ctx.measureText(accLabel).width
-    ctx.fillStyle = 'rgba(8, 51, 68, 0.9)'
-    ctx.fillRect(badgeX - tw / 2 - 3, badgeY - 6, tw + 6, 12)
+    ctx.fillStyle = 'rgba(8, 51, 68, 0.95)'
+    ctx.fillRect(badgeX - tw / 2 - 3, badgeY - 6, tw + 6, 13)
     ctx.fillStyle = '#22d3ee'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'

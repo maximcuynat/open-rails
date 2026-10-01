@@ -360,12 +360,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     // Render locomotive on top of the track network
     if (store.locomotive) {
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug)
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected)
     }
 
     // Ghost preview when placing a locomotive
     if (store.tool === 'locomotive' && store.locomotivePreview && !store.isPlayMode) {
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotivePreview, true, store.showTrainDebug)
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotivePreview, true, store.showTrainDebug, false)
     }
 
     // Box selection rectangle
@@ -1606,6 +1606,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      if (e.button === 0 && store.locomotive && !store.isPlayMode) {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const trainHit = store.checkTrainHover(world)
+        if (trainHit.hit) {
+          store.selectTrain(true)
+          redraw()
+          return
+        } else if (store.isTrainSelected && store.tool !== 'locomotive') {
+          store.selectTrain(false)
+        }
+      }
+
       if (e.button === 0 && store.tool === 'locomotive') {
         const world = getWorldPos(e.clientX, e.clientY)
         store.placeLocomotiveAt(world)
@@ -1757,6 +1769,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       const rawWorld = getWorldPos(e.clientX, e.clientY)
       store.cursorWorld = rawWorld
+
+      // Update train hover detection (for pilot button and inspection)
+      if (store.locomotive && !store.isPlayMode) {
+        store.checkTrainHover(rawWorld)
+      }
 
       // Update locomotive ghost preview during locomotive placement mode
       if (store.tool === 'locomotive' && !store.isPlayMode) {
@@ -2201,7 +2218,28 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
   return (
     <div className="canvas-wrap" style={{ position: 'relative' }}>
-      <canvas ref={canvasRef} className={`tool-${store.tool}`} />
+      <canvas
+        ref={canvasRef}
+        className={`tool-${store.tool}`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          const world = getWorldPos(e.clientX, e.clientY)
+          store.cursorWorld = world
+          store.updateLocomotivePreview(world)
+          redraw()
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          const itemType = (e.dataTransfer.getData('application/open-rails-train') ||
+            e.dataTransfer.getData('text/plain')) as 'tgv_loco' | 'tgv_wagon'
+          const world = getWorldPos(e.clientX, e.clientY)
+          if (itemType === 'tgv_loco' || itemType === 'tgv_wagon') {
+            store.handleDropTrainItem(itemType, world)
+            redraw()
+          }
+        }}
+      />
 
       {renamingSection && (
         <div

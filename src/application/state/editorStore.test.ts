@@ -350,5 +350,33 @@ describe('EditorStore persistence', () => {
       // 3. La motrice est prête à avancer vers l'avant dans sa nouvelle direction
       expect(store.locomotive!.direction).toBe(1)
     })
+
+    it('handleDropTrainItem places loco and appends passenger wagons via drag and drop', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 300, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      // 1. Drag & drop d'une motrice
+      const droppedLoco = store.handleDropTrainItem('tgv_loco', { x: 50, y: 0 })
+      expect(droppedLoco).toBe(true)
+      expect(store.locomotive).not.toBeNull()
+      expect(store.isTrainSelected).toBe(true)
+
+      const initialWagons = store.trainWagonCount
+
+      // 2. Drag & drop d'un wagon sur le train
+      const droppedWagon = store.handleDropTrainItem('tgv_wagon', { x: 40, y: 0 })
+      expect(droppedWagon).toBe(true)
+      expect(store.trainWagonCount).toBe(initialWagons + 1)
+      expect(store.locomotive!.wagonCount).toBe(initialWagons + 1)
+
+      // 3. Vérification de sélection et survol
+      const hover = store.checkTrainHover({ x: 50, y: 0 })
+      expect(hover.hit).toBe(true)
+
+      store.selectTrain(false)
+      expect(store.isTrainSelected).toBe(false)
+    })
   })
 })

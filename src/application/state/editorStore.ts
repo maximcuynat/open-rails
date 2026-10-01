@@ -24,6 +24,8 @@ import {
   steerJunction,
   getLocomotiveFrontPos,
   reverseTGVTrain,
+  hitTestTGVTrain,
+  type TrainHitResult,
 } from '@domain/models/locomotive'
 
 export type Tool =
@@ -119,6 +121,9 @@ export class EditorStore {
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
   showTrainDebug = false // Debug skeleton mode: see attachment points, pivots and accordions without body
+  isTrainSelected = false // Train selected in editor mode
+  hoveredTrainPart: 'lead' | 'rear' | 'car' | null = null // Part currently under cursor
+  hoveredTrainAnchor: Point | null = null // World anchor point of hovered part for UI badge
 
   // --- Locomotive Kinematics & Physics ---
   locomotiveCurrentSpeed = 0 // current speed in m/s (0 = stopped)
@@ -1233,8 +1238,15 @@ export class EditorStore {
     )
     if (!loco) return false
     this.locomotive = loco
+    this.isTrainSelected = true
     this.notify()
     return true
+  }
+
+  /** Select or deselect the train */
+  selectTrain = (selected: boolean = true): void => {
+    this.isTrainSelected = selected
+    this.notify()
   }
 
   /** Set the number of passenger cars in the articulated TGV train */
@@ -1244,6 +1256,67 @@ export class EditorStore {
       this.locomotive.wagonCount = this.trainWagonCount
     }
     this.notify()
+  }
+
+  /** Increment passenger car count */
+  addTrainWagon = (): void => {
+    this.setTrainWagonCount(this.trainWagonCount + 1)
+  }
+
+  /** Decrement passenger car count */
+  removeTrainWagon = (): void => {
+    this.setTrainWagonCount(this.trainWagonCount - 1)
+  }
+
+  /** Perform hit test on train at a world position */
+  checkTrainHover = (worldPos: Point): TrainHitResult => {
+    if (!this.locomotive) {
+      if (this.hoveredTrainPart !== null) {
+        this.hoveredTrainPart = null
+        this.hoveredTrainAnchor = null
+        this.notify()
+      }
+      return { hit: false, part: 'none' }
+    }
+    const res = hitTestTGVTrain(this.network, this.locomotive, worldPos, 2.5 / this.camera.scale)
+    const newPart: 'lead' | 'rear' | 'car' | null = (res.hit && res.part !== 'none') ? res.part : null
+    const newAnchor = res.anchorPoint ?? null
+    if (newPart !== this.hoveredTrainPart || (newAnchor && !this.hoveredTrainAnchor)) {
+      this.hoveredTrainPart = newPart
+      this.hoveredTrainAnchor = newAnchor
+      this.notify()
+    }
+    return res
+  }
+
+  /** Handle Drag & Drop of a train part onto the canvas world */
+  handleDropTrainItem = (itemType: 'tgv_loco' | 'tgv_wagon', worldPos: Point): boolean => {
+    if (itemType === 'tgv_loco') {
+      const placed = this.placeLocomotiveAt(worldPos)
+      if (placed) {
+        this.isTrainSelected = true
+        this.notify()
+      }
+      return placed
+    } else if (itemType === 'tgv_wagon') {
+      if (!this.locomotive) {
+        // Pas encore de train : poser une rame avec 1 wagon à l'endroit droppé
+        this.trainWagonCount = 1
+        const placed = this.placeLocomotiveAt(worldPos)
+        if (placed) {
+          this.isTrainSelected = true
+          this.notify()
+        }
+        return placed
+      } else {
+        // Train existant : ajouter un wagon articulé à la rame
+        this.addTrainWagon()
+        this.isTrainSelected = true
+        this.notify()
+        return true
+      }
+    }
+    return false
   }
 
   /** Toggle train kinematic skeleton / debug visualization mode */
@@ -1416,6 +1489,9 @@ export class EditorStore {
     this.locomotiveCurrentSpeed = 0
     this.locomotiveThrottle = 0
     this.locomotive = null
+    this.isTrainSelected = false
+    this.hoveredTrainPart = null
+    this.hoveredTrainAnchor = null
     this.isPlayMode = false
     this.notify()
   }

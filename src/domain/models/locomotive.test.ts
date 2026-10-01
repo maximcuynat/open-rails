@@ -20,6 +20,7 @@ import {
   getTGVDetails,
   getFullTGVTrain,
   reverseTGVTrain,
+  hitTestTGVTrain,
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -489,5 +490,36 @@ describe('locomotive', () => {
 
     const advancedFrontPos = getLocomotiveFrontPos(net, reversed!)!
     expect(advancedFrontPos.x).toBeCloseTo(newFrontPos.x - 10, 0.5)
+  })
+
+  it('hitTestTGVTrain correctly identifies hover and click on lead loco, passenger cars and rear loco', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 300, y: 0 })
+    const seg = addSegment(net, n1.id, n2.id)!
+
+    const loco = createLocomotive(net, seg.id, 0.9, 22, 14, 2)!
+    expect(loco).not.toBeNull()
+
+    // 1. Point sur la motrice de tête (proche de x = 270)
+    const hitLead = hitTestTGVTrain(net, loco, { x: 270, y: 0.5 }, 2.5)
+    expect(hitLead.hit).toBe(true)
+    expect(hitLead.part).toBe('lead')
+    expect(hitLead.anchorPoint).toBeDefined()
+
+    // 2. Point sur une voiture voyageur intermédiaire (x ~ 230)
+    const hitCar = hitTestTGVTrain(net, loco, { x: 235, y: 0.2 }, 2.5)
+    expect(hitCar.hit).toBe(true)
+    expect(hitCar.part).toBe('car')
+
+    // 3. Point sur la motrice de queue M2 (x ~ 200)
+    const hitRear = hitTestTGVTrain(net, loco, { x: 198, y: -0.2 }, 2.5)
+    expect(hitRear.hit).toBe(true)
+    expect(hitRear.part).toBe('rear')
+
+    // 4. Point hors du train
+    const hitNone = hitTestTGVTrain(net, loco, { x: 50, y: 50 }, 2.5)
+    expect(hitNone.hit).toBe(false)
+    expect(hitNone.part).toBe('none')
   })
 })

@@ -846,7 +846,7 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
     }
   }
 
-  // Cadre arrière de motrice M1 (centré sur polygon[4] et polygon[5])
+  // Cadre arrière de motrice M1 (ancré sur les parois latérales gauche et droite)
   const m1BackL = leadLoco.polygon[4]
   const m1BackR = leadLoco.polygon[5]
   const m1CX = (m1BackL.x + m1BackR.x) / 2
@@ -856,8 +856,9 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
   const m1DirLen = Math.hypot(m1DirX, m1DirY) || 1
   const m1NormX = m1DirX / m1DirLen
   const m1NormY = m1DirY / m1DirLen
-  const m1FrameL: Point = { x: m1CX + m1NormX * 0.95, y: m1CY + m1NormY * 0.95 }
-  const m1FrameR: Point = { x: m1CX - m1NormX * 0.95, y: m1CY - m1NormY * 0.95 }
+  const accordionHalfWidth = 1.38 // Flancs extérieurs latéraux des soufflets
+  const m1FrameL: Point = { x: m1CX + m1NormX * accordionHalfWidth, y: m1CY + m1NormY * accordionHalfWidth }
+  const m1FrameR: Point = { x: m1CX - m1NormX * accordionHalfWidth, y: m1CY - m1NormY * accordionHalfWidth }
 
   if (cars.length > 0) {
     // 1. Accordéon M1 -> Première voiture (Voiture 0)
@@ -869,8 +870,8 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
     const c0DirLen = Math.hypot(c0DirX, c0DirY) || 1
     const c0NormX = c0DirX / c0DirLen
     const c0NormY = c0DirY / c0DirLen
-    const c0FrameL: Point = { x: c0FrontCX + c0NormX * 0.95, y: c0FrontCY + c0NormY * 0.95 }
-    const c0FrameR: Point = { x: c0FrontCX - c0NormX * 0.95, y: c0FrontCY - c0NormY * 0.95 }
+    const c0FrameL: Point = { x: c0FrontCX + c0NormX * accordionHalfWidth, y: c0FrontCY + c0NormY * accordionHalfWidth }
+    const c0FrameR: Point = { x: c0FrontCX - c0NormX * accordionHalfWidth, y: c0FrontCY - c0NormY * accordionHalfWidth }
 
     accordions.push(createAccordionBetweenFrames(m1FrameL, m1FrameR, c0FrameL, c0FrameR))
 
@@ -886,8 +887,8 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
       const cA_len = Math.hypot(cA_dirX, cA_dirY) || 1
       const aNormX = cA_dirX / cA_len
       const aNormY = cA_dirY / cA_len
-      const aFrameL: Point = { x: cA_rearCX + aNormX * 0.95, y: cA_rearCY + aNormY * 0.95 }
-      const aFrameR: Point = { x: cA_rearCX - aNormX * 0.95, y: cA_rearCY - aNormY * 0.95 }
+      const aFrameL: Point = { x: cA_rearCX + aNormX * accordionHalfWidth, y: cA_rearCY + aNormY * accordionHalfWidth }
+      const aFrameR: Point = { x: cA_rearCX - aNormX * accordionHalfWidth, y: cA_rearCY - aNormY * accordionHalfWidth }
 
       const cB_frontCX = (cB[0].x + cB[1].x) / 2
       const cB_frontCY = (cB[0].y + cB[1].y) / 2
@@ -896,8 +897,8 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
       const cB_len = Math.hypot(cB_dirX, cB_dirY) || 1
       const bNormX = cB_dirX / cB_len
       const bNormY = cB_dirY / cB_len
-      const bFrameL: Point = { x: cB_frontCX + bNormX * 0.95, y: cB_frontCY + bNormY * 0.95 }
-      const bFrameR: Point = { x: cB_frontCX - bNormX * 0.95, y: cB_frontCY - bNormY * 0.95 }
+      const bFrameL: Point = { x: cB_frontCX + bNormX * accordionHalfWidth, y: cB_frontCY + bNormY * accordionHalfWidth }
+      const bFrameR: Point = { x: cB_frontCX - bNormX * accordionHalfWidth, y: cB_frontCY - bNormY * accordionHalfWidth }
 
       accordions.push(createAccordionBetweenFrames(aFrameL, aFrameR, bFrameL, bFrameR))
     }
@@ -912,16 +913,16 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
       const cLast_len = Math.hypot(cLast_dirX, cLast_dirY) || 1
       const lastNormX = cLast_dirX / cLast_len
       const lastNormY = cLast_dirY / cLast_len
-      const lastFrameL: Point = { x: cLast_rearCX + lastNormX * 0.95, y: cLast_rearCY + lastNormY * 0.95 }
-      const lastFrameR: Point = { x: cLast_rearCX - lastNormX * 0.95, y: cLast_rearCY - lastNormY * 0.95 }
+      const lastFrameL: Point = { x: cLast_rearCX + lastNormX * accordionHalfWidth, y: cLast_rearCY + lastNormY * accordionHalfWidth }
+      const lastFrameR: Point = { x: cLast_rearCX - lastNormX * accordionHalfWidth, y: cLast_rearCY - lastNormY * accordionHalfWidth }
 
       const m2BackL = rearLoco.polygon[4]
       const m2BackR = rearLoco.polygon[5]
       const m2CX = (m2BackL.x + m2BackR.x) / 2
       const m2CY = (m2BackL.y + m2BackR.y) / 2
       // Utiliser lastNorm pour aligner les côtés gauche/droite du train sans torsion 180°
-      const m2FrameL: Point = { x: m2CX + lastNormX * 0.95, y: m2CY + lastNormY * 0.95 }
-      const m2FrameR: Point = { x: m2CX - lastNormX * 0.95, y: m2CY - lastNormY * 0.95 }
+      const m2FrameL: Point = { x: m2CX + lastNormX * accordionHalfWidth, y: m2CY + lastNormY * accordionHalfWidth }
+      const m2FrameR: Point = { x: m2CX - lastNormX * accordionHalfWidth, y: m2CY - lastNormY * accordionHalfWidth }
 
       accordions.push(createAccordionBetweenFrames(lastFrameL, lastFrameR, m2FrameL, m2FrameR))
     }
@@ -931,8 +932,8 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
     const m2BackR = rearLoco.polygon[5]
     const m2CX = (m2BackL.x + m2BackR.x) / 2
     const m2CY = (m2BackL.y + m2BackR.y) / 2
-    const m2FrameL: Point = { x: m2CX + m1NormX * 0.95, y: m2CY + m1NormY * 0.95 }
-    const m2FrameR: Point = { x: m2CX - m1NormX * 0.95, y: m2CY - m1NormY * 0.95 }
+    const m2FrameL: Point = { x: m2CX + m1NormX * accordionHalfWidth, y: m2CY + m1NormY * accordionHalfWidth }
+    const m2FrameR: Point = { x: m2CX - m1NormX * accordionHalfWidth, y: m2CY - m1NormY * accordionHalfWidth }
 
     accordions.push(createAccordionBetweenFrames(m1FrameL, m1FrameR, m2FrameL, m2FrameR))
   }
@@ -1192,3 +1193,77 @@ export function reverseTGVTrain(net: Network, loco: Locomotive): Locomotive | nu
 
   return loco
 }
+
+/** Test if a 2D point is inside a polygon */
+export function isPointInPolygon(p: Point, poly: Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y
+    const xj = poly[j].x, yj = poly[j].y
+    const intersect = ((yi > p.y) !== (yj > p.y)) && (p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi)
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+/** Distance between point p and segment [a, b] */
+export function distToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const l2 = dx * dx + dy * dy
+  if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y)
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2))
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+}
+
+/** Test if a 2D point is inside or within tolerance of a polygon */
+export function isPointNearPolygon(p: Point, poly: Point[], tolerance = 2.0): boolean {
+  if (isPointInPolygon(p, poly)) return true
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    if (distToSegment(p, poly[i], poly[j]) <= tolerance) return true
+  }
+  return false
+}
+
+export interface TrainHitResult {
+  hit: boolean
+  part: 'lead' | 'rear' | 'car' | 'none'
+  carIndex?: number
+  anchorPoint?: Point
+}
+
+/** Detect if a world point touches the TGV train (lead engine, cars, or rear engine) */
+export function hitTestTGVTrain(
+  net: Network,
+  loco: Locomotive,
+  worldPt: Point,
+  tolerance = 2.5
+): TrainHitResult {
+  const train = getFullTGVTrain(net, loco)
+  if (!train) return { hit: false, part: 'none' }
+
+  // 1. Motrice de tête (lead loco)
+  if (isPointNearPolygon(worldPt, train.leadLoco.polygon, tolerance)) {
+    return { hit: true, part: 'lead', anchorPoint: train.leadLoco.polygon[0] }
+  }
+
+  // 2. Motrice de queue (rear loco)
+  if (train.rearLoco && isPointNearPolygon(worldPt, train.rearLoco.polygon, tolerance)) {
+    return { hit: true, part: 'rear', anchorPoint: train.rearLoco.polygon[0] }
+  }
+
+  // 3. Voitures voyageurs
+  for (let i = 0; i < train.cars.length; i++) {
+    const car = train.cars[i]
+    if (isPointNearPolygon(worldPt, car.polygon, tolerance)) {
+      const cCenter = {
+        x: (car.polygon[0].x + car.polygon[2].x) / 2,
+        y: (car.polygon[0].y + car.polygon[2].y) / 2,
+      }
+      return { hit: true, part: 'car', carIndex: i, anchorPoint: cCenter }
+    }
+  }
+
+  return { hit: false, part: 'none' }
+}
+
