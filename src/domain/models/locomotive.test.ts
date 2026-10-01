@@ -15,7 +15,8 @@ import {
   snapToNearestTrack,
   steerJunction,
   getLocomotiveFrontPos,
-  getLocomotiveRearPos
+  getLocomotiveRearPos,
+  getLocomotiveBogies,
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -321,5 +322,40 @@ describe('locomotive', () => {
     const dist2 = Math.hypot(pFront2.x - pRear2.x, pFront2.y - pRear2.y)
     expect(dist2).toBeGreaterThan(13.0)
     expect(dist2).toBeLessThanOrEqual(bogieDistance + 0.1)
+  })
+
+  it('getLocomotiveBogies computes rotating frames and 2 axles per bogie', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 200, y: 0 })
+    const seg = addSegment(net, n1.id, n2.id)!
+
+    const loco = createLocomotive(net, seg.id, 0.5, 20, 14)
+    expect(loco).not.toBeNull()
+
+    const bogies = getLocomotiveBogies(net, loco!)
+    expect(bogies).not.toBeNull()
+    expect(bogies!.front).toBeDefined()
+    expect(bogies!.rear).toBeDefined()
+
+    // Vérifier le cadre du bogie avant (4 coins du rectangle)
+    expect(bogies!.front.polygon.length).toBe(4)
+    // Vérifier les 2 essieux du bogie avant
+    expect(bogies!.front.axles.length).toBe(2)
+    const [axle1, axle2] = bogies!.front.axles
+
+    // L'empattement entre les 2 essieux doit être de 2.3m (±1.15m du centre)
+    const axleDist = Math.hypot(axle1.center.x - axle2.center.x, axle1.center.y - axle2.center.y)
+    expect(axleDist).toBeCloseTo(2.3, 1)
+
+    // La largeur de chaque essieu entre roues gauche et droite doit être de 1.9m
+    const axleWidth1 = Math.hypot(axle1.left.x - axle1.right.x, axle1.left.y - axle1.right.y)
+    expect(axleWidth1).toBeCloseTo(1.9, 1)
+    const axleWidth2 = Math.hypot(axle2.left.x - axle2.right.x, axle2.left.y - axle2.right.y)
+    expect(axleWidth2).toBeCloseTo(1.9, 1)
+
+    // Vérifier le bogie arrière
+    expect(bogies!.rear.polygon.length).toBe(4)
+    expect(bogies!.rear.axles.length).toBe(2)
   })
 })

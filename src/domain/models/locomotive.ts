@@ -479,6 +479,77 @@ export function getLocomotivePolygon(net: Network, loco: Locomotive): Point[] | 
   }
 }
 
+export interface BogieAxle {
+  center: Point
+  left: Point
+  right: Point
+}
+
+export interface BogieFrame {
+  center: Point
+  tangent: Point
+  normal: Point
+  polygon: Point[] // 4 coins du cadre rectangulaire du bogie (qui tourne sur son pivot)
+  axles: [BogieAxle, BogieAxle] // Les 2 essieux montés sur le bogie
+}
+
+/** Compute the geometry for a bogie (châssis orienté + 2 essieux pivotant selon la voie locale) */
+export function computeBogieFrame(net: Network, pos: TrackPosition): BogieFrame | null {
+  const center = positionOnSegment(net, pos.segId, pos.t)
+  const rawTan = tangentOnSegment(net, pos.segId, pos.t)
+  if (!center || !rawTan) return null
+
+  const tan: Point = pos.forward ? rawTan : { x: -rawTan.x, y: -rawTan.y }
+  const norm: Point = { x: -tan.y, y: tan.x }
+
+  // Dimensions géométriques d'un bogie ferroviaire (en mètres)
+  const halfL = 1.6 // Châssis de 3.2m de longueur
+  const halfW = 1.05 // Châssis de 2.1m de largeur
+  const axleDist = 1.15 // Empattement entre essieux de 2.3m (±1.15m du centre de rotation)
+  const axleHalfW = 0.95 // Largeur de l'axe transversal avec boîtes d'essieu
+
+  // 4 coins du cadre de bogie
+  const fl: Point = { x: center.x + tan.x * halfL + norm.x * halfW, y: center.y + tan.y * halfL + norm.y * halfW }
+  const fr: Point = { x: center.x + tan.x * halfL - norm.x * halfW, y: center.y + tan.y * halfL - norm.y * halfW }
+  const rr: Point = { x: center.x - tan.x * halfL - norm.x * halfW, y: center.y - tan.y * halfL - norm.y * halfW }
+  const rl: Point = { x: center.x - tan.x * halfL + norm.x * halfW, y: center.y - tan.y * halfL + norm.y * halfW }
+
+  // Essieu 1 (avant du bogie)
+  const c1: Point = { x: center.x + tan.x * axleDist, y: center.y + tan.y * axleDist }
+  const axle1: BogieAxle = {
+    center: c1,
+    left: { x: c1.x + norm.x * axleHalfW, y: c1.y + norm.y * axleHalfW },
+    right: { x: c1.x - norm.x * axleHalfW, y: c1.y - norm.y * axleHalfW },
+  }
+
+  // Essieu 2 (arrière du bogie)
+  const c2: Point = { x: center.x - tan.x * axleDist, y: center.y - tan.y * axleDist }
+  const axle2: BogieAxle = {
+    center: c2,
+    left: { x: c2.x + norm.x * axleHalfW, y: c2.y + norm.y * axleHalfW },
+    right: { x: c2.x - norm.x * axleHalfW, y: c2.y - norm.y * axleHalfW },
+  }
+
+  return {
+    center,
+    tangent: tan,
+    normal: norm,
+    polygon: [fl, fr, rr, rl],
+    axles: [axle1, axle2],
+  }
+}
+
+/** Get the detailed front and rear bogie geometries with their rotating frame and 2 axles */
+export function getLocomotiveBogies(
+  net: Network,
+  loco: Locomotive
+): { front: BogieFrame; rear: BogieFrame } | null {
+  const frontFrame = computeBogieFrame(net, loco.front)
+  const rearFrame = computeBogieFrame(net, loco.rear)
+  if (!frontFrame || !rearFrame) return null
+  return { front: frontFrame, rear: rearFrame }
+}
+
 export function findUpcomingJunction(net: Network, loco: Locomotive): { junction: Junction; approachNodeId: NodeId } | null {
   const { segId, forward } = loco.front
   const dir = loco.direction

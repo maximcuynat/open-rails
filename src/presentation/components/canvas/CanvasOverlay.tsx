@@ -134,67 +134,6 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
             {Math.round(store.locomotiveCurrentSpeed * 3.6)} km/h
           </span>
 
-          {/* Badge cinématique : Accélération / Décélération / Inertie / Arrêt */}
-          {store.locomotiveThrottle === 1 && (
-            <span
-              style={{
-                background: 'rgba(16, 185, 129, 0.2)',
-                border: '1px solid #10b981',
-                color: '#34d399',
-                borderRadius: '4px',
-                padding: '1px 6px',
-                fontSize: '11px',
-                fontWeight: 600,
-              }}
-            >
-              ▲ Accélération
-            </span>
-          )}
-          {store.locomotiveThrottle === -1 && (
-            <span
-              style={{
-                background: 'rgba(244, 63, 94, 0.2)',
-                border: '1px solid #f43f5e',
-                color: '#fb7185',
-                borderRadius: '4px',
-                padding: '1px 6px',
-                fontSize: '11px',
-                fontWeight: 600,
-              }}
-            >
-              ▼ Décélération
-            </span>
-          )}
-          {store.locomotiveThrottle === 0 && store.locomotiveCurrentSpeed > 0.1 && (
-            <span
-              style={{
-                background: 'rgba(56, 189, 248, 0.15)',
-                border: '1px solid #38bdf8',
-                color: '#7dd3fc',
-                borderRadius: '4px',
-                padding: '1px 6px',
-                fontSize: '11px',
-                fontWeight: 600,
-              }}
-            >
-              ≋ Inertie
-            </span>
-          )}
-          {store.locomotiveThrottle === 0 && store.locomotiveCurrentSpeed <= 0.1 && (
-            <span
-              style={{
-                background: 'rgba(148, 163, 184, 0.15)',
-                border: '1px solid #64748b',
-                color: '#94a3b8',
-                borderRadius: '4px',
-                padding: '1px 6px',
-                fontSize: '11px',
-              }}
-            >
-              ⏹ À l'arrêt
-            </span>
-          )}
-
           <span className="hud-sep" />
 
           {/* Guide raccourcis clavier */}

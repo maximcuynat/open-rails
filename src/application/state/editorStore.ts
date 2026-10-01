@@ -118,10 +118,10 @@ export class EditorStore {
 
   // --- Locomotive Kinematics & Physics ---
   locomotiveCurrentSpeed = 0 // current speed in m/s (0 = stopped)
-  locomotiveMaxSpeed = 45 // max speed in m/s (~162 km/h)
-  locomotiveAcceleration = 3.5 // m/s^2 (applied while holding ArrowUp)
-  locomotiveBraking = 7.0 // m/s^2 (applied while holding ArrowDown)
-  locomotiveCoastingDecel = 0.4 // m/s^2 (friction / drag during coasting / inertia)
+  locomotiveMaxSpeed = 500 / 3.6 // max speed in m/s (500 km/h)
+  locomotiveAcceleration = 5.5 // m/s^2 (applied while holding ArrowUp)
+  locomotiveBraking = 10.0 // m/s^2 (applied while holding ArrowDown)
+  locomotiveCoastingDecel = 0.5 // m/s^2 (friction / drag during coasting / inertia)
   locomotiveThrottle: 1 | 0 | -1 = 0 // 1 = accelerating, -1 = braking, 0 = coasting / inertia
   private simRafId: number | null = null
   private simLastTime = 0

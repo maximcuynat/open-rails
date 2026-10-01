@@ -2741,12 +2741,19 @@ import {
   getLocomotiveFrontPos,
   getLocomotiveRearPos,
   getLocomotivePolygon,
+  getLocomotiveBogies,
+  type BogieFrame,
 } from '@domain/models/locomotive'
 
 /**
  * Render a locomotive on the canvas.
- * Draws the body (rectangle + nose triangle), 2 bogie markers,
- * and a direction arrow showing the heading.
+ * Draws:
+ * - 2 rotating bogies following track curvature, each with:
+ *   - A rotating frame (carré/rectangle orienté)
+ *   - 2 mechanical axles with wheel treads
+ *   - A fixed center pivot pin
+ * - The rigid locomotive body silhouette (TGV aerodynamic shape)
+ * - The forward nose tip indicator
  */
 export function renderLocomotive(
   ctx: CanvasRenderingContext2D,
@@ -2772,7 +2779,81 @@ export function renderLocomotive(
     ctx.globalAlpha = 0.4
   }
 
-  // 1. Draw body polygon (TGV silhouette)
+  // 1. Draw detailed bogies UNDER the body (châssis orienté + 2 essieux pivotants)
+  const bogies = getLocomotiveBogies(net, loco)
+  if (bogies) {
+    const drawBogie = (bogie: BogieFrame, isForwardBogie: boolean) => {
+      // 1.1 Bogie chassis frame (rectangle orienté selon la tangente locale)
+      ctx.beginPath()
+      ctx.moveTo(toSx(bogie.polygon[0]), toSy(bogie.polygon[0]))
+      for (let i = 1; i < bogie.polygon.length; i++) {
+        ctx.lineTo(toSx(bogie.polygon[i]), toSy(bogie.polygon[i]))
+      }
+      ctx.closePath()
+
+      // Fond du châssis en acier sombre
+      ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
+      ctx.fill()
+      ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // 1.2 Les 2 essieux mécaniques (traits transversaux et roues)
+      const wheelHalfL = 0.45 // demi-longueur de la roue vue du dessus (0.9m de diamètre)
+      for (const axle of bogie.axles) {
+        // Trait de l'axe transversal reliant les deux roues
+        ctx.beginPath()
+        ctx.moveTo(toSx(axle.left), toSy(axle.left))
+        ctx.lineTo(toSx(axle.right), toSy(axle.right))
+        ctx.strokeStyle = isGhost ? 'rgba(148, 163, 184, 0.5)' : '#94a3b8'
+        ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+        ctx.stroke()
+
+        // Roue gauche (sur le rail gauche)
+        const wl1 = { x: axle.left.x + bogie.tangent.x * wheelHalfL, y: axle.left.y + bogie.tangent.y * wheelHalfL }
+        const wl2 = { x: axle.left.x - bogie.tangent.x * wheelHalfL, y: axle.left.y - bogie.tangent.y * wheelHalfL }
+        ctx.beginPath()
+        ctx.moveTo(toSx(wl1), toSy(wl1))
+        ctx.lineTo(toSx(wl2), toSy(wl2))
+        ctx.strokeStyle = isGhost ? 'rgba(15, 23, 42, 0.6)' : '#0f172a'
+        ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+        ctx.stroke()
+
+        // Roue droite (sur le rail droit)
+        const wr1 = { x: axle.right.x + bogie.tangent.x * wheelHalfL, y: axle.right.y + bogie.tangent.y * wheelHalfL }
+        const wr2 = { x: axle.right.x - bogie.tangent.x * wheelHalfL, y: axle.right.y - bogie.tangent.y * wheelHalfL }
+        ctx.beginPath()
+        ctx.moveTo(toSx(wr1), toSy(wr1))
+        ctx.lineTo(toSx(wr2), toSy(wr2))
+        ctx.strokeStyle = isGhost ? 'rgba(15, 23, 42, 0.6)' : '#0f172a'
+        ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+        ctx.stroke()
+
+        // Boîtes d'essieu / écrous aux extrémités
+        ctx.beginPath()
+        ctx.arc(toSx(axle.left), toSy(axle.left), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+        ctx.arc(toSx(axle.right), toSy(axle.right), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+        ctx.fillStyle = '#64748b'
+        ctx.fill()
+      }
+
+      // 1.3 Pivot central fixe (axe fixé au centre reliant le bogie à la caisse)
+      const pivotR = Math.max(3, Math.min(6, 3.5 * Math.sqrt(cam.scale)))
+      ctx.beginPath()
+      ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotR, 0, Math.PI * 2)
+      ctx.fillStyle = isForwardBogie ? '#ef4444' : '#fb923c'
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+
+    const isForwardFront = loco.direction === 1
+    drawBogie(bogies.rear, !isForwardFront)
+    drawBogie(bogies.front, isForwardFront)
+  }
+
+  // 2. Draw body polygon (TGV silhouette translucide au-dessus des bogies)
   ctx.beginPath()
   ctx.moveTo(toSx(polygon[0]), toSy(polygon[0]))
   for (let i = 1; i < polygon.length; i++) {
@@ -2780,44 +2861,25 @@ export function renderLocomotive(
   }
   ctx.closePath()
 
-  // Fill
-  ctx.fillStyle = isGhost ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.35)'
+  // Remplissage carrosserie (teinte bleue aérodynamique semi-transparente pour voir les bogies en dessous)
+  ctx.fillStyle = isGhost ? 'rgba(37, 99, 235, 0.2)' : 'rgba(37, 99, 235, 0.45)'
   ctx.fill()
 
-  // Stroke
+  // Contour carrosserie
   ctx.strokeStyle = isGhost ? 'rgba(59, 130, 246, 0.5)' : '#2563eb'
   ctx.lineWidth = isGhost ? 1 : 2
   ctx.stroke()
 
-  // 2. Draw bogie markers (visible anchor points at center of rails)
-  const bogieR = Math.max(3, Math.min(6, 4 * Math.sqrt(cam.scale)))
-  const forwardBogiePos = loco.direction === 1 ? frontPos : rearPos
-  const backwardBogiePos = loco.direction === 1 ? rearPos : frontPos
-
-  // Active front bogie (filled accent red)
-  ctx.beginPath()
-  ctx.arc(toSx(forwardBogiePos), toSy(forwardBogiePos), bogieR, 0, Math.PI * 2)
-  ctx.fillStyle = isGhost ? 'rgba(239, 68, 68, 0.4)' : '#ef4444'
-  ctx.fill()
-  ctx.strokeStyle = isGhost ? 'rgba(239, 68, 68, 0.6)' : '#b91c1c'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-
-  // Rear bogie (filled orange)
-  ctx.beginPath()
-  ctx.arc(toSx(backwardBogiePos), toSy(backwardBogiePos), bogieR, 0, Math.PI * 2)
-  ctx.fillStyle = isGhost ? 'rgba(251, 146, 60, 0.4)' : '#fb923c'
-  ctx.fill()
-  ctx.strokeStyle = isGhost ? 'rgba(251, 146, 60, 0.6)' : '#c2410c'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-
-  // 3. Nose tip indicator (small triangle marker at nose point)
+  // 3. Nose tip indicator (pointe verte à l'avant du nez)
   const nosePt = polygon[0]
+  const bogieR = Math.max(3, Math.min(6, 4 * Math.sqrt(cam.scale)))
   ctx.beginPath()
   ctx.arc(toSx(nosePt), toSy(nosePt), bogieR * 0.7, 0, Math.PI * 2)
-  ctx.fillStyle = isGhost ? 'rgba(16, 185, 129, 0.4)' : '#10b981'
+  ctx.fillStyle = isGhost ? 'rgba(16, 185, 129, 0.5)' : '#10b981'
   ctx.fill()
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 1
+  ctx.stroke()
 
   ctx.restore()
 }

@@ -248,7 +248,7 @@ describe('EditorStore persistence', () => {
       store.setLocomotiveThrottle(1)
       store.tickSimulation(1.0)
 
-      expect(store.locomotiveCurrentSpeed).toBeCloseTo(3.5, 2)
+      expect(store.locomotiveCurrentSpeed).toBeCloseTo(5.5, 2)
       expect(store.locomotive!.front.t).toBeGreaterThan(initialT)
     })
 
@@ -268,8 +268,8 @@ describe('EditorStore persistence', () => {
       const tBefore = store.locomotive!.front.t
       store.tickSimulation(1.0)
 
-      // La vitesse doit diminuer très légèrement en roue libre (frottement de 0.4 m/s²)
-      expect(store.locomotiveCurrentSpeed).toBeCloseTo(9.6, 2)
+      // La vitesse doit diminuer très légèrement en roue libre (frottement de 0.5 m/s²)
+      expect(store.locomotiveCurrentSpeed).toBeCloseTo(9.5, 2)
       // Mais le train a quand même bien avancé grâce à son élan
       expect(store.locomotive!.front.t).toBeGreaterThan(tBefore)
     })
@@ -283,13 +283,13 @@ describe('EditorStore persistence', () => {
       store.placeLocomotiveAt({ x: 30, y: 0 })
       store.togglePlayMode()
 
-      store.locomotiveCurrentSpeed = 10.0
-      store.setLocomotiveThrottle(-1) // Freinage actif
+      store.locomotiveCurrentSpeed = 15.0
+      store.setLocomotiveThrottle(-1) // Freinage actif (10.0 m/s²)
 
       store.tickSimulation(1.0)
 
-      // La vitesse chute fortement avec le freinage (7.0 m/s²)
-      expect(store.locomotiveCurrentSpeed).toBeCloseTo(3.0, 2)
+      // La vitesse chute fortement avec le freinage (15.0 - 10.0 = 5.0 m/s²)
+      expect(store.locomotiveCurrentSpeed).toBeCloseTo(5.0, 2)
     })
 
     it('clamps speed to 0 when braking stops the locomotive', () => {
