@@ -118,6 +118,7 @@ export class EditorStore {
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
+  showTrainDebug = false // Debug skeleton mode: see attachment points, pivots and accordions without body
 
   // --- Locomotive Kinematics & Physics ---
   locomotiveCurrentSpeed = 0 // current speed in m/s (0 = stopped)
@@ -1242,6 +1243,12 @@ export class EditorStore {
     if (this.locomotive) {
       this.locomotive.wagonCount = this.trainWagonCount
     }
+    this.notify()
+  }
+
+  /** Toggle train kinematic skeleton / debug visualization mode */
+  toggleTrainDebug = (): void => {
+    this.showTrainDebug = !this.showTrainDebug
     this.notify()
   }
 

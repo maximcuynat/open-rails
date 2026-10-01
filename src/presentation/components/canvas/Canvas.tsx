@@ -360,12 +360,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     // Render locomotive on top of the track network
     if (store.locomotive) {
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive)
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug)
     }
 
     // Ghost preview when placing a locomotive
     if (store.tool === 'locomotive' && store.locomotivePreview && !store.isPlayMode) {
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotivePreview, true)
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotivePreview, true, store.showTrainDebug)
     }
 
     // Box selection rectangle

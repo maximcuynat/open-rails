@@ -3,7 +3,7 @@ import type { EditorStore } from '@application/state/editorStore'
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
   if (store.isPlayMode) {
-    return '▶ Conduite · ↑ Accélérer · ↓ Freiner · R Changer de motrice · ←/→ Aiguillage · Espace Quitter'
+    return '▶ Conduite · ↑ Accélérer · ↓ Freiner · R Changer de motrice · D Squelette · ←/→ Aiguillage · Espace Quitter'
   }
   switch (store.tool) {
     case 'place':
@@ -35,8 +35,8 @@ function hintText(store: EditorStore): string {
     default:
       if (store.tool === 'locomotive') {
         return store.locomotive
-          ? 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV · Espace pour Conduire'
-          : 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV'
+          ? 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV · D Squelette · Espace pour Conduire'
+          : 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV · D Squelette'
       }
       return ''
   }
@@ -173,6 +173,22 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
           <span style={{ color: store.locomotivePreview ? '#10b981' : '#94a3b8', fontSize: '10.5px', fontWeight: store.locomotivePreview ? 600 : 400 }}>
             {store.locomotivePreview ? '✓ Voie aimantée · Clic pour poser' : 'Survolez une voie ferrée'}
           </span>
+          <span className="hud-sep" />
+          <button
+            onClick={() => store.toggleTrainDebug()}
+            style={{
+              background: store.showTrainDebug ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
+              border: `1px solid ${store.showTrainDebug ? '#38bdf8' : '#475569'}`,
+              borderRadius: '4px',
+              color: store.showTrainDebug ? '#38bdf8' : '#94a3b8',
+              fontSize: '11px',
+              padding: '2px 6px',
+              cursor: 'pointer',
+            }}
+            title="Afficher les points d'attache, liaisons et accordéons en mode squelette (Touche D)"
+          >
+            {store.showTrainDebug ? '⚙ Squelette ON' : '⚙ Squelette'}
+          </button>
         </div>
       )}
 
@@ -205,6 +221,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
             <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↑</kbd> Accélérer &nbsp;
             <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↓</kbd> Freiner &nbsp;
             <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>R</kbd> Changer de motrice &nbsp;
+            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>D</kbd> Squelette &nbsp;
             <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>←/→</kbd> Aiguillage
           </span>
 
@@ -244,6 +261,22 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
             title="Changer de cabine / motrice active pour repartir dans l'autre sens (Touche R ou Tab)"
           >
             ⇄ Changer de motrice (R)
+          </button>
+
+          <button
+            onClick={() => store.toggleTrainDebug()}
+            style={{
+              background: store.showTrainDebug ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
+              border: `1px solid ${store.showTrainDebug ? '#38bdf8' : 'var(--border, #475569)'}`,
+              borderRadius: '4px',
+              color: store.showTrainDebug ? '#38bdf8' : 'var(--text-muted, #94a3b8)',
+              fontSize: '11px',
+              padding: '2px 6px',
+              cursor: 'pointer',
+            }}
+            title="Afficher les points d'attache, liaisons et accordéons en mode squelette (Touche D)"
+          >
+            {store.showTrainDebug ? '⚙ Squelette ON' : '⚙ Squelette (D)'}
           </button>
         </div>
       )}

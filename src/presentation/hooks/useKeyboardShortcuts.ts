@@ -33,6 +33,10 @@ export function useKeyboardShortcuts(store: EditorStore): void {
           e.preventDefault()
           store.togglePlayMode()
           return
+        } else if (e.key === 'd' || e.key === 'D') {
+          e.preventDefault()
+          store.toggleTrainDebug()
+          return
         } else if (e.key === 'r' || e.key === 'R' || e.key === 'Tab') {
           e.preventDefault()
           store.flipLocomotiveDirection()
@@ -114,6 +118,9 @@ export function useKeyboardShortcuts(store: EditorStore): void {
           if (store.selection.nodes.size === 2) {
             e.preventDefault()
             store.createParallelTrackFromSelection()
+          } else if (store.locomotive || store.tool === 'locomotive') {
+            e.preventDefault()
+            store.toggleTrainDebug()
           }
         }
       } else if (e.key === 'i' || e.key === 'I') {

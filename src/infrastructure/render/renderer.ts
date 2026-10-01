@@ -2741,6 +2741,7 @@ import {
   getFullTGVTrain,
   type BogieFrame,
   type TGVDetails,
+  type TGVFullTrain,
 } from '@domain/models/locomotive'
 
 /**
@@ -2761,6 +2762,7 @@ export function renderLocomotive(
   net: Network,
   loco: Locomotive,
   isGhost = false,
+  isDebugSkeleton = false,
 ): void {
   const train = getFullTGVTrain(net, loco)
   if (!train) return
@@ -2941,140 +2943,158 @@ export function renderLocomotive(
 
   // 3. Dessiner les voitures voyageurs intermédiaires
   for (const car of train.cars) {
-    // Caisse de la voiture
     ctx.beginPath()
     ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
     for (let pi = 1; pi < car.polygon.length; pi++) {
       ctx.lineTo(toSx(car.polygon[pi]), toSy(car.polygon[pi]))
     }
     ctx.closePath()
-    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.92)'
-    ctx.fill()
-    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
-    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
-    ctx.stroke()
 
-    // Bandes latérales bleu roi TGV
-    ctx.beginPath()
-    ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
-    ctx.lineTo(toSx(car.polygon[3]), toSy(car.polygon[3]))
-    ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
-    ctx.stroke()
+    if (isDebugSkeleton) {
+      // Mode Squelette : contour filaire léger sans carcasse opaque
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.setLineDash([])
+    } else {
+      ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.92)'
+      ctx.fill()
+      ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
+      ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+      ctx.stroke()
 
-    ctx.beginPath()
-    ctx.moveTo(toSx(car.polygon[1]), toSy(car.polygon[1]))
-    ctx.lineTo(toSx(car.polygon[2]), toSy(car.polygon[2]))
-    ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
-    ctx.stroke()
+      // Bandes latérales bleu roi TGV
+      ctx.beginPath()
+      ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
+      ctx.lineTo(toSx(car.polygon[3]), toSy(car.polygon[3]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
 
-    // Baies vitrées passagers
-    const drawWindows = (wins: { p1: Point; p2: Point }[]) => {
-      for (const w of wins) {
-        ctx.beginPath()
-        ctx.moveTo(toSx(w.p1), toSy(w.p1))
-        ctx.lineTo(toSx(w.p2), toSy(w.p2))
-        ctx.strokeStyle = '#0f172a'
-        ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
-        ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(toSx(car.polygon[1]), toSy(car.polygon[1]))
+      ctx.lineTo(toSx(car.polygon[2]), toSy(car.polygon[2]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // Baies vitrées passagers
+      const drawWindows = (wins: { p1: Point; p2: Point }[]) => {
+        for (const w of wins) {
+          ctx.beginPath()
+          ctx.moveTo(toSx(w.p1), toSy(w.p1))
+          ctx.lineTo(toSx(w.p2), toSy(w.p2))
+          ctx.strokeStyle = '#0f172a'
+          ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+          ctx.stroke()
+        }
       }
+      drawWindows(car.windowsLeft)
+      drawWindows(car.windowsRight)
     }
-    drawWindows(car.windowsLeft)
-    drawWindows(car.windowsRight)
   }
 
   // 4. Fonction de rendu d'une motrice TGV (tête ou queue)
   const drawLoco = (tgv: TGVDetails, isFrontFacing: boolean) => {
-    // 4.1 Carrosserie profilée aérodynamique TGV
     ctx.beginPath()
     ctx.moveTo(toSx(tgv.polygon[0]), toSy(tgv.polygon[0]))
     for (let i = 1; i < tgv.polygon.length; i++) {
       ctx.lineTo(toSx(tgv.polygon[i]), toSy(tgv.polygon[i]))
     }
     ctx.closePath()
-    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.90)'
-    ctx.fill()
-    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
-    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
-    ctx.stroke()
 
-    // 4.2 Bandes profilées latérales bleu roi TGV
-    ctx.beginPath()
-    ctx.moveTo(toSx(tgv.polygon[1]), toSy(tgv.polygon[1]))
-    ctx.lineTo(toSx(tgv.polygon[2]), toSy(tgv.polygon[2]))
-    ctx.lineTo(toSx(tgv.polygon[3]), toSy(tgv.polygon[3]))
-    ctx.lineTo(toSx(tgv.polygon[4]), toSy(tgv.polygon[4]))
-    ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
-    ctx.stroke()
+    if (isDebugSkeleton) {
+      // Mode Squelette : contour filaire discret
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)'
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.setLineDash([])
+    } else {
+      ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.90)'
+      ctx.fill()
+      ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
+      ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+      ctx.stroke()
 
-    ctx.beginPath()
-    ctx.moveTo(toSx(tgv.polygon[5]), toSy(tgv.polygon[5]))
-    ctx.lineTo(toSx(tgv.polygon[6]), toSy(tgv.polygon[6]))
-    ctx.lineTo(toSx(tgv.polygon[7]), toSy(tgv.polygon[7]))
-    ctx.lineTo(toSx(tgv.polygon[8]), toSy(tgv.polygon[8]))
-    ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-    ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
-    ctx.stroke()
+      // Bandes profilées latérales bleu roi TGV
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.polygon[1]), toSy(tgv.polygon[1]))
+      ctx.lineTo(toSx(tgv.polygon[2]), toSy(tgv.polygon[2]))
+      ctx.lineTo(toSx(tgv.polygon[3]), toSy(tgv.polygon[3]))
+      ctx.lineTo(toSx(tgv.polygon[4]), toSy(tgv.polygon[4]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
 
-    // 4.3 Pare-brise panoramique de cabine teinté sombre avec reflet
-    ctx.beginPath()
-    ctx.moveTo(toSx(tgv.windshield[0]), toSy(tgv.windshield[0]))
-    for (let i = 1; i < tgv.windshield.length; i++) {
-      ctx.lineTo(toSx(tgv.windshield[i]), toSy(tgv.windshield[i]))
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.polygon[5]), toSy(tgv.polygon[5]))
+      ctx.lineTo(toSx(tgv.polygon[6]), toSy(tgv.polygon[6]))
+      ctx.lineTo(toSx(tgv.polygon[7]), toSy(tgv.polygon[7]))
+      ctx.lineTo(toSx(tgv.polygon[8]), toSy(tgv.polygon[8]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // Pare-brise panoramique de cabine teinté sombre avec reflet
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.windshield[0]), toSy(tgv.windshield[0]))
+      for (let i = 1; i < tgv.windshield.length; i++) {
+        ctx.lineTo(toSx(tgv.windshield[i]), toSy(tgv.windshield[i]))
+      }
+      ctx.closePath()
+      ctx.fillStyle = isGhost ? 'rgba(15, 23, 42, 0.7)' : '#0f172a'
+      ctx.fill()
+      ctx.strokeStyle = '#38bdf8'
+      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // Phares avant ou feux de queue rouges
+      const hlR = Math.max(2, 2.8 * Math.sqrt(cam.scale))
+      const isLitWhite = (isFrontFacing && loco.direction === 1) || (!isFrontFacing && loco.direction === -1)
+      const hlColor = isLitWhite ? '#fef08a' : '#ef4444'
+      const hlBorder = isLitWhite ? '#eab308' : '#991b1b'
+
+      ctx.beginPath()
+      ctx.arc(toSx(tgv.headlights.left), toSy(tgv.headlights.left), hlR, 0, Math.PI * 2)
+      ctx.fillStyle = hlColor
+      ctx.fill()
+      ctx.strokeStyle = hlBorder
+      ctx.lineWidth = 1
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.arc(toSx(tgv.headlights.right), toSy(tgv.headlights.right), hlR, 0, Math.PI * 2)
+      ctx.fillStyle = hlColor
+      ctx.fill()
+      ctx.strokeStyle = hlBorder
+      ctx.lineWidth = 1
+      ctx.stroke()
+
+      // Pantographe de toiture
+      const panto = tgv.pantograph
+      ctx.beginPath()
+      ctx.moveTo(toSx(panto.armStart), toSy(panto.armStart))
+      ctx.lineTo(toSx(panto.center), toSy(panto.center))
+      ctx.lineTo(toSx(panto.armEnd), toSy(panto.armEnd))
+      ctx.strokeStyle = isGhost ? 'rgba(71, 85, 105, 0.6)' : '#475569'
+      ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(toSx(panto.bowLeft), toSy(panto.bowLeft))
+      ctx.lineTo(toSx(panto.bowRight), toSy(panto.bowRight))
+      ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
+      ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.arc(toSx(panto.bowLeft), toSy(panto.bowLeft), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+      ctx.arc(toSx(panto.bowRight), toSy(panto.bowRight), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+      ctx.fillStyle = '#d97706'
+      ctx.fill()
     }
-    ctx.closePath()
-    ctx.fillStyle = isGhost ? 'rgba(15, 23, 42, 0.7)' : '#0f172a'
-    ctx.fill()
-    ctx.strokeStyle = '#38bdf8'
-    ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
-    ctx.stroke()
-
-    // 4.4 Phares avant ou feux de queue rouges
-    const hlR = Math.max(2, 2.8 * Math.sqrt(cam.scale))
-    const isLitWhite = (isFrontFacing && loco.direction === 1) || (!isFrontFacing && loco.direction === -1)
-    const hlColor = isLitWhite ? '#fef08a' : '#ef4444'
-    const hlBorder = isLitWhite ? '#eab308' : '#991b1b'
-
-    ctx.beginPath()
-    ctx.arc(toSx(tgv.headlights.left), toSy(tgv.headlights.left), hlR, 0, Math.PI * 2)
-    ctx.fillStyle = hlColor
-    ctx.fill()
-    ctx.strokeStyle = hlBorder
-    ctx.lineWidth = 1
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.arc(toSx(tgv.headlights.right), toSy(tgv.headlights.right), hlR, 0, Math.PI * 2)
-    ctx.fillStyle = hlColor
-    ctx.fill()
-    ctx.strokeStyle = hlBorder
-    ctx.lineWidth = 1
-    ctx.stroke()
-
-    // 4.5 Pantographe de toiture
-    const panto = tgv.pantograph
-    ctx.beginPath()
-    ctx.moveTo(toSx(panto.armStart), toSy(panto.armStart))
-    ctx.lineTo(toSx(panto.center), toSy(panto.center))
-    ctx.lineTo(toSx(panto.armEnd), toSy(panto.armEnd))
-    ctx.strokeStyle = isGhost ? 'rgba(71, 85, 105, 0.6)' : '#475569'
-    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.moveTo(toSx(panto.bowLeft), toSy(panto.bowLeft))
-    ctx.lineTo(toSx(panto.bowRight), toSy(panto.bowRight))
-    ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
-    ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.arc(toSx(panto.bowLeft), toSy(panto.bowLeft), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
-    ctx.arc(toSx(panto.bowRight), toSy(panto.bowRight), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
-    ctx.fillStyle = '#d97706'
-    ctx.fill()
   }
 
   // Dessin de la motrice avant
@@ -3083,6 +3103,194 @@ export function renderLocomotive(
   // Dessin de la motrice arrière inversée (si présente)
   if (train.rearLoco) {
     drawLoco(train.rearLoco, false)
+  }
+
+  // 5. En mode Debug Squelette : afficher tous les repères, réticules, points logiques d'attache et cotations
+  if (isDebugSkeleton) {
+    renderTrainSkeletonDebug(ctx, cam, toSx, toSy, train)
+  }
+
+  ctx.restore()
+}
+
+/** Rendu des repères cinématiques, pivots de bogies, attaches de caisses et accordéons (sans carcasse) */
+function renderTrainSkeletonDebug(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  train: TGVFullTrain,
+): void {
+  ctx.save()
+  const fontSize = Math.max(9, Math.min(12, 11 * Math.sqrt(cam.scale)))
+  ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
+
+  // 1. Lignes de cote d'entraxe entre bogies consécutifs
+  for (let bi = 0; bi < train.bogies.length - 1; bi++) {
+    const bA = train.bogies[bi].center
+    const bB = train.bogies[bi + 1].center
+    const dist = Math.hypot(bA.x - bB.x, bA.y - bB.y)
+
+    ctx.beginPath()
+    ctx.setLineDash([3, 4])
+    ctx.moveTo(toSx(bA), toSy(bA))
+    ctx.lineTo(toSx(bB), toSy(bB))
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Badge textuel de cotation
+    const midX = (toSx(bA) + toSx(bB)) / 2
+    const midY = (toSy(bA) + toSy(bB)) / 2
+    const label = `${dist.toFixed(2)} m`
+    const pad = 3
+    const tw = ctx.measureText(label).width
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
+    ctx.fillRect(midX - tw / 2 - pad, midY - 7 - pad, tw + pad * 2, 14 + pad)
+    ctx.fillStyle = '#38bdf8'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, midX, midY)
+  }
+
+  // 2. Points de bogies et réticules de pivots
+  for (let bi = 0; bi < train.bogies.length; bi++) {
+    const bogie = train.bogies[bi]
+    const sx = toSx(bogie.center)
+    const sy = toSy(bogie.center)
+
+    // Disque de pivot
+    const rOuter = Math.max(6, 6 * Math.sqrt(cam.scale))
+    ctx.beginPath()
+    ctx.arc(sx, sy, rOuter, 0, Math.PI * 2)
+    ctx.fillStyle = '#0284c7'
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    // Réticule en croix au centre du pivot
+    const crossR = rOuter + 4
+    ctx.beginPath()
+    ctx.moveTo(sx - crossR, sy)
+    ctx.lineTo(sx + crossR, sy)
+    ctx.moveTo(sx, sy - crossR)
+    ctx.lineTo(sx, sy + crossR)
+    ctx.strokeStyle = '#38bdf8'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    // Nom du bogie
+    let bName = `B${bi + 1}`
+    if (bi === 0) bName = 'B1 (Nez M1)'
+    else if (bi === 1) bName = 'B2 (M1)'
+    else if (bi === train.bogies.length - 2) bName = `B${bi + 1} (M2)`
+    else if (bi === train.bogies.length - 1) bName = `B${bi + 1} (Nez M2)`
+    else bName = `J${bi - 1} (Jacobs)`
+
+    const tw = ctx.measureText(bName).width
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.9)'
+    ctx.fillRect(sx - tw / 2 - 3, sy - rOuter - 18, tw + 6, 14)
+    ctx.fillStyle = '#f8fafc'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(bName, sx, sy - rOuter - 11)
+  }
+
+  // 3. Points logiques d'attache de caisse
+  const drawAttachPoint = (p: Point, label: string, color: string) => {
+    const sx = toSx(p)
+    const sy = toSy(p)
+    ctx.beginPath()
+    ctx.arc(sx, sy, 4.5, 0, Math.PI * 2)
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    if (label) {
+      const tw = ctx.measureText(label).width
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
+      ctx.fillRect(sx - tw / 2 - 2, sy + 7, tw + 4, 13)
+      ctx.fillStyle = color
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, sx, sy + 13)
+    }
+  }
+
+  // Motrice M1
+  const m1Tail = {
+    x: (train.leadLoco.polygon[4].x + train.leadLoco.polygon[5].x) / 2,
+    y: (train.leadLoco.polygon[4].y + train.leadLoco.polygon[5].y) / 2,
+  }
+  drawAttachPoint(train.leadLoco.polygon[0], 'Nez M1', '#ef4444')
+  drawAttachPoint(m1Tail, 'Attache M1', '#f59e0b')
+
+  // Voitures intermédiaires
+  for (let ci = 0; ci < train.cars.length; ci++) {
+    const car = train.cars[ci]
+    const pFrontAtt = {
+      x: (car.polygon[0].x + car.polygon[1].x) / 2,
+      y: (car.polygon[0].y + car.polygon[1].y) / 2,
+    }
+    const pRearAtt = {
+      x: (car.polygon[3].x + car.polygon[2].x) / 2,
+      y: (car.polygon[3].y + car.polygon[2].y) / 2,
+    }
+    drawAttachPoint(pFrontAtt, `V${ci + 1} Av`, '#22c55e')
+    drawAttachPoint(pRearAtt, `V${ci + 1} Ar`, '#f59e0b')
+  }
+
+  // Motrice M2
+  if (train.rearLoco) {
+    const m2Tail = {
+      x: (train.rearLoco.polygon[4].x + train.rearLoco.polygon[5].x) / 2,
+      y: (train.rearLoco.polygon[4].y + train.rearLoco.polygon[5].y) / 2,
+    }
+    drawAttachPoint(m2Tail, 'Attache M2', '#f59e0b')
+    drawAttachPoint(train.rearLoco.polygon[0], 'Nez M2', '#ef4444')
+  }
+
+  // 4. Points d'attache des soufflets accordéons
+  for (let ai = 0; ai < train.accordions.length; ai++) {
+    const acc = train.accordions[ai]
+    const [fL, fR] = acc.frontFrame
+    const [rL, rR] = acc.rearFrame
+
+    // Marquer les 4 points d'ancrage du soufflet en cyan
+    drawAttachPoint(fL, '', '#06b6d4')
+    drawAttachPoint(fR, '', '#06b6d4')
+    drawAttachPoint(rL, '', '#06b6d4')
+    drawAttachPoint(rR, '', '#06b6d4')
+
+    // Ligne centrale d'intercirculation en pointillé
+    const midF = { x: (fL.x + fR.x) / 2, y: (fL.y + fR.y) / 2 }
+    const midR = { x: (rL.x + rR.x) / 2, y: (rL.y + rR.y) / 2 }
+    const gapLen = Math.hypot(midF.x - midR.x, midF.y - midR.y)
+
+    ctx.beginPath()
+    ctx.setLineDash([2, 2])
+    ctx.moveTo(toSx(midF), toSy(midF))
+    ctx.lineTo(toSx(midR), toSy(midR))
+    ctx.strokeStyle = '#facc15'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Badge d'écartement soufflet
+    const badgeX = (toSx(midF) + toSx(midR)) / 2
+    const badgeY = (toSy(midF) + toSy(midR)) / 2 - 14
+    const accLabel = `Accordéon: ${gapLen.toFixed(2)} m`
+    const tw = ctx.measureText(accLabel).width
+    ctx.fillStyle = 'rgba(8, 51, 68, 0.9)'
+    ctx.fillRect(badgeX - tw / 2 - 3, badgeY - 6, tw + 6, 12)
+    ctx.fillStyle = '#22d3ee'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(accLabel, badgeX, badgeY)
   }
 
   ctx.restore()
