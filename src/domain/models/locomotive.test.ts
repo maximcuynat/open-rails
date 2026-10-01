@@ -19,6 +19,7 @@ import {
   getLocomotiveBogies,
   getTGVDetails,
   getFullTGVTrain,
+  reverseTGVTrain,
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -458,5 +459,35 @@ describe('locomotive', () => {
     // L'écart entre la dernière voiture et M2 doit être compact (~0.7m, bien inférieur aux 15m de l'ancien bug)
     expect(gap).toBeGreaterThan(0.2)
     expect(gap).toBeLessThan(1.5)
+  })
+
+  it('reverseTGVTrain swaps control to rear locomotive and reverses forward travel direction', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 300, y: 0 })
+    const seg = addSegment(net, n1.id, n2.id)!
+
+    // Créer une rame TGV avec 2 voitures
+    const loco = createLocomotive(net, seg.id, 0.9, 22, 14, 2)!
+    expect(loco).not.toBeNull()
+
+    const initialFrontPos = getLocomotiveFrontPos(net, loco)!
+    expect(initialFrontPos.x).toBeCloseTo(270, 0) // t = 0.9 sur 300m = 270m
+
+    // Inverser le sens : échange de locomotive menante (relève de cabine)
+    const reversed = reverseTGVTrain(net, loco)
+    expect(reversed).not.toBeNull()
+
+    // La nouvelle motrice de tête est désormais M2 (en x = 197.8m)
+    const newFrontPos = getLocomotiveFrontPos(net, reversed!)!
+    expect(newFrontPos.x).toBeLessThan(initialFrontPos.x)
+    expect(newFrontPos.x).toBeCloseTo(197.8, 1)
+
+    // Vérifier que la nouvelle motrice avance son nez vers x = 0 (direction inverse)
+    const moved = advanceLocomotive(net, reversed!, 10) // Avancer de 10 mètres
+    expect(moved).toBe(true)
+
+    const advancedFrontPos = getLocomotiveFrontPos(net, reversed!)!
+    expect(advancedFrontPos.x).toBeCloseTo(newFrontPos.x - 10, 0.5)
   })
 })

@@ -328,5 +328,27 @@ describe('EditorStore persistence', () => {
       // Arrêté net au butoir
       expect(store.locomotiveCurrentSpeed).toBe(0)
     })
+
+    it('flipLocomotiveDirection swaps control cab to opposite locomotive and halts speed', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 300, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      store.placeLocomotiveAt({ x: 270, y: 0 })
+      store.togglePlayMode()
+
+      store.locomotiveCurrentSpeed = 20.0
+      const oldFrontX = store.locomotive!.front.t
+
+      store.flipLocomotiveDirection()
+
+      // 1. La vitesse s'arrête à 0 pour la relève de cabine
+      expect(store.locomotiveCurrentSpeed).toBe(0)
+      // 2. Le bogie de tête est maintenant celui de la motrice opposée
+      expect(store.locomotive!.front.t).not.toBe(oldFrontX)
+      // 3. La motrice est prête à avancer vers l'avant dans sa nouvelle direction
+      expect(store.locomotive!.direction).toBe(1)
+    })
   })
 })

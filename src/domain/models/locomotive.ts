@@ -1127,3 +1127,68 @@ export function snapToNearestTrack(net: Network, worldPos: Point): { segId: Segm
   }
   return null
 }
+
+/**
+ * Reverse the TGV trainset by swapping the active control cab to the opposite locomotive.
+ * The rear power car (M2) becomes the new active leading locomotive (M1),
+ * while the former leading locomotive becomes the rear power car.
+ * This guarantees the train always travels forward with its aerodynamic nose leading.
+ */
+export function reverseTGVTrain(net: Network, loco: Locomotive): Locomotive | null {
+  const wagonCount = loco.wagonCount ?? 0
+  let m2FrontPos: TrackPosition | null = null
+  let m2RearPos: TrackPosition | null = null
+
+  if (wagonCount > 0) {
+    let curBogie = walkBackward(net, loco.rear.segId, loco.rear.t, loco.rear.forward, 4.10)
+    if (curBogie) {
+      for (let w = 0; w < wagonCount; w++) {
+        const nextB = walkBackward(net, curBogie.segId, curBogie.t, curBogie.forward, 18.0)
+        if (!nextB) break
+        curBogie = nextB
+      }
+      const m2f = walkBackward(net, curBogie.segId, curBogie.t, curBogie.forward, 4.10)
+      if (m2f) {
+        const m2r = walkBackward(net, m2f.segId, m2f.t, m2f.forward, loco.bogieDistance)
+        if (m2r) {
+          m2FrontPos = m2f
+          m2RearPos = m2r
+        }
+      }
+    }
+  } else {
+    const m2f = walkBackward(net, loco.rear.segId, loco.rear.t, loco.rear.forward, 6.80)
+    if (m2f) {
+      const m2r = walkBackward(net, m2f.segId, m2f.t, m2f.forward, loco.bogieDistance)
+      if (m2r) {
+        m2FrontPos = m2f
+        m2RearPos = m2r
+      }
+    }
+  }
+
+  if (!m2FrontPos || !m2RearPos) {
+    loco.direction = loco.direction === 1 ? -1 : 1
+    return loco
+  }
+
+  // La nouvelle motrice de tête est M2 : son bogie de nez devient le nouveau front,
+  // et son orientation de progression s'inverse pour avancer vers son nez
+  const newFront: TrackPosition = {
+    segId: m2RearPos.segId,
+    t: m2RearPos.t,
+    forward: !m2RearPos.forward,
+  }
+
+  const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, loco.bogieDistance)
+  if (!newRear) {
+    loco.direction = loco.direction === 1 ? -1 : 1
+    return loco
+  }
+
+  loco.front = newFront
+  loco.rear = newRear
+  loco.direction = 1 // Toujours marche avant depuis la nouvelle cabine active
+
+  return loco
+}

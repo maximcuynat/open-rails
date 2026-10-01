@@ -23,6 +23,7 @@ import {
   snapToNearestTrack,
   steerJunction,
   getLocomotiveFrontPos,
+  reverseTGVTrain,
 } from '@domain/models/locomotive'
 
 export type Tool =
@@ -1357,10 +1358,14 @@ export class EditorStore {
     this.locomotiveThrottle = 0
   }
 
-  /** Advance the locomotive by one step in the given direction (discrete fallback) */
+  /** Advance the locomotive by one step (discrete fallback: forward only) */
   stepLocomotive = (direction: 1 | -1): void => {
     if (!this.locomotive || !this.isPlayMode) return
-    const moved = advanceLocomotive(this.network, this.locomotive, direction * this.locomotiveSpeed)
+    if (direction === -1) {
+      this.flipLocomotiveDirection()
+      return
+    }
+    const moved = advanceLocomotive(this.network, this.locomotive, this.locomotiveSpeed)
     if (moved && this.followLocomotiveCamera) {
       const pos = getLocomotiveFrontPos(this.network, this.locomotive)
       if (pos) {
@@ -1378,10 +1383,23 @@ export class EditorStore {
     this.notify()
   }
 
-  /** Invert locomotive direction / reverse its orientation on track */
+  /** Reverse TGV train by swapping active driving cab to the opposite locomotive */
   flipLocomotiveDirection = (): void => {
     if (!this.locomotive) return
-    this.locomotive.direction = this.locomotive.direction === 1 ? -1 : 1
+
+    // Relève de cabine : arrêt complet du train pour transférer les commandes
+    if (this.locomotiveCurrentSpeed > 0) {
+      this.locomotiveCurrentSpeed = 0
+    }
+    this.locomotiveThrottle = 0
+
+    const reversed = reverseTGVTrain(this.network, this.locomotive)
+    if (reversed) {
+      this.locomotive = reversed
+      if (this.followLocomotiveCamera) {
+        this.focusOnLocomotive()
+      }
+    }
     this.notify()
   }
 

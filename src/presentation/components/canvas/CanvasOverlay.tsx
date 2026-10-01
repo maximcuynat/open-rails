@@ -3,7 +3,7 @@ import type { EditorStore } from '@application/state/editorStore'
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
   if (store.isPlayMode) {
-    return '▶ Mode Play · ↑ Avancer · ↓ Refouler · ←→ Aiguillage · R Inverser sens · Espace Quitter'
+    return '▶ Conduite · ↑ Accélérer · ↓ Freiner · R Changer de motrice · ←/→ Aiguillage · Espace Quitter'
   }
   switch (store.tool) {
     case 'place':
@@ -203,7 +203,8 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
           {/* Guide raccourcis clavier */}
           <span style={{ color: '#94a3b8', fontSize: '10.5px' }}>
             <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↑</kbd> Accélérer &nbsp;
-            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↓</kbd> Décélérer &nbsp;
+            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↓</kbd> Freiner &nbsp;
+            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>R</kbd> Changer de motrice &nbsp;
             <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>←/→</kbd> Aiguillage
           </span>
 
@@ -240,9 +241,9 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
               padding: '2px 6px',
               cursor: 'pointer',
             }}
-            title="Inverser le sens de la locomotive (Touche R ou Tab)"
+            title="Changer de cabine / motrice active pour repartir dans l'autre sens (Touche R ou Tab)"
           >
-            ⇄ Sens (R)
+            ⇄ Changer de motrice (R)
           </button>
         </div>
       )}
