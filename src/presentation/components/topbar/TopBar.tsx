@@ -6,6 +6,7 @@ import { serializeNetwork } from '@infrastructure/persistence/persistence'
 import { computeTrackSections } from '@domain/models/sections'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
+import { SettingsModal } from '../settings/SettingsModal'
 
 interface TopBarProps {
   store: EditorStore
@@ -30,6 +31,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const fileItems: MenuItem[] = [
     { id: 'new', label: 'Nouveau réseau' },
+    { id: 'settings', label: 'Paramètres du réseau (Échelles, Unités)...', separatorAfter: true },
     { id: 'import-json', label: 'Importer JSON...' },
     { id: 'export-json', label: 'Exporter JSON', separatorAfter: true },
     { id: 'export-svg', label: 'Exporter SVG réaliste (1:87)' },
@@ -51,8 +53,10 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     { id: 'zoom-100', label: 'Zoom 100%', shortcut: 'Ctrl+0', separatorAfter: true },
     { id: 'toggle-grid', label: 'Afficher la grille' },
     { id: 'toggle-snap', label: 'Activer le magnétisme', shortcut: 'G' },
+    { id: 'toggle-dimensions', label: store.showDimensions ? '✓ Côtes dynamiques CAO' : 'Afficher les côtes CAO' },
     { id: 'toggle-minimap', label: 'Afficher la mini-carte' },
     { id: 'toggle-inspector', label: 'Panneau latéral de propriétés', shortcut: 'I', separatorAfter: true },
+    { id: 'open-settings', label: 'Paramètres & Échelles...' },
   ]
 
   const helpItems: MenuItem[] = [
@@ -68,6 +72,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           store.newProject()
           showToast('Nouveau projet initialisé', 'info')
         }
+        break
+      case 'settings':
+        store.openSettings()
         break
       case 'import-json': {
         const input = document.createElement('input')
@@ -143,11 +150,18 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       case 'toggle-snap':
         store.toggleSnap()
         break
+      case 'toggle-dimensions':
+        store.toggleDimensions()
+        showToast(store.showDimensions ? 'Côtes dynamiques activées' : 'Côtes dynamiques masquées', 'info')
+        break
       case 'toggle-minimap':
         store.toggleMinimap()
         break
       case 'toggle-inspector':
         store.toggleSidePanel()
+        break
+      case 'open-settings':
+        store.openSettings()
         break
     }
   }
@@ -198,6 +212,17 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           <Menu label="Aide" items={helpItems} onSelect={onHelpSelect} />
         </MenuBar>
         <div className="tb-right">
+          <button
+            className="tb-icon-btn"
+            onClick={store.openSettings}
+            title="Paramètres du réseau & Échelles ferroviaires"
+            aria-label="Paramètres"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
           <button
             className="tb-icon-btn"
             onClick={store.cycleTheme}
@@ -288,6 +313,11 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           <div>Désélectionner / Terminer la pose</div>
         </div>
       </Modal>
+      <SettingsModal
+        store={store}
+        isOpen={store.isSettingsOpen}
+        onClose={store.closeSettings}
+      />
     </>
   )
 }

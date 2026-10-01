@@ -4,6 +4,7 @@ import { findJunctionAtNode } from '../../domain/models/junction'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import type { Junction, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
+import type { Unit, ScalePresetId } from '../../domain/models/units'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -75,6 +76,11 @@ export interface SerializedProject {
   gridSpacing?: number
   /** Computed sections (cantons) with type, direction, length, and adjacency graph */
   sections?: SerializedSection[]
+  unit?: Unit
+  scalePreset?: ScalePresetId
+  gauge?: number
+  trackSpacing?: number
+  showDimensions?: boolean
 }
 
 /**
@@ -88,6 +94,11 @@ export function serializeNetwork(
   gridMode?: 'auto' | 'fixed',
   gridSpacing?: number,
   computedSections?: TrackSection[],
+  unit?: Unit,
+  scalePreset?: ScalePresetId,
+  gauge?: number,
+  trackSpacing?: number,
+  showDimensions?: boolean,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -180,6 +191,11 @@ export function serializeNetwork(
     gridMode,
     gridSpacing,
     sections: serializedSections,
+    unit,
+    scalePreset,
+    gauge,
+    trackSpacing,
+    showDimensions,
   }
 }
 
@@ -194,6 +210,11 @@ export function deserializeNetwork(data: SerializedProject): {
   sectionMeta?: Record<string, any>
   gridMode?: 'auto' | 'fixed'
   gridSpacing?: number
+  unit?: Unit
+  scalePreset?: ScalePresetId
+  gauge?: number
+  trackSpacing?: number
+  showDimensions?: boolean
 } {
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
@@ -291,6 +312,11 @@ export function deserializeNetwork(data: SerializedProject): {
     sectionMeta: data.sectionMeta && typeof data.sectionMeta === 'object' ? data.sectionMeta : undefined,
     gridMode: data.gridMode === 'auto' || data.gridMode === 'fixed' ? data.gridMode : undefined,
     gridSpacing: typeof data.gridSpacing === 'number' && data.gridSpacing > 0 ? data.gridSpacing : undefined,
+    unit: data.unit,
+    scalePreset: data.scalePreset,
+    gauge: typeof data.gauge === 'number' ? data.gauge : undefined,
+    trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
+    showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
   }
 }
 
@@ -343,11 +369,29 @@ export function saveNetworkToStorage(
   gridMode?: 'auto' | 'fixed',
   gridSpacing?: number,
   computedSections?: TrackSection[],
+  unit?: Unit,
+  scalePreset?: ScalePresetId,
+  gauge?: number,
+  trackSpacing?: number,
+  showDimensions?: boolean,
 ): boolean {
   try {
     const storage = getStorage()
     if (!storage) return false
-    const serialized = serializeNetwork(net, projectName, camera, sectionMeta, gridMode, gridSpacing, computedSections)
+    const serialized = serializeNetwork(
+      net,
+      projectName,
+      camera,
+      sectionMeta,
+      gridMode,
+      gridSpacing,
+      computedSections,
+      unit,
+      scalePreset,
+      gauge,
+      trackSpacing,
+      showDimensions,
+    )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
   } catch (err) {
@@ -366,6 +410,11 @@ export function loadNetworkFromStorage(): {
   sectionMeta?: Record<string, any>
   gridMode?: 'auto' | 'fixed'
   gridSpacing?: number
+  unit?: Unit
+  scalePreset?: ScalePresetId
+  gauge?: number
+  trackSpacing?: number
+  showDimensions?: boolean
 } | null {
   try {
     const storage = getStorage()

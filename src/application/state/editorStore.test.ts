@@ -102,4 +102,33 @@ describe('EditorStore persistence', () => {
     expect(store.network.nodes.size).toBe(0)
     expect(store.curveState.startId).toBeNull()
   })
+
+  it('updates and persists unit, scale preset, gauge, and CAD dimensions', () => {
+    const store1 = new EditorStore()
+    expect(store1.unit).toBe('m')
+    expect(store1.scalePreset).toBe('1:1')
+    expect(store1.gauge).toBe(1.435)
+
+    // Switch to HO scale
+    store1.setScalePreset('HO')
+    expect(store1.scalePreset).toBe('HO')
+    expect(store1.unit).toBe('mm')
+    expect(store1.gauge).toBe(0.0165)
+    expect(store1.trackSpacing).toBe(0.050)
+    expect(store1.parallelOffset).toBe(0.050)
+    expect(store1.gridSpacing).toBe(0.1)
+
+    // Toggle dimensions
+    expect(store1.showDimensions).toBe(true)
+    store1.toggleDimensions()
+    expect(store1.showDimensions).toBe(false)
+
+    // Simulate page reload
+    const store2 = new EditorStore()
+    expect(store2.scalePreset).toBe('HO')
+    expect(store2.unit).toBe('mm')
+    expect(store2.gauge).toBe(0.0165)
+    expect(store2.trackSpacing).toBe(0.050)
+    expect(store2.showDimensions).toBe(false)
+  })
 })

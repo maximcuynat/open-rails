@@ -218,7 +218,9 @@ export function renderNetwork(
   net: Network,
   selection: Selection,
   sectionMeta?: Record<string, SectionMetadata>,
+  options?: { gauge?: number },
 ): void {
+  const activeGauge = options?.gauge ?? GAUGE
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
@@ -328,14 +330,14 @@ export function renderNetwork(
       if (isInactive) ctx.globalAlpha = 0.4
 
       if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
+        renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, activeGauge)
       } else {
-        renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor)
+        renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, activeGauge)
       }
       ctx.restore()
     }
     // Connect rails and create smooth dynamic miter joints at nodes
-    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds)
+    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, activeGauge)
 
     // 3. SECTION BADGES (LOD: multi-level representation according to cam.scale)
     // - Scale < 1.0 (Macro view): hide all labels unless the section is actively selected
@@ -815,6 +817,7 @@ export function renderDetailedRailLines(
   startPullback = 0,
   endPullback = 0,
   railHeadColor = '#ffffff',
+  gauge: number = GAUGE,
 ): void {
   const s = cam.scale
   const dx = b.x - a.x
@@ -827,7 +830,7 @@ export function renderDetailedRailLines(
   const uy = dy / len
   const nx = -uy
   const ny = ux
-  const hg = GAUGE / 2
+  const hg = gauge / 2
 
   const aStart = { x: a.x + ux * startPullback, y: a.y + uy * startPullback }
   const bEnd = { x: b.x - ux * endPullback, y: b.y - uy * endPullback }
@@ -841,7 +844,8 @@ export function renderDetailedRailLines(
   const r2bx = (bEnd.x - nx * hg - cam.x) * s + vw / 2
   const r2by = (bEnd.y - ny * hg - cam.y) * s + vh / 2
 
-  const railPx = Math.max(1.2, RAIL_WIDTH * s)
+  const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
+  const railPx = Math.max(1.2, RAIL_WIDTH * railWidthRatio * s)
   const railColor = selected ? accent : ink
 
   // Pass 1: Rail base / patin
@@ -1050,6 +1054,7 @@ export function renderDetailedCurveRails(
   startPullback = 0,
   endPullback = 0,
   railHeadColor = '#ffffff',
+  gauge: number = GAUGE,
 ): void {
   const s = cam.scale
   const samples = curveSamples(p0, via, p2, s)
@@ -1057,8 +1062,9 @@ export function renderDetailedCurveRails(
   const tStart = len > 0 && startPullback > 0 ? Math.min(0.25, startPullback / len) : 0
   const tEnd = len > 0 && endPullback > 0 ? Math.max(0.75, 1 - endPullback / len) : 1
 
-  const hg = GAUGE / 2
-  const railPx = Math.max(1.2, RAIL_WIDTH * s)
+  const hg = gauge / 2
+  const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
+  const railPx = Math.max(1.2, RAIL_WIDTH * railWidthRatio * s)
   const railColor = selected ? accent : ink
 
   const leftRail: [number, number][] = []
@@ -1341,11 +1347,12 @@ export function getNodeSegmentEnds(
   vw: number,
   vh: number,
   selection: Selection,
+  gauge: number = GAUGE,
 ): SegmentEndGeom[] {
   const adj = net.adjacency.get(node.id) ?? []
   const ends: SegmentEndGeom[] = []
-  const hg = GAUGE / 2
-  const hb = BALLAST_WIDTH / 2
+  const hg = gauge / 2
+  const hb = (BALLAST_WIDTH * (gauge / GAUGE)) / 2
 
   for (const sid of adj) {
     const seg = net.segments.get(sid)
@@ -1415,10 +1422,11 @@ export function getConnectedEndPairs(
   cam: Camera,
   vw: number,
   vh: number,
+  gauge: number = GAUGE,
 ): ConnectedEndPair[] {
   const pairs: ConnectedEndPair[] = []
-  const hg = GAUGE / 2
-  const hb = BALLAST_WIDTH / 2
+  const hg = gauge / 2
+  const hb = (BALLAST_WIDTH * (gauge / GAUGE)) / 2
 
   for (let i = 0; i < ends.length; i++) {
     for (let j = i + 1; j < ends.length; j++) {
@@ -1566,9 +1574,11 @@ export function renderRailJoints(
   railColor: string,
   accent: string,
   bounds?: ViewportBounds,
+  gauge: number = GAUGE,
 ): void {
   const s = cam.scale
-  const railPx = Math.max(1.2, RAIL_WIDTH * s)
+  const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
+  const railPx = Math.max(1.2, RAIL_WIDTH * railWidthRatio * s)
   const capRadius = railPx / 2
 
   for (const node of net.nodes.values()) {
@@ -1581,8 +1591,8 @@ export function renderRailJoints(
     const ny_scr = (node.pos.y - cam.y) * s + vh / 2
     if (nx_scr < -40 || nx_scr > vw + 40 || ny_scr < -40 || ny_scr > vh + 40) continue
 
-    const ends = getNodeSegmentEnds(net, node, cam, vw, vh, selection)
-    const pairs = getConnectedEndPairs(node, ends, cam, vw, vh)
+    const ends = getNodeSegmentEnds(net, node, cam, vw, vh, selection, gauge)
+    const pairs = getConnectedEndPairs(node, ends, cam, vw, vh, gauge)
 
     for (const p of pairs) {
       const isSel = p.e1.selected || p.e2.selected

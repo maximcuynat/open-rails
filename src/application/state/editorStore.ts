@@ -15,6 +15,7 @@ import {
 import type { JunctionId, Network, Point, Selection } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
+import { type Unit, type ScalePresetId, SCALE_PRESETS } from '@domain/models/units'
 
 export type Tool =
   | 'select'
@@ -84,6 +85,14 @@ export class EditorStore {
   selectedCrossingAngle = 15 // degrees (15, 30, 45, 60, 90)
   selectedCrossingLength = 124 // mm (standard Kato/Peco crossing length)
 
+  // --- Units, Scale and CAD Dimensioning System ---
+  unit: Unit = 'm'
+  scalePreset: ScalePresetId = '1:1'
+  gauge: number = 1.435 // rail gauge in meters (UIC standard 1.435m, HO: 0.0165m, N: 0.009m)
+  trackSpacing: number = 3.80 // standard double-track center-to-center spacing in meters
+  showDimensions: boolean = true // live CAD dimensioning HUD overlay
+  isSettingsOpen: boolean = false
+
   measureStart: Point | null = null
   measureEnd: Point | null = null
   isMeasuring = false
@@ -117,7 +126,20 @@ export class EditorStore {
 
   pushHistorySnapshot = (): void => {
     if (this.isUndoingRedoing) return
-    const snapshot = serializeNetwork(this.network, this.projectName, undefined, this.sectionMeta)
+    const snapshot = serializeNetwork(
+      this.network,
+      this.projectName,
+      undefined,
+      this.sectionMeta,
+      this.gridMode,
+      this.gridSpacing,
+      undefined,
+      this.unit,
+      this.scalePreset,
+      this.gauge,
+      this.trackSpacing,
+      this.showDimensions,
+    )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
       this.history = this.history.slice(0, this.historyIndex + 1)
@@ -140,6 +162,14 @@ export class EditorStore {
         this.network = res.network
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
         else this.sectionMeta = {}
+        if (res.unit) this.unit = res.unit
+        if (res.scalePreset) this.scalePreset = res.scalePreset
+        if (res.gauge) this.gauge = res.gauge
+        if (res.trackSpacing) {
+          this.trackSpacing = res.trackSpacing
+          this.parallelOffset = res.trackSpacing
+        }
+        if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.lastNodeId = null
         this.curveState = { phase: 0, startId: null }
@@ -163,6 +193,14 @@ export class EditorStore {
         this.network = res.network
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
         else this.sectionMeta = {}
+        if (res.unit) this.unit = res.unit
+        if (res.scalePreset) this.scalePreset = res.scalePreset
+        if (res.gauge) this.gauge = res.gauge
+        if (res.trackSpacing) {
+          this.trackSpacing = res.trackSpacing
+          this.parallelOffset = res.trackSpacing
+        }
+        if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.lastNodeId = null
         this.curveState = { phase: 0, startId: null }
@@ -216,6 +254,22 @@ export class EditorStore {
     if (saved.gridSpacing) {
       this.gridSpacing = saved.gridSpacing
     }
+    if (saved.unit) {
+      this.unit = saved.unit
+    }
+    if (saved.scalePreset) {
+      this.scalePreset = saved.scalePreset
+    }
+    if (saved.gauge) {
+      this.gauge = saved.gauge
+    }
+    if (saved.trackSpacing) {
+      this.trackSpacing = saved.trackSpacing
+      this.parallelOffset = saved.trackSpacing
+    }
+    if (typeof saved.showDimensions === 'boolean') {
+      this.showDimensions = saved.showDimensions
+    }
     return true
   }
 
@@ -230,6 +284,14 @@ export class EditorStore {
     if (res.sectionMeta) this.sectionMeta = res.sectionMeta
     if (res.gridMode) this.gridMode = res.gridMode
     if (res.gridSpacing) this.gridSpacing = res.gridSpacing
+    if (res.unit) this.unit = res.unit
+    if (res.scalePreset) this.scalePreset = res.scalePreset
+    if (res.gauge) this.gauge = res.gauge
+    if (res.trackSpacing) {
+      this.trackSpacing = res.trackSpacing
+      this.parallelOffset = res.trackSpacing
+    }
+    if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
     this.selection = { nodes: new Set(), segments: new Set() }
     this.lastNodeId = null
     this.curveState = { phase: 0, startId: null }
@@ -242,7 +304,20 @@ export class EditorStore {
    */
   savePersistedState = (): void => {
     const sections = computeTrackSections(this.network, this.sectionMeta)
-    saveNetworkToStorage(this.network, this.projectName, this.camera, this.sectionMeta, this.gridMode, this.gridSpacing, sections)
+    saveNetworkToStorage(
+      this.network,
+      this.projectName,
+      this.camera,
+      this.sectionMeta,
+      this.gridMode,
+      this.gridSpacing,
+      sections,
+      this.unit,
+      this.scalePreset,
+      this.gauge,
+      this.trackSpacing,
+      this.showDimensions,
+    )
   }
 
   /**
@@ -452,6 +527,78 @@ export class EditorStore {
     this.projectName = name
     this.savePersistedState()
     this.notify()
+  }
+
+  setUnit = (unit: Unit): void => {
+    this.unit = unit
+    this.savePersistedState()
+    this.notify()
+  }
+
+  setScalePreset = (presetId: ScalePresetId): void => {
+    this.scalePreset = presetId
+    const preset = SCALE_PRESETS[presetId]
+    if (preset) {
+      this.unit = preset.defaultUnit
+      this.gauge = preset.defaultGauge
+      this.trackSpacing = preset.defaultTrackSpacing
+      this.parallelOffset = preset.defaultTrackSpacing
+      if (presetId === 'HO' || presetId === 'TT') {
+        this.gridSpacing = 0.1
+      } else if (presetId === 'N' || presetId === 'Z') {
+        this.gridSpacing = 0.05
+      } else if (presetId === 'O') {
+        this.gridSpacing = 0.2
+      } else if (presetId === '1:1') {
+        this.gridSpacing = 5
+      }
+    }
+    this.savePersistedState()
+    this.notify()
+  }
+
+  setCustomGauge = (gauge: number): void => {
+    if (gauge > 0) {
+      this.gauge = gauge
+      this.scalePreset = 'custom'
+      this.savePersistedState()
+      this.notify()
+    }
+  }
+
+  setCustomTrackSpacing = (spacing: number): void => {
+    if (spacing > 0) {
+      this.trackSpacing = spacing
+      this.parallelOffset = spacing
+      this.savePersistedState()
+      this.notify()
+    }
+  }
+
+  toggleDimensions = (): void => {
+    this.showDimensions = !this.showDimensions
+    this.savePersistedState()
+    this.notify()
+  }
+
+  openSettings = (): void => {
+    this.isSettingsOpen = true
+    this.notify()
+  }
+
+  closeSettings = (): void => {
+    this.isSettingsOpen = false
+    this.notify()
+  }
+
+  toggleSettings = (): void => {
+    this.isSettingsOpen = !this.isSettingsOpen
+    this.notify()
+  }
+
+  getMinTrackLength = (): number => {
+    const preset = SCALE_PRESETS[this.scalePreset]
+    return preset ? preset.minLength : 0.05
   }
 
   markDirty = (): void => {

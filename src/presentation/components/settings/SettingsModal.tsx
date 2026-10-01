@@ -1,0 +1,231 @@
+import { useState, useEffect } from 'react'
+import { Modal } from '../common/Modal'
+import type { EditorStore } from '@application/state/editorStore'
+import {
+  SCALE_PRESETS,
+  type ScalePresetId,
+  type Unit,
+  formatDistance,
+  toUnitValue,
+  parseDistance,
+} from '@domain/models/units'
+import { showToast } from '../common/Toast'
+
+interface SettingsModalProps {
+  store: EditorStore
+  isOpen: boolean
+  onClose: () => void
+}
+
+export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
+  const [selectedScale, setSelectedScale] = useState<ScalePresetId>(store.scalePreset)
+  const [selectedUnit, setSelectedUnit] = useState<Unit>(store.unit)
+  const [gaugeVal, setGaugeVal] = useState<string>(
+    toUnitValue(store.gauge, store.unit).toString()
+  )
+  const [spacingVal, setSpacingVal] = useState<string>(
+    toUnitValue(store.trackSpacing, store.unit).toString()
+  )
+  const [showDimensions, setShowDimensions] = useState<boolean>(store.showDimensions)
+
+  // Sync state when modal opens or store changes
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedScale(store.scalePreset)
+      setSelectedUnit(store.unit)
+      setGaugeVal(toUnitValue(store.gauge, store.unit).toString())
+      setSpacingVal(toUnitValue(store.trackSpacing, store.unit).toString())
+      setShowDimensions(store.showDimensions)
+    }
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions])
+
+  // When changing scale preset in the modal
+  const handleScaleChange = (presetId: ScalePresetId) => {
+    setSelectedScale(presetId)
+    const preset = SCALE_PRESETS[presetId]
+    if (preset) {
+      setSelectedUnit(preset.defaultUnit)
+      setGaugeVal(toUnitValue(preset.defaultGauge, preset.defaultUnit).toString())
+      setSpacingVal(toUnitValue(preset.defaultTrackSpacing, preset.defaultUnit).toString())
+    }
+  }
+
+  // When changing unit directly
+  const handleUnitChange = (newUnit: Unit) => {
+    const currentGaugeMeters = parseDistance(gaugeVal, selectedUnit)
+    const currentSpacingMeters = parseDistance(spacingVal, selectedUnit)
+    setSelectedUnit(newUnit)
+    setGaugeVal(toUnitValue(currentGaugeMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
+    setSpacingVal(toUnitValue(currentSpacingMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
+  }
+
+  const handleSave = () => {
+    const parsedGauge = parseDistance(gaugeVal, selectedUnit)
+    const parsedSpacing = parseDistance(spacingVal, selectedUnit)
+
+    if (parsedGauge <= 0 || parsedSpacing <= 0) {
+      showToast('Valeurs de voie invalides', 'error')
+      return
+    }
+
+    if (selectedScale !== 'custom') {
+      store.setScalePreset(selectedScale)
+      store.setUnit(selectedUnit)
+      // Custom overrides if modified
+      const preset = SCALE_PRESETS[selectedScale]
+      if (Math.abs(preset.defaultGauge - parsedGauge) > 0.0001) {
+        store.setCustomGauge(parsedGauge)
+      }
+      if (Math.abs(preset.defaultTrackSpacing - parsedSpacing) > 0.0001) {
+        store.setCustomTrackSpacing(parsedSpacing)
+      }
+    } else {
+      store.setScalePreset('custom')
+      store.setUnit(selectedUnit)
+      store.setCustomGauge(parsedGauge)
+      store.setCustomTrackSpacing(parsedSpacing)
+    }
+
+    if (store.showDimensions !== showDimensions) {
+      store.toggleDimensions()
+    }
+
+    showToast(`Paramètres enregistrés : Échelle ${SCALE_PRESETS[selectedScale]?.name ?? selectedScale}`, 'success')
+    onClose()
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      title="Paramètres du réseau & Échelles ferroviaires"
+      confirmLabel="Enregistrer les modifications"
+      onConfirm={handleSave}
+      onClose={onClose}
+    >
+      <div className="settings-container">
+        {/* Section 1 : Échelle du réseau */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Échelle de travail
+            <span className="settings-hint">Sélectionnez votre standard de modélisme ou l'échelle réelle</span>
+          </label>
+          <div className="scale-preset-grid">
+            {(Object.keys(SCALE_PRESETS) as ScalePresetId[]).map((id) => {
+              const preset = SCALE_PRESETS[id]
+              const isSelected = selectedScale === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`scale-preset-card ${isSelected ? 'active' : ''}`}
+                  onClick={() => handleScaleChange(id)}
+                >
+                  <div className="scale-card-header">
+                    <span className="scale-card-name">{preset.name}</span>
+                    <span className="scale-card-badge">{id === '1:1' ? '1:1' : `1:${preset.ratio}`}</span>
+                  </div>
+                  <div className="scale-card-info">
+                    Écartement : {(preset.defaultGauge * 1000).toFixed(1)} mm
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Section 2 : Unité de travail & Saisie */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Unité d'affichage & des côtes
+            <span className="settings-hint">Toutes les longueurs et rayons seront exprimés dans cette unité</span>
+          </label>
+          <div className="unit-selector-row">
+            {(['mm', 'cm', 'm'] as Unit[]).map((u) => (
+              <button
+                key={u}
+                type="button"
+                className={`unit-toggle-btn ${selectedUnit === u ? 'active' : ''}`}
+                onClick={() => handleUnitChange(u)}
+              >
+                {u === 'mm' ? 'Millimètres (mm)' : u === 'cm' ? 'Centimètres (cm)' : 'Mètres (m)'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Section 3 : Géométrie et Écartement */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Gabarit et géométrie de voie
+            <span className="settings-hint">Personnalisez l'écartement physique et l'entraxe entre voies parallèles</span>
+          </label>
+          <div className="settings-grid-2">
+            <div className="settings-field">
+              <label htmlFor="input-gauge" className="settings-sublabel">
+                Écartement des rails ({selectedUnit}) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-gauge"
+                  type="number"
+                  step="any"
+                  min="0.1"
+                  className="settings-input"
+                  value={gaugeVal}
+                  onChange={(e) => setGaugeVal(e.target.value)}
+                />
+                <span className="settings-input-unit">{selectedUnit}</span>
+              </div>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="input-spacing" className="settings-sublabel">
+                Entraxe double voie standard ({selectedUnit}) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-spacing"
+                  type="number"
+                  step="any"
+                  min="0.1"
+                  className="settings-input"
+                  value={spacingVal}
+                  onChange={(e) => setSpacingVal(e.target.value)}
+                />
+                <span className="settings-input-unit">{selectedUnit}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 4 : Dessin & Côtes CAO */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Aides de construction CAO
+          </label>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={showDimensions}
+              onChange={(e) => setShowDimensions(e.target.checked)}
+            />
+            <span className="settings-checkbox-text">
+              Afficher les côtes de construction dynamiques en direct (longueur, rayon, angle et entraxe)
+            </span>
+          </label>
+        </div>
+
+        {/* Info recap banner */}
+        <div className="settings-summary-banner">
+          <div className="summary-title">Configuration active :</div>
+          <div className="summary-details">
+            <span>Échelle : <strong>{SCALE_PRESETS[selectedScale]?.name}</strong></span>
+            <span> • </span>
+            <span>Écartement : <strong>{formatDistance(parseDistance(gaugeVal, selectedUnit), selectedUnit)}</strong></span>
+            <span> • </span>
+            <span>Entraxe : <strong>{formatDistance(parseDistance(spacingVal, selectedUnit), selectedUnit)}</strong></span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}

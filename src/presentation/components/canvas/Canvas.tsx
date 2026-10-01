@@ -41,6 +41,12 @@ import {
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
+import { formatDistance, formatRadius, formatAngle } from '@domain/models/units'
+import {
+  renderStraightDimension,
+  renderCurveDimension,
+  renderParallelSpacingDimension,
+} from './dimensionOverlay'
 import type { EditorStore } from '@application/state/editorStore'
 
 
@@ -144,6 +150,7 @@ function renderPlacePreview(
   snappedEnd: Point,
   labelText: string,
   isClosedToNode = false,
+  gauge?: number,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
   const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
@@ -198,7 +205,7 @@ function renderPlacePreview(
     ctx.setLineDash([])
   } else {
     ctx.globalAlpha = 0.85
-    renderDetailedRailLines(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent)
+    renderDetailedRailLines(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent, 0, 0, '#ffffff', gauge)
     ctx.globalAlpha = 1
   }
 
@@ -240,6 +247,7 @@ function renderCurvePreview(
   labelText: string,
   isClosedToNode = false,
   colorOverride?: string,
+  gauge?: number,
 ): void {
   const defaultAccent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
   const accent = colorOverride ?? defaultAccent
@@ -275,7 +283,7 @@ function renderCurvePreview(
     ctx.setLineDash([])
   } else {
     ctx.globalAlpha = 0.95
-    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, isGreen, railColor, accent)
+    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, isGreen, railColor, accent, 0, 0, '#ffffff', gauge)
     ctx.globalAlpha = 1
   }
 
@@ -333,7 +341,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, rect.width, rect.height)
     }
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta)
+    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { gauge: store.gauge })
 
     // Box selection rectangle
     if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
@@ -422,13 +430,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         let candidateEnd: Point
         const dx = cursor.x - startNode.pos.x
         const dy = cursor.y - startNode.pos.y
+        const minLen = store.getMinTrackLength()
 
         if (tangent) {
           dir = tangent
           const proj = dx * dir.x + dy * dir.y
-          const dist = Math.max(10, proj)
+          const dist = Math.max(minLen, proj)
           if (store.trackMode === 'freeform') {
-            snappedLen = Math.max(10, Math.round(dist))
+            snappedLen = store.snap ? Math.max(minLen, Math.round(dist * 10) / 10) : Math.max(minLen, dist)
           } else if (store.selectedStraightLength !== 'auto') {
             snappedLen = store.selectedStraightLength
           } else {
@@ -438,14 +447,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         } else {
           if (store.trackMode === 'freeform') {
             candidateEnd = cursor
-            snappedLen = Math.max(10, Math.round(Math.hypot(dx, dy)))
+            const rawDist = Math.hypot(dx, dy)
+            snappedLen = store.snap ? Math.max(minLen, Math.round(rawDist * 10) / 10) : Math.max(minLen, rawDist)
           } else {
             const dist = Math.hypot(dx, dy)
-            dir = dist > 1 ? snapDirection({ x: dx / dist, y: dy / dist }, 15, 6) : { x: 1, y: 0 }
+            dir = dist > 0.01
+              ? (store.snap ? snapDirection({ x: dx / dist, y: dy / dist }, 15, 6) : { x: dx / dist, y: dy / dist })
+              : { x: 1, y: 0 }
             if (store.selectedStraightLength !== 'auto') {
               snappedLen = store.selectedStraightLength
             } else {
-              snappedLen = snapStraightLength(dist)
+              snappedLen = store.snap ? snapStraightLength(dist) : Math.max(minLen, dist)
             }
             candidateEnd = computeStraightPiece(startNode.pos, dir, snappedLen)
           }
@@ -457,8 +469,24 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
         const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
         const modeLabel = store.parallelMode ? '  | Double voie' : ''
-        const labelText = `${prefix}${snappedLen.toFixed(2)} m${joinSuffix}${modeLabel}`
-        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
+        const formattedDist = formatDistance(snappedLen, store.unit)
+        const labelText = `${prefix}${formattedDist}${joinSuffix}${modeLabel}`
+        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin, store.gauge)
+
+        // Live CAD dimensioning overlay
+        if (store.showDimensions) {
+          renderStraightDimension(
+            ctx,
+            cam,
+            rect.width,
+            rect.height,
+            startNode.pos,
+            candidateEnd,
+            snappedLen,
+            store.unit,
+            { showAngle: true },
+          )
+        }
 
         // Preview de la voie secondaire parallele si mode double voie actif ou touche Shift/Ctrl maintenue
         const showParallelPreview = store.parallelMode || isModifierDownRef.current
@@ -482,8 +510,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secEnd = { x: candidateEnd.x + nxp * off, y: candidateEnd.y + nyp * off }
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, 'Voie 2', false)
+            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, 'Voie 2', false, store.gauge)
             ctx.restore()
+
+            if (store.showDimensions) {
+              renderParallelSpacingDimension(
+                ctx,
+                cam,
+                rect.width,
+                rect.height,
+                candidateEnd,
+                secEnd,
+                store.parallelOffset,
+                store.unit,
+              )
+            }
           }
         }
       }
@@ -502,7 +543,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const dx = cursor.x - startNode.pos.x
           const dy = cursor.y - startNode.pos.y
           const len = Math.hypot(dx, dy)
-          return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
+          return len > 0.01
+            ? (store.snap ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: dx / len, y: dy / len })
+            : { x: 1, y: 0 }
         })()
 
         const showParallelPreview = store.parallelMode || isModifierDownRef.current
@@ -519,8 +562,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const end = lock.lockPoint
             const via = lock.via
             const len = curveLength(startNode.pos, via, end)
-            const labelText = `Aiguillage verrouillé (0°)  R${lock.radius.toFixed(0)} m  ${lock.angleDeg.toFixed(1)}° (${len.toFixed(1)} m)  → Jonction tangente`
-            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
+            const labelText = `Aiguillage verrouillé (0°)  ${formatRadius(lock.radius, store.unit)}  ${formatAngle(lock.angleDeg)} (${formatDistance(len, store.unit)})  → Jonction tangente`
+            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981', store.gauge)
+
+            if (store.showDimensions) {
+              renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, lock.radius, lock.angleDeg, len, store.unit)
+            }
 
             if (showParallelPreview) {
               const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
@@ -528,8 +575,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const secStart = secStartNode ? secStartNode.pos : par.start
               ctx.save()
               ctx.globalAlpha = 0.55
-              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
               ctx.restore()
+
+              if (store.showDimensions) {
+                renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
+              }
             }
           } else {
             const { end, via, radius, angle } = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
@@ -540,9 +591,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const sideLabel = side === -1 ? 'Gauche' : 'Droite'
             const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent (0°)'
             const labelText = radius === Infinity
-              ? `Ligne droite ${len.toFixed(2)} m${joinSuffix}`
-              : `Courbe ${sideLabel} R${radius.toFixed(0)} m  ${angle.toFixed(1)}° (${len.toFixed(1)} m)${joinSuffix}`
-            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
+              ? `Ligne droite ${formatDistance(len, store.unit)}${joinSuffix}`
+              : `Courbe ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
+            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981', store.gauge)
+
+            if (store.showDimensions) {
+              renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
+            }
 
             if (showParallelPreview) {
               const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
@@ -550,8 +605,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const secStart = secStartNode ? secStartNode.pos : par.start
               ctx.save()
               ctx.globalAlpha = 0.55
-              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
               ctx.restore()
+
+              if (store.showDimensions) {
+                renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
+              }
             }
           }
         } else if (store.trackMode === 'freeform') {
@@ -567,9 +626,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const sideLabel = side === -1 ? 'Gauche' : 'Droite'
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
           const labelText = radius === Infinity
-            ? `Flex ${len.toFixed(2)} m${joinSuffix}`
-            : `Flex ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
+            ? `Flex ${formatDistance(len, store.unit)}${joinSuffix}`
+            : `Flex ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin, undefined, store.gauge)
+
+          if (store.showDimensions) {
+            renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
+          }
 
           if (showParallelPreview) {
             const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
@@ -577,8 +640,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secStart = secStartNode ? secStartNode.pos : par.start
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
             ctx.restore()
+
+            if (store.showDimensions) {
+              renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
+            }
           }
         } else {
           const tangent = fallbackTangent
@@ -593,8 +660,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const isJoin = isJoinNode || hitSegId !== null
           const len = curveLength(startNode.pos, via, end)
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-          const labelText = `Courbe ${sideLabel} R${radius.toFixed(2)} m  ${angle.toFixed(2)}° (${len.toFixed(2)} m)${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
+          const labelText = `Courbe ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin, undefined, store.gauge)
+
+          if (store.showDimensions) {
+            renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
+          }
 
           if (showParallelPreview) {
             const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
@@ -602,8 +673,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secStart = secStartNode ? secStartNode.pos : par.start
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
             ctx.restore()
+
+            if (store.showDimensions) {
+              renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
+            }
           }
         }
       }
@@ -1173,12 +1248,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const dx = snappedWorld.x - startNode.pos.x
             const dy = snappedWorld.y - startNode.pos.y
 
+            const minLen = store.getMinTrackLength()
             if (tangent) {
               dir = tangent
               const proj = dx * dir.x + dy * dir.y
-              const dist = Math.max(10, proj)
+              const dist = Math.max(minLen, proj)
               if (store.trackMode === 'freeform') {
-                snappedLen = Math.max(10, Math.round(dist))
+                snappedLen = store.snap ? Math.max(minLen, Math.round(dist * 10) / 10) : Math.max(minLen, dist)
               } else if (store.selectedStraightLength !== 'auto') {
                 snappedLen = store.selectedStraightLength
               } else {
@@ -1191,11 +1267,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 endPos = closeTarget && closeTarget.id !== store.lastNodeId ? closeTarget.pos : snappedWorld
               } else {
                 const rawDist = Math.hypot(dx, dy)
-                dir = rawDist > 1 ? snapDirection({ x: dx / rawDist, y: dy / rawDist }, 15, 6) : { x: 1, y: 0 }
+                dir = rawDist > 0.01
+                  ? (store.snap ? snapDirection({ x: dx / rawDist, y: dy / rawDist }, 15, 6) : { x: dx / rawDist, y: dy / rawDist })
+                  : { x: 1, y: 0 }
                 if (store.selectedStraightLength !== 'auto') {
                   snappedLen = store.selectedStraightLength
                 } else {
-                  snappedLen = snapStraightLength(rawDist)
+                  snappedLen = store.snap ? snapStraightLength(rawDist) : Math.max(minLen, rawDist)
                 }
                 endPos = computeStraightPiece(startNode.pos, dir, snappedLen)
               }
