@@ -12,6 +12,7 @@ import {
   hitSegment,
   pruneOrphanNodes,
   removeNode,
+  dissolveNode,
   removeSegment,
   resetIdCounter,
   snapToGrid,
@@ -100,6 +101,65 @@ describe('removeNode', () => {
     expect(net.nodes.has(c.id)).toBe(true)
     expect(net.adjacency.get(a.id)).toEqual([])
     expect(net.adjacency.get(c.id)).toEqual([])
+  })
+})
+
+describe('dissolveNode', () => {
+  it('dissolves an intermediate aligned straight node and connects the two outer endpoints', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 0 })
+    const c = addNode(net, { x: 100, y: 0 })
+    const s1 = addSegment(net, a.id, b.id)!
+    const s2 = addSegment(net, b.id, c.id)!
+
+    const mergedSeg = dissolveNode(net, b.id)
+
+    expect(mergedSeg).not.toBeNull()
+    expect(net.nodes.has(b.id)).toBe(false)
+    expect(net.segments.has(s1.id)).toBe(false)
+    expect(net.segments.has(s2.id)).toBe(false)
+
+    // a and c are preserved and now connected directly
+    expect(net.nodes.has(a.id)).toBe(true)
+    expect(net.nodes.has(c.id)).toBe(true)
+    expect(net.segments.size).toBe(1)
+    expect(mergedSeg!.from).toBe(a.id)
+    expect(mergedSeg!.to).toBe(c.id)
+    expect(net.adjacency.get(a.id)).toEqual([mergedSeg!.id])
+    expect(net.adjacency.get(c.id)).toEqual([mergedSeg!.id])
+  })
+
+  it('does not dissolve a corner node (non-aligned)', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 0 })
+    const c = addNode(net, { x: 50, y: 50 })
+    addSegment(net, a.id, b.id)
+    addSegment(net, b.id, c.id)
+
+    const result = dissolveNode(net, b.id)
+    expect(result).toBeNull()
+    // Network remains unchanged
+    expect(net.nodes.has(b.id)).toBe(true)
+    expect(net.segments.size).toBe(2)
+  })
+
+  it('does not dissolve a node with degree other than 2', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 0 })
+    addSegment(net, a.id, b.id)
+
+    // Degree 1 (dead end)
+    expect(dissolveNode(net, b.id)).toBeNull()
+
+    // Degree 3 (junction)
+    const c = addNode(net, { x: 100, y: 0 })
+    const d = addNode(net, { x: 90, y: 25 })
+    addSegment(net, b.id, c.id)
+    addSegment(net, b.id, d.id)
+    expect(dissolveNode(net, b.id)).toBeNull()
   })
 })
 

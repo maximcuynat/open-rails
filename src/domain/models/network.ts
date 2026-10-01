@@ -87,6 +87,95 @@ export function removeNode(net: Network, id: NodeId): void {
   net.adjacency.delete(id)
 }
 
+/**
+ * Dissolve an intermediate degree-2 node aligned between two straight segments.
+ * Removes the intermediate node and replaces the two collinear straight segments
+ * with a single continuous straight segment connecting the outer endpoints directly.
+ * Returns the newly created segment if dissolved, or null if the node cannot be dissolved.
+ */
+export function dissolveNode(
+  net: Network,
+  id: NodeId,
+  maxDeflectionDeg = 25,
+): Segment | null {
+  const node = net.nodes.get(id)
+  if (!node) return null
+
+  const adj = net.adjacency.get(id)
+  if (!adj || adj.length !== 2) return null
+
+  const s1 = net.segments.get(adj[0])
+  const s2 = net.segments.get(adj[1])
+  if (!s1 || !s2) return null
+
+  // Both segments must be straight
+  if (s1.kind !== 'straight' || s2.kind !== 'straight') return null
+
+  const otherId1 = s1.from === id ? s1.to : s1.from
+  const otherId2 = s2.from === id ? s2.to : s2.from
+  if (otherId1 === otherId2) return null // No self-loops
+
+  const node1 = net.nodes.get(otherId1)
+  const node2 = net.nodes.get(otherId2)
+  if (!node1 || !node2) return null
+
+  // Direction vectors pointing away from id towards outer endpoints
+  const v1x = node1.pos.x - node.pos.x
+  const v1y = node1.pos.y - node.pos.y
+  const len1 = Math.hypot(v1x, v1y)
+
+  const v2x = node2.pos.x - node.pos.x
+  const v2y = node2.pos.y - node.pos.y
+  const len2 = Math.hypot(v2x, v2y)
+
+  if (len1 < 1e-4 || len2 < 1e-4) return null
+
+  // Normalized dot product
+  const dot = (v1x * v2x + v1y * v2y) / (len1 * len2)
+
+  // For aligned segments (straight line), v1 and v2 point in opposite directions (dot ≈ -1.0)
+  // Max deflection threshold: -cos(maxDeflectionDeg)
+  const threshold = -Math.cos((maxDeflectionDeg * Math.PI) / 180)
+  if (dot > threshold) {
+    // Segments are not aligned as a straight line
+    return null
+  }
+
+  // Preserve parent segment heritage
+  const parentId = s1.parentSegmentId ?? s2.parentSegmentId ?? s1.id
+
+  // Remove the two segments without cleaning orphans
+  removeSegment(net, s1.id, false)
+  removeSegment(net, s2.id, false)
+
+  // Remove the intermediate node
+  net.nodes.delete(id)
+  net.adjacency.delete(id)
+
+  // Connect node1 and node2 directly with a straight segment
+  const newSeg = addSegment(net, otherId1, otherId2)
+  if (newSeg) {
+    newSeg.parentSegmentId = parentId
+
+    // Update any junctions that were referencing s1 or s2
+    for (const junc of net.junctions.values()) {
+      if (junc.straightSegmentId === s1.id || junc.straightSegmentId === s2.id) {
+        junc.straightSegmentId = newSeg.id
+        junc.straightNodeId = otherId1 === junc.nodeId ? otherId2 : otherId1
+      }
+      if (junc.divergingSegmentId === s1.id || junc.divergingSegmentId === s2.id) {
+        junc.divergingSegmentId = newSeg.id
+        junc.divergingNodeId = otherId1 === junc.nodeId ? otherId2 : otherId1
+      }
+      if (junc.stemNodeId === id) {
+        junc.stemNodeId = otherId1 === junc.nodeId ? otherId2 : otherId1
+      }
+    }
+  }
+
+  return newSeg
+}
+
 export function removeSegment(net: Network, id: SegmentId, cleanOrphans = true): void {
   const seg = net.segments.get(id)
   if (!seg) return

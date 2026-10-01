@@ -178,4 +178,53 @@ describe('EditorStore persistence', () => {
     store.toggleSettings()
     expect(store.isSettingsOpen).toBe(false)
   })
+
+  describe('deleteSelection with aligned intermediate nodes', () => {
+    it('dissolves an intermediate aligned node and connects the two outer nodes without destroying the track', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 50, y: 0 })
+      const n3 = addNode(store.network, { x: 100, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+      addSegment(store.network, n2.id, n3.id)
+
+      // User selects ONLY the intermediate node n2
+      store.selection = { nodes: new Set([n2.id]), segments: new Set() }
+
+      store.deleteSelection()
+
+      // n2 is gone
+      expect(store.network.nodes.has(n2.id)).toBe(false)
+      // n1 and n3 are preserved and connected directly
+      expect(store.network.nodes.has(n1.id)).toBe(true)
+      expect(store.network.nodes.has(n3.id)).toBe(true)
+      expect(store.network.segments.size).toBe(1)
+
+      const remainingSeg = [...store.network.segments.values()][0]
+      expect((remainingSeg.from === n1.id && remainingSeg.to === n3.id) ||
+             (remainingSeg.from === n3.id && remainingSeg.to === n1.id)).toBe(true)
+    })
+
+    it('preserves section metadata when dissolving an intermediate node', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 50, y: 0 })
+      const n3 = addNode(store.network, { x: 100, y: 0 })
+      const s1 = addSegment(store.network, n1.id, n2.id)!
+      const s2 = addSegment(store.network, n2.id, n3.id)!
+
+      // Name section
+      store.setSectionMeta(`${s1.id}-${s2.id}`, { name: 'Voie Rapide', color: '#ff5500' })
+
+      // Delete n2
+      store.selection = { nodes: new Set([n2.id]), segments: new Set() }
+      store.deleteSelection()
+
+      expect(store.network.nodes.size).toBe(2)
+      expect(store.network.segments.size).toBe(1)
+
+      const remainingSeg = [...store.network.segments.values()][0]
+      expect(store.sectionMeta[remainingSeg.id]?.name).toBe('Voie Rapide')
+    })
+  })
 })

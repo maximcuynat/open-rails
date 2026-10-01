@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, pruneOrphanNodes } from '@domain/models/network'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, pruneOrphanNodes, dissolveNode } from '@domain/models/network'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
@@ -12,7 +12,7 @@ import {
   serializeNetwork,
   type SerializedProject,
 } from '@infrastructure/persistence/persistence'
-import type { JunctionId, Network, Point, Selection } from '@domain/models/types'
+import type { JunctionId, Network, Point, Selection, Segment } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
 import { type Unit, type ScalePresetId, SCALE_PRESETS } from '@domain/models/units'
@@ -874,9 +874,29 @@ export class EditorStore {
       removeSegment(this.network, sid, false)
     }
 
-    // 2. Remove nodes that were specifically targeted and have no unselected segments
+    // 2. Remove / dissolve nodes that were specifically targeted
     for (const nid of nodesToDelete) {
-      removeNode(this.network, nid)
+      if (!this.network.nodes.has(nid)) continue
+
+      const adj = this.network.adjacency.get(nid) ?? []
+      const hasSelectedAdjacentSegment = adj.some((sid) => segsToDelete.has(sid))
+
+      let dissolvedSeg: Segment | null = null
+      if (!hasSelectedAdjacentSegment && adj.length === 2) {
+        const seg1 = this.network.segments.get(adj[0])
+        const seg2 = this.network.segments.get(adj[1])
+        const oldMeta = (seg1 ? this.sectionMeta[seg1.id] : null) || (seg2 ? this.sectionMeta[seg2.id] : null)
+
+        dissolvedSeg = dissolveNode(this.network, nid)
+        if (dissolvedSeg && oldMeta) {
+          this.sectionMeta[dissolvedSeg.id] = { ...oldMeta }
+        }
+      }
+
+      if (!dissolvedSeg) {
+        removeNode(this.network, nid)
+      }
+
       if (this.lastNodeId === nid) this.lastNodeId = null
       if (this.curveState.startId === nid) {
         this.curveState = { phase: 0, startId: null }
