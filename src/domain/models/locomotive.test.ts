@@ -18,6 +18,7 @@ import {
   getLocomotiveRearPos,
   getLocomotiveBogies,
   getTGVDetails,
+  getFullTGVTrain,
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -392,5 +393,60 @@ describe('locomotive', () => {
 
     // 5. Soufflet d'intercirculation arrière (face plate pour wagons)
     expect(tgv!.gangway.length).toBe(4)
+  })
+
+  it('getFullTGVTrain builds complete reversible articulated TGV train with intermediate cars, Jacobs bogies and rear loco', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 300, y: 0 })
+    const seg = addSegment(net, n1.id, n2.id)!
+
+    // Créer une rame TGV avec 2 voitures voyageurs au milieu
+    const loco = createLocomotive(net, seg.id, 0.9, 22, 14, 2)
+    expect(loco).not.toBeNull()
+    expect(loco!.wagonCount).toBe(2)
+
+    const train = getFullTGVTrain(net, loco!)
+    expect(train).not.toBeNull()
+
+    // 1. Motrice de tête (M1)
+    expect(train!.leadLoco).toBeDefined()
+    expect(train!.leadLoco.isRearLoco).toBe(false)
+    expect(train!.leadLoco.polygon.length).toBe(10)
+
+    // 2. Voitures voyageur intermédiaires
+    expect(train!.cars.length).toBe(2)
+    for (const car of train!.cars) {
+      expect(car.polygon.length).toBe(4) // Caisse rectangulaire
+      expect(car.windowsLeft.length).toBeGreaterThan(0) // Baies vitrées gauche
+      expect(car.windowsRight.length).toBeGreaterThan(0) // Baies vitrées droite
+    }
+
+    // 3. Soufflets accordéons flexibles (1 entre M1 et C1, 1 entre C1 et C2, 1 entre C2 et M2)
+    expect(train!.accordions.length).toBe(3)
+    for (const acc of train!.accordions) {
+      expect(acc.frontFrame.length).toBe(2)
+      expect(acc.rearFrame.length).toBe(2)
+      expect(acc.folds.length).toBeGreaterThanOrEqual(2)
+    }
+
+    // 4. Motrice de queue (M2) réversible orientée en sens inverse
+    expect(train!.rearLoco).toBeDefined()
+    expect(train!.rearLoco!.isRearLoco).toBe(true)
+    expect(train!.rearLoco!.polygon.length).toBe(10)
+
+    // Le nez de la motrice arrière doit pointer vers l'arrière (x décroissant)
+    const noseLead = train!.leadLoco.polygon[0]
+    const noseRear = train!.rearLoco!.polygon[0]
+    expect(noseRear.x).toBeLessThan(noseLead.x)
+
+    // 5. Bogies : 2 bogies motrice avant + 2 bogies intermédiaires + 2 bogies motrice arrière
+    // Total = 6 bogies pour 2 voitures articulées
+    expect(train!.bogies.length).toBe(6)
+    for (const bogie of train!.bogies) {
+      expect(bogie.polygon.length).toBe(4)
+      expect(bogie.axles.length).toBe(2)
+      expect(bogie.center).toBeDefined()
+    }
   })
 })

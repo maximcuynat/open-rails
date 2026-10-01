@@ -35,8 +35,8 @@ function hintText(store: EditorStore): string {
     default:
       if (store.tool === 'locomotive') {
         return store.locomotive
-          ? 'Clic sur un rail pour repositionner · Espace pour Play'
-          : 'Clic sur un rail pour poser la locomotive'
+          ? 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV · Espace pour Conduire'
+          : 'Survolez un rail pour prévisualiser · Clic pour poser la rame TGV'
       }
       return ''
   }
@@ -109,6 +109,70 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
               </span>
             </>
           )}
+        </div>
+      )}
+
+      {/* Locomotive Placement HUD */}
+      {store.tool === 'locomotive' && !store.isPlayMode && (
+        <div className="hud-realtime-card" style={{ pointerEvents: 'auto', gap: '8px' }}>
+          <span className="hud-pill" style={{ color: '#38bdf8', fontWeight: 600 }}>
+            🚄 Rame TGV articulée
+          </span>
+          <span className="hud-sep" />
+          <span style={{ color: '#94a3b8', fontSize: '11px' }}>
+            Voitures :
+          </span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <button
+              onClick={() => store.setTrainWagonCount(Math.max(0, store.trainWagonCount - 1))}
+              disabled={store.trainWagonCount <= 0}
+              style={{
+                background: 'rgba(30, 41, 59, 0.8)',
+                border: '1px solid #475569',
+                borderRadius: '3px',
+                color: store.trainWagonCount <= 0 ? '#475569' : '#f8fafc',
+                width: '20px',
+                height: '20px',
+                cursor: store.trainWagonCount <= 0 ? 'default' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: 'bold',
+              }}
+              title="Diminuer le nombre de voitures intermédiaires"
+            >
+              -
+            </button>
+            <span style={{ fontWeight: 700, minWidth: '18px', textAlign: 'center', fontSize: '12px', color: '#f8fafc' }}>
+              {store.trainWagonCount}
+            </span>
+            <button
+              onClick={() => store.setTrainWagonCount(Math.min(8, store.trainWagonCount + 1))}
+              disabled={store.trainWagonCount >= 8}
+              style={{
+                background: 'rgba(30, 41, 59, 0.8)',
+                border: '1px solid #475569',
+                borderRadius: '3px',
+                color: store.trainWagonCount >= 8 ? '#475569' : '#f8fafc',
+                width: '20px',
+                height: '20px',
+                cursor: store.trainWagonCount >= 8 ? 'default' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px',
+                fontWeight: 'bold',
+              }}
+              title="Augmenter le nombre de voitures intermédiaires"
+            >
+              +
+            </button>
+          </div>
+          <span className="hud-sep" />
+          <span style={{ color: store.locomotivePreview ? '#10b981' : '#94a3b8', fontSize: '10.5px', fontWeight: store.locomotivePreview ? 600 : 400 }}>
+            {store.locomotivePreview ? '✓ Voie aimantée · Clic pour poser' : 'Survolez une voie ferrée'}
+          </span>
         </div>
       )}
 

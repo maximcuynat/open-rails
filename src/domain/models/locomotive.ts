@@ -19,6 +19,7 @@ export interface Locomotive {
   front: TrackPosition
   rear: TrackPosition
   direction: 1 | -1
+  wagonCount?: number
 }
 
 export function positionOnSegment(net: Network, segId: SegmentId, t: number): Point | null {
@@ -242,7 +243,8 @@ export function createLocomotive(
   segId: SegmentId,
   t: number,
   length = 20,
-  bogieDistance = 14
+  bogieDistance = 14,
+  wagonCount = 0
 ): Locomotive | null {
   const front: TrackPosition = { segId, t, forward: true }
   const rear = walkBackward(net, segId, t, true, bogieDistance)
@@ -255,6 +257,7 @@ export function createLocomotive(
     front,
     rear,
     direction: 1,
+    wagonCount,
   }
 }
 
@@ -452,6 +455,7 @@ export interface TGVDetails {
   headlights: { left: Point; right: Point }
   pantograph: { center: Point; armStart: Point; armEnd: Point; bowLeft: Point; bowRight: Point }
   gangway: Point[]
+  isRearLoco?: boolean
 }
 
 export function getLocomotivePolygon(net: Network, loco: Locomotive): Point[] | null {
@@ -643,6 +647,255 @@ export function getLocomotiveBogies(
   const rearFrame = computeBogieFrame(net, loco.rear)
   if (!frontFrame || !rearFrame) return null
   return { front: frontFrame, rear: rearFrame }
+}
+
+export interface TGVPasengerCar {
+  index: number
+  polygon: Point[]
+  windowsLeft: { p1: Point; p2: Point }[]
+  windowsRight: { p1: Point; p2: Point }[]
+}
+
+export interface TGVAccordion {
+  frontFrame: [Point, Point]
+  rearFrame: [Point, Point]
+  folds: { left: Point; right: Point }[]
+}
+
+export interface TGVFullTrain {
+  leadLoco: TGVDetails
+  rearLoco: TGVDetails | null
+  cars: TGVPasengerCar[]
+  accordions: TGVAccordion[]
+  bogies: BogieFrame[]
+}
+
+/** Compute the complete articulated TGV train: lead power car, intermediate jacobs cars, flexible accordions, and reversed rear power car */
+export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | null {
+  const leadLoco = getTGVDetails(net, loco)
+  if (!leadLoco) return null
+  leadLoco.isRearLoco = false
+
+  const bogiePosList: TrackPosition[] = [loco.front, loco.rear]
+  const jacobsPosList: TrackPosition[] = []
+  let m2FrontPos: TrackPosition | null = null
+  let m2RearPos: TrackPosition | null = null
+
+  const wagonCount = loco.wagonCount ?? 0
+  if (wagonCount > 0) {
+    let lastPos = loco.rear
+    for (let w = 0; w < wagonCount; w++) {
+      const dist = w === 0 ? 18.0 : 18.5
+      const nextB = walkBackward(net, lastPos.segId, lastPos.t, lastPos.forward, dist)
+      if (!nextB) break
+      jacobsPosList.push(nextB)
+      lastPos = nextB
+    }
+
+    if (jacobsPosList.length > 0) {
+      const m2f = walkBackward(net, lastPos.segId, lastPos.t, lastPos.forward, 18.0)
+      if (m2f) {
+        const m2r = walkBackward(net, m2f.segId, m2f.t, m2f.forward, loco.bogieDistance)
+        if (m2r) {
+          m2FrontPos = m2f
+          m2RearPos = m2r
+        }
+      }
+    }
+  }
+
+  bogiePosList.push(...jacobsPosList)
+  if (m2FrontPos && m2RearPos) {
+    bogiePosList.push(m2FrontPos, m2RearPos)
+  }
+
+  // Calcul de tous les châssis et essieux de bogies
+  const bogies: BogieFrame[] = []
+  for (const pos of bogiePosList) {
+    const frame = computeBogieFrame(net, pos)
+    if (frame) bogies.push(frame)
+  }
+
+  // Calcul des voitures voyageurs intermédiaires articulées
+  const cars: TGVPasengerCar[] = []
+  const accordions: TGVAccordion[] = []
+
+  const carPivots: { front: Point; rear: Point }[] = []
+  for (let i = 0; i < jacobsPosList.length; i++) {
+    const prevPos = i === 0 ? loco.rear : jacobsPosList[i - 1]
+    const currPos = jacobsPosList[i]
+    const pFront = positionOnSegment(net, prevPos.segId, prevPos.t)
+    const pRear = positionOnSegment(net, currPos.segId, currPos.t)
+    if (pFront && pRear) {
+      carPivots.push({ front: pFront, rear: pRear })
+    }
+  }
+
+  const w = 1.45 // demi-largeur caisse TGV (2.90m)
+
+  // Création des caisses de voitures
+  for (let i = 0; i < carPivots.length; i++) {
+    const { front: pF, rear: pR } = carPivots[i]
+    const dx = pF.x - pR.x
+    const dy = pF.y - pR.y
+    const len = Math.hypot(dx, dy)
+    if (len === 0) continue
+
+    const ux = dx / len
+    const uy = dy / len
+    const nx = -uy
+    const ny = ux
+
+    const overhang = 0.35 // débordement de caisse
+    const c1 = { x: pF.x + ux * overhang + nx * w, y: pF.y + uy * overhang + ny * w }
+    const c2 = { x: pF.x + ux * overhang - nx * w, y: pF.y + uy * overhang - ny * w }
+    const c3 = { x: pR.x - ux * overhang - nx * w, y: pR.y - uy * overhang - ny * w }
+    const c4 = { x: pR.x - ux * overhang + nx * w, y: pR.y - uy * overhang + ny * w }
+
+    // Baies vitrées passagers
+    const numWindows = 6
+    const winSpan = len - 3.0
+    const winStep = winSpan / numWindows
+    const winLen = winStep * 0.7
+    const windowsLeft: { p1: Point; p2: Point }[] = []
+    const windowsRight: { p1: Point; p2: Point }[] = []
+
+    for (let wi = 0; wi < numWindows; wi++) {
+      const d = 1.5 + wi * winStep
+      const pStart = { x: pR.x + ux * d, y: pR.y + uy * d }
+      const pEnd = { x: pR.x + ux * (d + winLen), y: pR.y + uy * (d + winLen) }
+      windowsLeft.push({
+        p1: { x: pStart.x + nx * (w - 0.08), y: pStart.y + ny * (w - 0.08) },
+        p2: { x: pEnd.x + nx * (w - 0.08), y: pEnd.y + ny * (w - 0.08) },
+      })
+      windowsRight.push({
+        p1: { x: pStart.x - nx * (w - 0.08), y: pStart.y - ny * (w - 0.08) },
+        p2: { x: pEnd.x - nx * (w - 0.08), y: pEnd.y - ny * (w - 0.08) },
+      })
+    }
+
+    cars.push({
+      index: i,
+      polygon: [c1, c2, c3, c4],
+      windowsLeft,
+      windowsRight,
+    })
+  }
+
+  // Calcul des soufflets accordéons flexibles reliant les véhicules consécutifs
+  const createAccordion = (
+    tailCenter: Point,
+    tailNorm: Point,
+    headCenter: Point,
+    headNorm: Point,
+    bellowHalfW = 1.15
+  ): TGVAccordion => {
+    const fL = { x: tailCenter.x + tailNorm.x * bellowHalfW, y: tailCenter.y + tailNorm.y * bellowHalfW }
+    const fR = { x: tailCenter.x - tailNorm.x * bellowHalfW, y: tailCenter.y - tailNorm.y * bellowHalfW }
+    const rL = { x: headCenter.x + headNorm.x * bellowHalfW, y: headCenter.y + headNorm.y * bellowHalfW }
+    const rR = { x: headCenter.x - headNorm.x * bellowHalfW, y: headCenter.y - headNorm.y * bellowHalfW }
+
+    const numFolds = 3
+    const folds: { left: Point; right: Point }[] = []
+    for (let fi = 1; fi <= numFolds; fi++) {
+      const s = fi / (numFolds + 1)
+      folds.push({
+        left: { x: fL.x * (1 - s) + rL.x * s, y: fL.y * (1 - s) + rL.y * s },
+        right: { x: fR.x * (1 - s) + rR.x * s, y: fR.y * (1 - s) + rR.y * s },
+      })
+    }
+
+    return {
+      frontFrame: [fL, fR],
+      rearFrame: [rL, rR],
+      folds,
+    }
+  }
+
+  // Accordéon M1 -> Voiture 0
+  if (cars.length > 0) {
+    const pRearM1 = positionOnSegment(net, loco.rear.segId, loco.rear.t)
+    const pFrontC0 = carPivots[0].front
+    const tanM1 = tangentOnSegment(net, loco.rear.segId, loco.rear.t)
+    if (pRearM1 && pFrontC0 && tanM1) {
+      const dirM1 = loco.direction === 1 ? tanM1 : { x: -tanM1.x, y: -tanM1.y }
+      const normM1 = { x: -dirM1.y, y: dirM1.x }
+      const { front: pF0, rear: pR0 } = carPivots[0]
+      const d0x = pF0.x - pR0.x
+      const d0y = pF0.y - pR0.y
+      const d0len = Math.hypot(d0x, d0y) || 1
+      const normC0 = { x: -d0y / d0len, y: d0x / d0len }
+
+      const tailM1 = { x: pRearM1.x - dirM1.x * 2.3, y: pRearM1.y - dirM1.y * 2.3 }
+      const headC0 = { x: pF0.x + (d0x / d0len) * 0.35, y: pF0.y + (d0y / d0len) * 0.35 }
+      accordions.push(createAccordion(tailM1, normM1, headC0, normC0))
+    }
+  }
+
+  // Accordéons entre voitures consécutives
+  for (let i = 0; i < cars.length - 1; i++) {
+    const pPivotA = carPivots[i]
+    const pPivotB = carPivots[i + 1]
+
+    const dxA = pPivotA.front.x - pPivotA.rear.x
+    const dyA = pPivotA.front.y - pPivotA.rear.y
+    const lenA = Math.hypot(dxA, dyA) || 1
+    const normA = { x: -dyA / lenA, y: dxA / lenA }
+
+    const dxB = pPivotB.front.x - pPivotB.rear.x
+    const dyB = pPivotB.front.y - pPivotB.rear.y
+    const lenB = Math.hypot(dxB, dyB) || 1
+    const normB = { x: -dyB / lenB, y: dxB / lenB }
+
+    const tailA = { x: pPivotA.rear.x - (dxA / lenA) * 0.35, y: pPivotA.rear.y - (dyA / lenA) * 0.35 }
+    const headB = { x: pPivotB.front.x + (dxB / lenB) * 0.35, y: pPivotB.front.y + (dyB / lenB) * 0.35 }
+
+    accordions.push(createAccordion(tailA, normA, headB, normB))
+  }
+
+  // Motrice de queue M2 (orientée vers l'arrière)
+  let rearLoco: TGVDetails | null = null
+  if (m2FrontPos && m2RearPos) {
+    const locoM2: Locomotive = {
+      id: `${loco.id}_rear`,
+      length: loco.length,
+      bogieDistance: loco.bogieDistance,
+      front: m2FrontPos,
+      rear: m2RearPos,
+      direction: (loco.direction === 1 ? -1 : 1) as 1 | -1,
+    }
+    rearLoco = getTGVDetails(net, locoM2)
+    if (rearLoco) {
+      rearLoco.isRearLoco = true
+    }
+
+    // Accordéon entre la dernière voiture et M2
+    if (cars.length > 0) {
+      const lastCarPivot = carPivots[cars.length - 1]
+      const dxLast = lastCarPivot.front.x - lastCarPivot.rear.x
+      const dyLast = lastCarPivot.front.y - lastCarPivot.rear.y
+      const lenLast = Math.hypot(dxLast, dyLast) || 1
+      const normLast = { x: -dyLast / lenLast, y: dxLast / lenLast }
+
+      const pFrontM2 = positionOnSegment(net, m2FrontPos.segId, m2FrontPos.t)
+      const tanM2 = tangentOnSegment(net, m2FrontPos.segId, m2FrontPos.t)
+      if (pFrontM2 && tanM2) {
+        const dirM2 = locoM2.direction === 1 ? tanM2 : { x: -tanM2.x, y: -tanM2.y }
+        const normM2 = { x: -dirM2.y, y: dirM2.x }
+        const tailCar = { x: lastCarPivot.rear.x - (dxLast / lenLast) * 0.35, y: lastCarPivot.rear.y - (dyLast / lenLast) * 0.35 }
+        const headM2 = { x: pFrontM2.x + dirM2.x * 2.3, y: pFrontM2.y + dirM2.y * 2.3 }
+        accordions.push(createAccordion(tailCar, normLast, headM2, normM2))
+      }
+    }
+  }
+
+  return {
+    leadLoco,
+    rearLoco,
+    cars,
+    accordions,
+    bogies,
+  }
 }
 
 export function findUpcomingJunction(net: Network, loco: Locomotive): { junction: Junction; approachNodeId: NodeId } | null {

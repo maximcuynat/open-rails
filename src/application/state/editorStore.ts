@@ -111,6 +111,8 @@ export class EditorStore {
 
   // --- Locomotive / Simulation ---
   locomotive: Locomotive | null = null
+  locomotivePreview: Locomotive | null = null // Ghost preview along track on hover
+  trainWagonCount = 2 // 2 articulated passenger cars by default (full TGV train)
   isPlayMode = false
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
@@ -482,6 +484,7 @@ export class EditorStore {
     this.gizmoDragDelta = { x: 0, y: 0 }
     this.hoverSegSteps = null
     this.hoverNodeId = null
+    this.locomotivePreview = null
     this.notify()
   }
 
@@ -1175,15 +1178,70 @@ export class EditorStore {
 
   // --- Locomotive / Simulation methods ---
 
+  /** Update ghost preview when hovering near track with the locomotive placement tool */
+  updateLocomotivePreview = (worldPos: Point): void => {
+    if (this.isPlayMode || this.tool !== 'locomotive') {
+      if (this.locomotivePreview !== null) {
+        this.locomotivePreview = null
+        this.notify()
+      }
+      return
+    }
+
+    const snap = snapToNearestTrack(this.network, worldPos)
+    if (!snap) {
+      if (this.locomotivePreview !== null) {
+        this.locomotivePreview = null
+        this.notify()
+      }
+      return
+    }
+
+    const previewLoco = createLocomotive(
+      this.network,
+      snap.segId,
+      snap.t,
+      this.locomotiveLength,
+      14,
+      this.trainWagonCount
+    )
+
+    this.locomotivePreview = previewLoco
+    this.notify()
+  }
+
   /** Place locomotive on the nearest track segment to a world position */
   placeLocomotiveAt = (worldPos: Point): boolean => {
+    if (this.locomotivePreview) {
+      this.locomotive = this.locomotivePreview
+      this.locomotivePreview = null
+      this.notify()
+      return true
+    }
+
     const snap = snapToNearestTrack(this.network, worldPos)
     if (!snap) return false
-    const loco = createLocomotive(this.network, snap.segId, snap.t, this.locomotiveLength)
+    const loco = createLocomotive(
+      this.network,
+      snap.segId,
+      snap.t,
+      this.locomotiveLength,
+      14,
+      this.trainWagonCount
+    )
     if (!loco) return false
     this.locomotive = loco
     this.notify()
     return true
+  }
+
+  /** Set the number of passenger cars in the articulated TGV train */
+  setTrainWagonCount = (count: number): void => {
+    this.trainWagonCount = Math.max(0, Math.min(8, Math.round(count)))
+    if (this.locomotive) {
+      this.locomotive.wagonCount = this.trainWagonCount
+    }
+    this.notify()
   }
 
   /** Center camera on the locomotive */

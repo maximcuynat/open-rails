@@ -363,6 +363,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive)
     }
 
+    // Ghost preview when placing a locomotive
+    if (store.tool === 'locomotive' && store.locomotivePreview && !store.isPlayMode) {
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotivePreview, true)
+    }
+
     // Box selection rectangle
     if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
       const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
@@ -1753,6 +1758,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const rawWorld = getWorldPos(e.clientX, e.clientY)
       store.cursorWorld = rawWorld
 
+      // Update locomotive ghost preview during locomotive placement mode
+      if (store.tool === 'locomotive' && !store.isPlayMode) {
+        store.updateLocomotivePreview(rawWorld)
+      }
+
       // Dragging along 2D Gizmo axis (orthogonal constraint)
       if (store.gizmoDragAxis && store.dragStartWorld) {
         const spacing = getSnapSpacing()
@@ -1978,6 +1988,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'turnout' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
+          store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
         ) {
           draw()
@@ -2159,10 +2170,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
+    const onLeave = () => {
+      stopEdgePan()
+      if (store.locomotivePreview) {
+        store.locomotivePreview = null
+        draw()
+      }
+    }
+
     canvas.addEventListener('pointerdown', onDown)
     canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp)
-    canvas.addEventListener('pointerleave', stopEdgePan)
+    canvas.addEventListener('pointerleave', onLeave)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContextMenu)
     canvas.addEventListener('dblclick', onDblClick)
@@ -2173,7 +2192,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
-      canvas.removeEventListener('pointerleave', stopEdgePan)
+      canvas.removeEventListener('pointerleave', onLeave)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContextMenu)
       canvas.removeEventListener('dblclick', onDblClick)
