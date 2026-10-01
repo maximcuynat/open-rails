@@ -440,13 +440,23 @@ describe('locomotive', () => {
     const noseRear = train!.rearLoco!.polygon[0]
     expect(noseRear.x).toBeLessThan(noseLead.x)
 
-    // 5. Bogies : 2 bogies motrice avant + 2 bogies intermédiaires + 2 bogies motrice arrière
-    // Total = 6 bogies pour 2 voitures articulées
-    expect(train!.bogies.length).toBe(6)
+    // 5. Bogies : 2 bogies motrice avant + 3 bogies voitures (dont 1 Jacobs partagé) + 2 bogies motrice arrière
+    // Total = 7 bogies pour 2 voitures articulées
+    expect(train!.bogies.length).toBe(7)
     for (const bogie of train!.bogies) {
       expect(bogie.polygon.length).toBe(4)
       expect(bogie.axles.length).toBe(2)
       expect(bogie.center).toBeDefined()
     }
+
+    // 6. Vérifier l'absence totale de trou ou d'espace vide à la fin du train (accordéon compact ~0.70m)
+    const rearAccordion = train!.accordions[2]
+    const gap = Math.hypot(
+      rearAccordion.frontFrame[0].x - rearAccordion.rearFrame[0].x,
+      rearAccordion.frontFrame[0].y - rearAccordion.rearFrame[0].y
+    )
+    // L'écart entre la dernière voiture et M2 doit être compact (~0.7m, bien inférieur aux 15m de l'ancien bug)
+    expect(gap).toBeGreaterThan(0.2)
+    expect(gap).toBeLessThan(1.5)
   })
 })
