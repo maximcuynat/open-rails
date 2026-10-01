@@ -31,9 +31,12 @@ export function splitSegmentAtNode(
       const t = Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
       node.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
     }
+    const ancestorId = seg.parentSegmentId ?? segmentId
     removeSegment(net, segmentId, false)
     const seg1 = addSegment(net, nodeA.id, node.id)!
     const seg2 = addSegment(net, node.id, nodeB.id)!
+    seg1.parentSegmentId = ancestorId
+    seg2.parentSegmentId = ancestorId
     return { seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -67,9 +70,12 @@ export function splitSegmentAtNode(
     }
     node.pos = bt
 
+    const ancestorId = seg.parentSegmentId ?? segmentId
     removeSegment(net, segmentId, false)
     const seg1 = addCurveSegment(net, nodeA.id, node.id, q0)!
     const seg2 = addCurveSegment(net, node.id, nodeB.id, q1)!
+    seg1.parentSegmentId = ancestorId
+    seg2.parentSegmentId = ancestorId
     return { seg1, seg2 }
   }
   return null

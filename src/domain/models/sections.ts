@@ -99,7 +99,6 @@ export function computeTrackSections(
   net: Network,
   customMeta?: Record<string, SectionMetadata>,
 ): TrackSection[] {
-  const sections: TrackSection[] = []
   const visitedSegments = new Set<SegmentId>()
 
   // Helper to compute length of a segment
@@ -159,6 +158,17 @@ export function computeTrackSections(
 
     return null
   }
+
+  interface RawSection {
+    segmentIds: SegmentId[]
+    orderedNodes: NodeId[]
+    nodeIds: NodeId[]
+    totalLength: number
+    sortedSegKey: string
+    hasDeadEnd: boolean
+    crossingNodeIds?: NodeId[]
+  }
+  const rawSections: RawSection[] = []
 
   // Iterate over all segments
   for (const [segId, startSeg] of net.segments) {
@@ -234,15 +244,7 @@ export function computeTrackSections(
       if (seg) totalLen += getSegLength(seg)
     }
 
-    // Stable ID based on sorted segment IDs so renaming is preserved
     const sortedSegKey = [...sectionSegIds].sort().join('-')
-    const index = sections.length
-    const fallbackColor = SECTION_COLORS[index % SECTION_COLORS.length]
-    const fallbackName = `Section ${String.fromCharCode(65 + (index % 26))}${index >= 26 ? Math.floor(index / 26) : ''}`
-
-    // Check user custom metadata
-    const userMeta = customMeta?.[sortedSegKey] || customMeta?.[sectionSegIds[0]]
-
     const startNodeId = orderedNodes[0]
     const endNodeId = orderedNodes[orderedNodes.length - 1]
     const hasDeadEnd = isEndOfTrackNode(net, startNodeId) || isEndOfTrackNode(net, endNodeId)
@@ -255,19 +257,211 @@ export function computeTrackSections(
       return deg === 4 && (!junc || junc.hand !== 'three_way')
     })
 
-    sections.push({
-      id: sortedSegKey,
-      name: userMeta?.name || fallbackName,
-      type: userMeta?.type || 'circulation',
-      direction: userMeta?.direction || 'two_way',
+    rawSections.push({
       segmentIds: sectionSegIds,
-      orderedNodeIds: orderedNodes,
+      orderedNodes,
       nodeIds: Array.from(new Set(orderedNodes)),
       totalLength: totalLen,
-      color: userMeta?.color || (userMeta?.type === 'station_stop' ? '#06b6d4' : fallbackColor),
+      sortedSegKey,
       hasDeadEnd,
       crossingNodeIds: crossingNodeIds.length > 0 ? crossingNodeIds : undefined,
     })
+  }
+
+  // Precompute segment ancestors (parentSegmentId chain)
+  const getAncestors = (sid: SegmentId): Set<SegmentId> => {
+    const ancestors = new Set<SegmentId>([sid])
+    let curr = net.segments.get(sid)
+    while (curr?.parentSegmentId) {
+      ancestors.add(curr.parentSegmentId)
+      curr = net.segments.get(curr.parentSegmentId)
+    }
+    return ancestors
+  }
+
+  const sectionAncestors = new Map<RawSection, Set<SegmentId>>()
+  for (const rawSec of rawSections) {
+    const allAncestors = new Set<SegmentId>()
+    for (const sid of rawSec.segmentIds) {
+      for (const anc of getAncestors(sid)) {
+        allAncestors.add(anc)
+      }
+    }
+    sectionAncestors.set(rawSec, allAncestors)
+  }
+
+  const matchedMeta = new Map<RawSection, SectionMetadata>()
+  const claimedNames = new Set<string>()
+
+  // Collect all known compound keys in customMeta
+  const compoundKeys = new Set<string>()
+  if (customMeta) {
+    for (const key of Object.keys(customMeta)) {
+      if (key.includes('-')) compoundKeys.add(key)
+    }
+  }
+
+  // Pass 1: Exact intact section matches
+  // A raw section is considered an exact intact match if:
+  // - its sortedSegKey exists in customMeta
+  // - AND if it is a single-segment key, it wasn't part of an existing compound key with the same name
+  // - AND its name has not already been claimed
+  for (const rawSec of rawSections) {
+    if (!customMeta) break
+    const meta = customMeta[rawSec.sortedSegKey]
+    if (!meta || !meta.name) continue
+
+    // If this is a single segment, check if it was actually part of a multi-segment section
+    if (!rawSec.sortedSegKey.includes('-')) {
+      const wasPartOfCompound = Array.from(compoundKeys).some(
+        (ck) => ck.split('-').includes(rawSec.sortedSegKey) && customMeta[ck]?.name === meta.name
+      )
+      if (wasPartOfCompound) {
+        // This is a fragment from a split/bifurcation, delegate to Pass 2
+        continue
+      }
+    }
+
+    if (!claimedNames.has(meta.name)) {
+      matchedMeta.set(rawSec, { ...meta })
+      claimedNames.add(meta.name)
+    }
+  }
+
+  // Group prior records by distinct section name
+  interface PriorRecord {
+    name: string
+    meta: SectionMetadata
+    segmentIds: Set<SegmentId>
+  }
+  const priorRecordsByName = new Map<string, PriorRecord>()
+  if (customMeta) {
+    for (const [key, meta] of Object.entries(customMeta)) {
+      if (!meta || !meta.name) continue
+      if (claimedNames.has(meta.name)) continue // already claimed by exact intact match
+
+      let prior = priorRecordsByName.get(meta.name)
+      if (!prior) {
+        prior = {
+          name: meta.name,
+          meta: { ...meta },
+          segmentIds: new Set(),
+        }
+        priorRecordsByName.set(meta.name, prior)
+      }
+      const segs = key.includes('-') ? key.split('-') : [key]
+      for (const s of segs) prior.segmentIds.add(s)
+    }
+  }
+
+  // Pass 2: Overlap and ancestor heritage (when a line is cut or bifurcated)
+  // Each unclaimed prior section gets assigned to AT MOST ONE candidate raw section (the primary piece).
+  for (const prior of priorRecordsByName.values()) {
+    if (claimedNames.has(prior.name)) continue
+
+    const candidates = rawSections.filter((rawSec) => {
+      if (matchedMeta.has(rawSec)) return false
+      const ancSet = sectionAncestors.get(rawSec)!
+      for (const sid of prior.segmentIds) {
+        if (ancSet.has(sid)) return true
+      }
+      return false
+    })
+
+    if (candidates.length > 0) {
+      let bestCandidate = candidates[0]
+      let bestScore = -1
+      for (const cand of candidates) {
+        const ancSet = sectionAncestors.get(cand)!
+        let matchCount = 0
+        for (const sid of prior.segmentIds) {
+          if (ancSet.has(sid)) matchCount++
+        }
+        const score = matchCount * 1e9 + cand.totalLength
+        if (score > bestScore) {
+          bestScore = score
+          bestCandidate = cand
+        }
+      }
+
+      matchedMeta.set(bestCandidate, { ...prior.meta })
+      claimedNames.add(prior.name)
+    }
+  }
+
+  // Pass 3: Stable fallback name allocation for new or unassigned sections
+  const allUsedNames = new Set<string>(claimedNames)
+  if (customMeta) {
+    for (const m of Object.values(customMeta)) {
+      if (m?.name) allUsedNames.add(m.name)
+    }
+  }
+
+  let letterIndex = 0
+  const getNextAvailableName = (): string => {
+    while (true) {
+      const letter = String.fromCharCode(65 + (letterIndex % 26))
+      const suffix = letterIndex >= 26 ? Math.floor(letterIndex / 26) : ''
+      const name = `Section ${letter}${suffix}`
+      letterIndex++
+      if (!allUsedNames.has(name)) {
+        allUsedNames.add(name)
+        return name
+      }
+    }
+  }
+
+  const sections: TrackSection[] = []
+  for (let i = 0; i < rawSections.length; i++) {
+    const rawSec = rawSections[i]
+    let meta = matchedMeta.get(rawSec)
+
+    if (!meta) {
+      const fallbackName = getNextAvailableName()
+      const fallbackColor = SECTION_COLORS[i % SECTION_COLORS.length]
+      meta = {
+        name: fallbackName,
+        type: 'circulation',
+        direction: 'two_way',
+        color: fallbackColor,
+      }
+      matchedMeta.set(rawSec, meta)
+    }
+
+    const fallbackColor = SECTION_COLORS[i % SECTION_COLORS.length]
+    const finalSection: TrackSection = {
+      id: rawSec.sortedSegKey,
+      name: meta.name || getNextAvailableName(),
+      type: meta.type || 'circulation',
+      direction: meta.direction || 'two_way',
+      segmentIds: rawSec.segmentIds,
+      orderedNodeIds: rawSec.orderedNodes,
+      nodeIds: Array.from(new Set(rawSec.orderedNodes)),
+      totalLength: rawSec.totalLength,
+      color: meta.color || (meta.type === 'station_stop' ? '#06b6d4' : fallbackColor),
+      hasDeadEnd: rawSec.hasDeadEnd,
+      crossingNodeIds: rawSec.crossingNodeIds?.length ? rawSec.crossingNodeIds : undefined,
+    }
+
+    // Persist assigned names and associations to customMeta
+    if (customMeta) {
+      customMeta[finalSection.id] = {
+        name: finalSection.name,
+        type: finalSection.type,
+        color: finalSection.color,
+        direction: finalSection.direction,
+      }
+      for (const sid of finalSection.segmentIds) {
+        customMeta[sid] = {
+          name: finalSection.name,
+          type: finalSection.type,
+          color: finalSection.color,
+          direction: finalSection.direction,
+        }
+      }
+    }
+
+    sections.push(finalSection)
   }
 
   return sections

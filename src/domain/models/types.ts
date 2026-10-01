@@ -20,6 +20,8 @@ export interface Segment {
   kind: SegmentKind
   /** Control point for curved segments (midpoint arc definition). */
   via?: Point
+  /** Parent segment ID if this segment was split from another segment */
+  parentSegmentId?: SegmentId
 }
 
 export type JunctionId = string

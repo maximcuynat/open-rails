@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createNetwork, addNode, addSegment } from './network'
-import { autoDetectJunctions } from './junction'
+import { autoDetectJunctions, splitSegment } from './junction'
 import {
   computeTrackSections,
   detectDirectionConflicts,
@@ -206,5 +206,119 @@ describe('isEndOfTrackNode', () => {
     expect(secStem.id).not.toBe(secStraight.id)
     expect(secLeft.id).not.toBe(secRight.id)
     expect(secStraight.id).not.toBe(secLeft.id)
+  })
+
+  describe('Section Name Preservation on Cuts and Bifurcations', () => {
+    it('preserves renamed section name when a line is cut in two (one piece keeps the name, only the new piece gets named)', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 100, y: 0 })
+      const s1 = addSegment(net, n1.id, n2.id)!
+
+      // User has a renamed section
+      const customMeta: Record<string, any> = {
+        [s1.id]: { name: 'Voie Principale' },
+      }
+
+      // Cut segment in two
+      const split = splitSegment(net, s1.id, { x: 60, y: 0 })!
+      expect(split).not.toBeNull()
+
+      // Sever the joint at midNode so they form 2 distinct track sections
+      const detachedNode = addNode(net, { x: 60.1, y: 0 })
+      split.seg2.from = detachedNode.id
+      net.adjacency.get(split.midNode.id)?.splice(
+        net.adjacency.get(split.midNode.id)!.indexOf(split.seg2.id),
+        1
+      )
+      net.adjacency.set(detachedNode.id, [split.seg2.id])
+
+      const sections = computeTrackSections(net, customMeta)
+      expect(sections).toHaveLength(2)
+
+      // Exactly ONE piece retains 'Voie Principale', the other gets a new section name
+      const names = sections.map((s) => s.name)
+      expect(names).toContain('Voie Principale')
+      expect(names.filter((n) => n === 'Voie Principale')).toHaveLength(1)
+
+      const newPiece = sections.find((s) => s.name !== 'Voie Principale')!
+      expect(newPiece).toBeDefined()
+      expect(newPiece.name).toMatch(/^Section [A-Z]/)
+    })
+
+    it('does not rename existing sections when adding a curve to create a bifurcation', () => {
+      const net = createNetwork()
+      // Section 1: n1 -> n2 -> n3
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 50, y: 0 })
+      const n3 = addNode(net, { x: 100, y: 0 })
+      const s1 = addSegment(net, n1.id, n2.id)!
+      const s2 = addSegment(net, n2.id, n3.id)!
+
+      // Section 2: n4 -> n5 (unrelated existing section)
+      const n4 = addNode(net, { x: 0, y: 50 })
+      const n5 = addNode(net, { x: 100, y: 50 })
+      const sOther = addSegment(net, n4.id, n5.id)!
+
+      const customMeta: Record<string, any> = {
+        [`${s1.id}-${s2.id}`]: { name: 'Ligne Paris-Lyon' },
+        [s1.id]: { name: 'Ligne Paris-Lyon' },
+        [s2.id]: { name: 'Ligne Paris-Lyon' },
+        [sOther.id]: { name: 'Voie de Garage' },
+      }
+
+      // Add a diverging curve from n2 to make a bifurcation
+      const nCurve = addNode(net, { x: 90, y: 25 })
+      const sCurve = addSegment(net, n2.id, nCurve.id)!
+
+      const sections = computeTrackSections(net, customMeta)
+
+      // 'Voie de Garage' MUST NOT be renamed
+      const garageSec = sections.find((s) => s.segmentIds.includes(sOther.id))
+      expect(garageSec?.name).toBe('Voie de Garage')
+
+      // The original line's primary piece MUST retain 'Ligne Paris-Lyon'
+      const names = sections.map((s) => s.name)
+      expect(names).toContain('Ligne Paris-Lyon')
+      expect(names.filter((n) => n === 'Ligne Paris-Lyon')).toHaveLength(1)
+
+      // The curve gets a newly assigned section name without colliding
+      const curveSec = sections.find((s) => s.segmentIds.includes(sCurve.id))
+      expect(curveSec?.name).not.toBe('Ligne Paris-Lyon')
+      expect(curveSec?.name).not.toBe('Voie de Garage')
+      expect(curveSec?.name).toMatch(/^Section [A-Z]/)
+    })
+
+    it('preserves section name when cutting a multi-segment line at an intermediate node', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 50, y: 0 })
+      const n3 = addNode(net, { x: 100, y: 0 })
+      const s1 = addSegment(net, n1.id, n2.id)!
+      const s2 = addSegment(net, n2.id, n3.id)!
+
+      const customMeta: Record<string, any> = {
+        [`${s1.id}-${s2.id}`]: { name: 'Voie Express' },
+        [s1.id]: { name: 'Voie Express' },
+        [s2.id]: { name: 'Voie Express' },
+      }
+
+      // Detach s2 from n2 to create 2 separate sections
+      const detachedNode = addNode(net, { x: 50.1, y: 0 })
+      s2.from = detachedNode.id
+      net.adjacency.get(n2.id)?.splice(net.adjacency.get(n2.id)!.indexOf(s2.id), 1)
+      net.adjacency.set(detachedNode.id, [s2.id])
+
+      const sections = computeTrackSections(net, customMeta)
+      expect(sections).toHaveLength(2)
+
+      const names = sections.map((s) => s.name)
+      expect(names).toContain('Voie Express')
+      expect(names.filter((n) => n === 'Voie Express')).toHaveLength(1)
+
+      const otherPiece = sections.find((s) => s.name !== 'Voie Express')!
+      expect(otherPiece).toBeDefined()
+      expect(otherPiece.name).toMatch(/^Section [A-Z]/)
+    })
   })
 })
