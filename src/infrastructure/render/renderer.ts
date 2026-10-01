@@ -2783,68 +2783,146 @@ export function renderLocomotive(
   const bogies = getLocomotiveBogies(net, loco)
   if (bogies) {
     const drawBogie = (bogie: BogieFrame, isForwardBogie: boolean) => {
-      // 1.1 Bogie chassis frame (rectangle orienté selon la tangente locale)
-      ctx.beginPath()
-      ctx.moveTo(toSx(bogie.polygon[0]), toSy(bogie.polygon[0]))
-      for (let i = 1; i < bogie.polygon.length; i++) {
-        ctx.lineTo(toSx(bogie.polygon[i]), toSy(bogie.polygon[i]))
-      }
-      ctx.closePath()
+      // 1.1 Châssis mécanique en H vu de dessus (longerons latéraux + traverse centrale)
+      const halfL = 1.6
+      const halfW = 1.05
+      const beamW = 0.22 // largeur des poutres du châssis en mètres
 
-      // Fond du châssis en acier sombre
+      // Poutre latérale gauche (rejoignant les boîtes d'essieu gauches)
+      const bl1 = { x: bogie.center.x + bogie.tangent.x * halfL + bogie.normal.x * (halfW - beamW), y: bogie.center.y + bogie.tangent.y * halfL + bogie.normal.y * (halfW - beamW) }
+      const bl2 = { x: bogie.center.x + bogie.tangent.x * halfL + bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * halfL + bogie.normal.y * halfW }
+      const bl3 = { x: bogie.center.x - bogie.tangent.x * halfL + bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * halfL + bogie.normal.y * halfW }
+      const bl4 = { x: bogie.center.x - bogie.tangent.x * halfL + bogie.normal.x * (halfW - beamW), y: bogie.center.y - bogie.tangent.y * halfL + bogie.normal.y * (halfW - beamW) }
+      ctx.beginPath()
+      ctx.moveTo(toSx(bl1), toSy(bl1))
+      ctx.lineTo(toSx(bl2), toSy(bl2))
+      ctx.lineTo(toSx(bl3), toSy(bl3))
+      ctx.lineTo(toSx(bl4), toSy(bl4))
+      ctx.closePath()
       ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
       ctx.fill()
       ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
       ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
       ctx.stroke()
 
-      // 1.2 Les 2 essieux mécaniques (traits transversaux et roues)
-      const wheelHalfL = 0.45 // demi-longueur de la roue vue du dessus (0.9m de diamètre)
+      // Poutre latérale droite (rejoignant les boîtes d'essieu droites)
+      const br1 = { x: bogie.center.x + bogie.tangent.x * halfL - bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * halfL - bogie.normal.y * halfW }
+      const br2 = { x: bogie.center.x + bogie.tangent.x * halfL - bogie.normal.x * (halfW - beamW), y: bogie.center.y + bogie.tangent.y * halfL - bogie.normal.y * (halfW - beamW) }
+      const br3 = { x: bogie.center.x - bogie.tangent.x * halfL - bogie.normal.x * (halfW - beamW), y: bogie.center.y - bogie.tangent.y * halfL - bogie.normal.y * (halfW - beamW) }
+      const br4 = { x: bogie.center.x - bogie.tangent.x * halfL - bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * halfL - bogie.normal.y * halfW }
+      ctx.beginPath()
+      ctx.moveTo(toSx(br1), toSy(br1))
+      ctx.lineTo(toSx(br2), toSy(br2))
+      ctx.lineTo(toSx(br3), toSy(br3))
+      ctx.lineTo(toSx(br4), toSy(br4))
+      ctx.closePath()
+      ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
+      ctx.fill()
+      ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // Traverse centrale (bolster) traversant le pivot
+      const bmidW = 0.35 // demi-longueur de la traverse le long de la tangente (0.7m de large)
+      const bm1 = { x: bogie.center.x + bogie.tangent.x * bmidW + bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * bmidW + bogie.normal.y * halfW }
+      const bm2 = { x: bogie.center.x + bogie.tangent.x * bmidW - bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * bmidW - bogie.normal.y * halfW }
+      const bm3 = { x: bogie.center.x - bogie.tangent.x * bmidW - bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * bmidW - bogie.normal.y * halfW }
+      const bm4 = { x: bogie.center.x - bogie.tangent.x * bmidW + bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * bmidW + bogie.normal.y * halfW }
+      ctx.beginPath()
+      ctx.moveTo(toSx(bm1), toSy(bm1))
+      ctx.lineTo(toSx(bm2), toSy(bm2))
+      ctx.lineTo(toSx(bm3), toSy(bm3))
+      ctx.lineTo(toSx(bm4), toSy(bm4))
+      ctx.closePath()
+      ctx.fillStyle = isGhost ? 'rgba(15, 23, 42, 0.5)' : '#0f172a'
+      ctx.fill()
+      ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // 1.2 Les 2 essieux mécaniques (barres transversales d'acier et 4 roues sur rails)
+      const wheelHalfL = 0.45 // demi-longueur de la roue vue du dessus (diamètre 0.9m)
+      const wheelThickness = 0.08 // demi-épaisseur de la jante en mètres
+
       for (const axle of bogie.axles) {
-        // Trait de l'axe transversal reliant les deux roues
+        // Barre transversale de l'axe reliant les deux roues
         ctx.beginPath()
         ctx.moveTo(toSx(axle.left), toSy(axle.left))
         ctx.lineTo(toSx(axle.right), toSy(axle.right))
         ctx.strokeStyle = isGhost ? 'rgba(148, 163, 184, 0.5)' : '#94a3b8'
-        ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+        ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.scale))
         ctx.stroke()
 
-        // Roue gauche (sur le rail gauche)
-        const wl1 = { x: axle.left.x + bogie.tangent.x * wheelHalfL, y: axle.left.y + bogie.tangent.y * wheelHalfL }
-        const wl2 = { x: axle.left.x - bogie.tangent.x * wheelHalfL, y: axle.left.y - bogie.tangent.y * wheelHalfL }
-        ctx.beginPath()
-        ctx.moveTo(toSx(wl1), toSy(wl1))
-        ctx.lineTo(toSx(wl2), toSy(wl2))
-        ctx.strokeStyle = isGhost ? 'rgba(15, 23, 42, 0.6)' : '#0f172a'
-        ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
-        ctx.stroke()
+        // Fonction pour dessiner une roue vue du dessus avec son boudin
+        const drawWheel = (wheelCenter: Point) => {
+          const w1 = { x: wheelCenter.x + bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wheelCenter.y + bogie.tangent.y * wheelHalfL + bogie.normal.y * wheelThickness }
+          const w2 = { x: wheelCenter.x + bogie.tangent.x * wheelHalfL - bogie.normal.x * wheelThickness, y: wheelCenter.y + bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
+          const w3 = { x: wheelCenter.x - bogie.tangent.x * wheelHalfL - bogie.normal.x * wheelThickness, y: wheelCenter.y - bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
+          const w4 = { x: wheelCenter.x - bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wheelCenter.y - bogie.tangent.y * wheelHalfL + bogie.normal.y * wheelThickness }
 
-        // Roue droite (sur le rail droit)
-        const wr1 = { x: axle.right.x + bogie.tangent.x * wheelHalfL, y: axle.right.y + bogie.tangent.y * wheelHalfL }
-        const wr2 = { x: axle.right.x - bogie.tangent.x * wheelHalfL, y: axle.right.y - bogie.tangent.y * wheelHalfL }
-        ctx.beginPath()
-        ctx.moveTo(toSx(wr1), toSy(wr1))
-        ctx.lineTo(toSx(wr2), toSy(wr2))
-        ctx.strokeStyle = isGhost ? 'rgba(15, 23, 42, 0.6)' : '#0f172a'
-        ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
-        ctx.stroke()
+          ctx.beginPath()
+          ctx.moveTo(toSx(w1), toSy(w1))
+          ctx.lineTo(toSx(w2), toSy(w2))
+          ctx.lineTo(toSx(w3), toSy(w3))
+          ctx.lineTo(toSx(w4), toSy(w4))
+          ctx.closePath()
 
-        // Boîtes d'essieu / écrous aux extrémités
-        ctx.beginPath()
-        ctx.arc(toSx(axle.left), toSy(axle.left), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
-        ctx.arc(toSx(axle.right), toSy(axle.right), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
-        ctx.fillStyle = '#64748b'
-        ctx.fill()
+          ctx.fillStyle = isGhost ? 'rgba(51, 65, 85, 0.7)' : '#334155'
+          ctx.fill()
+          ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
+          ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+          ctx.stroke()
+        }
+
+        // Roue gauche sur rail gauche
+        drawWheel(axle.leftWheel)
+        // Roue droite sur rail droit
+        drawWheel(axle.rightWheel)
+
+        // Boîtes d'essieu extérieures (roulements au bout de l'axe)
+        const boxSize = 0.15
+        const drawAxleBox = (pt: Point) => {
+          const b1 = { x: pt.x + bogie.tangent.x * boxSize + bogie.normal.x * boxSize, y: pt.y + bogie.tangent.y * boxSize + bogie.normal.y * boxSize }
+          const b2 = { x: pt.x + bogie.tangent.x * boxSize - bogie.normal.x * boxSize, y: pt.y + bogie.tangent.y * boxSize - bogie.normal.y * boxSize }
+          const b3 = { x: pt.x - bogie.tangent.x * boxSize - bogie.normal.x * boxSize, y: pt.y - bogie.tangent.y * boxSize - bogie.normal.y * boxSize }
+          const b4 = { x: pt.x - bogie.tangent.x * boxSize + bogie.normal.x * boxSize, y: pt.y - bogie.tangent.y * boxSize + bogie.normal.y * boxSize }
+          ctx.beginPath()
+          ctx.moveTo(toSx(b1), toSy(b1))
+          ctx.lineTo(toSx(b2), toSy(b2))
+          ctx.lineTo(toSx(b3), toSy(b3))
+          ctx.lineTo(toSx(b4), toSy(b4))
+          ctx.closePath()
+          ctx.fillStyle = isGhost ? 'rgba(71, 85, 105, 0.7)' : '#64748b'
+          ctx.fill()
+          ctx.strokeStyle = '#0f172a'
+          ctx.lineWidth = 1
+          ctx.stroke()
+        }
+
+        drawAxleBox(axle.left)
+        drawAxleBox(axle.right)
       }
 
-      // 1.3 Pivot central fixe (axe fixé au centre reliant le bogie à la caisse)
-      const pivotR = Math.max(3, Math.min(6, 3.5 * Math.sqrt(cam.scale)))
+      // 1.3 Pivot central fixe (axe fixé au centre reliant le bogie à la caisse du train)
+      const pivotOuterR = Math.max(4, Math.min(8, 4.5 * Math.sqrt(cam.scale)))
+      const pivotInnerR = Math.max(2, Math.min(4, 2.5 * Math.sqrt(cam.scale)))
+
+      // Bague extérieure métallique
       ctx.beginPath()
-      ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotR, 0, Math.PI * 2)
+      ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotOuterR, 0, Math.PI * 2)
+      ctx.fillStyle = '#334155'
+      ctx.fill()
+      ctx.strokeStyle = '#94a3b8'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
+      // Axe / Pivot central fixé
+      ctx.beginPath()
+      ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotInnerR, 0, Math.PI * 2)
       ctx.fillStyle = isForwardBogie ? '#ef4444' : '#fb923c'
       ctx.fill()
       ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.5
+      ctx.lineWidth = 1
       ctx.stroke()
     }
 

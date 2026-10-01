@@ -483,6 +483,8 @@ export interface BogieAxle {
   center: Point
   left: Point
   right: Point
+  leftWheel: Point
+  rightWheel: Point
 }
 
 export interface BogieFrame {
@@ -507,6 +509,7 @@ export function computeBogieFrame(net: Network, pos: TrackPosition): BogieFrame 
   const halfW = 1.05 // Châssis de 2.1m de largeur
   const axleDist = 1.15 // Empattement entre essieux de 2.3m (±1.15m du centre de rotation)
   const axleHalfW = 0.95 // Largeur de l'axe transversal avec boîtes d'essieu
+  const wheelHalfGauge = 0.7175 // Demi-écartement de voie standard UIC (1.435m / 2)
 
   // 4 coins du cadre de bogie
   const fl: Point = { x: center.x + tan.x * halfL + norm.x * halfW, y: center.y + tan.y * halfL + norm.y * halfW }
@@ -520,6 +523,8 @@ export function computeBogieFrame(net: Network, pos: TrackPosition): BogieFrame 
     center: c1,
     left: { x: c1.x + norm.x * axleHalfW, y: c1.y + norm.y * axleHalfW },
     right: { x: c1.x - norm.x * axleHalfW, y: c1.y - norm.y * axleHalfW },
+    leftWheel: { x: c1.x + norm.x * wheelHalfGauge, y: c1.y + norm.y * wheelHalfGauge },
+    rightWheel: { x: c1.x - norm.x * wheelHalfGauge, y: c1.y - norm.y * wheelHalfGauge },
   }
 
   // Essieu 2 (arrière du bogie)
@@ -528,6 +533,8 @@ export function computeBogieFrame(net: Network, pos: TrackPosition): BogieFrame 
     center: c2,
     left: { x: c2.x + norm.x * axleHalfW, y: c2.y + norm.y * axleHalfW },
     right: { x: c2.x - norm.x * axleHalfW, y: c2.y - norm.y * axleHalfW },
+    leftWheel: { x: c2.x + norm.x * wheelHalfGauge, y: c2.y + norm.y * wheelHalfGauge },
+    rightWheel: { x: c2.x - norm.x * wheelHalfGauge, y: c2.y - norm.y * wheelHalfGauge },
   }
 
   return {
