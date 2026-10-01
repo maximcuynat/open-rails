@@ -17,6 +17,7 @@ import {
   getLocomotiveFrontPos,
   getLocomotiveRearPos,
   getLocomotiveBogies,
+  getTGVDetails,
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -126,7 +127,7 @@ describe('locomotive', () => {
 
     const poly = getLocomotivePolygon(net, loco!)
     expect(poly).not.toBeNull()
-    expect(poly!.length).toBe(5)
+    expect(poly!.length).toBeGreaterThanOrEqual(5)
   })
 
   it('snapToNearestTrack finds closest segment', () => {
@@ -357,5 +358,39 @@ describe('locomotive', () => {
     // Vérifier le bogie arrière
     expect(bogies!.rear.polygon.length).toBe(4)
     expect(bogies!.rear.axles.length).toBe(2)
+  })
+
+  it('getTGVDetails computes streamlined TGV body with windshield, headlights, pantograph and rear gangway', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 200, y: 0 })
+    const seg = addSegment(net, n1.id, n2.id)!
+
+    const loco = createLocomotive(net, seg.id, 0.5, 22, 14)
+    expect(loco).not.toBeNull()
+
+    const tgv = getTGVDetails(net, loco!)
+    expect(tgv).not.toBeNull()
+
+    // 1. Polygone de la motrice profilée TGV (10 sommets avec museau et épaules aérodynamiques)
+    expect(tgv!.polygon.length).toBe(10)
+
+    // 2. Pare-brise panoramique de cabine (trapèze à 4 sommets)
+    expect(tgv!.windshield.length).toBe(4)
+
+    // 3. Phares avant (deux optiques gauche et droite)
+    expect(tgv!.headlights.left).toBeDefined()
+    expect(tgv!.headlights.right).toBeDefined()
+    const hlDist = Math.hypot(tgv!.headlights.left.x - tgv!.headlights.right.x, tgv!.headlights.left.y - tgv!.headlights.right.y)
+    expect(hlDist).toBeCloseTo(0.8, 1)
+
+    // 4. Pantographe (châssis en Z et archet transversal)
+    expect(tgv!.pantograph.bowLeft).toBeDefined()
+    expect(tgv!.pantograph.bowRight).toBeDefined()
+    const bowWidth = Math.hypot(tgv!.pantograph.bowLeft.x - tgv!.pantograph.bowRight.x, tgv!.pantograph.bowLeft.y - tgv!.pantograph.bowRight.y)
+    expect(bowWidth).toBeCloseTo(1.6, 1)
+
+    // 5. Soufflet d'intercirculation arrière (face plate pour wagons)
+    expect(tgv!.gangway.length).toBe(4)
   })
 })

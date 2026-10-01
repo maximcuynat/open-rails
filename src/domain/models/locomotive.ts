@@ -446,7 +446,20 @@ export function getLocomotiveHeading(net: Network, loco: Locomotive): Point | nu
   return { x: ux, y: uy }
 }
 
+export interface TGVDetails {
+  polygon: Point[]
+  windshield: Point[]
+  headlights: { left: Point; right: Point }
+  pantograph: { center: Point; armStart: Point; armEnd: Point; bowLeft: Point; bowRight: Point }
+  gangway: Point[]
+}
+
 export function getLocomotivePolygon(net: Network, loco: Locomotive): Point[] | null {
+  const details = getTGVDetails(net, loco)
+  return details ? details.polygon : null
+}
+
+export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null {
   const pFront = getLocomotiveFrontPos(net, loco)
   const pRear = getLocomotiveRearPos(net, loco)
   if (!pFront || !pRear) return null
@@ -456,26 +469,101 @@ export function getLocomotivePolygon(net: Network, loco: Locomotive): Point[] | 
   const len = Math.hypot(dx, dy)
   if (len === 0) return null
 
-  const ux = dx / len
-  const uy = dy / len
+  // Direction unitaire vers l'avant selon loco.direction
+  const forwardDir = loco.direction
+  const ux = forwardDir === 1 ? dx / len : -dx / len
+  const uy = forwardDir === 1 ? dy / len : -dy / len
   const nx = -uy
   const ny = ux
 
-  const w = 1.5
+  const frontPivot = forwardDir === 1 ? pFront : pRear
+  const rearPivot = forwardDir === 1 ? pRear : pFront
 
-  const fl = { x: pFront.x + nx * w, y: pFront.y + ny * w }
-  const fr = { x: pFront.x - nx * w, y: pFront.y - ny * w }
-  const rl = { x: pRear.x + nx * w, y: pRear.y + ny * w }
-  const rr = { x: pRear.x - nx * w, y: pRear.y - ny * w }
+  const totalLength = Math.max(loco.length, loco.bogieDistance + 4)
+  const overhangFront = (totalLength - loco.bogieDistance) * 0.62 // long nez profilé (~3.7m)
+  const overhangRear = totalLength - loco.bogieDistance - overhangFront // arrière (~2.3m)
 
-  const extFront = (loco.length - loco.bogieDistance) / 2
-  const nose = { x: pFront.x + ux * extFront, y: pFront.y + uy * extFront }
+  const w = 1.45 // demi-largeur de caisse standard TGV (2.90m)
 
-  if (loco.direction === 1) {
-    return [nose, fr, rr, rl, fl]
-  } else {
-    const noseRev = { x: pRear.x - ux * extFront, y: pRear.y - uy * extFront }
-    return [noseRev, rl, fl, fr, rr]
+  // Points du contour aérodynamique TGV (8 sommets)
+  // Museau avant
+  const noseTipL = { x: frontPivot.x + ux * overhangFront + nx * 0.45, y: frontPivot.y + uy * overhangFront + ny * 0.45 }
+  const noseTipR = { x: frontPivot.x + ux * overhangFront - nx * 0.45, y: frontPivot.y + uy * overhangFront - ny * 0.45 }
+
+  // Épaules aérodynamiques du nez
+  const shoulderDist = overhangFront * 0.55
+  const shoulderL = { x: frontPivot.x + ux * shoulderDist + nx * 1.15, y: frontPivot.y + uy * shoulderDist + ny * 1.15 }
+  const shoulderR = { x: frontPivot.x + ux * shoulderDist - nx * 1.15, y: frontPivot.y + uy * shoulderDist - ny * 1.15 }
+
+  // Base du nez au niveau du bogie avant
+  const bodyFrontL = { x: frontPivot.x + nx * w, y: frontPivot.y + ny * w }
+  const bodyFrontR = { x: frontPivot.x - nx * w, y: frontPivot.y - ny * w }
+
+  // Flancs droits jusqu'au bogie arrière
+  const bodyRearL = { x: rearPivot.x + nx * w, y: rearPivot.y + ny * w }
+  const bodyRearR = { x: rearPivot.x - nx * w, y: rearPivot.y - ny * w }
+
+  // Face arrière d'attelage (droite pour les futurs wagons)
+  const backL = { x: rearPivot.x - ux * overhangRear + nx * (w - 0.05), y: rearPivot.y - uy * overhangRear + ny * (w - 0.05) }
+  const backR = { x: rearPivot.x - ux * overhangRear - nx * (w - 0.05), y: rearPivot.y - uy * overhangRear - ny * (w - 0.05) }
+
+  // Contour complet fermé de la motrice profilée
+  const polygon = [
+    noseTipL,
+    shoulderL,
+    bodyFrontL,
+    bodyRearL,
+    backL,
+    backR,
+    bodyRearR,
+    bodyFrontR,
+    shoulderR,
+    noseTipR,
+  ]
+
+  // Pare-brise profilé de cabine
+  const wsDist1 = overhangFront * 0.72
+  const wsDist2 = overhangFront * 0.38
+  const wsL1 = { x: frontPivot.x + ux * wsDist1 + nx * 0.55, y: frontPivot.y + uy * wsDist1 + ny * 0.55 }
+  const wsR1 = { x: frontPivot.x + ux * wsDist1 - nx * 0.55, y: frontPivot.y + uy * wsDist1 - ny * 0.55 }
+  const wsR2 = { x: frontPivot.x + ux * wsDist2 - nx * 0.95, y: frontPivot.y + uy * wsDist2 - ny * 0.95 }
+  const wsL2 = { x: frontPivot.x + ux * wsDist2 + nx * 0.95, y: frontPivot.y + uy * wsDist2 + ny * 0.95 }
+  const windshield = [wsL1, wsR1, wsR2, wsL2]
+
+  // Phares avant (feux de tête)
+  const hlDist = overhangFront * 0.88
+  const headlights = {
+    left: { x: frontPivot.x + ux * hlDist + nx * 0.40, y: frontPivot.y + uy * hlDist + ny * 0.40 },
+    right: { x: frontPivot.x + ux * hlDist - nx * 0.40, y: frontPivot.y + uy * hlDist - ny * 0.40 },
+  }
+
+  // Pantographe sur le toit (vers le tiers arrière)
+  const pantoC = { x: rearPivot.x + ux * 1.5, y: rearPivot.y + uy * 1.5 }
+  const pantoArmStart = { x: rearPivot.x + ux * 0.7, y: rearPivot.y + uy * 0.7 }
+  const pantoArmEnd = { x: rearPivot.x + ux * 2.3, y: rearPivot.y + uy * 2.3 }
+  const pantoBowL = { x: pantoArmEnd.x + nx * 0.8, y: pantoArmEnd.y + ny * 0.8 }
+  const pantoBowR = { x: pantoArmEnd.x - nx * 0.8, y: pantoArmEnd.y - ny * 0.8 }
+  const pantograph = {
+    center: pantoC,
+    armStart: pantoArmStart,
+    armEnd: pantoArmEnd,
+    bowLeft: pantoBowL,
+    bowRight: pantoBowR,
+  }
+
+  // Soufflet d'intercirculation arrière (gangway pour futurs wagons)
+  const gw1 = { x: backL.x - ux * 0.25 + nx * (0.6 - (w - 0.05)), y: backL.y - uy * 0.25 + ny * (0.6 - (w - 0.05)) }
+  const gw2 = { x: backR.x - ux * 0.25 - nx * (0.6 - (w - 0.05)), y: backR.y - uy * 0.25 - ny * (0.6 - (w - 0.05)) }
+  const gw3 = { x: backR.x - nx * (0.6 - (w - 0.05)), y: backR.y - ny * (0.6 - (w - 0.05)) }
+  const gw4 = { x: backL.x + nx * (0.6 - (w - 0.05)), y: backL.y + ny * (0.6 - (w - 0.05)) }
+  const gangway = [gw4, gw1, gw2, gw3]
+
+  return {
+    polygon,
+    windshield,
+    headlights,
+    pantograph,
+    gangway,
   }
 }
 

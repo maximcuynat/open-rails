@@ -2742,6 +2742,7 @@ import {
   getLocomotiveRearPos,
   getLocomotivePolygon,
   getLocomotiveBogies,
+  getTGVDetails,
   type BogieFrame,
 } from '@domain/models/locomotive'
 
@@ -2931,33 +2932,120 @@ export function renderLocomotive(
     drawBogie(bogies.front, isForwardFront)
   }
 
-  // 2. Draw body polygon (TGV silhouette translucide au-dessus des bogies)
-  ctx.beginPath()
-  ctx.moveTo(toSx(polygon[0]), toSy(polygon[0]))
-  for (let i = 1; i < polygon.length; i++) {
-    ctx.lineTo(toSx(polygon[i]), toSy(polygon[i]))
+  // 2. Draw streamlined TGV locomotive body and equipment
+  const tgv = getTGVDetails(net, loco)
+  if (tgv) {
+    // 2.1 Soufflet d'intercirculation arrière (face plate prête pour wagons)
+    ctx.beginPath()
+    ctx.moveTo(toSx(tgv.gangway[0]), toSy(tgv.gangway[0]))
+    for (let i = 1; i < tgv.gangway.length; i++) {
+      ctx.lineTo(toSx(tgv.gangway[i]), toSy(tgv.gangway[i]))
+    }
+    ctx.closePath()
+    ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.5)' : '#1e293b'
+    ctx.fill()
+    ctx.strokeStyle = '#0f172a'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    // 2.2 Carrosserie profilée aérodynamique TGV
+    ctx.beginPath()
+    ctx.moveTo(toSx(tgv.polygon[0]), toSy(tgv.polygon[0]))
+    for (let i = 1; i < tgv.polygon.length; i++) {
+      ctx.lineTo(toSx(tgv.polygon[i]), toSy(tgv.polygon[i]))
+    }
+    ctx.closePath()
+
+    // Livrée blanc argenté TGV avec légère transparence pour laisser deviner les bogies en dessous
+    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.88)'
+    ctx.fill()
+    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
+    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    // 2.3 Bandes profilées latérales bleu roi TGV
+    const drawSideStripes = () => {
+      // Ligne gauche
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.polygon[1]), toSy(tgv.polygon[1]))
+      ctx.lineTo(toSx(tgv.polygon[2]), toSy(tgv.polygon[2]))
+      ctx.lineTo(toSx(tgv.polygon[3]), toSy(tgv.polygon[3]))
+      ctx.lineTo(toSx(tgv.polygon[4]), toSy(tgv.polygon[4]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      // Ligne droite
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.polygon[5]), toSy(tgv.polygon[5]))
+      ctx.lineTo(toSx(tgv.polygon[6]), toSy(tgv.polygon[6]))
+      ctx.lineTo(toSx(tgv.polygon[7]), toSy(tgv.polygon[7]))
+      ctx.lineTo(toSx(tgv.polygon[8]), toSy(tgv.polygon[8]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
+    }
+    drawSideStripes()
+
+    // 2.4 Pare-brise panoramique de cabine teinté sombre avec reflet
+    ctx.beginPath()
+    ctx.moveTo(toSx(tgv.windshield[0]), toSy(tgv.windshield[0]))
+    for (let i = 1; i < tgv.windshield.length; i++) {
+      ctx.lineTo(toSx(tgv.windshield[i]), toSy(tgv.windshield[i]))
+    }
+    ctx.closePath()
+    ctx.fillStyle = isGhost ? 'rgba(15, 23, 42, 0.7)' : '#0f172a'
+    ctx.fill()
+    ctx.strokeStyle = '#38bdf8'
+    ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    // 2.5 Phares avant à LED (feux de tête allumés)
+    const hlR = Math.max(2, 2.8 * Math.sqrt(cam.scale))
+    // Phare gauche
+    ctx.beginPath()
+    ctx.arc(toSx(tgv.headlights.left), toSy(tgv.headlights.left), hlR, 0, Math.PI * 2)
+    ctx.fillStyle = '#fef08a'
+    ctx.fill()
+    ctx.strokeStyle = '#eab308'
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    // Phare droit
+    ctx.beginPath()
+    ctx.arc(toSx(tgv.headlights.right), toSy(tgv.headlights.right), hlR, 0, Math.PI * 2)
+    ctx.fillStyle = '#fef08a'
+    ctx.fill()
+    ctx.strokeStyle = '#eab308'
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    // 2.6 Pantographe de toiture (arrière)
+    const panto = tgv.pantograph
+    // Bras articulé en Z
+    ctx.beginPath()
+    ctx.moveTo(toSx(panto.armStart), toSy(panto.armStart))
+    ctx.lineTo(toSx(panto.center), toSy(panto.center))
+    ctx.lineTo(toSx(panto.armEnd), toSy(panto.armEnd))
+    ctx.strokeStyle = isGhost ? 'rgba(71, 85, 105, 0.6)' : '#475569'
+    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    // Archet transversal de captage
+    ctx.beginPath()
+    ctx.moveTo(toSx(panto.bowLeft), toSy(panto.bowLeft))
+    ctx.lineTo(toSx(panto.bowRight), toSy(panto.bowRight))
+    ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
+    ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    // Cornes d'archet cuivrées
+    ctx.beginPath()
+    ctx.arc(toSx(panto.bowLeft), toSy(panto.bowLeft), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+    ctx.arc(toSx(panto.bowRight), toSy(panto.bowRight), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+    ctx.fillStyle = '#d97706'
+    ctx.fill()
   }
-  ctx.closePath()
-
-  // Remplissage carrosserie (teinte bleue aérodynamique semi-transparente pour voir les bogies en dessous)
-  ctx.fillStyle = isGhost ? 'rgba(37, 99, 235, 0.2)' : 'rgba(37, 99, 235, 0.45)'
-  ctx.fill()
-
-  // Contour carrosserie
-  ctx.strokeStyle = isGhost ? 'rgba(59, 130, 246, 0.5)' : '#2563eb'
-  ctx.lineWidth = isGhost ? 1 : 2
-  ctx.stroke()
-
-  // 3. Nose tip indicator (pointe verte à l'avant du nez)
-  const nosePt = polygon[0]
-  const bogieR = Math.max(3, Math.min(6, 4 * Math.sqrt(cam.scale)))
-  ctx.beginPath()
-  ctx.arc(toSx(nosePt), toSy(nosePt), bogieR * 0.7, 0, Math.PI * 2)
-  ctx.fillStyle = isGhost ? 'rgba(16, 185, 129, 0.5)' : '#10b981'
-  ctx.fill()
-  ctx.strokeStyle = '#ffffff'
-  ctx.lineWidth = 1
-  ctx.stroke()
 
   ctx.restore()
 }
