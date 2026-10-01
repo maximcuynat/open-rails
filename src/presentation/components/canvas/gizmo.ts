@@ -1,7 +1,73 @@
-import type { Point } from '@domain/models/types'
+import type { Point, Network, Selection, NodeId, SegmentId } from '@domain/models/types'
 import { snapToGrid } from '@domain/models/network'
+import { bezierPoint } from '@domain/geometry/curve'
 
 export type GizmoAxis = 'x' | 'y'
+
+export interface GizmoAnchor {
+  type: 'node' | 'section'
+  worldPos: Point
+  nodeIds: Set<NodeId>
+  curvedSegments: Map<SegmentId, Point>
+}
+
+/**
+ * Computes the anchor position for the 2D gizmo based on current selection:
+ * - If a node is selected: anchor is directly on the node (anchor.type = 'node').
+ * - If a section/segments are selected: anchor is at the geometric center of the track (anchor.type = 'section').
+ */
+export function getGizmoAnchor(
+  net: Network,
+  selection: Selection
+): GizmoAnchor | null {
+  if (selection.nodes.size > 0) {
+    const primaryNodeId = [...selection.nodes][selection.nodes.size - 1]
+    const primaryNode = net.nodes.get(primaryNodeId)
+    if (!primaryNode) return null
+    return {
+      type: 'node',
+      worldPos: { ...primaryNode.pos },
+      nodeIds: new Set(selection.nodes),
+      curvedSegments: new Map(),
+    }
+  }
+
+  if (selection.segments.size > 0) {
+    const nodeIds = new Set<NodeId>()
+    const curvedSegments = new Map<SegmentId, Point>()
+    for (const sid of selection.segments) {
+      const seg = net.segments.get(sid)
+      if (seg) {
+        nodeIds.add(seg.from)
+        nodeIds.add(seg.to)
+        if (seg.kind === 'curve' && seg.via) {
+          curvedSegments.set(sid, { ...seg.via })
+        }
+      }
+    }
+
+    const segArray = [...selection.segments]
+    const midSegId = segArray[Math.floor(segArray.length / 2)]
+    const midSeg = net.segments.get(midSegId)
+    if (!midSeg) return null
+    const a = net.nodes.get(midSeg.from)
+    const b = net.nodes.get(midSeg.to)
+    if (!a || !b) return null
+
+    const center = midSeg.kind === 'curve' && midSeg.via
+      ? bezierPoint(0.5, a.pos, midSeg.via, b.pos)
+      : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+
+    return {
+      type: 'section',
+      worldPos: center,
+      nodeIds,
+      curvedSegments,
+    }
+  }
+
+  return null
+}
 
 export const GIZMO_LENGTH = 52 // pixels
 export const GIZMO_OFFSET = 12 // pixels from node center

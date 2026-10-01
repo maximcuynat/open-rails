@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hitTestGizmo, constrainGizmoDrag, GIZMO_LENGTH } from './gizmo'
+import { hitTestGizmo, constrainGizmoDrag, GIZMO_LENGTH, getGizmoAnchor } from './gizmo'
 
 describe('gizmo module', () => {
   const nodeScreen = { x: 200, y: 300 }
@@ -104,6 +104,81 @@ describe('gizmo module', () => {
       expect(res.pos.y).toBe(25)
       expect(res.delta.x).toBe(0)
       expect(res.delta.y).toBe(5)
+    })
+  })
+
+  describe('getGizmoAnchor', () => {
+    it('returns anchor on the node when a node is selected', () => {
+      const net = {
+        nodes: new Map([
+          ['n1', { id: 'n1', pos: { x: 50, y: 80 } }],
+          ['n2', { id: 'n2', pos: { x: 100, y: 80 } }],
+        ]),
+        segments: new Map([
+          ['s1', { id: 's1', from: 'n1', to: 'n2', kind: 'straight' as const }],
+        ]),
+        adjacency: new Map([
+          ['n1', ['s1']],
+          ['n2', ['s1']],
+        ]),
+        junctions: new Map(),
+      }
+
+      const selection = {
+        nodes: new Set(['n1']),
+        segments: new Set<string>(),
+      }
+
+      const anchor = getGizmoAnchor(net, selection)
+      expect(anchor).not.toBeNull()
+      expect(anchor?.type).toBe('node')
+      expect(anchor?.worldPos).toEqual({ x: 50, y: 80 })
+      expect(anchor?.nodeIds.has('n1')).toBe(true)
+    })
+
+    it('returns anchor at the center of the track when a section is selected', () => {
+      const net = {
+        nodes: new Map([
+          ['n1', { id: 'n1', pos: { x: 0, y: 0 } }],
+          ['n2', { id: 'n2', pos: { x: 100, y: 0 } }],
+        ]),
+        segments: new Map([
+          ['s1', { id: 's1', from: 'n1', to: 'n2', kind: 'straight' as const }],
+        ]),
+        adjacency: new Map([
+          ['n1', ['s1']],
+          ['n2', ['s1']],
+        ]),
+        junctions: new Map(),
+      }
+
+      const selection = {
+        nodes: new Set<string>(),
+        segments: new Set(['s1']),
+      }
+
+      const anchor = getGizmoAnchor(net, selection)
+      expect(anchor).not.toBeNull()
+      expect(anchor?.type).toBe('section')
+      // Center of straight segment from (0,0) to (100,0) is (50,0)
+      expect(anchor?.worldPos.x).toBeCloseTo(50)
+      expect(anchor?.worldPos.y).toBeCloseTo(0)
+      expect(anchor?.nodeIds.has('n1')).toBe(true)
+      expect(anchor?.nodeIds.has('n2')).toBe(true)
+    })
+
+    it('returns null when nothing is selected', () => {
+      const net = {
+        nodes: new Map(),
+        segments: new Map(),
+        adjacency: new Map(),
+        junctions: new Map(),
+      }
+      const selection = {
+        nodes: new Set<string>(),
+        segments: new Set<string>(),
+      }
+      expect(getGizmoAnchor(net, selection)).toBeNull()
     })
   })
 })

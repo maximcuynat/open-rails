@@ -57,6 +57,7 @@ import {
   hitTestGizmo,
   constrainGizmoDrag,
   renderTranslationGizmo,
+  getGizmoAnchor,
 } from './gizmo'
 import type { EditorStore } from '@application/state/editorStore'
 
@@ -881,26 +882,23 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.restore()
     }
 
-    // 2D Orthogonal Translation Gizmo on selected node(s)
-    if (store.selection.nodes.size > 0) {
-      const primaryNodeId = [...store.selection.nodes][store.selection.nodes.size - 1]
-      const primaryNode = store.network.nodes.get(primaryNodeId)
-      if (primaryNode) {
-        const sx = (primaryNode.pos.x - cam.x) * cam.scale + rect.width / 2
-        const sy = (primaryNode.pos.y - cam.y) * cam.scale + rect.height / 2
-        renderTranslationGizmo(
-          ctx,
-          { x: sx, y: sy },
-          store.gizmoHoverAxis,
-          store.gizmoDragAxis,
-          {
-            delta: store.gizmoDragDelta,
-            unit: store.unit,
-            canvasWidth: rect.width,
-            canvasHeight: rect.height,
-          }
-        )
-      }
+    // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
+    const gizmoAnchor = getGizmoAnchor(store.network, store.selection)
+    if (gizmoAnchor) {
+      const sx = (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2
+      const sy = (gizmoAnchor.worldPos.y - cam.y) * cam.scale + rect.height / 2
+      renderTranslationGizmo(
+        ctx,
+        { x: sx, y: sy },
+        store.gizmoHoverAxis,
+        store.gizmoDragAxis,
+        {
+          delta: store.gizmoDragDelta,
+          unit: store.unit,
+          canvasWidth: rect.width,
+          canvasHeight: rect.height,
+        }
+      )
     }
 
     renderScaleBar(ctx, cam, rect.width, rect.height)
@@ -1019,8 +1017,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
         if (store.gizmoDragAxis && store.dragStartWorld) {
           const spacing = getSnapSpacing()
-          const primaryNodeId = [...store.selection.nodes][store.selection.nodes.size - 1]
-          const primaryInitPos = store.draggedNodeInitialPositions.get(primaryNodeId)
+          const anchor = getGizmoAnchor(store.network, store.selection)
+          const primaryInitPos = anchor ? anchor.worldPos : null
           if (primaryInitPos) {
             const { delta } = constrainGizmoDrag(
               store.gizmoDragAxis,
@@ -1037,6 +1035,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               if (node) {
                 node.pos.x = initPos.x + delta.x
                 node.pos.y = initPos.y + delta.y
+              }
+            }
+            for (const [sid, initVia] of store.draggedViaInitialPositions) {
+              const seg = store.network.segments.get(sid)
+              if (seg && seg.via) {
+                seg.via.x = initVia.x + delta.x
+                seg.via.y = initVia.y + delta.y
               }
             }
           }
@@ -1121,24 +1126,27 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const px = e.clientX - rect.left
       const py = e.clientY - rect.top
 
-      // Priority 0: Check if click hit a 2D Gizmo translation arrow on selected node
-      if (e.button === 0 && store.selection.nodes.size > 0) {
-        const primaryNodeId = [...store.selection.nodes][store.selection.nodes.size - 1]
-        const primaryNode = store.network.nodes.get(primaryNodeId)
-        if (primaryNode) {
-          const sx = (primaryNode.pos.x - store.camera.x) * store.camera.scale + rect.width / 2
-          const sy = (primaryNode.pos.y - store.camera.y) * store.camera.scale + rect.height / 2
+      // Priority 0: Check if click hit a 2D Gizmo translation arrow on selected node or section
+      if (e.button === 0) {
+        const anchor = getGizmoAnchor(store.network, store.selection)
+        if (anchor) {
+          const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
+          const sy = (anchor.worldPos.y - store.camera.y) * store.camera.scale + rect.height / 2
           const hitAxis = hitTestGizmo({ x: px, y: py }, { x: sx, y: sy })
           if (hitAxis) {
             store.gizmoDragAxis = hitAxis
             store.gizmoDragDelta = { x: 0, y: 0 }
             store.dragStartWorld = getWorldPos(e.clientX, e.clientY)
             store.draggedNodeInitialPositions.clear()
-            for (const nid of store.selection.nodes) {
+            store.draggedViaInitialPositions.clear()
+            for (const nid of anchor.nodeIds) {
               const n = store.network.nodes.get(nid)
               if (n) {
                 store.draggedNodeInitialPositions.set(nid, { ...n.pos })
               }
+            }
+            for (const [sid, initVia] of anchor.curvedSegments) {
+              store.draggedViaInitialPositions.set(sid, { ...initVia })
             }
             canvas.setPointerCapture(e.pointerId)
             canvas.style.cursor = hitAxis === 'x' ? 'ew-resize' : 'ns-resize'
@@ -1755,8 +1763,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       // Dragging along 2D Gizmo axis (orthogonal constraint)
       if (store.gizmoDragAxis && store.dragStartWorld) {
         const spacing = getSnapSpacing()
-        const primaryNodeId = [...store.selection.nodes][store.selection.nodes.size - 1]
-        const primaryInitPos = store.draggedNodeInitialPositions.get(primaryNodeId)
+        const anchor = getGizmoAnchor(store.network, store.selection)
+        const primaryInitPos = anchor ? anchor.worldPos : null
 
         if (primaryInitPos) {
           const { delta } = constrainGizmoDrag(
@@ -1778,6 +1786,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               node.pos.y = initPos.y + delta.y
             }
           }
+
+          for (const [sid, initVia] of store.draggedViaInitialPositions) {
+            const seg = store.network.segments.get(sid)
+            if (seg && seg.via) {
+              seg.via.x = initVia.x + delta.x
+              seg.via.y = initVia.y + delta.y
+            }
+          }
         }
 
         draw()
@@ -1785,13 +1801,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
-      // Gizmo arrow hover detection on selected node
-      if (!store.panning && !store.isDraggingNode && !store.gizmoDragAxis && store.selection.nodes.size > 0) {
-        const primaryNodeId = [...store.selection.nodes][store.selection.nodes.size - 1]
-        const primaryNode = store.network.nodes.get(primaryNodeId)
-        if (primaryNode) {
-          const sx = (primaryNode.pos.x - store.camera.x) * store.camera.scale + vw / 2
-          const sy = (primaryNode.pos.y - store.camera.y) * store.camera.scale + vh / 2
+      // Gizmo arrow hover detection on selected node or section
+      if (!store.panning && !store.isDraggingNode && !store.gizmoDragAxis) {
+        const anchor = getGizmoAnchor(store.network, store.selection)
+        if (anchor) {
+          const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + vw / 2
+          const sy = (anchor.worldPos.y - store.camera.y) * store.camera.scale + vh / 2
           const hoveredAxis = hitTestGizmo({ x: px, y: py }, { x: sx, y: sy })
           if (hoveredAxis !== store.gizmoHoverAxis) {
             store.gizmoHoverAxis = hoveredAxis
@@ -2002,6 +2017,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.gizmoDragDelta = { x: 0, y: 0 }
         store.dragStartWorld = null
         store.draggedNodeInitialPositions.clear()
+        store.draggedViaInitialPositions.clear()
         if (canvas.hasPointerCapture(e.pointerId)) {
           canvas.releasePointerCapture(e.pointerId)
         }

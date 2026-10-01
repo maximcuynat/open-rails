@@ -109,10 +109,11 @@ export class EditorStore {
   measureEnd: Point | null = null
   isMeasuring = false
 
-  // Dragging nodes (Select tool)
+  // Dragging nodes & sections (Select tool)
   isDraggingNode = false
   dragStartWorld: Point | null = null
   draggedNodeInitialPositions = new Map<string, Point>()
+  draggedViaInitialPositions = new Map<string, Point>()
 
   // 2D Orthogonal Gizmo (Translation handles on selected node)
   gizmoHoverAxis: 'x' | 'y' | null = null
@@ -810,6 +811,13 @@ export class EditorStore {
         node.pos.y = initPos.y
       }
     }
+    for (const [sid, initVia] of this.draggedViaInitialPositions) {
+      const seg = this.network.segments.get(sid)
+      if (seg && seg.via) {
+        seg.via.x = initVia.x
+        seg.via.y = initVia.y
+      }
+    }
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
@@ -818,6 +826,7 @@ export class EditorStore {
     this.isDraggingNode = false
     this.dragStartWorld = null
     this.draggedNodeInitialPositions.clear()
+    this.draggedViaInitialPositions.clear()
     this.pruneOrphans(false)
     this.clearSelection()
   }
