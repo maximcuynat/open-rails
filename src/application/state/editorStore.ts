@@ -47,7 +47,7 @@ export class EditorStore {
   network: Network = createNetwork()
   camera: Camera = createCamera(0, 0, 1) // 1 px per meter by default
   selection: Selection = { nodes: new Set(), segments: new Set() }
-  tool: Tool = 'select'
+  tool: Tool = 'pan'
   snap = true
   showGrid = true
   gridMode: 'auto' | 'fixed' = 'fixed'
@@ -367,6 +367,7 @@ export class EditorStore {
     this.network = createNetwork()
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
+    this.tool = 'pan'
     this.lastNodeId = null
     this.curveState = { phase: 0, startId: null }
     this.projectName = 'Untitled Network'
