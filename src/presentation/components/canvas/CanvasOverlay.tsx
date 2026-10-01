@@ -22,9 +22,13 @@ function hintText(store: EditorStore): string {
         ? 'Clic pour fixer la mesure · Échap pour réinitialiser'
         : 'Clic pour fixer le point de départ de la mesure'
     case 'select':
-      return 'Clic pour sélectionner · Ctrl/Shift+Clic pour multi-sélection · Suppr pour effacer'
+      return store.selection.nodes.size > 0
+        ? 'Glisser les flèches orthogonales (X/Y) pour déplacer le nœud · Glisser le centre pour déplacement libre · Suppr pour effacer'
+        : 'Clic pour sélectionner un nœud · Ctrl/Shift+Clic pour multi-sélection'
     case 'pan':
-      return 'Glisser pour déplacer la vue · Molette pour zoomer'
+      return store.selection.nodes.size > 0
+        ? 'Glisser les flèches (X/Y) pour déplacer le nœud · Glisser le fond pour déplacer la vue'
+        : 'Glisser pour déplacer la vue · Clic sur un nœud pour afficher ses flèches de déplacement'
     default:
       return ''
   }

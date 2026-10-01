@@ -114,6 +114,11 @@ export class EditorStore {
   dragStartWorld: Point | null = null
   draggedNodeInitialPositions = new Map<string, Point>()
 
+  // 2D Orthogonal Gizmo (Translation handles on selected node)
+  gizmoHoverAxis: 'x' | 'y' | null = null
+  gizmoDragAxis: 'x' | 'y' | null = null
+  gizmoDragDelta: Point = { x: 0, y: 0 }
+
   // Box selection (Select tool)
   boxSelectStart: Point | null = null
   boxSelectEnd: Point | null = null
@@ -430,6 +435,9 @@ export class EditorStore {
     this.parallelMode = false
     this.parallelLastNodeId = null
     this.turnoutStartId = null
+    this.gizmoHoverAxis = null
+    this.gizmoDragAxis = null
+    this.gizmoDragDelta = { x: 0, y: 0 }
     this.notify()
   }
 
@@ -780,6 +788,20 @@ export class EditorStore {
         this.network.adjacency.delete(nid)
       }
     }
+    // Restore dragged node positions if cancelled mid-drag
+    for (const [nid, initPos] of this.draggedNodeInitialPositions) {
+      const node = this.network.nodes.get(nid)
+      if (node) {
+        node.pos.x = initPos.x
+        node.pos.y = initPos.y
+      }
+    }
+    this.gizmoHoverAxis = null
+    this.gizmoDragAxis = null
+    this.gizmoDragDelta = { x: 0, y: 0 }
+    this.isDraggingNode = false
+    this.dragStartWorld = null
+    this.draggedNodeInitialPositions.clear()
     this.pruneOrphans(false)
     this.clearSelection()
   }
