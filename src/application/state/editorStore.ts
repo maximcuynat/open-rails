@@ -22,6 +22,7 @@ import {
   advanceLocomotive,
   snapToNearestTrack,
   steerJunction,
+  getLocomotiveFrontPos,
 } from '@domain/models/locomotive'
 
 export type Tool =
@@ -113,6 +114,7 @@ export class EditorStore {
   isPlayMode = false
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (keyboard advance increment)
+  followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
 
   turnoutStartId: string | null = null
   turnoutOffset = 4.0
@@ -1174,6 +1176,17 @@ export class EditorStore {
     return true
   }
 
+  /** Center camera on the locomotive */
+  focusOnLocomotive = (): void => {
+    if (!this.locomotive) return
+    const pos = getLocomotiveFrontPos(this.network, this.locomotive)
+    if (pos) {
+      this.camera.x = pos.x
+      this.camera.y = pos.y
+      this.notify()
+    }
+  }
+
   /** Toggle play mode on/off */
   togglePlayMode = (): void => {
     if (!this.locomotive) return
@@ -1183,6 +1196,9 @@ export class EditorStore {
       this.lastNodeId = null
       this.curveState = { phase: 0, startId: null }
       this.turnoutStartId = null
+      if (this.followLocomotiveCamera) {
+        this.focusOnLocomotive()
+      }
     }
     this.notify()
   }
@@ -1190,7 +1206,14 @@ export class EditorStore {
   /** Advance the locomotive by one step in the given direction */
   stepLocomotive = (direction: 1 | -1): void => {
     if (!this.locomotive || !this.isPlayMode) return
-    advanceLocomotive(this.network, this.locomotive, direction * this.locomotiveSpeed)
+    const moved = advanceLocomotive(this.network, this.locomotive, direction * this.locomotiveSpeed)
+    if (moved && this.followLocomotiveCamera) {
+      const pos = getLocomotiveFrontPos(this.network, this.locomotive)
+      if (pos) {
+        this.camera.x = pos.x
+        this.camera.y = pos.y
+      }
+    }
     this.notify()
   }
 
@@ -1198,6 +1221,13 @@ export class EditorStore {
   steerUpcomingTurnout = (steerDirection: 'left' | 'right'): void => {
     if (!this.locomotive) return
     steerJunction(this.network, this.locomotive, steerDirection)
+    this.notify()
+  }
+
+  /** Invert locomotive direction / reverse its orientation on track */
+  flipLocomotiveDirection = (): void => {
+    if (!this.locomotive) return
+    this.locomotive.direction = this.locomotive.direction === 1 ? -1 : 1
     this.notify()
   }
 

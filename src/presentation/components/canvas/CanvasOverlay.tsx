@@ -3,7 +3,7 @@ import type { EditorStore } from '@application/state/editorStore'
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
   if (store.isPlayMode) {
-    return '▶ Mode Play · ↑ Avancer · ↓ Refouler · ←→ Aiguillage · Espace/Échap pour quitter'
+    return '▶ Mode Play · ↑ Avancer · ↓ Refouler · ←→ Aiguillage · R Inverser sens · Espace Quitter'
   }
   switch (store.tool) {
     case 'place':
@@ -109,6 +109,51 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
               </span>
             </>
           )}
+        </div>
+      )}
+
+      {/* Live Play Mode HUD */}
+      {store.isPlayMode && store.locomotive && (
+        <div className="hud-realtime-card" style={{ pointerEvents: 'auto' }}>
+          <span className="hud-pill" style={{ color: '#10b981', fontWeight: 600 }}>
+            ▶ Conduite TGV ({store.locomotiveLength}m)
+          </span>
+          <span className="hud-sep" />
+          <button
+            onClick={() => {
+              store.followLocomotiveCamera = !store.followLocomotiveCamera
+              if (store.followLocomotiveCamera) store.focusOnLocomotive()
+              store.notify()
+            }}
+            style={{
+              background: store.followLocomotiveCamera ? 'rgba(37,99,235,0.2)' : 'transparent',
+              border: `1px solid ${store.followLocomotiveCamera ? 'var(--accent, #2563eb)' : 'var(--border, #475569)'}`,
+              borderRadius: '4px',
+              color: store.followLocomotiveCamera ? 'var(--accent, #60a5fa)' : 'var(--text-muted, #94a3b8)',
+              fontSize: '11px',
+              padding: '2px 6px',
+              cursor: 'pointer',
+            }}
+            title="Centrer / Suivre automatiquement la locomotive avec la caméra"
+          >
+            {store.followLocomotiveCamera ? '🎯 Caméra fixée' : 'Libre'}
+          </button>
+          <span className="hud-sep" />
+          <button
+            onClick={() => store.flipLocomotiveDirection()}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--border, #475569)',
+              borderRadius: '4px',
+              color: '#c084fc',
+              fontSize: '11px',
+              padding: '2px 6px',
+              cursor: 'pointer',
+            }}
+            title="Inverser le sens de la locomotive (Touche R ou Tab)"
+          >
+            ⇄ Inverser sens (R)
+          </button>
         </div>
       )}
 

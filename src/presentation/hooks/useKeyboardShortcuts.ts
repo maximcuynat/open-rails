@@ -33,6 +33,10 @@ export function useKeyboardShortcuts(store: EditorStore): void {
           e.preventDefault()
           store.togglePlayMode()
           return
+        } else if (e.key === 'r' || e.key === 'R' || e.key === 'Tab') {
+          e.preventDefault()
+          store.flipLocomotiveDirection()
+          return
         } else if (e.key === 'Escape') {
           store.togglePlayMode()
           return

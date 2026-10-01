@@ -64,6 +64,85 @@ export function segmentArcLength(net: Network, segId: SegmentId): number {
   return segmentLength(net, seg)
 }
 
+/** Helper to compute arc length between two parametric positions on a segment. */
+function segmentPartialLength(net: Network, segId: SegmentId, tStart: number, tEnd: number): number {
+  const seg = net.segments.get(segId)
+  if (!seg) return 0
+  const fromNode = net.nodes.get(seg.from)
+  const toNode = net.nodes.get(seg.to)
+  if (!fromNode || !toNode) return 0
+
+  if (seg.kind === 'straight' || !seg.via) {
+    const fullLen = Math.hypot(toNode.pos.x - fromNode.pos.x, toNode.pos.y - fromNode.pos.y)
+    return Math.abs(tEnd - tStart) * fullLen
+  }
+
+  const N = 32
+  let length = 0
+  const dir = tEnd >= tStart ? 1 : -1
+  const step = Math.abs(tEnd - tStart) / N
+  let prev: Point | null = null
+
+  for (let i = 0; i <= N; i++) {
+    const t = tStart + dir * step * i
+    const p = bezierPoint(t, fromNode.pos, seg.via, toNode.pos)
+    if (prev) {
+      length += Math.hypot(p.x - prev.x, p.y - prev.y)
+    }
+    prev = p
+  }
+  return length
+}
+
+/** Helper to move parametric t along a segment by a given distance in the backward direction. */
+function moveWithinSegmentBackward(
+  net: Network,
+  segId: SegmentId,
+  currentT: number,
+  forward: boolean,
+  dist: number
+): number {
+  const seg = net.segments.get(segId)
+  if (!seg) return currentT
+  const segLen = segmentArcLength(net, segId)
+  if (segLen === 0) return currentT
+
+  if (seg.kind === 'straight' || !seg.via) {
+    const dt = dist / segLen
+    return forward ? currentT - dt : currentT + dt
+  }
+
+  // Pour les courbes Bézier, recherche dichotomique pour trouver t tel que partialLength = dist
+  let low = forward ? 0 : currentT
+  let high = forward ? currentT : 1
+
+  for (let iter = 0; iter < 32; iter++) {
+    const mid = (low + high) / 2
+    const len = forward
+      ? segmentPartialLength(net, segId, mid, currentT)
+      : segmentPartialLength(net, segId, currentT, mid)
+
+    if (Math.abs(len - dist) < 1e-6) {
+      return mid
+    }
+    if (forward) {
+      if (len > dist) {
+        low = mid
+      } else {
+        high = mid
+      }
+    } else {
+      if (len > dist) {
+        high = mid
+      } else {
+        low = mid
+      }
+    }
+  }
+
+  return (low + high) / 2
+}
+
 export function walkBackward(
   net: Network,
   startSeg: SegmentId,
@@ -77,45 +156,64 @@ export function walkBackward(
   let distRemaining = distance
 
   while (distRemaining > 0) {
-    const len = segmentArcLength(net, currentSegId)
-    if (len === 0) return null
+    const seg = net.segments.get(currentSegId)
+    if (!seg) return null
 
-    const distAvail = forward ? t * len : (1 - t) * len
+    // Distance disponible sur le segment courant en reculant
+    const distAvail = forward
+      ? segmentPartialLength(net, currentSegId, 0, t)
+      : segmentPartialLength(net, currentSegId, t, 1)
 
-    if (distRemaining <= distAvail) {
-      const dt = distRemaining / len
-      t = forward ? t - dt : t + dt
+    if (distRemaining <= distAvail + 1e-9) {
+      t = moveWithinSegmentBackward(net, currentSegId, t, forward, distRemaining)
+      // Borner t entre 0 et 1
+      t = Math.max(0, Math.min(1, t))
       return { segId: currentSegId, t, forward }
     }
 
     distRemaining -= distAvail
-    const seg = net.segments.get(currentSegId)
-    if (!seg) return null
-
     const exitNodeId = forward ? seg.from : seg.to
     const adj = net.adjacency.get(exitNodeId) || []
-    
+
     let prevSegId: SegmentId | null = null
 
-    // For simplicity, find a segment that allows transition from the exit node towards it
-    // Wait, since we are going backward, we are entering exitNodeId from currentSegId
-    // and want to exit via some prevSegId.
-    for (const sid of adj) {
-      if (sid === currentSegId) continue
-      const s = net.segments.get(sid)
-      if (!s) continue
-      
-      const nextNodeId = s.from === exitNodeId ? s.to : s.from
-      // We are travelling backwards, so the 'front' of the train entered exitNodeId from some node
-      // Actually, if we just check isTransitionAllowed:
-      // prevNodeId = nextNodeId (where the rear is coming from)
-      // currNodeId = exitNodeId
-      // nextNodeId = the node currentSeg goes to
-      const currentNextNodeId = forward ? seg.to : seg.from
-      
-      if (isTransitionAllowed(net, nextNodeId, exitNodeId, currentNextNodeId)) {
-        prevSegId = sid
-        break
+    // Si le nœud de sortie est l'apex d'un aiguillage et qu'on vient d'une branche divergente ou straight,
+    // en reculant on doit retourner sur le stem !
+    const juncAtExit = findJunctionAtNode(net, exitNodeId)
+    if (juncAtExit && juncAtExit.stemNodeId) {
+      const isFromBranch =
+        (juncAtExit.straightSegmentId === currentSegId) ||
+        (juncAtExit.divergingSegmentId === currentSegId) ||
+        (juncAtExit.divergingRightSegmentId === currentSegId)
+
+      if (isFromBranch) {
+        // Le segment précédent est celui qui relie exitNodeId à stemNodeId
+        for (const sid of adj) {
+          if (sid === currentSegId) continue
+          const s = net.segments.get(sid)
+          if (!s) continue
+          if ((s.from === exitNodeId && s.to === juncAtExit.stemNodeId) ||
+              (s.to === exitNodeId && s.from === juncAtExit.stemNodeId)) {
+            prevSegId = sid
+            break
+          }
+        }
+      }
+    }
+
+    if (!prevSegId) {
+      for (const sid of adj) {
+        if (sid === currentSegId) continue
+        const s = net.segments.get(sid)
+        if (!s) continue
+
+        const nextNodeId = s.from === exitNodeId ? s.to : s.from
+        const currentNextNodeId = forward ? seg.to : seg.from
+
+        if (isTransitionAllowed(net, nextNodeId, exitNodeId, currentNextNodeId)) {
+          prevSegId = sid
+          break
+        }
       }
     }
 
@@ -160,6 +258,55 @@ export function createLocomotive(
   }
 }
 
+/** Helper to move parametric t along a segment by a given distance in the forward direction. */
+function moveWithinSegmentForward(
+  net: Network,
+  segId: SegmentId,
+  currentT: number,
+  forward: boolean,
+  dist: number
+): number {
+  const seg = net.segments.get(segId)
+  if (!seg) return currentT
+  const segLen = segmentArcLength(net, segId)
+  if (segLen === 0) return currentT
+
+  if (seg.kind === 'straight' || !seg.via) {
+    const dt = dist / segLen
+    return forward ? currentT + dt : currentT - dt
+  }
+
+  // Pour les courbes Bézier, recherche dichotomique
+  let low = forward ? currentT : 0
+  let high = forward ? 1 : currentT
+
+  for (let iter = 0; iter < 32; iter++) {
+    const mid = (low + high) / 2
+    const len = forward
+      ? segmentPartialLength(net, segId, currentT, mid)
+      : segmentPartialLength(net, segId, mid, currentT)
+
+    if (Math.abs(len - dist) < 1e-6) {
+      return mid
+    }
+    if (forward) {
+      if (len > dist) {
+        high = mid
+      } else {
+        low = mid
+      }
+    } else {
+      if (len > dist) {
+        low = mid
+      } else {
+        high = mid
+      }
+    }
+  }
+
+  return (low + high) / 2
+}
+
 export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: number): boolean {
   let { segId, t, forward } = loco.front
   let distRemaining = deltaMeters * loco.direction
@@ -167,19 +314,20 @@ export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: n
   if (distRemaining > 0) {
     // move forward
     while (distRemaining > 0) {
-      const len = segmentArcLength(net, segId)
-      if (len === 0) return false
+      const seg = net.segments.get(segId)
+      if (!seg) return false
 
-      const distAvail = forward ? (1 - t) * len : t * len
-      if (distRemaining <= distAvail) {
-        const dt = distRemaining / len
-        t = forward ? t + dt : t - dt
+      const distAvail = forward
+        ? segmentPartialLength(net, segId, t, 1)
+        : segmentPartialLength(net, segId, 0, t)
+
+      if (distRemaining <= distAvail + 1e-9) {
+        t = moveWithinSegmentForward(net, segId, t, forward, distRemaining)
+        t = Math.max(0, Math.min(1, t))
         break
       }
 
       distRemaining -= distAvail
-      const seg = net.segments.get(segId)
-      if (!seg) return false
 
       const exitNodeId = forward ? seg.to : seg.from
       const prevNodeId = forward ? seg.from : seg.to
@@ -215,19 +363,20 @@ export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: n
     // move backward
     distRemaining = -distRemaining
     while (distRemaining > 0) {
-      const len = segmentArcLength(net, segId)
-      if (len === 0) return false
+      const seg = net.segments.get(segId)
+      if (!seg) return false
 
-      const distAvail = forward ? t * len : (1 - t) * len
-      if (distRemaining <= distAvail) {
-        const dt = distRemaining / len
-        t = forward ? t - dt : t + dt
+      const distAvail = forward
+        ? segmentPartialLength(net, segId, 0, t)
+        : segmentPartialLength(net, segId, t, 1)
+
+      if (distRemaining <= distAvail + 1e-9) {
+        t = moveWithinSegmentBackward(net, segId, t, forward, distRemaining)
+        t = Math.max(0, Math.min(1, t))
         break
       }
 
       distRemaining -= distAvail
-      const seg = net.segments.get(segId)
-      if (!seg) return false
 
       const exitNodeId = forward ? seg.from : seg.to
       const prevNodeId = forward ? seg.to : seg.from
@@ -389,68 +538,84 @@ export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'l
 
   // check if we are approaching the apex
   if (junction.nodeId === approachNodeId) {
-    // we must decide between branches
-    let leftBranch: 'straight' | 'diverging' | 'left' | 'right' = 'straight'
-    let rightBranch: 'straight' | 'diverging' | 'left' | 'right' = 'diverging'
+    const getDir = (segId: SegmentId) => {
+      const s = net.segments.get(segId)
+      if (!s) return { x: 1, y: 0 }
+      const other = s.from === junction.nodeId ? s.to : s.from
+      const pOther = net.nodes.get(other)
+      const pApex = net.nodes.get(junction.nodeId)
+      if (!pOther || !pApex) return { x: 1, y: 0 }
+      const dx = pOther.pos.x - pApex.pos.x
+      const dy = pOther.pos.y - pApex.pos.y
+      const len = Math.hypot(dx, dy)
+      if (len === 0) return { x: 1, y: 0 }
+      return { x: dx / len, y: dy / len }
+    }
 
-    // determine left/right based on cross product
-    const straightSeg = net.segments.get(junction.straightSegmentId)
-    const divSeg = net.segments.get(junction.divergingSegmentId)
-    
-    if (straightSeg && divSeg) {
-      const getDir = (segId: SegmentId) => {
-        const s = net.segments.get(segId)
-        if (!s) return { x: 1, y: 0 }
-        const other = s.from === junction.nodeId ? s.to : s.from
-        const pOther = net.nodes.get(other)
-        const pApex = net.nodes.get(junction.nodeId)
-        if (!pOther || !pApex) return { x: 1, y: 0 }
-        const dx = pOther.pos.x - pApex.pos.x
-        const dy = pOther.pos.y - pApex.pos.y
-        const len = Math.hypot(dx, dy)
-        if (len === 0) return { x: 1, y: 0 }
-        return { x: dx / len, y: dy / len }
-      }
-      
+    if (junction.hand === 'three_way') {
       const dirStraight = getDir(junction.straightSegmentId)
+      const dirLeft = getDir(junction.divergingSegmentId)
+      const dirRight = junction.divergingRightSegmentId ? getDir(junction.divergingRightSegmentId) : dirLeft
+
       const crossStraight = heading.x * dirStraight.y - heading.y * dirStraight.x
-      
+      const crossLeft = heading.x * dirLeft.y - heading.y * dirLeft.x
+      const crossRight = heading.x * dirRight.y - heading.y * dirRight.x
+
+      // Ordered from most left (lowest cross) to most right (highest cross)
+      const branches: Array<{ b: 'straight' | 'left' | 'right'; c: number }> = [
+        { b: 'straight', c: crossStraight },
+        { b: 'left', c: crossLeft },
+        { b: 'right', c: crossRight },
+      ]
+      branches.sort((a, b) => a.c - b.c)
+
+      // Find current branch index
+      let currentIdx = branches.findIndex((item) => item.b === junction.activeBranch)
+      if (currentIdx === -1) {
+        if (junction.activeBranch === 'diverging') {
+          currentIdx = branches.findIndex((item) => item.b === 'left')
+        }
+        if (currentIdx === -1) currentIdx = 0
+      }
+
+      // Step by 1 in desired direction
+      let nextIdx = currentIdx
+      if (steerDirection === 'left') {
+        nextIdx = Math.max(0, currentIdx - 1)
+      } else {
+        nextIdx = Math.min(branches.length - 1, currentIdx + 1)
+      }
+
+      setJunctionBranch(junction, branches[nextIdx].b)
+      return true
+    } else {
+      // Standard 2-way turnout (straight & diverging)
+      const straightSeg = net.segments.get(junction.straightSegmentId)
+      const divSeg = net.segments.get(junction.divergingSegmentId)
+      if (!straightSeg || !divSeg) return false
+
+      const dirStraight = getDir(junction.straightSegmentId)
       const dirDiv = getDir(junction.divergingSegmentId)
+      const crossStraight = heading.x * dirStraight.y - heading.y * dirStraight.x
       const crossDiv = heading.x * dirDiv.y - heading.y * dirDiv.x
 
-      if (junction.hand === 'three_way') {
-         // for three way, check all branches
-         const dirRight = junction.divergingRightSegmentId ? getDir(junction.divergingRightSegmentId) : dirDiv
-         const crossRight = heading.x * dirRight.y - heading.y * dirRight.x
-         
-         const crosses: Array<{ b: 'straight' | 'left' | 'right'; c: number }> = [
-           { b: 'straight', c: crossStraight },
-           { b: 'left', c: crossDiv },
-           { b: 'right', c: crossRight },
-         ]
-         crosses.sort((a, b) => a.c - b.c)
-         
-         if (steerDirection === 'left') {
-           setJunctionBranch(junction, crosses[0].b)
-         } else {
-           setJunctionBranch(junction, crosses[2].b)
-         }
-         return true
-      }
+      const branches: Array<{ b: 'straight' | 'diverging'; c: number }> = [
+        { b: 'straight', c: crossStraight },
+        { b: 'diverging', c: crossDiv },
+      ]
+      branches.sort((a, b) => a.c - b.c) // 0: left, 1: right
 
-      if (crossStraight < crossDiv) { // straight is more 'left'
-        leftBranch = 'straight'
-        rightBranch = 'diverging'
-      } else {
-        leftBranch = 'diverging'
-        rightBranch = 'straight'
-      }
+      let currentIdx = branches.findIndex((item) => item.b === junction.activeBranch)
+      if (currentIdx === -1) currentIdx = 0
 
+      let nextIdx = currentIdx
       if (steerDirection === 'left') {
-        setJunctionBranch(junction, leftBranch)
+        nextIdx = Math.max(0, currentIdx - 1)
       } else {
-        setJunctionBranch(junction, rightBranch)
+        nextIdx = Math.min(branches.length - 1, currentIdx + 1)
       }
+
+      setJunctionBranch(junction, branches[nextIdx].b)
       return true
     }
   }

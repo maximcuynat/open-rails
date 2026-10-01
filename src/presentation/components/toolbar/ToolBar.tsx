@@ -309,6 +309,31 @@ export function ToolBar({ store }: { store: EditorStore }) {
           </div>
         )}
 
+        {/* Flip direction button */}
+        {store.locomotive && (
+          <div
+            style={{
+              margin: '2px 0 0',
+              padding: '4px 2px',
+              background: 'rgba(168, 85, 247, 0.15)',
+              border: '1px solid #a855f7',
+              borderRadius: '6px',
+              fontSize: '9px',
+              fontWeight: 700,
+              color: '#c084fc',
+              textAlign: 'center',
+              lineHeight: 1.2,
+              cursor: 'pointer',
+              width: '34px',
+            }}
+            title="Inverser le sens de la locomotive (Touche R ou Tab)"
+            onClick={() => store.flipLocomotiveDirection()}
+          >
+            <div>⇄</div>
+            <div style={{ fontSize: '7px', opacity: 0.8 }}>Sens</div>
+          </div>
+        )}
+
         {/* Remove locomotive button */}
         {store.locomotive && !store.isPlayMode && (
           <div

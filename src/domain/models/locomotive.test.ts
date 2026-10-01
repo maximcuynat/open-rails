@@ -3,6 +3,7 @@ import {
   createNetwork,
   addNode,
   addSegment,
+  addCurveSegment,
   resetIdCounter
 } from './network'
 import { addJunction } from './junction'
@@ -12,7 +13,9 @@ import {
   advanceLocomotive,
   getLocomotivePolygon,
   snapToNearestTrack,
-  steerJunction
+  steerJunction,
+  getLocomotiveFrontPos,
+  getLocomotiveRearPos
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -169,5 +172,154 @@ describe('locomotive', () => {
     // Test steer left
     steerJunction(net, loco!, 'left')
     expect(junc.activeBranch).toBe('straight')
+  })
+
+  it('steerJunction steps by 1 on 3-way turnout (left <-> straight <-> right)', () => {
+    const net = createNetwork()
+    const nStem = addNode(net, { x: 0, y: 0 })
+    const nApex = addNode(net, { x: 100, y: 0 })
+    const nStraight = addNode(net, { x: 200, y: 0 })
+    const nLeft = addNode(net, { x: 200, y: -100 })
+    const nRight = addNode(net, { x: 200, y: 100 })
+
+    const sStem = addSegment(net, nStem.id, nApex.id)!
+    const sStraight = addSegment(net, nApex.id, nStraight.id)!
+    const sLeft = addSegment(net, nApex.id, nLeft.id)!
+    const sRight = addSegment(net, nApex.id, nRight.id)!
+
+    const junc = addJunction(net, {
+      nodeId: nApex.id,
+      stemNodeId: nStem.id,
+      straightNodeId: nStraight.id,
+      divergingNodeId: nLeft.id,
+      divergingRightNodeId: nRight.id,
+      straightSegmentId: sStraight.id,
+      divergingSegmentId: sLeft.id,
+      divergingRightSegmentId: sRight.id,
+      hand: 'three_way',
+      frogNumber: 6,
+      activeBranch: 'straight',
+    })
+
+    const loco = createLocomotive(net, sStem.id, 0.5, 20, 10)
+
+    // Initially straight. Steer left shifts to 'left'
+    steerJunction(net, loco!, 'left')
+    expect(junc.activeBranch).toBe('left')
+
+    // Steer left again stays at left (limit)
+    steerJunction(net, loco!, 'left')
+    expect(junc.activeBranch).toBe('left')
+
+    // Steer right shifts by 1 -> straight
+    steerJunction(net, loco!, 'right')
+    expect(junc.activeBranch).toBe('straight')
+
+    // Steer right again shifts by 1 -> right
+    steerJunction(net, loco!, 'right')
+    expect(junc.activeBranch).toBe('right')
+
+    // Steer right again stays at right (limit)
+    steerJunction(net, loco!, 'right')
+    expect(junc.activeBranch).toBe('right')
+
+    // Steer left shifts back by 1 -> straight
+    steerJunction(net, loco!, 'left')
+    expect(junc.activeBranch).toBe('straight')
+  })
+
+  it('preserves exact bogie distance along a curved track', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 100, y: 100 })
+    // Segment courbe avec un point de contrôle via
+    const s1 = addCurveSegment(net, n1.id, n2.id, { x: 10, y: 90 })!
+
+    const bogieDistance = 14
+    // Placer la locomotive au milieu de la courbe
+    const loco = createLocomotive(net, s1.id, 0.6, 20, bogieDistance)
+    expect(loco).not.toBeNull()
+
+    const pFront0 = getLocomotiveFrontPos(net, loco!)!
+    const pRear0 = getLocomotiveRearPos(net, loco!)!
+    const chordDist0 = Math.hypot(pFront0.x - pRear0.x, pFront0.y - pRear0.y)
+    // La distance de corde sur une courbe douce doit être très proche de bogieDistance (légèrement inférieure à l'arc, sans distorsion excessive)
+    expect(chordDist0).toBeGreaterThan(13.0)
+    expect(chordDist0).toBeLessThanOrEqual(bogieDistance + 0.01)
+
+    // Avancer par petits pas de 2m sur la courbe et vérifier que la distance reste stable
+    for (let step = 0; step < 5; step++) {
+      const ok = advanceLocomotive(net, loco!, 2)
+      expect(ok).toBe(true)
+
+      const pFront = getLocomotiveFrontPos(net, loco!)!
+      const pRear = getLocomotiveRearPos(net, loco!)!
+      const chordDist = Math.hypot(pFront.x - pRear.x, pFront.y - pRear.y)
+
+      // Sur une même courbure, la corde reste très proche
+      expect(chordDist).toBeGreaterThan(13.0)
+      expect(chordDist).toBeLessThanOrEqual(bogieDistance + 0.01)
+    }
+  })
+
+  it('preserves bogie distance across 3-way turnout', () => {
+    const net = createNetwork()
+    const nStem = addNode(net, { x: 0, y: 0 })
+    const nApex = addNode(net, { x: 100, y: 0 })
+    const nStraight = addNode(net, { x: 200, y: 0 })
+    const nLeft = addNode(net, { x: 200, y: -50 })
+    const nRight = addNode(net, { x: 200, y: 50 })
+
+    const sStem = addSegment(net, nStem.id, nApex.id)!
+    const sStraight = addSegment(net, nApex.id, nStraight.id)!
+    const sLeft = addCurveSegment(net, nApex.id, nLeft.id, { x: 150, y: -25 })!
+    const sRight = addCurveSegment(net, nApex.id, nRight.id, { x: 150, y: 25 })!
+
+    addJunction(net, {
+      nodeId: nApex.id,
+      stemNodeId: nStem.id,
+      straightNodeId: nStraight.id,
+      divergingNodeId: nLeft.id,
+      divergingRightNodeId: nRight.id,
+      straightSegmentId: sStraight.id,
+      divergingSegmentId: sLeft.id,
+      divergingRightSegmentId: sRight.id,
+      hand: 'three_way',
+      frogNumber: 6,
+      activeBranch: 'left', // branche gauche
+    })
+
+    const bogieDistance = 14
+    // Placer la loco sur le stem à 5m de l'apex
+    // stem longueur = 100m. t = 0.95 -> 95m.
+    const loco = createLocomotive(net, sStem.id, 0.95, 20, bogieDistance)
+    expect(loco).not.toBeNull()
+
+    // Avancer de 10 mètres : le bogie avant avance de 5m sur sStem, franchit l'apex et avance de 5m sur sLeft.
+    // Le bogie arrière (à 14m derrière le bogie avant) se trouve donc encore sur sStem (5m sur sLeft + 9m sur sStem -> t = 0.91).
+    const ok = advanceLocomotive(net, loco!, 10)
+    expect(ok).toBe(true)
+    expect(loco!.front.segId).toBe(sLeft.id)
+    expect(loco!.rear.segId).toBe(sStem.id)
+
+    const pFront = getLocomotiveFrontPos(net, loco!)!
+    const pRear = getLocomotiveRearPos(net, loco!)!
+    const dist = Math.hypot(pFront.x - pRear.x, pFront.y - pRear.y)
+
+    // Entre l'arrière sur le stem et l'avant sur le virage, la distance géométrique reste proche de 14m
+    expect(dist).toBeGreaterThan(13.0)
+    expect(dist).toBeLessThanOrEqual(bogieDistance + 0.1)
+
+    // Puis avancer de 15m supplémentaires : le bogie arrière franchit l'apex et entre à son tour sur sLeft
+    const ok2 = advanceLocomotive(net, loco!, 15)
+    expect(ok2).toBe(true)
+    expect(loco!.front.segId).toBe(sLeft.id)
+    expect(loco!.rear.segId).toBe(sLeft.id)
+
+    const pFront2 = getLocomotiveFrontPos(net, loco!)!
+    const pRear2 = getLocomotiveRearPos(net, loco!)!
+    const dist2 = Math.hypot(pFront2.x - pRear2.x, pFront2.y - pRear2.y)
+    expect(dist2).toBeGreaterThan(13.0)
+    expect(dist2).toBeLessThanOrEqual(bogieDistance + 0.1)
   })
 })

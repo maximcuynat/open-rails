@@ -2791,10 +2791,12 @@ export function renderLocomotive(
 
   // 2. Draw bogie markers (visible anchor points at center of rails)
   const bogieR = Math.max(3, Math.min(6, 4 * Math.sqrt(cam.scale)))
+  const forwardBogiePos = loco.direction === 1 ? frontPos : rearPos
+  const backwardBogiePos = loco.direction === 1 ? rearPos : frontPos
 
-  // Front bogie (filled accent)
+  // Active front bogie (filled accent red)
   ctx.beginPath()
-  ctx.arc(toSx(frontPos), toSy(frontPos), bogieR, 0, Math.PI * 2)
+  ctx.arc(toSx(forwardBogiePos), toSy(forwardBogiePos), bogieR, 0, Math.PI * 2)
   ctx.fillStyle = isGhost ? 'rgba(239, 68, 68, 0.4)' : '#ef4444'
   ctx.fill()
   ctx.strokeStyle = isGhost ? 'rgba(239, 68, 68, 0.6)' : '#b91c1c'
@@ -2803,7 +2805,7 @@ export function renderLocomotive(
 
   // Rear bogie (filled orange)
   ctx.beginPath()
-  ctx.arc(toSx(rearPos), toSy(rearPos), bogieR, 0, Math.PI * 2)
+  ctx.arc(toSx(backwardBogiePos), toSy(backwardBogiePos), bogieR, 0, Math.PI * 2)
   ctx.fillStyle = isGhost ? 'rgba(251, 146, 60, 0.4)' : '#fb923c'
   ctx.fill()
   ctx.strokeStyle = isGhost ? 'rgba(251, 146, 60, 0.6)' : '#c2410c'
