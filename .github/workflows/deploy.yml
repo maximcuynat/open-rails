@@ -2,7 +2,12 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ['main'] # Remplace par 'master' si c'est le nom de ta branche principale
+    branches: ['main']
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - '.vscode/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
