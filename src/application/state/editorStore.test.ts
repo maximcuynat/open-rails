@@ -161,4 +161,21 @@ describe('EditorStore persistence', () => {
     expect(store.turnoutStartId).toBeNull()
     expect(store.network.nodes.size).toBe(0)
   })
+
+  it('manages settings modal visibility states (open, close, toggle)', () => {
+    const store = new EditorStore()
+    expect(store.isSettingsOpen).toBe(false)
+
+    store.openSettings()
+    expect(store.isSettingsOpen).toBe(true)
+
+    store.closeSettings()
+    expect(store.isSettingsOpen).toBe(false)
+
+    store.toggleSettings()
+    expect(store.isSettingsOpen).toBe(true)
+
+    store.toggleSettings()
+    expect(store.isSettingsOpen).toBe(false)
+  })
 })

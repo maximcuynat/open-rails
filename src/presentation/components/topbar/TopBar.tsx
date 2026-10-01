@@ -32,7 +32,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const fileItems: MenuItem[] = [
     { id: 'new', label: 'Nouveau réseau' },
-    { id: 'settings', label: 'Paramètres du réseau (Échelles, Unités)...', separatorAfter: true },
+    { id: 'settings', label: 'Paramètres du réseau (Échelles, Unités)...', shortcut: 'Ctrl+,', separatorAfter: true },
     { id: 'import-json', label: 'Importer JSON...' },
     { id: 'export-json', label: 'Exporter JSON', separatorAfter: true },
     { id: 'export-svg', label: 'Exporter SVG réaliste (1:87)' },
@@ -58,7 +58,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     { id: 'toggle-dimensions', label: store.showDimensions ? '✓ Côtes dynamiques CAO' : 'Afficher les côtes CAO' },
     { id: 'toggle-minimap', label: 'Afficher la mini-carte' },
     { id: 'toggle-inspector', label: 'Panneau latéral de propriétés', shortcut: 'I', separatorAfter: true },
-    { id: 'open-settings', label: 'Paramètres & Échelles...' },
+    { id: 'open-settings', label: 'Paramètres & Échelles...', shortcut: 'Ctrl+,' },
   ]
 
   const helpItems: MenuItem[] = [
@@ -246,7 +246,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           <button
             className="tb-icon-btn"
             onClick={store.openSettings}
-            title="Paramètres du réseau & Échelles ferroviaires"
+            title="Paramètres du réseau & Échelles ferroviaires (Ctrl+,)"
             aria-label="Paramètres"
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -339,6 +339,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
           <div><span className="shortcut-kbd">Suppr</span></div>
           <div>Supprimer la sélection</div>
+
+          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">,</span> ou <span className="shortcut-kbd">,</span></div>
+          <div>Paramètres du réseau (Échelles, Unités)</div>
 
           <div><span className="shortcut-kbd">Échap</span></div>
           <div>Désélectionner / Terminer la pose</div>

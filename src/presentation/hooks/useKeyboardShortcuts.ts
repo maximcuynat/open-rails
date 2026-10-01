@@ -56,6 +56,12 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         store.selectAll()
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma' || e.key === 'p' || e.key === 'P')) {
+        e.preventDefault()
+        store.toggleSettings()
+      } else if (e.key === ',' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        store.toggleSettings()
       } else if (e.key === 'Tab') {
         if (store.tool === 'curve') {
           e.preventDefault()
