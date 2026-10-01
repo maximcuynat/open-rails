@@ -114,11 +114,98 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
 
       {/* Live Play Mode HUD */}
       {store.isPlayMode && store.locomotive && (
-        <div className="hud-realtime-card" style={{ pointerEvents: 'auto' }}>
+        <div className="hud-realtime-card" style={{ pointerEvents: 'auto', gap: '8px' }}>
           <span className="hud-pill" style={{ color: '#10b981', fontWeight: 600 }}>
-            ▶ Conduite TGV ({store.locomotiveLength}m)
+            ▶ Conduite ({store.locomotiveLength}m)
           </span>
+
           <span className="hud-sep" />
+
+          {/* Vitesse en temps réel */}
+          <span
+            style={{
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: 700,
+              fontSize: '13px',
+              color: '#f8fafc',
+              minWidth: '68px',
+            }}
+          >
+            {Math.round(store.locomotiveCurrentSpeed * 3.6)} km/h
+          </span>
+
+          {/* Badge cinématique : Accélération / Décélération / Inertie / Arrêt */}
+          {store.locomotiveThrottle === 1 && (
+            <span
+              style={{
+                background: 'rgba(16, 185, 129, 0.2)',
+                border: '1px solid #10b981',
+                color: '#34d399',
+                borderRadius: '4px',
+                padding: '1px 6px',
+                fontSize: '11px',
+                fontWeight: 600,
+              }}
+            >
+              ▲ Accélération
+            </span>
+          )}
+          {store.locomotiveThrottle === -1 && (
+            <span
+              style={{
+                background: 'rgba(244, 63, 94, 0.2)',
+                border: '1px solid #f43f5e',
+                color: '#fb7185',
+                borderRadius: '4px',
+                padding: '1px 6px',
+                fontSize: '11px',
+                fontWeight: 600,
+              }}
+            >
+              ▼ Décélération
+            </span>
+          )}
+          {store.locomotiveThrottle === 0 && store.locomotiveCurrentSpeed > 0.1 && (
+            <span
+              style={{
+                background: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid #38bdf8',
+                color: '#7dd3fc',
+                borderRadius: '4px',
+                padding: '1px 6px',
+                fontSize: '11px',
+                fontWeight: 600,
+              }}
+            >
+              ≋ Inertie
+            </span>
+          )}
+          {store.locomotiveThrottle === 0 && store.locomotiveCurrentSpeed <= 0.1 && (
+            <span
+              style={{
+                background: 'rgba(148, 163, 184, 0.15)',
+                border: '1px solid #64748b',
+                color: '#94a3b8',
+                borderRadius: '4px',
+                padding: '1px 6px',
+                fontSize: '11px',
+              }}
+            >
+              ⏹ À l'arrêt
+            </span>
+          )}
+
+          <span className="hud-sep" />
+
+          {/* Guide raccourcis clavier */}
+          <span style={{ color: '#94a3b8', fontSize: '10.5px' }}>
+            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↑</kbd> Accélérer &nbsp;
+            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>↓</kbd> Décélérer &nbsp;
+            <kbd style={{ background: '#1e293b', padding: '1px 4px', borderRadius: '3px', border: '1px solid #334155' }}>←/→</kbd> Aiguillage
+          </span>
+
+          <span className="hud-sep" />
+
           <button
             onClick={() => {
               store.followLocomotiveCamera = !store.followLocomotiveCamera
@@ -138,7 +225,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
           >
             {store.followLocomotiveCamera ? '🎯 Caméra fixée' : 'Libre'}
           </button>
-          <span className="hud-sep" />
+
           <button
             onClick={() => store.flipLocomotiveDirection()}
             style={{
@@ -152,7 +239,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
             }}
             title="Inverser le sens de la locomotive (Touche R ou Tab)"
           >
-            ⇄ Inverser sens (R)
+            ⇄ Sens (R)
           </button>
         </div>
       )}

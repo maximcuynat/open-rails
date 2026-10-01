@@ -113,8 +113,18 @@ export class EditorStore {
   locomotive: Locomotive | null = null
   isPlayMode = false
   locomotiveLength = 20 // meters (adjustable)
-  locomotiveSpeed = 0.5 // meters per step (keyboard advance increment)
+  locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
+
+  // --- Locomotive Kinematics & Physics ---
+  locomotiveCurrentSpeed = 0 // current speed in m/s (0 = stopped)
+  locomotiveMaxSpeed = 45 // max speed in m/s (~162 km/h)
+  locomotiveAcceleration = 3.5 // m/s^2 (applied while holding ArrowUp)
+  locomotiveBraking = 7.0 // m/s^2 (applied while holding ArrowDown)
+  locomotiveCoastingDecel = 0.4 // m/s^2 (friction / drag during coasting / inertia)
+  locomotiveThrottle: 1 | 0 | -1 = 0 // 1 = accelerating, -1 = braking, 0 = coasting / inertia
+  private simRafId: number | null = null
+  private simLastTime = 0
 
   turnoutStartId: string | null = null
   turnoutOffset = 4.0
@@ -1199,11 +1209,97 @@ export class EditorStore {
       if (this.followLocomotiveCamera) {
         this.focusOnLocomotive()
       }
+      this.startSimulationLoop()
+    } else {
+      this.stopSimulationLoop()
+      this.locomotiveCurrentSpeed = 0
+      this.locomotiveThrottle = 0
     }
     this.notify()
   }
 
-  /** Advance the locomotive by one step in the given direction */
+  /** Set the throttle state for drive mode: 1 = accelerate, -1 = brake/decelerate, 0 = coast/inertia */
+  setLocomotiveThrottle = (throttle: 1 | 0 | -1): void => {
+    if (this.locomotiveThrottle !== throttle) {
+      this.locomotiveThrottle = throttle
+      this.notify()
+    }
+  }
+
+  /** Run one physical simulation tick (dt in seconds) */
+  tickSimulation = (dt: number): void => {
+    if (!this.locomotive || !this.isPlayMode || dt <= 0) return
+
+    // Mise à jour de la vitesse selon la commande (accélération, freinage ou inertie)
+    if (this.locomotiveThrottle === 1) {
+      // Flèche Haut : accélération active
+      this.locomotiveCurrentSpeed = Math.min(
+        this.locomotiveMaxSpeed,
+        this.locomotiveCurrentSpeed + this.locomotiveAcceleration * dt
+      )
+    } else if (this.locomotiveThrottle === -1) {
+      // Flèche Bas : décélération / freinage actif
+      this.locomotiveCurrentSpeed = Math.max(
+        0,
+        this.locomotiveCurrentSpeed - this.locomotiveBraking * dt
+      )
+    } else {
+      // Inertie (roue libre) : résistance au roulement / traînée progressive
+      if (this.locomotiveCurrentSpeed > 0) {
+        this.locomotiveCurrentSpeed = Math.max(
+          0,
+          this.locomotiveCurrentSpeed - this.locomotiveCoastingDecel * dt
+        )
+      }
+    }
+
+    // Déplacement sur le réseau si la vitesse est positive
+    if (this.locomotiveCurrentSpeed > 0) {
+      const dist = this.locomotiveCurrentSpeed * dt
+      const moved = advanceLocomotive(this.network, this.locomotive, dist)
+      if (!moved) {
+        // En fin de voie ou bloqué par un butoir : arrêt immédiat
+        this.locomotiveCurrentSpeed = 0
+      } else if (this.followLocomotiveCamera) {
+        const pos = getLocomotiveFrontPos(this.network, this.locomotive)
+        if (pos) {
+          this.camera.x = pos.x
+          this.camera.y = pos.y
+        }
+      }
+      this.notify()
+    } else if (this.locomotiveThrottle !== 0) {
+      this.notify()
+    }
+  }
+
+  /** Start requestAnimationFrame simulation loop */
+  startSimulationLoop = (): void => {
+    if (this.simRafId !== null || typeof window === 'undefined') return
+    this.simLastTime = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const loop = (now: number) => {
+      if (!this.isPlayMode || !this.locomotive) {
+        this.stopSimulationLoop()
+        return
+      }
+      const dt = Math.min((now - this.simLastTime) / 1000, 0.1)
+      this.simLastTime = now
+      this.tickSimulation(dt)
+      this.simRafId = requestAnimationFrame(loop)
+    }
+    this.simRafId = requestAnimationFrame(loop)
+  }
+
+  /** Stop simulation loop */
+  stopSimulationLoop = (): void => {
+    if (this.simRafId !== null && typeof window !== 'undefined') {
+      cancelAnimationFrame(this.simRafId)
+      this.simRafId = null
+    }
+    this.locomotiveThrottle = 0
+  }
+
+  /** Advance the locomotive by one step in the given direction (discrete fallback) */
   stepLocomotive = (direction: 1 | -1): void => {
     if (!this.locomotive || !this.isPlayMode) return
     const moved = advanceLocomotive(this.network, this.locomotive, direction * this.locomotiveSpeed)
@@ -1233,6 +1329,9 @@ export class EditorStore {
 
   /** Remove the locomotive from the layout */
   removeLocomotive = (): void => {
+    this.stopSimulationLoop()
+    this.locomotiveCurrentSpeed = 0
+    this.locomotiveThrottle = 0
     this.locomotive = null
     this.isPlayMode = false
     this.notify()

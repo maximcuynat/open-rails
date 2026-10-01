@@ -4,7 +4,7 @@ import type { EditorStore } from '@application/state/editorStore'
 /** Global keyboard shortcuts wired to the shared store. */
 export function useKeyboardShortcuts(store: EditorStore): void {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       // Don't intercept when typing in an input/textarea
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
@@ -15,11 +15,11 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       if (store.isPlayMode) {
         if (e.key === 'ArrowUp') {
           e.preventDefault()
-          store.stepLocomotive(1)
+          store.setLocomotiveThrottle(1)
           return
         } else if (e.key === 'ArrowDown') {
           e.preventDefault()
-          store.stepLocomotive(-1)
+          store.setLocomotiveThrottle(-1)
           return
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault()
@@ -131,7 +131,36 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         else if (store.tool === 'turnout') store.setTurnoutRadius(store.turnoutRadius + 5)
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (store.isPlayMode) {
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          if (store.locomotiveThrottle === 1) {
+            store.setLocomotiveThrottle(0)
+          }
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          if (store.locomotiveThrottle === -1) {
+            store.setLocomotiveThrottle(0)
+          }
+        }
+      }
+    }
+
+    const onBlur = () => {
+      if (store.isPlayMode && store.locomotiveThrottle !== 0) {
+        store.setLocomotiveThrottle(0)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [store])
 }

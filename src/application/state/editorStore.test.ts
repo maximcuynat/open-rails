@@ -227,4 +227,106 @@ describe('EditorStore persistence', () => {
       expect(store.sectionMeta[remainingSeg.id]?.name).toBe('Voie Rapide')
     })
   })
+
+  describe('Locomotive drive kinematics & inertia', () => {
+    it('accelerates with ArrowUp (throttle = 1) and advances along the track', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 200, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      // Placer la locomotive à x = 30m (assez d'espace pour le bogie arrière à 14m derrière)
+      const placed = store.placeLocomotiveAt({ x: 30, y: 0 })
+      expect(placed).toBe(true)
+      expect(store.locomotive).not.toBeNull()
+      const initialT = store.locomotive!.front.t
+
+      store.togglePlayMode()
+      expect(store.isPlayMode).toBe(true)
+
+      // Accélération pendant 1 seconde
+      store.setLocomotiveThrottle(1)
+      store.tickSimulation(1.0)
+
+      expect(store.locomotiveCurrentSpeed).toBeCloseTo(3.5, 2)
+      expect(store.locomotive!.front.t).toBeGreaterThan(initialT)
+    })
+
+    it('coasts with inertia when throttle is released (throttle = 0)', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 300, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      store.placeLocomotiveAt({ x: 30, y: 0 })
+      store.togglePlayMode()
+
+      // Vitesse initiale
+      store.locomotiveCurrentSpeed = 10.0
+      store.setLocomotiveThrottle(0) // Relâché -> inertie
+
+      const tBefore = store.locomotive!.front.t
+      store.tickSimulation(1.0)
+
+      // La vitesse doit diminuer très légèrement en roue libre (frottement de 0.4 m/s²)
+      expect(store.locomotiveCurrentSpeed).toBeCloseTo(9.6, 2)
+      // Mais le train a quand même bien avancé grâce à son élan
+      expect(store.locomotive!.front.t).toBeGreaterThan(tBefore)
+    })
+
+    it('decelerates quickly when braking (throttle = -1)', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 300, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      store.placeLocomotiveAt({ x: 30, y: 0 })
+      store.togglePlayMode()
+
+      store.locomotiveCurrentSpeed = 10.0
+      store.setLocomotiveThrottle(-1) // Freinage actif
+
+      store.tickSimulation(1.0)
+
+      // La vitesse chute fortement avec le freinage (7.0 m/s²)
+      expect(store.locomotiveCurrentSpeed).toBeCloseTo(3.0, 2)
+    })
+
+    it('clamps speed to 0 when braking stops the locomotive', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 300, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      store.placeLocomotiveAt({ x: 30, y: 0 })
+      store.togglePlayMode()
+
+      store.locomotiveCurrentSpeed = 2.0
+      store.setLocomotiveThrottle(-1)
+
+      store.tickSimulation(1.0)
+
+      // La vitesse s'arrête à 0 et ne devient jamais négative
+      expect(store.locomotiveCurrentSpeed).toBe(0)
+    })
+
+    it('resets speed to 0 when reaching a dead end', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 50, y: 0 }) // voie de 50m seulement
+      addSegment(store.network, n1.id, n2.id)
+
+      store.placeLocomotiveAt({ x: 30, y: 0 })
+      store.togglePlayMode()
+
+      // Vitesse très élevée pour percuter le bout de voie
+      store.locomotiveCurrentSpeed = 100
+      store.setLocomotiveThrottle(1)
+
+      store.tickSimulation(1.0)
+
+      // Arrêté net au butoir
+      expect(store.locomotiveCurrentSpeed).toBe(0)
+    })
+  })
 })
