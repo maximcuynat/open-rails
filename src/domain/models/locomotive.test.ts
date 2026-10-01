@@ -442,9 +442,9 @@ describe('locomotive', () => {
     const noseRear = train!.rearLoco!.polygon[0]
     expect(noseRear.x).toBeLessThan(noseLead.x)
 
-    // 5. Bogies : 2 bogies motrice avant + 3 bogies voitures (dont 1 Jacobs partagé) + 2 bogies motrice arrière
-    // Total = 7 bogies pour 2 voitures articulées
-    expect(train!.bogies.length).toBe(7)
+    // 5. Bogies : 2 bogies motrice avant + 4 bogies voitures (2 par voiture avec retrait de 3.04m identique à la motrice) + 2 bogies motrice arrière
+    // Total = 8 bogies pour 2 voitures
+    expect(train!.bogies.length).toBe(8)
     for (const bogie of train!.bogies) {
       expect(bogie.polygon.length).toBe(4)
       expect(bogie.axles.length).toBe(2)

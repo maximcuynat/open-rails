@@ -2778,13 +2778,11 @@ export function renderLocomotive(
     ctx.globalAlpha = 0.45
   }
 
-  // Halo de sélection lumineux cyan si le train est sélectionné
-  if (isSelected && !isGhost) {
+  // Ligne de sélection fine et nette sans aucun effet de glow baveux (désactivé en mode squelette pour clarté)
+  if (isSelected && !isGhost && !isDebugSkeleton) {
     ctx.save()
     ctx.strokeStyle = '#38bdf8'
-    ctx.lineWidth = Math.max(3, 4.5 * Math.sqrt(cam.scale))
-    ctx.shadowColor = '#38bdf8'
-    ctx.shadowBlur = 12
+    ctx.lineWidth = 1.5
     ctx.lineJoin = 'round'
     // Contour motrice 1
     ctx.beginPath()
@@ -2991,10 +2989,10 @@ export function renderLocomotive(
     ctx.closePath()
 
     if (isDebugSkeleton) {
-      // Mode Squelette : contour filaire léger sans carcasse opaque
-      ctx.setLineDash([4, 4])
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)'
-      ctx.lineWidth = 1
+      // Mode Squelette : contour filaire discret et très fin
+      ctx.setLineDash([3, 3])
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)'
+      ctx.lineWidth = 0.75
       ctx.stroke()
       ctx.setLineDash([])
     } else {
@@ -3045,10 +3043,10 @@ export function renderLocomotive(
     ctx.closePath()
 
     if (isDebugSkeleton) {
-      // Mode Squelette : contour filaire discret
-      ctx.setLineDash([4, 4])
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)'
-      ctx.lineWidth = 1
+      // Mode Squelette : contour filaire discret et très fin
+      ctx.setLineDash([3, 3])
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)'
+      ctx.lineWidth = 0.75
       ctx.stroke()
       ctx.setLineDash([])
     } else {
@@ -3153,7 +3151,7 @@ export function renderLocomotive(
   ctx.restore()
 }
 
-/** Rendu des repères cinématiques, pivots de bogies, attaches de caisses et accordéons (sans carcasse) */
+/** Rendu des repères cinématiques, pivots de bogies, attaches de caisses et accordéons (tracés fins sans encombrement) */
 function renderTrainSkeletonDebug(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
@@ -3162,32 +3160,32 @@ function renderTrainSkeletonDebug(
   train: TGVFullTrain,
 ): void {
   ctx.save()
-  const fontSize = Math.max(9, Math.min(12, 11 * Math.sqrt(cam.scale)))
+  const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
   ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
 
-  // 1. Lignes de cote d'entraxe entre bogies consécutifs
+  // 1. Lignes de cote d'entraxe entre bogies consécutifs (trait fin pointillé)
   for (let bi = 0; bi < train.bogies.length - 1; bi++) {
     const bA = train.bogies[bi].center
     const bB = train.bogies[bi + 1].center
     const dist = Math.hypot(bA.x - bB.x, bA.y - bB.y)
 
     ctx.beginPath()
-    ctx.setLineDash([3, 4])
+    ctx.setLineDash([2, 3])
     ctx.moveTo(toSx(bA), toSy(bA))
     ctx.lineTo(toSx(bB), toSy(bB))
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)'
-    ctx.lineWidth = 1.5
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)'
+    ctx.lineWidth = 0.8
     ctx.stroke()
     ctx.setLineDash([])
 
-    // Badge textuel de cotation
+    // Badge textuel de cotation discret
     const midX = (toSx(bA) + toSx(bB)) / 2
     const midY = (toSy(bA) + toSy(bB)) / 2
     const label = `${dist.toFixed(2)} m`
-    const pad = 3
+    const pad = 2.5
     const tw = ctx.measureText(label).width
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
-    ctx.fillRect(midX - tw / 2 - pad, midY - 7 - pad, tw + pad * 2, 14 + pad)
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.8)'
+    ctx.fillRect(midX - tw / 2 - pad, midY - 6 - pad, tw + pad * 2, 12 + pad)
     ctx.fillStyle = '#38bdf8'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -3200,19 +3198,19 @@ function renderTrainSkeletonDebug(
     const sx = toSx(bogie.center)
     const sy = toSy(bogie.center)
 
-    // Disque de pivot central
-    const rOuter = Math.max(6, 6 * Math.sqrt(cam.scale))
+    // Disque de pivot central fin
+    const rOuter = Math.max(3.5, 4.5 * Math.sqrt(cam.scale))
     ctx.beginPath()
     ctx.arc(sx, sy, rOuter, 0, Math.PI * 2)
     ctx.fillStyle = '#0284c7'
     ctx.fill()
     ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 1.5
+    ctx.lineWidth = 1
     ctx.stroke()
 
     // 2.2 Axes orientés qui tournent solidairement avec le bogie dans les courbes
     // (Axe longitudinal = tangent, Axe transversal = normal)
-    const axisMeters = 2.2 // longueur de l'axe orienté en mètres
+    const axisMeters = 2.0 // longueur de l'axe orienté en mètres
     const pFrontAxis = {
       x: bogie.center.x + bogie.tangent.x * axisMeters,
       y: bogie.center.y + bogie.tangent.y * axisMeters,
@@ -3222,56 +3220,60 @@ function renderTrainSkeletonDebug(
       y: bogie.center.y - bogie.tangent.y * axisMeters,
     }
     const pLeftAxis = {
-      x: bogie.center.x + bogie.normal.x * 1.4,
-      y: bogie.center.y + bogie.normal.y * 1.4,
+      x: bogie.center.x + bogie.normal.x * 1.3,
+      y: bogie.center.y + bogie.normal.y * 1.3,
     }
     const pRightAxis = {
-      x: bogie.center.x - bogie.normal.x * 1.4,
-      y: bogie.center.y - bogie.normal.y * 1.4,
+      x: bogie.center.x - bogie.normal.x * 1.3,
+      y: bogie.center.y - bogie.normal.y * 1.3,
     }
 
-    // Axe transversal orienté (cyan - suit la rotation des essieux)
+    // Axe transversal orienté (cyan fin - suit la rotation des essieux)
     ctx.beginPath()
     ctx.moveTo(toSx(pLeftAxis), toSy(pLeftAxis))
     ctx.lineTo(toSx(pRightAxis), toSy(pRightAxis))
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)'
-    ctx.lineWidth = 2
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)'
+    ctx.lineWidth = 1
     ctx.stroke()
 
-    // Axe longitudinal orienté (ambre/orange - suit la direction du bogie)
+    // Axe longitudinal orienté (ambre/orange fin - suit la direction du bogie)
     ctx.beginPath()
     ctx.moveTo(toSx(pRearAxis), toSy(pRearAxis))
     ctx.lineTo(toSx(pFrontAxis), toSy(pFrontAxis))
     ctx.strokeStyle = '#f59e0b'
-    ctx.lineWidth = 2.5
+    ctx.lineWidth = 1.2
     ctx.stroke()
 
     // Flèche / point d'orientation vers l'avant du bogie
     const sxF = toSx(pFrontAxis)
     const syF = toSy(pFrontAxis)
     ctx.beginPath()
-    ctx.arc(sxF, syF, 3.5, 0, Math.PI * 2)
+    ctx.arc(sxF, syF, 2.2, 0, Math.PI * 2)
     ctx.fillStyle = '#f59e0b'
     ctx.fill()
     ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 1
+    ctx.lineWidth = 0.8
     ctx.stroke()
 
-    // Nom du bogie
+    // Nom du bogie clair et précis
     let bName = `B${bi + 1}`
     if (bi === 0) bName = 'B1 (Nez M1)'
-    else if (bi === 1) bName = 'B2 (M1)'
-    else if (bi === train.bogies.length - 2) bName = `B${bi + 1} (M2)`
+    else if (bi === 1) bName = 'B2 (Ar M1)'
+    else if (bi === train.bogies.length - 2) bName = `B${bi + 1} (Ar M2)`
     else if (bi === train.bogies.length - 1) bName = `B${bi + 1} (Nez M2)`
-    else bName = `J${bi - 1} (Jacobs)`
+    else {
+      const carIndex = Math.floor((bi - 2) / 2)
+      const isLeadInCar = (bi - 2) % 2 === 0
+      bName = `V${carIndex + 1} (${isLeadInCar ? 'Bogie Av' : 'Bogie Ar'})`
+    }
 
     const tw = ctx.measureText(bName).width
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.9)'
-    ctx.fillRect(sx - tw / 2 - 3, sy - rOuter - 18, tw + 6, 14)
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.85)'
+    ctx.fillRect(sx - tw / 2 - 2.5, sy - rOuter - 15, tw + 5, 12)
     ctx.fillStyle = '#f8fafc'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(bName, sx, sy - rOuter - 11)
+    ctx.fillText(bName, sx, sy - rOuter - 9)
   }
 
   // 3. Points logiques d'attache et de liaison mécanique centrale
@@ -3279,31 +3281,31 @@ function renderTrainSkeletonDebug(
     const sx = toSx(p)
     const sy = toSy(p)
     ctx.beginPath()
-    ctx.arc(sx, sy, 4.5, 0, Math.PI * 2)
+    ctx.arc(sx, sy, 3, 0, Math.PI * 2)
     ctx.fillStyle = color
     ctx.fill()
     ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 1.5
+    ctx.lineWidth = 1
     ctx.stroke()
 
     if (label) {
       const tw = ctx.measureText(label).width
       ctx.fillStyle = 'rgba(15, 23, 42, 0.85)'
-      ctx.fillRect(sx - tw / 2 - 2, sy + 7, tw + 4, 13)
+      ctx.fillRect(sx - tw / 2 - 2, sy + 5, tw + 4, 11)
       ctx.fillStyle = color
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(label, sx, sy + 13)
+      ctx.fillText(label, sx, sy + 10.5)
     }
   }
 
-  // Bielle / liaison mécanique centrale d'attelage
+  // Bielle / liaison mécanique centrale d'attelage (trait fin et net)
   const drawCouplerLink = (pA: Point, pB: Point, label: string) => {
     ctx.beginPath()
     ctx.moveTo(toSx(pA), toSy(pA))
     ctx.lineTo(toSx(pB), toSy(pB))
     ctx.strokeStyle = '#10b981'
-    ctx.lineWidth = 3.5
+    ctx.lineWidth = 1.2
     ctx.stroke()
 
     const mid = { x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 }
@@ -3345,7 +3347,7 @@ function renderTrainSkeletonDebug(
           x: (nextCar.polygon[0].x + nextCar.polygon[1].x) / 2,
           y: (nextCar.polygon[0].y + nextCar.polygon[1].y) / 2,
         }
-        drawCouplerLink(pRearAtt, nextFrontAtt, `Pivot Jacobs V${ci + 1}-V${ci + 2}`)
+        drawCouplerLink(pRearAtt, nextFrontAtt, `Attelage V${ci + 1}-V${ci + 2}`)
       }
     }
 
@@ -3372,7 +3374,7 @@ function renderTrainSkeletonDebug(
     drawAttachPoint(train.rearLoco.polygon[0], 'Nez M2', '#ef4444')
   }
 
-  // 4. Parois latérales d'accordéons (Flancs gauche et droit extérieurs distincts de la liaison centrale)
+  // 4. Parois latérales d'accordéons (traits fins et nets, distincts de la liaison centrale)
   for (let ai = 0; ai < train.accordions.length; ai++) {
     const acc = train.accordions[ai]
     const [fL, fR] = acc.frontFrame
@@ -3383,7 +3385,7 @@ function renderTrainSkeletonDebug(
     ctx.moveTo(toSx(fL), toSy(fL))
     ctx.lineTo(toSx(rL), toSy(rL))
     ctx.strokeStyle = '#06b6d4'
-    ctx.lineWidth = 2.5
+    ctx.lineWidth = 1
     ctx.stroke()
 
     // Ligne de paroi latérale DROITE
@@ -3391,7 +3393,7 @@ function renderTrainSkeletonDebug(
     ctx.moveTo(toSx(fR), toSy(fR))
     ctx.lineTo(toSx(rR), toSy(rR))
     ctx.strokeStyle = '#06b6d4'
-    ctx.lineWidth = 2.5
+    ctx.lineWidth = 1
     ctx.stroke()
 
     // 4 points d'ancrage sur les parois latérales extérieures
@@ -3405,8 +3407,8 @@ function renderTrainSkeletonDebug(
       ctx.beginPath()
       ctx.moveTo(toSx(fold.left), toSy(fold.left))
       ctx.lineTo(toSx(fold.right), toSy(fold.right))
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)'
-      ctx.lineWidth = 1.5
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.5)'
+      ctx.lineWidth = 0.75
       ctx.stroke()
     }
 
@@ -3415,11 +3417,11 @@ function renderTrainSkeletonDebug(
     const midR = { x: (rL.x + rR.x) / 2, y: (rL.y + rR.y) / 2 }
     const gapLen = Math.hypot(midF.x - midR.x, midF.y - midR.y)
     const badgeX = (toSx(midF) + toSx(midR)) / 2
-    const badgeY = (toSy(midF) + toSy(midR)) / 2 - 16
+    const badgeY = (toSy(midF) + toSy(midR)) / 2 - 14
     const accLabel = `Soufflet latéral: ${gapLen.toFixed(2)} m`
     const tw = ctx.measureText(accLabel).width
-    ctx.fillStyle = 'rgba(8, 51, 68, 0.95)'
-    ctx.fillRect(badgeX - tw / 2 - 3, badgeY - 6, tw + 6, 13)
+    ctx.fillStyle = 'rgba(8, 51, 68, 0.9)'
+    ctx.fillRect(badgeX - tw / 2 - 2.5, badgeY - 5, tw + 5, 11)
     ctx.fillStyle = '#22d3ee'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'

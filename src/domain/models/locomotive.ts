@@ -679,51 +679,75 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
   const bogiePosList: TrackPosition[] = [loco.front, loco.rear]
   const wagonCount = loco.wagonCount ?? 0
 
-  // Positions des bogies du tronçon voyageur
-  // Pour N voitures, nous avons N+1 pivots de bogies :
-  // - B_0 : premier bogie voyageur (à 3.35m derrière loco.rear)
-  // - B_1 .. B_{N-1} : bogies Jacobs partagés entre voitures (espacés de 18.0m)
-  // - B_N : dernier bogie voyageur (à 18.0m du précédent)
   const carBogiePositions: TrackPosition[] = []
+  const carEndpoints: { front: TrackPosition; rear: TrackPosition }[] = []
   let m2FrontPos: TrackPosition | null = null
   let m2RearPos: TrackPosition | null = null
 
-  if (wagonCount > 0) {
-    // Premier bogie voyageur à 4.10m du bogie arrière de M1
-    // (overhangRear M1: 3.04m + soufflet: 0.70m + overhangCar: 0.35m = 4.09m ~ 4.10m)
-    let curBogie = walkBackward(net, loco.rear.segId, loco.rear.t, loco.rear.forward, 4.10)
-    if (curBogie) {
-      carBogiePositions.push(curBogie)
-      for (let w = 0; w < wagonCount; w++) {
-        const nextB = walkBackward(net, curBogie.segId, curBogie.t, curBogie.forward, 18.0)
-        if (!nextB) break
-        carBogiePositions.push(nextB)
-        curBogie = nextB
+  // Position de l'extrémité arrière de la motrice M1 (à 3.04m derrière le bogie arrière loco.rear)
+  const OVERHANG_LOCO = 3.04
+  const OVERHANG_CAR = 3.04 // Exactement le même espace que pour la locomotive (3.04m d'attache au bogie)
+  const ACCORDION_GAP = 0.80 // Largeur d'intercirculation / soufflet d'accordéon
+  const CAR_LENGTH = 18.00 // Longueur totale d'une caisse de wagon
+  const CAR_BOGIE_DIST = CAR_LENGTH - 2 * OVERHANG_CAR // Entraxe bogies du wagon = 11.92m
+
+  const posM1Tail = walkBackward(net, loco.rear.segId, loco.rear.t, loco.rear.forward, OVERHANG_LOCO)
+
+  if (wagonCount > 0 && posM1Tail) {
+    let prevCarRear: TrackPosition | null = null
+
+    for (let w = 0; w < wagonCount; w++) {
+      let carFront: TrackPosition | null = null
+      if (w === 0) {
+        carFront = walkBackward(net, posM1Tail.segId, posM1Tail.t, posM1Tail.forward, ACCORDION_GAP)
+      } else if (prevCarRear) {
+        carFront = walkBackward(net, prevCarRear.segId, prevCarRear.t, prevCarRear.forward, ACCORDION_GAP)
       }
+      if (!carFront) break
+
+      // 1. Bogie avant du wagon (en retrait de 3.04m, même espace que la motrice !)
+      const bogieFront = walkBackward(net, carFront.segId, carFront.t, carFront.forward, OVERHANG_CAR)
+      // 2. Bogie arrière du wagon
+      const bogieRear = bogieFront
+        ? walkBackward(net, bogieFront.segId, bogieFront.t, bogieFront.forward, CAR_BOGIE_DIST)
+        : null
+      // 3. Face arrière du wagon (à 3.04m après le bogie arrière)
+      const carRear = bogieRear
+        ? walkBackward(net, bogieRear.segId, bogieRear.t, bogieRear.forward, OVERHANG_CAR)
+        : null
+
+      if (!bogieFront || !bogieRear || !carRear) break
+
+      carBogiePositions.push(bogieFront, bogieRear)
+      carEndpoints.push({ front: carFront, rear: carRear })
+      prevCarRear = carRear
     }
 
-    // Le premier bogie de M2 se place à 4.10m derrière le dernier bogie voyageur
-    // (overhangCar: 0.35m + soufflet: 0.70m + overhangRear M2: 3.04m = 4.09m ~ 4.10m)
-    if (carBogiePositions.length === wagonCount + 1) {
-      const lastCarBogie = carBogiePositions[carBogiePositions.length - 1]
-      const m2f = walkBackward(net, lastCarBogie.segId, lastCarBogie.t, lastCarBogie.forward, 4.10)
+    // Motrice M2 placée après l'accordéon de la dernière voiture
+    if (prevCarRear) {
+      const m2Tail = walkBackward(net, prevCarRear.segId, prevCarRear.t, prevCarRear.forward, ACCORDION_GAP)
+      if (m2Tail) {
+        const m2f = walkBackward(net, m2Tail.segId, m2Tail.t, m2Tail.forward, OVERHANG_LOCO)
+        if (m2f) {
+          const m2r = walkBackward(net, m2f.segId, m2f.t, m2f.forward, loco.bogieDistance)
+          if (m2r) {
+            m2FrontPos = m2f
+            m2RearPos = m2r
+          }
+        }
+      }
+    }
+  } else if (posM1Tail) {
+    // 0 voiture : M1 et M2 directement couplées dos-à-dos avec soufflet
+    const m2Tail = walkBackward(net, posM1Tail.segId, posM1Tail.t, posM1Tail.forward, ACCORDION_GAP)
+    if (m2Tail) {
+      const m2f = walkBackward(net, m2Tail.segId, m2Tail.t, m2Tail.forward, OVERHANG_LOCO)
       if (m2f) {
         const m2r = walkBackward(net, m2f.segId, m2f.t, m2f.forward, loco.bogieDistance)
         if (m2r) {
           m2FrontPos = m2f
           m2RearPos = m2r
         }
-      }
-    }
-  } else {
-    // 0 voiture : M1 et M2 directement couplées dos-à-dos
-    // (overhangRear M1: 3.04m + soufflet: 0.70m + overhangRear M2: 3.04m = 6.78m ~ 6.80m)
-    const m2f = walkBackward(net, loco.rear.segId, loco.rear.t, loco.rear.forward, 6.80)
-    if (m2f) {
-      const m2r = walkBackward(net, m2f.segId, m2f.t, m2f.forward, loco.bogieDistance)
-      if (m2r) {
-        m2FrontPos = m2f
-        m2RearPos = m2r
       }
     }
   }
@@ -745,21 +769,15 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
   const cars: TGVPasengerCar[] = []
   const accordions: TGVAccordion[] = []
 
-  const carPivots: { front: Point; rear: Point }[] = []
-  for (let i = 0; i < carBogiePositions.length - 1; i++) {
-    const pFront = positionOnSegment(net, carBogiePositions[i].segId, carBogiePositions[i].t)
-    const pRear = positionOnSegment(net, carBogiePositions[i + 1].segId, carBogiePositions[i + 1].t)
-    if (pFront && pRear) {
-      carPivots.push({ front: pFront, rear: pRear })
-    }
-  }
-
   const w = 1.45 // demi-largeur caisse TGV (2.90m)
-  const overhang = 0.35 // débordement de caisse de chaque côté des pivots
 
-  // Création des caisses de voitures
-  for (let i = 0; i < carPivots.length; i++) {
-    const { front: pF, rear: pR } = carPivots[i]
+  // Création des caisses de voitures à partir de leurs extrémités nettes (sans chevauchement)
+  for (let i = 0; i < carEndpoints.length; i++) {
+    const { front: epF, rear: epR } = carEndpoints[i]
+    const pF = positionOnSegment(net, epF.segId, epF.t)
+    const pR = positionOnSegment(net, epR.segId, epR.t)
+    if (!pF || !pR) continue
+
     const dx = pF.x - pR.x
     const dy = pF.y - pR.y
     const len = Math.hypot(dx, dy)
@@ -770,14 +788,14 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
     const nx = -uy
     const ny = ux
 
-    const c1 = { x: pF.x + ux * overhang + nx * w, y: pF.y + uy * overhang + ny * w }
-    const c2 = { x: pF.x + ux * overhang - nx * w, y: pF.y + uy * overhang - ny * w }
-    const c3 = { x: pR.x - ux * overhang - nx * w, y: pR.y - uy * overhang - ny * w }
-    const c4 = { x: pR.x - ux * overhang + nx * w, y: pR.y - uy * overhang + ny * w }
+    const c1 = { x: pF.x + nx * w, y: pF.y + ny * w }
+    const c2 = { x: pF.x - nx * w, y: pF.y - ny * w }
+    const c3 = { x: pR.x - nx * w, y: pR.y - ny * w }
+    const c4 = { x: pR.x + nx * w, y: pR.y + ny * w }
 
     // Baies vitrées passagers
     const numWindows = 6
-    const winSpan = len - 3.0
+    const winSpan = Math.max(2, len - 3.0)
     const winStep = winSpan / numWindows
     const winLen = winStep * 0.7
     const windowsLeft: { p1: Point; p2: Point }[] = []
