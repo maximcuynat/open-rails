@@ -4,63 +4,31 @@
 > Stack : React 18 + TypeScript + Vite 5 + Vitest.
 > Dev server : `http://localhost:8900/`
 
-## État actuel
+## État actuel (Release v0.1.0 ✅)
 
-| Composant                                                            | Statut |
-| -------------------------------------------------------------------- | ------ |
-| Scaffolding projet (Vite, TS, React)                                 | Fait   |
-| Serveur dev port 8900                                                | Fait   |
-| Canvas infini (pan + zoom cursé)                                     | Fait   |
-| Grille adaptive (minor/major) déconnectée de la géométrie rail       | Fait   |
-| Barre d'échelle adaptative en mm / m                                  | Fait   |
-| HUD (zoom + coordonnées caméra)                                      | Fait   |
-| Thèmes light / dark / auto (variables CSS dédiées)                   | Fait   |
-| Modèle de données (Point, RailNode, Segment, Network)                | Fait   |
-| Continuité tangentielle G1 stricte (10⁻⁵) entre coupons              | Fait   |
-| Géométrie Bézier quadratique exacte ($R \tan(\theta/2)$)             | Fait   |
-| Snapping magnétique intelligent (tolérance 16 px, priorité absolue)  | Fait   |
-| Bouclage automatique de réseau (Loop Closure sans doublons de nœuds) | Fait   |
-| Prolongement naturel depuis toute extrémité de rail                  | Fait   |
-| Nettoyage automatique des nœuds orphelins lors de la suppression     | Fait   |
-| Rendu HO 1:87 réaliste (ballast 32mm chanfreiné, traverses 2.8×26mm) | Fait   |
-| Détection visuelle des extrémités libres (anneaux de snap dédiés)     | Fait   |
-| Palette des voies (TrackPalette) 100% vectorielle SVG (0 emoji)      | Fait   |
-| Mode Catalogue Kato HO (longueurs 60–369mm, rayons R430–R867, angles) | Fait   |
-| Mode Voie Libre 100% (courbes flexibles continues, décalquage)       | Fait   |
-| Déplacement libre des nœuds et intersections à la souris             | Fait   |
-| Sélection multiple (rectangle de sélection + Shift+clic + Ctrl+A)    | Fait   |
-| Suppression complète (`Delete` / `Backspace` / panneau latéral)      | Fait   |
-| Barre d'outils avec icônes ferroviaires techniques (V, N, C, Y, H)   | Fait   |
-| Barre d'état avec sélecteur de mode et états d'accrochage            | Fait   |
-| Raccourcis clavier (V, N, C, Y, T, H, G, F, M, Tab, [, ], Del, Esc)   | Fait   |
-| Outil et catalogue Aiguillages Kato #4 & #6 (gauche/droite)          | Fait   |
-| Scission automatique de segment (`splitSegment`) lors de la pose     | Fait   |
-| Soudure de nœuds (`weldNodes`) et bascule de déviation symétrique     | Fait   |
-| Continuité 100% sans trou des rails aux jonctions (`renderRailJoints`) | Fait   |
-| Accrochage grille strict en mode Voie Libre (pose & déplacement)     | Fait   |
-| Auto-détection dynamique des aiguillages (`autoDetectJunctions`)     | Fait   |
-| Auto-détection croisements à niveau sans superposition (Diamond Cross)| Fait   |
-| Outil précis Croisement / Traversée (X) avec angles 15°, 30°, 45°, 90°| Fait   |
-| Rendu SVG & Canvas géométrie pure : droites strictes & courbes Bézier Q| Fait   |
-| Lames et contre-rails épousant fidèlement les courbes de déviation   | Fait   |
-| Rendu mécanique aiguillage : contre-rails, cœur V, coussinets, cales | Fait   |
-| Rendu dynamique lames mobiles, biellette de commande & moteur        | Fait   |
-| Jonctions épurées : rails continus + discontinuité rail-head 1.2mm   | Fait   |
-| Selles métalliques d'assise (tie plates) & tirefonds sous rails      | Fait   |
-| Heurtoirs de voie (buffer stops) SNCF/UIC réalistes sur impasses      | Fait   |
-| Export SVG réaliste multi-calques (croisements, aiguilles, heurtoirs)| Fait   |
-| Bascule dynamique de voie active (clic / touche T / panneau)          | Fait   |
-| Indicateur visuel d'aiguillage (vert directe, ambre déviée + flèche)  | Fait   |
-| Pathfinding Dijkstra orienté aiguillages (`findPath`, `reachableFrom`)| Fait   |
-| Détection des impasses, boucles fermées et composantes disjointes    | Fait   |
-| MiniMap vectorielle synchronisée avec le viewport réel               | Fait   |
-| Panneau latéral SidePanel avec conversion métrique & contrôles aiguille| Fait   |
-| Squelette logique de jonction & réconciliation topologique (`reconcileNetworkIntersections`)| Fait   |
-| Détection automatique et scission de voie lors de pose de courbes/droites sur voies existantes| Fait   |
-| Accrochage magnétique direct sur rail avec maintien de la tangence G1 | Fait   |
-| Importation & Réconciliation JSON automatique (raccourci `R` / Menu)  | Fait   |
-| Export JSON / SVG réaliste / PNG                                     | Fait   |
-| Tests unitaires (147 tests Vitest, 100% passants)                    | Fait   |
+| Composant                                                                     | Statut |
+| ----------------------------------------------------------------------------- | ------ |
+| Scaffolding projet (Vite, TS, React 18, Vitest)                              | Fait   |
+| Architecture Clean / DDD (`domain/`, `application/`, `infrastructure/`, `presentation/`) | Fait |
+| Canvas infini (pan, zoom cursé, auto-panning sur les bords)                   | Fait   |
+| Grille adaptive & barre d'échelle adaptative (mm / m / km)                    | Fait   |
+| Système de cotations CAD en temps réel (longueurs, rayons, angles, entraxes)  | Fait   |
+| Gizmo de translation 2D orthogonal (axes X/Y contraints, déplacement libre)   | Fait   |
+| Modèle de données topologique (Point, Node, Segment, Network, Junction)       | Fait   |
+| Continuité tangentielle G1 stricte (10⁻⁵) entre coupons droits et courbes     | Fait   |
+| Rendu réaliste HO 1:87 (ballast chanfreiné, traverses, tirefonds, cœurs en V) | Fait   |
+| Aiguillages et traversées/croisements avec détection automatique             | Fait   |
+| Rame TGV articulée complète (motrice de tête M1, voitures, motrice queue M2) | Fait   |
+| Cinématique des bogies : retrait de 3.04m, axes tournants, pivot Jacobs      | Fait   |
+| Soufflets d'accordéons flexibles ancrés sur les parois extérieures latérales | Fait   |
+| Atelier Train Builder : palette interactive avec Drag & Drop fluide sur rails| Fait   |
+| Mode Conduite dynamique : jusqu'à 500 km/h, accélération, freinage, caméra    | Fait   |
+| Reversibilité ferroviaire réelle : inversion de sens par transfert de motrice| Fait   |
+| Mode Debug Squelette : inspection filaire fine (pivots, bielles, accordéons)  | Fait   |
+| Détection d'impact et bouton flottant « Prendre le contrôle »                | Fait   |
+| Export SVG vectoriel multicouche, PNG et sauvegarde/restauration JSON         | Fait   |
+| Déploiement continu automatisé GitHub Actions vers GitHub Pages               | Fait   |
+| Suite de tests automatisés (262 tests Vitest, 100% passants)                  | Fait   |
 
 ---
 
