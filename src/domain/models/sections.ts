@@ -18,6 +18,7 @@ export interface SectionMetadata {
   type?: SectionType
   color?: string
   direction?: SectionDirection
+  isCustomName?: boolean
 }
 
 export interface TrackSection {
@@ -35,6 +36,7 @@ export interface TrackSection {
   hasDeadEnd?: boolean
   /** Any diamond crossing nodes traversed in through-route by this section */
   crossingNodeIds?: NodeId[]
+  isCustomName?: boolean
 }
 
 export interface DirectionConflict {
@@ -429,6 +431,7 @@ export function computeTrackSections(
     }
 
     const fallbackColor = SECTION_COLORS[i % SECTION_COLORS.length]
+    const isCustom = meta.isCustomName ?? (meta.name ? !/^Section [A-Z]\d*$/.test(meta.name) : false)
     const finalSection: TrackSection = {
       id: rawSec.sortedSegKey,
       name: meta.name || getNextAvailableName(),
@@ -441,6 +444,7 @@ export function computeTrackSections(
       color: meta.color || (meta.type === 'station_stop' ? '#06b6d4' : fallbackColor),
       hasDeadEnd: rawSec.hasDeadEnd,
       crossingNodeIds: rawSec.crossingNodeIds?.length ? rawSec.crossingNodeIds : undefined,
+      isCustomName: isCustom,
     }
 
     // Persist assigned names and associations to customMeta
@@ -450,6 +454,7 @@ export function computeTrackSections(
         type: finalSection.type,
         color: finalSection.color,
         direction: finalSection.direction,
+        isCustomName: finalSection.isCustomName,
       }
       for (const sid of finalSection.segmentIds) {
         customMeta[sid] = {
@@ -457,6 +462,7 @@ export function computeTrackSections(
           type: finalSection.type,
           color: finalSection.color,
           direction: finalSection.direction,
+          isCustomName: finalSection.isCustomName,
         }
       }
     }
@@ -465,6 +471,12 @@ export function computeTrackSections(
   }
 
   return sections
+}
+
+/** Determine if a track section has been customized/renamed by the user */
+export function isRenamedSection(sec: TrackSection): boolean {
+  if (sec.isCustomName) return true
+  return !/^Section [A-Z]\d*$/.test(sec.name)
 }
 
 /** Determine if a node is an open end of track (dead end / heurtoir / cul-de-sac). */

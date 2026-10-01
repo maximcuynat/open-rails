@@ -5,7 +5,7 @@ import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@doma
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
-import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, type SectionMetadata } from '@domain/models/sections'
+import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 
@@ -335,6 +335,13 @@ export function isSegmentInBounds(
   return true
 }
 
+export interface RenderNetworkOptions {
+  tool?: string
+  hideConstructionNodes?: boolean
+  hideSectionCenterline?: boolean
+  onlyRenamedSectionBadges?: boolean
+}
+
 export function renderNetwork(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
@@ -343,11 +350,17 @@ export function renderNetwork(
   net: Network,
   selection: Selection,
   sectionMeta?: Record<string, SectionMetadata>,
+  options?: RenderNetworkOptions,
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
+
+  const isPan = options?.tool === 'pan'
+  const hideConstructionNodes = options?.hideConstructionNodes ?? isPan
+  const hideSectionCenterline = options?.hideSectionCenterline ?? isPan
+  const onlyRenamedSectionBadges = options?.onlyRenamedSectionBadges ?? isPan
 
   const simplified = cam.scale < SIMPLIFY_THRESHOLD
 
@@ -405,39 +418,41 @@ export function renderNetwork(
   } else {
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
-    for (const seg of visibleSegments) {
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
+    if (!hideSectionCenterline) {
+      for (const seg of visibleSegments) {
+        const a = net.nodes.get(seg.from)
+        const b = net.nodes.get(seg.to)
+        if (!a || !b) continue
 
-      const sec = findSectionBySegment(trackSections, seg.id)
-      const secColor = sec?.color ?? '#94a3b8'
-      const isSecSelected = sec && sec.segmentIds.some((sid) => selection.segments.has(sid))
+        const sec = findSectionBySegment(trackSections, seg.id)
+        const secColor = sec?.color ?? '#94a3b8'
+        const isSecSelected = sec && sec.segmentIds.some((sid) => selection.segments.has(sid))
 
-      ctx.save()
-      ctx.strokeStyle = secColor
-      const isStation = sec?.type === 'station_stop'
-      ctx.lineWidth = isStation ? Math.max(2.5, Math.min(5.0, 0.6 * cam.scale)) : Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
-      ctx.globalAlpha = isSecSelected ? 0.95 : isStation ? 0.8 : 0.45
-      ctx.lineCap = 'round'
-      if (isStation) {
-        ctx.setLineDash([8, 4])
+        ctx.save()
+        ctx.strokeStyle = secColor
+        const isStation = sec?.type === 'station_stop'
+        ctx.lineWidth = isStation ? Math.max(2.5, Math.min(5.0, 0.6 * cam.scale)) : Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
+        ctx.globalAlpha = isSecSelected ? 0.95 : isStation ? 0.8 : 0.45
+        ctx.lineCap = 'round'
+        if (isStation) {
+          ctx.setLineDash([8, 4])
+        }
+        ctx.beginPath()
+        const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
+        const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
+        const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
+        const by = (b.pos.y - cam.y) * cam.scale + vh / 2
+        ctx.moveTo(ax, ay)
+        if (seg.kind === 'curve' && seg.via) {
+          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
+          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
+          ctx.quadraticCurveTo(vx, vy, bx, by)
+        } else {
+          ctx.lineTo(bx, by)
+        }
+        ctx.stroke()
+        ctx.restore()
       }
-      ctx.beginPath()
-      const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
-      const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
-      const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
-      const by = (b.pos.y - cam.y) * cam.scale + vh / 2
-      ctx.moveTo(ax, ay)
-      if (seg.kind === 'curve' && seg.via) {
-        const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-        const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-        ctx.quadraticCurveTo(vx, vy, bx, by)
-      } else {
-        ctx.lineTo(bx, by)
-      }
-      ctx.stroke()
-      ctx.restore()
     }
 
     // 2. PURE RAIL RENDERING
@@ -471,12 +486,18 @@ export function renderNetwork(
       if (sec.segmentIds.length === 0) continue
       const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
 
-      // When zoomed out (< 1.0), only show badge for the currently selected section
-      if (!showAllBadges && !isSecSelected) continue
+      if (onlyRenamedSectionBadges) {
+        // En mode déplacement / vue épurée : uniquement les voies renommées par l'utilisateur
+        if (!isRenamedSection(sec)) continue
+        if (sec.totalLength * cam.scale < 30 && !isSecSelected) continue
+      } else {
+        // When zoomed out (< 1.0), only show badge for the currently selected section
+        if (!showAllBadges && !isSecSelected) continue
 
-      // In overview mode (1.0 to 3.0), avoid drawing badges on tiny track fragments (< 45px on screen)
-      const secScreenLen = sec.totalLength * cam.scale
-      if (!isSecSelected && cam.scale < 3.0 && secScreenLen < 45) continue
+        // In overview mode (1.0 to 3.0), avoid drawing badges on tiny track fragments (< 45px on screen)
+        const secScreenLen = sec.totalLength * cam.scale
+        if (!isSecSelected && cam.scale < 3.0 && secScreenLen < 45) continue
+      }
 
       const midSegIdx = Math.floor(sec.segmentIds.length / 2)
       const midSegId = sec.segmentIds[midSegIdx]
@@ -533,113 +554,117 @@ export function renderNetwork(
   }
 
   // 4. END OF TRACK / FIN DE VOIE (Sens interdit logique sur chaque fin de voie / impasse)
-  for (const node of net.nodes.values()) {
-    if (!isPointInBounds(node.pos, bounds)) continue
-    const adj = net.adjacency.get(node.id) ?? []
-    if (adj.length === 1) {
-      const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-      const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+  if (!hideConstructionNodes) {
+    for (const node of net.nodes.values()) {
+      if (!isPointInBounds(node.pos, bounds)) continue
+      const adj = net.adjacency.get(node.id) ?? []
+      if (adj.length === 1) {
+        const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
+        const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
 
-      ctx.save()
-      const signR = Math.max(7, Math.min(11, 1.8 * cam.scale))
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
-      ctx.shadowBlur = 5
-      ctx.shadowOffsetY = 1.5
+        ctx.save()
+        const signR = Math.max(7, Math.min(11, 1.8 * cam.scale))
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
+        ctx.shadowBlur = 5
+        ctx.shadowOffsetY = 1.5
 
-      // Red circle with white border
-      ctx.fillStyle = '#dc2626'
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.arc(sx, sy, signR, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.stroke()
+        // Red circle with white border
+        ctx.fillStyle = '#dc2626'
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.arc(sx, sy, signR, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
 
-      // White horizontal bar
-      ctx.shadowColor = 'transparent'
-      const barW = signR * 1.35
-      const barH = Math.max(2.2, signR * 0.35)
-      ctx.fillStyle = '#ffffff'
-      ctx.beginPath()
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
-      } else {
-        ctx.rect(sx - barW / 2, sy - barH / 2, barW, barH)
+        // White horizontal bar
+        ctx.shadowColor = 'transparent'
+        const barW = signR * 1.35
+        const barH = Math.max(2.2, signR * 0.35)
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
+        } else {
+          ctx.rect(sx - barW / 2, sy - barH / 2, barW, barH)
+        }
+        ctx.fill()
+
+        ctx.restore()
       }
-      ctx.fill()
-
-      ctx.restore()
     }
   }
 
   // 5. NODES (Points d'articulation et sélection)
-  for (const node of net.nodes.values()) {
-    if (!isPointInBounds(node.pos, bounds)) continue
+  if (!hideConstructionNodes) {
+    for (const node of net.nodes.values()) {
+      if (!isPointInBounds(node.pos, bounds)) continue
 
-    const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-    const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
-    const selected = selection.nodes.has(node.id)
-    const adj = net.adjacency.get(node.id) ?? []
-    const connectionCount = adj.length
+      const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
+      const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+      const selected = selection.nodes.has(node.id)
+      const adj = net.adjacency.get(node.id) ?? []
+      const connectionCount = adj.length
 
-    if (selected) {
-      // Selected node: accent ring + central white point
-      ctx.fillStyle = accent
-      ctx.beginPath()
-      ctx.arc(sx, sy, 7, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = '#ffffff'
-      ctx.beginPath()
-      ctx.arc(sx, sy, 4, 0, Math.PI * 2)
-      ctx.fill()
-    } else if (connectionCount === 1) {
-      // Dead end already rendered with clean Sens Interdit sign
-    } else if (connectionCount === 0) {
-      // Isolated / orphan node (0 connected tracks): render clear visible indicator so it is never an invisible ghost
-      ctx.save()
-      ctx.strokeStyle = '#f59e0b'
-      ctx.lineWidth = 1.5
-      ctx.setLineDash([3, 3])
-      ctx.beginPath()
-      ctx.arc(sx, sy, 6, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.fillStyle = '#f59e0b'
-      ctx.beginPath()
-      ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.restore()
-    } else if (connectionCount === 4) {
-      // Diamond crossing intersection node (zone de cisaillement / conflit logique)
-      const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale))
-      ctx.save()
-      ctx.fillStyle = '#0f172a'
-      ctx.strokeStyle = '#38bdf8'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.moveTo(sx, sy - dSize)
-      ctx.lineTo(sx + dSize, sy)
-      ctx.lineTo(sx, sy + dSize)
-      ctx.lineTo(sx - dSize, sy)
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-      ctx.restore()
-    } else {
-      // Intermediate joint or junction: neat white dot
-      ctx.fillStyle = '#334155'
-      ctx.beginPath()
-      ctx.arc(sx, sy, 4, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = '#ffffff'
-      ctx.beginPath()
-      ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
-      ctx.fill()
+      if (selected) {
+        // Selected node: accent ring + central white point
+        ctx.fillStyle = accent
+        ctx.beginPath()
+        ctx.arc(sx, sy, 7, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(sx, sy, 4, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (connectionCount === 1) {
+        // Dead end already rendered with clean Sens Interdit sign
+      } else if (connectionCount === 0) {
+        // Isolated / orphan node (0 connected tracks): render clear visible indicator so it is never an invisible ghost
+        ctx.save()
+        ctx.strokeStyle = '#f59e0b'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([3, 3])
+        ctx.beginPath()
+        ctx.arc(sx, sy, 6, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.fillStyle = '#f59e0b'
+        ctx.beginPath()
+        ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+      } else if (connectionCount === 4) {
+        // Diamond crossing intersection node (zone de cisaillement / conflit logique)
+        const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale))
+        ctx.save()
+        ctx.fillStyle = '#0f172a'
+        ctx.strokeStyle = '#38bdf8'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(sx, sy - dSize)
+        ctx.lineTo(sx + dSize, sy)
+        ctx.lineTo(sx, sy + dSize)
+        ctx.lineTo(sx - dSize, sy)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        ctx.restore()
+      } else {
+        // Intermediate joint or junction: neat white dot
+        ctx.fillStyle = '#334155'
+        ctx.beginPath()
+        ctx.arc(sx, sy, 4, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
 
   // 6. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)
   // Skip at macro zoom (< 0.8) to keep network schematic clean
-  if (cam.scale >= 0.8) {
+  if (!hideConstructionNodes && cam.scale >= 0.8) {
     for (const sec of trackSections) {
       if (sec.direction === 'two_way' || sec.orderedNodeIds.length < 2) continue
       const isForward = sec.direction === 'forward'
@@ -705,115 +730,119 @@ export function renderNetwork(
 }
 
   // 7. DIRECTION CONFLICTS / SENS INTERDIT (Panneau sens interdit en cas d'incohérence -> <-)
-  const conflicts = detectDirectionConflicts(net, trackSections)
-  for (const conf of conflicts) {
-    if (!isPointInBounds(conf.pos, bounds)) continue
-    const sx = (conf.pos.x - cam.x) * cam.scale + vw / 2
-    const sy = (conf.pos.y - cam.y) * cam.scale + vh / 2
+  if (!hideConstructionNodes) {
+    const conflicts = detectDirectionConflicts(net, trackSections)
+    for (const conf of conflicts) {
+      if (!isPointInBounds(conf.pos, bounds)) continue
+      const sx = (conf.pos.x - cam.x) * cam.scale + vw / 2
+      const sy = (conf.pos.y - cam.y) * cam.scale + vh / 2
 
-    ctx.save()
-    // Prohibitory sign: Red disc with white horizontal bar (B0 sens interdit)
-    const signR = Math.max(10, Math.min(16, 2.2 * cam.scale))
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'
-    ctx.shadowBlur = 6
-    ctx.shadowOffsetY = 2
+      ctx.save()
+      // Prohibitory sign: Red disc with white horizontal bar (B0 sens interdit)
+      const signR = Math.max(10, Math.min(16, 2.2 * cam.scale))
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'
+      ctx.shadowBlur = 6
+      ctx.shadowOffsetY = 2
 
-    // Red circle
-    ctx.fillStyle = '#dc2626'
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.arc(sx, sy, signR, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.stroke()
-
-    // Reset shadow for inner bar
-    ctx.shadowColor = 'transparent'
-
-    // White horizontal rectangle bar
-    const barW = signR * 1.4
-    const barH = Math.max(2.5, signR * 0.35)
-    ctx.fillStyle = '#ffffff'
-    ctx.beginPath()
-    ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
-    ctx.fill()
-
-    // Pulsing warning text above the sign
-    ctx.font = '700 10px Archivo, system-ui, sans-serif'
-    const warnText = 'SENS INTERDIT · CONFLIT'
-    const tw = ctx.measureText(warnText).width
-    const textY = sy - signR - 12
-    ctx.fillStyle = '#dc2626'
-    ctx.beginPath()
-    ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
-    ctx.fill()
-    ctx.fillStyle = '#ffffff'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(warnText, sx, textY)
-
-    ctx.restore()
-  }
-
-  // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
-  const kinematicIssues = analyzeKinematics(net)
-  for (const issue of kinematicIssues) {
-    const node = net.nodes.get(issue.nodeId)
-    if (!node || !isPointInBounds(node.pos, bounds)) continue
-
-    const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-    const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
-
-    ctx.save()
-    const isErr = issue.severity === 'error'
-    const badgeColor = isErr ? '#ef4444' : '#f59e0b'
-    const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
-
-    // Pulse halo
-    ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
-    ctx.beginPath()
-    ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
-    ctx.fill()
-
-    // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
-    ctx.fillStyle = badgeColor
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    ctx.moveTo(sx, sy - signR)
-    ctx.lineTo(sx + signR, sy)
-    ctx.lineTo(sx, sy + signR)
-    ctx.lineTo(sx - signR, sy)
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
-
-    // Exclamation point or angle
-    ctx.fillStyle = '#ffffff'
-    ctx.font = '900 11px Archivo, system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText('!', sx, sy)
-
-    // Label badge above if zoom is reasonable
-    if (cam.scale >= 0.9) {
-      ctx.font = '600 10px Archivo, system-ui, sans-serif'
-      const label = issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
-      const tw = ctx.measureText(label).width
-      const ty = sy - signR - 10
-
-      ctx.fillStyle = badgeColor
+      // Red circle
+      ctx.fillStyle = '#dc2626'
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
       ctx.beginPath()
-      ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
+      ctx.arc(sx, sy, signR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+
+      // Reset shadow for inner bar
+      ctx.shadowColor = 'transparent'
+
+      // White horizontal rectangle bar
+      const barW = signR * 1.4
+      const barH = Math.max(2.5, signR * 0.35)
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
       ctx.fill()
 
+      // Pulsing warning text above the sign
+      ctx.font = '700 10px Archivo, system-ui, sans-serif'
+      const warnText = 'SENS INTERDIT · CONFLIT'
+      const tw = ctx.measureText(warnText).width
+      const textY = sy - signR - 12
+      ctx.fillStyle = '#dc2626'
+      ctx.beginPath()
+      ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
+      ctx.fill()
       ctx.fillStyle = '#ffffff'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(label, sx, ty)
-    }
+      ctx.fillText(warnText, sx, textY)
 
-    ctx.restore()
+      ctx.restore()
+    }
+  }
+
+  // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
+  if (!hideConstructionNodes) {
+    const kinematicIssues = analyzeKinematics(net)
+    for (const issue of kinematicIssues) {
+      const node = net.nodes.get(issue.nodeId)
+      if (!node || !isPointInBounds(node.pos, bounds)) continue
+
+      const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
+      const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+
+      ctx.save()
+      const isErr = issue.severity === 'error'
+      const badgeColor = isErr ? '#ef4444' : '#f59e0b'
+      const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
+
+      // Pulse halo
+      ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
+      ctx.beginPath()
+      ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+      ctx.fillStyle = badgeColor
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(sx, sy - signR)
+      ctx.lineTo(sx + signR, sy)
+      ctx.lineTo(sx, sy + signR)
+      ctx.lineTo(sx - signR, sy)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+
+      // Exclamation point or angle
+      ctx.fillStyle = '#ffffff'
+      ctx.font = '900 11px Archivo, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('!', sx, sy)
+
+      // Label badge above if zoom is reasonable
+      if (cam.scale >= 0.9) {
+        ctx.font = '600 10px Archivo, system-ui, sans-serif'
+        const label = issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
+        const tw = ctx.measureText(label).width
+        const ty = sy - signR - 10
+
+        ctx.fillStyle = badgeColor
+        ctx.beginPath()
+        ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
+        ctx.fill()
+
+        ctx.fillStyle = '#ffffff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(label, sx, ty)
+      }
+
+      ctx.restore()
+    }
   }
 }
 

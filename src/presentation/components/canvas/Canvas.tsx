@@ -355,7 +355,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
     }
 
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta)
+    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { tool: store.tool })
 
     // Box selection rectangle
     if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
@@ -883,7 +883,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
-    const gizmoAnchor = getGizmoAnchor(store.network, store.selection)
+    const gizmoAnchor = store.tool === 'pan' ? null : getGizmoAnchor(store.network, store.selection)
     if (gizmoAnchor) {
       const sx = (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2
       const sy = (gizmoAnchor.worldPos.y - cam.y) * cam.scale + rect.height / 2
@@ -1127,7 +1127,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const py = e.clientY - rect.top
 
       // Priority 0: Check if click hit a 2D Gizmo translation arrow on selected node or section
-      if (e.button === 0) {
+      if (e.button === 0 && store.tool !== 'pan') {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
@@ -1158,26 +1158,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       if (e.button === 1 || (e.button === 0 && (store.tool === 'pan' || isSpaceDown))) {
-        if (!isSpaceDown && store.tool === 'pan') {
-          // If clicked directly on a node in pan tool, select it and show gizmo instead of panning!
-          const world = getWorldPos(e.clientX, e.clientY)
-          const hitTol = 14 / store.camera.scale
-          const clickedNodeId = hitNode(store.network, world, hitTol)
-          if (clickedNodeId) {
-            store.selection = { nodes: new Set([clickedNodeId]), segments: new Set() }
-            store.isDraggingNode = true
-            store.dragStartWorld = world
-            store.draggedNodeInitialPositions.clear()
-            const n = store.network.nodes.get(clickedNodeId)
-            if (n) {
-              store.draggedNodeInitialPositions.set(clickedNodeId, { ...n.pos })
-            }
-            canvas.setPointerCapture(e.pointerId)
-            store.markDirty()
-            redraw()
-            return
-          }
-        }
         // Middle click, pan tool, or spacebar pan: pan
         store.panning = true
         lastX = e.clientX
@@ -1802,7 +1782,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       // Gizmo arrow hover detection on selected node or section
-      if (!store.panning && !store.isDraggingNode && !store.gizmoDragAxis) {
+      if (store.tool !== 'pan' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis) {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + vw / 2

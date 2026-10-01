@@ -240,9 +240,11 @@ export class EditorStore {
   dirty = false
 
   setSectionMeta = (sectionId: string, meta: Partial<SectionMetadata>): void => {
+    const isCustom = meta.name !== undefined ? true : this.sectionMeta[sectionId]?.isCustomName
     const updated = {
       ...this.sectionMeta[sectionId],
       ...meta,
+      ...(isCustom ? { isCustomName: true } : {}),
     }
     this.sectionMeta[sectionId] = updated
 
@@ -253,6 +255,7 @@ export class EditorStore {
         this.sectionMeta[sid] = {
           ...this.sectionMeta[sid],
           ...meta,
+          ...(isCustom ? { isCustomName: true } : {}),
         }
       }
     }
