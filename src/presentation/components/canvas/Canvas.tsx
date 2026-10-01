@@ -394,8 +394,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    // Point de snap sur la voie survolée (point le plus proche uniquement, aucun point parasite avant/après)
-    if (store.hoverSegSteps && store.hoverSegSteps.nearest) {
+    // Point de snap sur la voie survolée (outils de construction uniquement)
+    if (isSnapTool && store.hoverSegSteps && store.hoverSegSteps.nearest) {
       const nearest = store.hoverSegSteps.nearest
       const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
       const w2sX = (wx: number) => (wx - cam.x) * cam.scale + rect.width / 2
@@ -1642,20 +1642,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           redraw()
           return
         }
-        // Si on est en Shift-clic sur un pas de voie prévisualisé, poser un noeud (splitter le segment)
-        if (e.shiftKey && store.hoverSegSteps?.nearest && store.hoverSegSteps?.segId) {
-          const splitPt = store.hoverSegSteps.nearest
-          const splitSegId = store.hoverSegSteps.segId
-          const splitRes = splitSegment(store.network, splitSegId, splitPt)
-          if (splitRes) {
-            const newNodeId = splitRes.midNode.id
-            store.selection = { nodes: new Set([newNodeId]), segments: new Set() }
-            reconcileNetworkIntersections(store.network)
-            store.markDirty()
-            redraw()
-          }
-          return
-        }
 
         const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
@@ -1853,26 +1839,44 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
-      // Magnetic node snap has priority 1
-      const nearNode = findNearestNode(store.network, rawWorld, 16, store.camera)
-      if (nearNode) {
-        store.snappedCursor = { ...nearNode.pos }
-        store.hoverNodeId = nearNode.id
+      const isConstructionTool =
+        store.tool === 'place' ||
+        store.tool === 'curve' ||
+        store.tool === 'turnout' ||
+        store.tool === 'split' ||
+        store.tool === 'measure'
+
+      if (!isConstructionTool) {
+        // En mode sélection (V) ou déplacement de vue (H) : aucun point de pose/snap de construction
         store.hoverSegSteps = null
-      } else {
         store.hoverNodeId = null
-        // Priority 2: Magnetic track snap when using place, curve, split, measure, select
-        const hitTol = 18 / store.camera.scale
-        const hitSegId = hitSegment(store.network, rawWorld, hitTol)
-        const isTrackSnapTool =
-          store.tool === 'place' ||
-          store.tool === 'curve' ||
-          store.tool === 'turnout' ||
-          store.tool === 'split' ||
-          store.tool === 'measure' ||
-          store.tool === 'select'
-        const isCurvePhase1 = store.tool === 'curve' && store.curveState.phase === 1
-        if (hitSegId && isTrackSnapTool) {
+        store.snappedCursor = rawWorld
+
+        // Feedback curseur survol sur les éléments sélectionnables
+        if (store.tool === 'select' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis && !store.gizmoHoverAxis) {
+          const hitTol = 14 / store.camera.scale
+          const hoveredNodeId = hitNode(store.network, rawWorld, hitTol)
+          const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
+          if (hoveredNodeId || hoveredSegId) {
+            canvas.style.cursor = 'pointer'
+          } else if (canvas.style.cursor === 'pointer') {
+            canvas.style.cursor = isSpaceDown ? 'grab' : ''
+          }
+        }
+      } else {
+        // Magnetic node snap has priority 1 (outils de construction uniquement)
+        const nearNode = findNearestNode(store.network, rawWorld, 16, store.camera)
+        if (nearNode) {
+          store.snappedCursor = { ...nearNode.pos }
+          store.hoverNodeId = nearNode.id
+          store.hoverSegSteps = null
+        } else {
+          store.hoverNodeId = null
+          // Priority 2: Magnetic track snap when using place, curve, split, measure
+          const hitTol = 18 / store.camera.scale
+          const hitSegId = hitSegment(store.network, rawWorld, hitTol)
+          const isCurvePhase1 = store.tool === 'curve' && store.curveState.phase === 1
+          if (hitSegId) {
           if (!isCurvePhase1 && (store.snap || e.shiftKey)) {
             const spacing = getSnapSpacing()
             const { points, nearest } = getStepPointsAlongSegment(hitSegId, store.network, spacing, rawWorld)
@@ -1957,6 +1961,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           }
         }
       }
+    }
 
       if (!store.panning) {
         if (

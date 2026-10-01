@@ -239,9 +239,21 @@ export class EditorStore {
   dirty = false
 
   setSectionMeta = (sectionId: string, meta: Partial<SectionMetadata>): void => {
-    this.sectionMeta[sectionId] = {
+    const updated = {
       ...this.sectionMeta[sectionId],
       ...meta,
+    }
+    this.sectionMeta[sectionId] = updated
+
+    // Also associate metadata with individual constituent segment IDs so it survives splits/cuts
+    const segIds = sectionId.split('-')
+    for (const sid of segIds) {
+      if (sid) {
+        this.sectionMeta[sid] = {
+          ...this.sectionMeta[sid],
+          ...meta,
+        }
+      }
     }
     this.markDirty()
     this.notify()
@@ -438,6 +450,8 @@ export class EditorStore {
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
+    this.hoverSegSteps = null
+    this.hoverNodeId = null
     this.notify()
   }
 
@@ -799,6 +813,8 @@ export class EditorStore {
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
+    this.hoverSegSteps = null
+    this.hoverNodeId = null
     this.isDraggingNode = false
     this.dragStartWorld = null
     this.draggedNodeInitialPositions.clear()
