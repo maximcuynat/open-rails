@@ -102,6 +102,20 @@ const TOOLS: ToolDef[] = [
       </svg>
     ),
   },
+  {
+    id: 'locomotive',
+    label: 'Locomotive (Pose & Simulation)',
+    shortcut: 'L',
+    group: 4,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="8" width="16" height="8" rx="1" />
+        <polygon points="18,8 22,12 18,16" />
+        <circle cx="6" cy="18" r="2" />
+        <circle cx="14" cy="18" r="2" />
+      </svg>
+    ),
+  },
 ]
 
 export function ToolBar({ store }: { store: EditorStore }) {
@@ -267,6 +281,56 @@ export function ToolBar({ store }: { store: EditorStore }) {
           >
             <div>+2v</div>
             <div style={{ fontSize: '8px', opacity: 0.8 }}>(D)</div>
+          </div>
+        )}
+
+        {/* Locomotive status badge */}
+        {store.locomotive && (
+          <div
+            style={{
+              margin: '4px 0 0',
+              padding: '4px 2px',
+              background: store.isPlayMode ? 'rgba(16, 185, 129, 0.2)' : 'rgba(59, 130, 246, 0.15)',
+              border: `1px solid ${store.isPlayMode ? '#10b981' : '#3b82f6'}`,
+              borderRadius: '6px',
+              fontSize: '9px',
+              fontWeight: 700,
+              color: store.isPlayMode ? '#34d399' : '#60a5fa',
+              textAlign: 'center',
+              lineHeight: 1.2,
+              cursor: 'pointer',
+              width: '34px',
+            }}
+            title={store.isPlayMode ? 'Mode Play actif · Espace pour arrêter' : 'Cliquer pour démarrer le mode Play (Espace)'}
+            onClick={() => store.togglePlayMode()}
+          >
+            <div>{store.isPlayMode ? '⏹' : '▶'}</div>
+            <div style={{ fontSize: '7px', opacity: 0.8 }}>{store.isPlayMode ? 'Stop' : 'Play'}</div>
+          </div>
+        )}
+
+        {/* Remove locomotive button */}
+        {store.locomotive && !store.isPlayMode && (
+          <div
+            style={{
+              margin: '2px 0 0',
+              padding: '4px 2px',
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid #ef4444',
+              borderRadius: '6px',
+              fontSize: '9px',
+              fontWeight: 700,
+              color: '#f87171',
+              textAlign: 'center',
+              lineHeight: 1.2,
+              cursor: 'pointer',
+              width: '34px',
+            }}
+            title="Retirer la locomotive"
+            onClick={() => store.removeLocomotive()}
+          >
+            <div>✕</div>
+            <div style={{ fontSize: '7px', opacity: 0.8 }}>Loco</div>
           </div>
         )}
       </div>

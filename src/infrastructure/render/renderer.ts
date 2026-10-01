@@ -2732,3 +2732,90 @@ export function renderBufferStop(
 
   ctx.restore()
 }
+
+
+// ─────────────────── Locomotive Rendering ───────────────────
+
+import type { Locomotive } from '@domain/models/locomotive'
+import {
+  getLocomotiveFrontPos,
+  getLocomotiveRearPos,
+  getLocomotivePolygon,
+} from '@domain/models/locomotive'
+
+/**
+ * Render a locomotive on the canvas.
+ * Draws the body (rectangle + nose triangle), 2 bogie markers,
+ * and a direction arrow showing the heading.
+ */
+export function renderLocomotive(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  loco: Locomotive,
+  isGhost = false,
+): void {
+  const polygon = getLocomotivePolygon(net, loco)
+  const frontPos = getLocomotiveFrontPos(net, loco)
+  const rearPos = getLocomotiveRearPos(net, loco)
+  if (!polygon || !frontPos || !rearPos) return
+
+  ctx.save()
+
+  // Convert world points to screen
+  const toSx = (p: Point) => (p.x - cam.x) * cam.scale + vw / 2
+  const toSy = (p: Point) => (p.y - cam.y) * cam.scale + vh / 2
+
+  if (isGhost) {
+    ctx.globalAlpha = 0.4
+  }
+
+  // 1. Draw body polygon (TGV silhouette)
+  ctx.beginPath()
+  ctx.moveTo(toSx(polygon[0]), toSy(polygon[0]))
+  for (let i = 1; i < polygon.length; i++) {
+    ctx.lineTo(toSx(polygon[i]), toSy(polygon[i]))
+  }
+  ctx.closePath()
+
+  // Fill
+  ctx.fillStyle = isGhost ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.35)'
+  ctx.fill()
+
+  // Stroke
+  ctx.strokeStyle = isGhost ? 'rgba(59, 130, 246, 0.5)' : '#2563eb'
+  ctx.lineWidth = isGhost ? 1 : 2
+  ctx.stroke()
+
+  // 2. Draw bogie markers (visible anchor points at center of rails)
+  const bogieR = Math.max(3, Math.min(6, 4 * Math.sqrt(cam.scale)))
+
+  // Front bogie (filled accent)
+  ctx.beginPath()
+  ctx.arc(toSx(frontPos), toSy(frontPos), bogieR, 0, Math.PI * 2)
+  ctx.fillStyle = isGhost ? 'rgba(239, 68, 68, 0.4)' : '#ef4444'
+  ctx.fill()
+  ctx.strokeStyle = isGhost ? 'rgba(239, 68, 68, 0.6)' : '#b91c1c'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // Rear bogie (filled orange)
+  ctx.beginPath()
+  ctx.arc(toSx(rearPos), toSy(rearPos), bogieR, 0, Math.PI * 2)
+  ctx.fillStyle = isGhost ? 'rgba(251, 146, 60, 0.4)' : '#fb923c'
+  ctx.fill()
+  ctx.strokeStyle = isGhost ? 'rgba(251, 146, 60, 0.6)' : '#c2410c'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // 3. Nose tip indicator (small triangle marker at nose point)
+  const nosePt = polygon[0]
+  ctx.beginPath()
+  ctx.arc(toSx(nosePt), toSy(nosePt), bogieR * 0.7, 0, Math.PI * 2)
+  ctx.fillStyle = isGhost ? 'rgba(16, 185, 129, 0.4)' : '#10b981'
+  ctx.fill()
+
+  ctx.restore()
+}

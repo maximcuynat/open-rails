@@ -11,8 +11,41 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         return
       }
 
+      // --- Play mode controls (highest priority when active) ---
+      if (store.isPlayMode) {
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          store.stepLocomotive(1)
+          return
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          store.stepLocomotive(-1)
+          return
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault()
+          store.steerUpcomingTurnout('left')
+          return
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault()
+          store.steerUpcomingTurnout('right')
+          return
+        } else if (e.key === ' ') {
+          e.preventDefault()
+          store.togglePlayMode()
+          return
+        } else if (e.key === 'Escape') {
+          store.togglePlayMode()
+          return
+        }
+      }
+
       if (e.code === 'Space') {
         e.preventDefault()
+        // If locomotive is placed but play mode is off, toggle play mode
+        if (store.locomotive && !store.isPlayMode) {
+          store.togglePlayMode()
+          return
+        }
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         store.deleteSelection()
@@ -35,6 +68,8 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         store.toggleActiveJunction()
       } else if (e.key === 'h' || e.key === 'H') {
         store.setTool('pan')
+      } else if (e.key === 'l' || e.key === 'L') {
+        store.setTool('locomotive')
       } else if (e.key === 'g' || e.key === 'G') {
         store.toggleSnap()
       } else if (e.key === 'f' || e.key === 'F') {

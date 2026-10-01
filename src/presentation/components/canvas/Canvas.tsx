@@ -7,6 +7,7 @@ import {
   renderScaleBar,
   renderDetailedCurveRails,
   renderDetailedRailLines,
+  renderLocomotive,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
   GAUGE,
@@ -356,6 +357,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { tool: store.tool })
+
+    // Render locomotive on top of the track network
+    if (store.locomotive) {
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive)
+    }
 
     // Box selection rectangle
     if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
@@ -1591,6 +1597,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.measureEnd = pt
           store.isMeasuring = false
         }
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'locomotive') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        store.placeLocomotiveAt(world)
         redraw()
         return
       }

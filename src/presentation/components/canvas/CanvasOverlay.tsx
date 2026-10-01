@@ -2,6 +2,9 @@ import type { EditorStore } from '@application/state/editorStore'
 
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
+  if (store.isPlayMode) {
+    return '▶ Mode Play · ↑ Avancer · ↓ Refouler · ←→ Aiguillage · Espace/Échap pour quitter'
+  }
   switch (store.tool) {
     case 'place':
       return store.lastNodeId
@@ -30,6 +33,11 @@ function hintText(store: EditorStore): string {
         ? 'Glisser les flèches (X/Y) pour déplacer le nœud · Glisser le fond pour déplacer la vue'
         : 'Glisser pour déplacer la vue · Clic sur un nœud pour afficher ses flèches de déplacement'
     default:
+      if (store.tool === 'locomotive') {
+        return store.locomotive
+          ? 'Clic sur un rail pour repositionner · Espace pour Play'
+          : 'Clic sur un rail pour poser la locomotive'
+      }
       return ''
   }
 }

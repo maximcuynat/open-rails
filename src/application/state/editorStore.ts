@@ -16,6 +16,13 @@ import type { JunctionId, Network, Point, Selection, Segment } from '@domain/mod
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
 import { type Unit, type ScalePresetId, SCALE_PRESETS } from '@domain/models/units'
+import type { Locomotive } from '@domain/models/locomotive'
+import {
+  createLocomotive,
+  advanceLocomotive,
+  snapToNearestTrack,
+  steerJunction,
+} from '@domain/models/locomotive'
 
 export type Tool =
   | 'select'
@@ -25,6 +32,7 @@ export type Tool =
   | 'split'
   | 'measure'
   | 'pan'
+  | 'locomotive'
 
 export type TrackMode = 'catalog' | 'freeform'
 
@@ -99,6 +107,12 @@ export class EditorStore {
   boardWidth: number = 2.40 // in meters (e.g. 240 cm = 8 ft)
   boardHeight: number = 1.20 // in meters (e.g. 120 cm = 4 ft)
   viewport: { w: number; h: number } = { w: 1200, h: 800 }
+
+  // --- Locomotive / Simulation ---
+  locomotive: Locomotive | null = null
+  isPlayMode = false
+  locomotiveLength = 20 // meters (adjustable)
+  locomotiveSpeed = 0.5 // meters per step (keyboard advance increment)
 
   turnoutStartId: string | null = null
   turnoutOffset = 4.0
@@ -1144,6 +1158,61 @@ export class EditorStore {
         this.notify()
         return
       }
+    }
+  }
+
+  // --- Locomotive / Simulation methods ---
+
+  /** Place locomotive on the nearest track segment to a world position */
+  placeLocomotiveAt = (worldPos: Point): boolean => {
+    const snap = snapToNearestTrack(this.network, worldPos)
+    if (!snap) return false
+    const loco = createLocomotive(this.network, snap.segId, snap.t, this.locomotiveLength)
+    if (!loco) return false
+    this.locomotive = loco
+    this.notify()
+    return true
+  }
+
+  /** Toggle play mode on/off */
+  togglePlayMode = (): void => {
+    if (!this.locomotive) return
+    this.isPlayMode = !this.isPlayMode
+    if (this.isPlayMode) {
+      // Switch away from any tool interaction
+      this.lastNodeId = null
+      this.curveState = { phase: 0, startId: null }
+      this.turnoutStartId = null
+    }
+    this.notify()
+  }
+
+  /** Advance the locomotive by one step in the given direction */
+  stepLocomotive = (direction: 1 | -1): void => {
+    if (!this.locomotive || !this.isPlayMode) return
+    advanceLocomotive(this.network, this.locomotive, direction * this.locomotiveSpeed)
+    this.notify()
+  }
+
+  /** Steer the upcoming junction left or right relative to the locomotive */
+  steerUpcomingTurnout = (steerDirection: 'left' | 'right'): void => {
+    if (!this.locomotive) return
+    steerJunction(this.network, this.locomotive, steerDirection)
+    this.notify()
+  }
+
+  /** Remove the locomotive from the layout */
+  removeLocomotive = (): void => {
+    this.locomotive = null
+    this.isPlayMode = false
+    this.notify()
+  }
+
+  /** Set the locomotive length (for future placement) */
+  setLocomotiveLength = (len: number): void => {
+    if (len > 2) {
+      this.locomotiveLength = len
+      this.notify()
     }
   }
 }
