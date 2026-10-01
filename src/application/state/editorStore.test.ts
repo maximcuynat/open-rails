@@ -131,4 +131,27 @@ describe('EditorStore persistence', () => {
     expect(store2.trackSpacing).toBe(0.050)
     expect(store2.showDimensions).toBe(false)
   })
+
+  it('manages turnout state, settings and cleanup on interaction cancel', () => {
+    const store = new EditorStore()
+    store.setTool('turnout')
+    expect(store.tool).toBe('turnout')
+    expect(store.turnoutSide).toBe(1)
+
+    store.toggleTurnoutSide()
+    expect(store.turnoutSide).toBe(-1)
+
+    store.setTurnoutRadius(60)
+    expect(store.turnoutRadius).toBe(60)
+
+    store.setTurnoutOffset(5.5)
+    expect(store.turnoutOffset).toBe(5.5)
+
+    const n1 = addNode(store.network, { x: 0, y: 0 })
+    store.turnoutStartId = n1.id
+
+    store.cancelInteraction()
+    expect(store.turnoutStartId).toBeNull()
+    expect(store.network.nodes.size).toBe(0)
+  })
 })

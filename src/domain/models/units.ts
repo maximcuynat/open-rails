@@ -19,7 +19,29 @@ export interface ScalePreset {
   defaultTrackSpacing: number // entraxe standard (e.g. 3.80m for 1:1, 0.050m = 50mm for HO)
   defaultUnit: Unit
   minLength: number // min track segment length in world meters (e.g. 0.5m for 1:1, 0.020m = 20mm for HO)
+  defaultBoardWidth?: number // in world meters (e.g. 2.40m for HO)
+  defaultBoardHeight?: number // in world meters (e.g. 1.20m for HO)
+  defaultCameraScale?: number // pixels per world meter (e.g. 350 for HO, 550 for N, 2.5 for 1:1)
 }
+
+export interface BoardPreset {
+  name: string
+  width: number // meters
+  height: number // meters
+  description: string
+  scale?: ScalePresetId
+}
+
+export const BOARD_PRESETS: BoardPreset[] = [
+  { name: 'Standard HO (8×4 ft)', width: 2.40, height: 1.20, description: 'Table classique de modélisme HO (240 × 120 cm)', scale: 'HO' },
+  { name: 'Compact HO', width: 2.00, height: 1.00, description: 'Table compacte HO (200 × 100 cm)', scale: 'HO' },
+  { name: 'Grand Réseau HO', width: 3.00, height: 1.50, description: 'Grand plateau HO (300 × 150 cm)', scale: 'HO' },
+  { name: 'Standard N', width: 1.60, height: 0.80, description: 'Table standard N (160 × 80 cm)', scale: 'N' },
+  { name: 'Compact N', width: 1.20, height: 0.60, description: 'Table compacte N (120 × 60 cm)', scale: 'N' },
+  { name: 'Standard TT', width: 2.00, height: 1.00, description: 'Table standard TT (200 × 100 cm)', scale: 'TT' },
+  { name: 'Plateau Micro Z', width: 1.00, height: 0.60, description: 'Table compacte Z (100 × 60 cm)', scale: 'Z' },
+  { name: 'Grand Réseau O', width: 3.60, height: 1.80, description: 'Grande table échelle O (360 × 180 cm)', scale: 'O' },
+]
 
 export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
   '1:1': {
@@ -31,6 +53,7 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 3.80,
     defaultUnit: 'm',
     minLength: 0.5,
+    defaultCameraScale: 2.5,
   },
   HO: {
     id: 'HO',
@@ -41,6 +64,9 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 0.050, // 50 mm standard NEM
     defaultUnit: 'mm',
     minLength: 0.020, // 20 mm
+    defaultBoardWidth: 2.40,
+    defaultBoardHeight: 1.20,
+    defaultCameraScale: 350,
   },
   N: {
     id: 'N',
@@ -51,6 +77,9 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 0.028, // 28 mm standard
     defaultUnit: 'mm',
     minLength: 0.015, // 15 mm
+    defaultBoardWidth: 1.60,
+    defaultBoardHeight: 0.80,
+    defaultCameraScale: 550,
   },
   TT: {
     id: 'TT',
@@ -61,6 +90,9 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 0.034, // 34 mm
     defaultUnit: 'mm',
     minLength: 0.018,
+    defaultBoardWidth: 2.00,
+    defaultBoardHeight: 1.00,
+    defaultCameraScale: 400,
   },
   O: {
     id: 'O',
@@ -71,6 +103,9 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 0.070, // 70 mm
     defaultUnit: 'mm',
     minLength: 0.030,
+    defaultBoardWidth: 3.60,
+    defaultBoardHeight: 1.80,
+    defaultCameraScale: 220,
   },
   Z: {
     id: 'Z',
@@ -81,6 +116,9 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 0.020, // 20 mm
     defaultUnit: 'mm',
     minLength: 0.010,
+    defaultBoardWidth: 1.00,
+    defaultBoardHeight: 0.60,
+    defaultCameraScale: 800,
   },
   custom: {
     id: 'custom',
@@ -91,6 +129,9 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     defaultTrackSpacing: 3.80,
     defaultUnit: 'm',
     minLength: 0.1,
+    defaultBoardWidth: 2.40,
+    defaultBoardHeight: 1.20,
+    defaultCameraScale: 150,
   },
 }
 

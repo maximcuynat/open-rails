@@ -81,6 +81,9 @@ export interface SerializedProject {
   gauge?: number
   trackSpacing?: number
   showDimensions?: boolean
+  boardEnabled?: boolean
+  boardWidth?: number
+  boardHeight?: number
 }
 
 /**
@@ -99,6 +102,9 @@ export function serializeNetwork(
   gauge?: number,
   trackSpacing?: number,
   showDimensions?: boolean,
+  boardEnabled?: boolean,
+  boardWidth?: number,
+  boardHeight?: number,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -196,6 +202,9 @@ export function serializeNetwork(
     gauge,
     trackSpacing,
     showDimensions,
+    boardEnabled,
+    boardWidth,
+    boardHeight,
   }
 }
 
@@ -215,6 +224,9 @@ export function deserializeNetwork(data: SerializedProject): {
   gauge?: number
   trackSpacing?: number
   showDimensions?: boolean
+  boardEnabled?: boolean
+  boardWidth?: number
+  boardHeight?: number
 } {
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
@@ -317,6 +329,9 @@ export function deserializeNetwork(data: SerializedProject): {
     gauge: typeof data.gauge === 'number' ? data.gauge : undefined,
     trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
     showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
+    boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
+    boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
+    boardHeight: typeof data.boardHeight === 'number' ? data.boardHeight : undefined,
   }
 }
 
@@ -374,6 +389,9 @@ export function saveNetworkToStorage(
   gauge?: number,
   trackSpacing?: number,
   showDimensions?: boolean,
+  boardEnabled?: boolean,
+  boardWidth?: number,
+  boardHeight?: number,
 ): boolean {
   try {
     const storage = getStorage()
@@ -391,6 +409,9 @@ export function saveNetworkToStorage(
       gauge,
       trackSpacing,
       showDimensions,
+      boardEnabled,
+      boardWidth,
+      boardHeight,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -415,6 +436,9 @@ export function loadNetworkFromStorage(): {
   gauge?: number
   trackSpacing?: number
   showDimensions?: boolean
+  boardEnabled?: boolean
+  boardWidth?: number
+  boardHeight?: number
 } | null {
   try {
     const storage = getStorage()

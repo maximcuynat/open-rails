@@ -40,7 +40,11 @@ import {
 } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
-import { performTrackCut } from '@domain/geometry/constructionTemplates'
+import {
+  computeFreeformParallelTurnout,
+  applyFreeformParallelTurnout,
+  performTrackCut,
+} from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatRadius, formatAngle } from '@domain/models/units'
 import {
   renderStraightDimension,
@@ -371,6 +375,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const isSnapTool =
       store.tool === 'place' ||
       store.tool === 'curve' ||
+      store.tool === 'turnout' ||
       store.tool === 'split' ||
       store.tool === 'measure'
     if (isSnapTool) {
@@ -684,6 +689,104 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
+    // Parallel Turnout preview (Branchement avec contre-courbe intégrée - pose libre par la fin)
+    if (store.tool === 'turnout') {
+      const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
+      const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      if (store.turnoutStartId) {
+        const startNode = store.network.nodes.get(store.turnoutStartId)
+        if (startNode) {
+          const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
+          const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
+          if (geom && geom.valid) {
+            ctx.save()
+            ctx.globalAlpha = 0.85
+            // Real double steel rails for the 2 curved segments:
+            renderDetailedCurveRails(ctx, cam, geom.startPos, geom.via1, geom.midPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', store.gauge)
+            renderDetailedCurveRails(ctx, cam, geom.midPos, geom.via2, geom.endPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', store.gauge)
+            ctx.globalAlpha = 1
+
+            const p0x = (geom.startPos.x - cam.x) * cam.scale + rect.width / 2
+            const p0y = (geom.startPos.y - cam.y) * cam.scale + rect.height / 2
+            const pex = (geom.endPos.x - cam.x) * cam.scale + rect.width / 2
+            const pey = (geom.endPos.y - cam.y) * cam.scale + rect.height / 2
+
+            // Start turnout node & end node markers
+            ctx.fillStyle = '#10b981'
+            ctx.beginPath()
+            ctx.arc(p0x, p0y, 5, 0, Math.PI * 2)
+            ctx.arc(pex, pey, 5, 0, Math.PI * 2)
+            ctx.fill()
+
+            // Forward sightline along parallel direction
+            const sightLen = Math.max(100, 300 / cam.scale)
+            ctx.strokeStyle = accent
+            ctx.globalAlpha = 0.35
+            ctx.lineWidth = 1.5
+            ctx.setLineDash([4, 4])
+            ctx.beginPath()
+            ctx.moveTo(pex, pey)
+            ctx.lineTo(
+              (geom.endPos.x + geom.tangent.x * sightLen - cam.x) * cam.scale + rect.width / 2,
+              (geom.endPos.y + geom.tangent.y * sightLen - cam.y) * cam.scale + rect.height / 2,
+            )
+            ctx.stroke()
+            ctx.setLineDash([])
+            ctx.globalAlpha = 1
+
+            // Floating label badge near end
+            const labelTxt = `Espacement: ${formatDistance(Math.abs(geom.offset), store.unit)} · Longueur: ${formatDistance(geom.dx, store.unit)} (R${formatRadius(geom.radius, store.unit)})`
+            ctx.font = '600 11px Archivo, system-ui, sans-serif'
+            const labelW = ctx.measureText(labelTxt).width
+            const lx = pex + 14
+            const ly = pey - 10
+            ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+            ctx.beginPath()
+            ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
+            ctx.fill()
+            ctx.fillStyle = '#fff'
+            ctx.textBaseline = 'middle'
+            ctx.textAlign = 'left'
+            ctx.fillText(labelTxt, lx, ly - 4)
+            ctx.restore()
+          }
+        }
+      } else {
+        // Phase A: hovering to select start node or start rail
+        const nearNode = findNearestNode(store.network, cursor, 20, cam)
+        if (nearNode) {
+          const nx = (nearNode.pos.x - cam.x) * cam.scale + rect.width / 2
+          const ny = (nearNode.pos.y - cam.y) * cam.scale + rect.height / 2
+          ctx.save()
+          ctx.strokeStyle = '#10b981'
+          ctx.lineWidth = 2.5
+          ctx.beginPath()
+          ctx.arc(nx, ny, 8, 0, Math.PI * 2)
+          ctx.stroke()
+          ctx.font = '600 11px Archivo, system-ui, sans-serif'
+          ctx.fillStyle = '#10b981'
+          ctx.fillText('Départ aiguillage', nx + 12, ny - 6)
+          ctx.restore()
+        } else {
+          const hitTol = 18 / cam.scale
+          const hitSegId = hitSegment(store.network, cursor, hitTol)
+          if (hitSegId) {
+            const cx = (cursor.x - cam.x) * cam.scale + rect.width / 2
+            const cy = (cursor.y - cam.y) * cam.scale + rect.height / 2
+            ctx.save()
+            ctx.fillStyle = '#10b981'
+            ctx.beginPath()
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.font = '600 11px Archivo, system-ui, sans-serif'
+            ctx.fillStyle = '#10b981'
+            ctx.fillText('Insérer aiguillage ici', cx + 12, cy - 6)
+            ctx.restore()
+          }
+        }
+      }
+    }
 
     // 5. Track Cut / Split preview
     if (store.tool === 'split') {
@@ -1329,6 +1432,44 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      if (e.button === 0 && store.tool === 'turnout') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const cursor = store.snap ? store.snappedCursor : world
+
+        if (store.turnoutStartId) {
+          const startNode = store.network.nodes.get(store.turnoutStartId)
+          if (startNode) {
+            const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
+            const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
+            if (geom && geom.valid) {
+              const res = applyFreeformParallelTurnout(store.network, startNode.id, geom)
+              store.lastNodeId = res.endNode.id
+              store.turnoutStartId = null
+              store.markDirty()
+            }
+          }
+        } else {
+          const nearNode = findNearestNode(store.network, cursor, 20, store.camera)
+          if (nearNode) {
+            store.turnoutStartId = nearNode.id
+          } else {
+            const hitTol = 18 / store.camera.scale
+            const hitSegId = store.hoverSegSteps?.segId ?? hitSegment(store.network, cursor, hitTol)
+            if (hitSegId) {
+              const targetPos = (store.snap && store.hoverSegSteps?.nearest && store.hoverSegSteps.segId === hitSegId)
+                ? store.hoverSegSteps.nearest
+                : cursor
+              const split = splitSegment(store.network, hitSegId, targetPos)
+              if (split) {
+                store.turnoutStartId = split.midNode.id
+                store.markDirty()
+              }
+            }
+          }
+        }
+        redraw()
+        return
+      }
 
       if (e.button === 0 && store.tool === 'split') {
         const world = getWorldPos(e.clientX, e.clientY)
@@ -1472,10 +1613,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const isInteracting =
         store.lastNodeId !== null ||
         store.curveState.phase !== 0 ||
+        store.turnoutStartId !== null ||
         store.isBoxSelecting ||
         store.isDraggingNode ||
         store.tool === 'place' ||
-        store.tool === 'curve'
+        store.tool === 'curve' ||
+        store.tool === 'turnout'
 
       if (!store.panning && isInteracting && px >= 0 && px <= vw && py >= 0 && py <= vh) {
         const EDGE_MARGIN = 55
@@ -1553,6 +1696,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isTrackSnapTool =
           store.tool === 'place' ||
           store.tool === 'curve' ||
+          store.tool === 'turnout' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.tool === 'select'
@@ -1647,6 +1791,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (
           store.tool === 'place' ||
           store.tool === 'curve' ||
+          store.tool === 'turnout' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.hoverSegSteps !== null

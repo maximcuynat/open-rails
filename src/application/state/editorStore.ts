@@ -21,6 +21,7 @@ export type Tool =
   | 'select'
   | 'place'
   | 'curve'
+  | 'turnout'
   | 'split'
   | 'measure'
   | 'pan'
@@ -92,6 +93,11 @@ export class EditorStore {
   trackSpacing: number = 3.80 // standard double-track center-to-center spacing in meters
   showDimensions: boolean = true // live CAD dimensioning HUD overlay
   isSettingsOpen: boolean = false
+
+  turnoutStartId: string | null = null
+  turnoutOffset = 4.0
+  turnoutRadius = 40.0
+  turnoutSide: 1 | -1 = 1
 
   measureStart: Point | null = null
   measureEnd: Point | null = null
@@ -367,6 +373,7 @@ export class EditorStore {
     const activeCandidates = [
       this.lastNodeId,
       this.curveState.startId,
+      this.turnoutStartId,
       this.parallelLastNodeId,
     ].filter(Boolean) as string[]
     for (const nid of activeCandidates) {
@@ -387,6 +394,22 @@ export class EditorStore {
     this.curveState = { phase: 0, startId: null }
     this.parallelMode = false
     this.parallelLastNodeId = null
+    this.turnoutStartId = null
+    this.notify()
+  }
+
+  toggleTurnoutSide = (): void => {
+    this.turnoutSide = this.turnoutSide === 1 ? -1 : 1
+    this.notify()
+  }
+
+  setTurnoutOffset = (val: number): void => {
+    this.turnoutOffset = Math.max(1.5, Math.min(20, val))
+    this.notify()
+  }
+
+  setTurnoutRadius = (val: number): void => {
+    this.turnoutRadius = Math.max(15, Math.min(200, val))
     this.notify()
   }
 
@@ -634,6 +657,7 @@ export class EditorStore {
     if (preserveActive) {
       if (this.lastNodeId) keep.add(this.lastNodeId)
       if (this.curveState.startId) keep.add(this.curveState.startId)
+      if (this.turnoutStartId) keep.add(this.turnoutStartId)
       if (this.parallelLastNodeId) keep.add(this.parallelLastNodeId)
     }
     const pruned = pruneOrphanNodes(this.network, keep)
@@ -652,6 +676,7 @@ export class EditorStore {
     const activeCandidates = [
       this.lastNodeId,
       this.curveState.startId,
+      this.turnoutStartId,
       this.parallelLastNodeId,
     ].filter(Boolean) as string[]
 
@@ -659,6 +684,7 @@ export class EditorStore {
     this.curveState = { phase: 0, startId: null }
     this.parallelMode = false
     this.parallelLastNodeId = null
+    this.turnoutStartId = null
     this.measureStart = null
     this.measureEnd = null
     this.isMeasuring = false

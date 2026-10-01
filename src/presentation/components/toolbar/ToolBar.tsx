@@ -62,10 +62,22 @@ const TOOLS: ToolDef[] = [
     ),
   },
   {
+    id: 'turnout',
+    label: 'Aiguillage parallèle',
+    shortcut: 'P',
+    group: 2,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="2" y1="18" x2="22" y2="18" />
+        <path d="M5 18c3-4 6-10 11-10h6" />
+      </svg>
+    ),
+  },
+  {
     id: 'split',
     label: 'Ciseaux / Découpe',
     shortcut: 'K',
-    group: 2,
+    group: 3,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="6" cy="6" r="3" />
@@ -80,7 +92,7 @@ const TOOLS: ToolDef[] = [
     id: 'measure',
     label: 'Règle / Mesureur',
     shortcut: 'M',
-    group: 2,
+    group: 3,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 21l18-18" />
