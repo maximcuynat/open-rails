@@ -343,16 +343,13 @@ export function renderNetwork(
   net: Network,
   selection: Selection,
   sectionMeta?: Record<string, SectionMetadata>,
-  options?: { gauge?: number },
 ): void {
-  const activeGauge = options?.gauge ?? GAUGE
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
 
-  const effectiveThreshold = SIMPLIFY_THRESHOLD * (GAUGE / activeGauge)
-  const simplified = cam.scale < effectiveThreshold
+  const simplified = cam.scale < SIMPLIFY_THRESHOLD
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
@@ -456,14 +453,14 @@ export function renderNetwork(
       if (isInactive) ctx.globalAlpha = 0.4
 
       if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, activeGauge)
+        renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
       } else {
-        renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, activeGauge)
+        renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
       }
       ctx.restore()
     }
     // Connect rails and create smooth dynamic miter joints at nodes
-    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, activeGauge)
+    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE)
 
     // 3. SECTION BADGES (LOD: multi-level representation according to cam.scale)
     // - Scale < 1.0 (Macro view): hide all labels unless the section is actively selected

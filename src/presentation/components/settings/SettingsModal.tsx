@@ -130,6 +130,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       confirmLabel="Enregistrer les modifications"
       onConfirm={handleSave}
       onClose={onClose}
+      dialogClassName="modal-dialog-wide"
     >
       <div className="settings-container">
         {/* Section 1 : Échelle du réseau */}

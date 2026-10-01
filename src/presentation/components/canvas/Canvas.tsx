@@ -156,7 +156,6 @@ function renderPlacePreview(
   snappedEnd: Point,
   labelText: string,
   isClosedToNode = false,
-  gauge?: number,
 ): void {
   const accent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
   const railColor = getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071'
@@ -200,9 +199,7 @@ function renderPlacePreview(
   }
 
   // Rail preview to snapped end
-  const effectiveGauge = gauge ?? GAUGE
-  const effectiveThreshold = SIMPLIFY_THRESHOLD * (GAUGE / effectiveGauge)
-  if (cam.scale < effectiveThreshold) {
+  if (cam.scale < SIMPLIFY_THRESHOLD) {
     ctx.strokeStyle = accent
     ctx.lineWidth = 2
     ctx.setLineDash([8, 4])
@@ -213,7 +210,7 @@ function renderPlacePreview(
     ctx.setLineDash([])
   } else {
     ctx.globalAlpha = 0.85
-    renderDetailedRailLines(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent, 0, 0, '#ffffff', gauge)
+    renderDetailedRailLines(ctx, cam, start, snappedEnd, vw, vh, false, railColor, accent, 0, 0, '#ffffff', GAUGE)
     ctx.globalAlpha = 1
   }
 
@@ -255,7 +252,6 @@ function renderCurvePreview(
   labelText: string,
   isClosedToNode = false,
   colorOverride?: string,
-  gauge?: number,
 ): void {
   const defaultAccent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
   const accent = colorOverride ?? defaultAccent
@@ -280,9 +276,7 @@ function renderCurvePreview(
   ctx.globalAlpha = 1
 
   // Curve preview
-  const effectiveGauge = gauge ?? GAUGE
-  const effectiveThreshold = SIMPLIFY_THRESHOLD * (GAUGE / effectiveGauge)
-  if (cam.scale < effectiveThreshold) {
+  if (cam.scale < SIMPLIFY_THRESHOLD) {
     ctx.strokeStyle = accent
     ctx.lineWidth = 2.5
     ctx.setLineDash(isGreen ? [] : [6, 4])
@@ -293,7 +287,7 @@ function renderCurvePreview(
     ctx.setLineDash([])
   } else {
     ctx.globalAlpha = 0.95
-    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, isGreen, railColor, accent, 0, 0, '#ffffff', gauge)
+    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, isGreen, railColor, accent, 0, 0, '#ffffff', GAUGE)
     ctx.globalAlpha = 1
   }
 
@@ -355,7 +349,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
     }
 
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { gauge: store.gauge })
+    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta)
 
     // Box selection rectangle
     if (store.isBoxSelecting && store.boxSelectStart && store.boxSelectEnd) {
@@ -486,7 +480,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const modeLabel = store.parallelMode ? '  | Double voie' : ''
         const formattedDist = formatDistance(snappedLen, store.unit)
         const labelText = `${prefix}${formattedDist}${joinSuffix}${modeLabel}`
-        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin, store.gauge)
+        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
 
         // Live CAD dimensioning overlay
         if (store.showDimensions) {
@@ -525,7 +519,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secEnd = { x: candidateEnd.x + nxp * off, y: candidateEnd.y + nyp * off }
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, 'Voie 2', false, store.gauge)
+            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, 'Voie 2', false)
             ctx.restore()
 
             if (store.showDimensions) {
@@ -578,7 +572,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const via = lock.via
             const len = curveLength(startNode.pos, via, end)
             const labelText = `Aiguillage verrouillé (0°)  ${formatRadius(lock.radius, store.unit)}  ${formatAngle(lock.angleDeg)} (${formatDistance(len, store.unit)})  → Jonction tangente`
-            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981', store.gauge)
+            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
 
             if (store.showDimensions) {
               renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, lock.radius, lock.angleDeg, len, store.unit)
@@ -590,7 +584,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const secStart = secStartNode ? secStartNode.pos : par.start
               ctx.save()
               ctx.globalAlpha = 0.55
-              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
+              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
               ctx.restore()
 
               if (store.showDimensions) {
@@ -608,7 +602,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const labelText = radius === Infinity
               ? `Ligne droite ${formatDistance(len, store.unit)}${joinSuffix}`
               : `Courbe ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
-            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981', store.gauge)
+            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
 
             if (store.showDimensions) {
               renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
@@ -620,7 +614,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const secStart = secStartNode ? secStartNode.pos : par.start
               ctx.save()
               ctx.globalAlpha = 0.55
-              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
+              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
               ctx.restore()
 
               if (store.showDimensions) {
@@ -643,7 +637,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const labelText = radius === Infinity
             ? `Flex ${formatDistance(len, store.unit)}${joinSuffix}`
             : `Flex ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin, undefined, store.gauge)
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
 
           if (store.showDimensions) {
             renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
@@ -655,7 +649,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secStart = secStartNode ? secStartNode.pos : par.start
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
             ctx.restore()
 
             if (store.showDimensions) {
@@ -676,7 +670,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const len = curveLength(startNode.pos, via, end)
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
           const labelText = `Courbe ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin, undefined, store.gauge)
+          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
 
           if (store.showDimensions) {
             renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
@@ -688,7 +682,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const secStart = secStartNode ? secStartNode.pos : par.start
             ctx.save()
             ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false, undefined, store.gauge)
+            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
             ctx.restore()
 
             if (store.showDimensions) {
@@ -713,8 +707,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             ctx.save()
             ctx.globalAlpha = 0.85
             // Real double steel rails for the 2 curved segments:
-            renderDetailedCurveRails(ctx, cam, geom.startPos, geom.via1, geom.midPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', store.gauge)
-            renderDetailedCurveRails(ctx, cam, geom.midPos, geom.via2, geom.endPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', store.gauge)
+            renderDetailedCurveRails(ctx, cam, geom.startPos, geom.via1, geom.midPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', GAUGE)
+            renderDetailedCurveRails(ctx, cam, geom.midPos, geom.via2, geom.endPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', GAUGE)
             ctx.globalAlpha = 1
 
             const p0x = (geom.startPos.x - cam.x) * cam.scale + rect.width / 2

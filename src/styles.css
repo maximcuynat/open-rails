@@ -1200,10 +1200,15 @@ kbd {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
   width: 100%;
   max-width: 480px;
+  max-height: 85vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   animation: modal-scale-in var(--transition-normal);
+}
+
+.modal-dialog-wide {
+  max-width: 760px;
 }
 
 @keyframes modal-fade-in {
@@ -1262,6 +1267,8 @@ kbd {
   color: var(--ink);
   font-size: var(--font-size-md);
   line-height: 1.5;
+  overflow-y: auto;
+  max-height: calc(85vh - 125px);
 }
 
 .modal-footer {
@@ -1400,7 +1407,7 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  max-width: 580px;
+  width: 100%;
 }
 
 .settings-section {
@@ -1426,7 +1433,7 @@ kbd {
 
 .scale-preset-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
 }
 

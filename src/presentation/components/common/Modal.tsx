@@ -9,6 +9,7 @@ export interface ModalProps {
   confirmLabel?: string
   confirmVariant?: 'primary' | 'danger'
   closeLabel?: string
+  dialogClassName?: string
 }
 
 /**
@@ -25,6 +26,7 @@ export function Modal({
   confirmLabel = 'Confirmer',
   confirmVariant = 'primary',
   closeLabel = 'Annuler',
+  dialogClassName,
 }: ModalProps) {
   useEffect(() => {
     if (!isOpen) return
@@ -41,7 +43,7 @@ export function Modal({
 
   return (
     <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 'var(--z-modal)' }}>
-      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal-dialog ${dialogClassName ?? ''}`.trim()} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3 className="modal-title">{title}</h3>
           <button className="modal-close-btn" onClick={onClose} aria-label="Fermer">
