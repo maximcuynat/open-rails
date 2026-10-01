@@ -124,6 +124,8 @@ export class EditorStore {
   isTrainSelected = false // Train selected in editor mode
   hoveredTrainPart: 'lead' | 'rear' | 'car' | null = null // Part currently under cursor
   hoveredTrainAnchor: Point | null = null // World anchor point of hovered part for UI badge
+  draggingTrainItem: 'tgv_loco' | 'tgv_wagon' | null = null // Active item being dragged
+  dragCursorScreen: Point | null = null // Screen position of cursor while dragging
 
   // --- Locomotive Kinematics & Physics ---
   locomotiveCurrentSpeed = 0 // current speed in m/s (0 = stopped)
@@ -1185,9 +1187,46 @@ export class EditorStore {
 
   // --- Locomotive / Simulation methods ---
 
-  /** Update ghost preview when hovering near track with the locomotive placement tool */
+  /** Start dragging a train component (motrice or wagon) */
+  startTrainDrag = (item: 'tgv_loco' | 'tgv_wagon', screenPos?: Point): void => {
+    this.draggingTrainItem = item
+    this.dragCursorScreen = screenPos ?? null
+    this.locomotivePreview = null
+    this.notify()
+  }
+
+  /** Update drag position and track snap preview */
+  updateTrainDrag = (worldPos: Point, screenPos?: Point): void => {
+    if (!this.draggingTrainItem) return
+    if (screenPos) {
+      this.dragCursorScreen = screenPos
+    }
+    this.updateLocomotivePreview(worldPos)
+  }
+
+  /** Complete train drag and drop onto track */
+  endTrainDrag = (worldPos: Point): boolean => {
+    if (!this.draggingTrainItem) return false
+    const item = this.draggingTrainItem
+    this.draggingTrainItem = null
+    this.dragCursorScreen = null
+    const res = this.handleDropTrainItem(item, worldPos)
+    this.locomotivePreview = null
+    this.notify()
+    return res
+  }
+
+  /** Cancel active train dragging */
+  cancelTrainDrag = (): void => {
+    this.draggingTrainItem = null
+    this.dragCursorScreen = null
+    this.locomotivePreview = null
+    this.notify()
+  }
+
+  /** Update ghost preview ONLY when actively dragging a train item over track */
   updateLocomotivePreview = (worldPos: Point): void => {
-    if (this.isPlayMode || this.tool !== 'locomotive') {
+    if (this.isPlayMode || !this.draggingTrainItem) {
       if (this.locomotivePreview !== null) {
         this.locomotivePreview = null
         this.notify()
@@ -1204,13 +1243,17 @@ export class EditorStore {
       return
     }
 
+    const previewWagons = this.draggingTrainItem === 'tgv_wagon'
+      ? (this.locomotive ? this.trainWagonCount + 1 : 1)
+      : this.trainWagonCount
+
     const previewLoco = createLocomotive(
       this.network,
       snap.segId,
       snap.t,
       this.locomotiveLength,
       14,
-      this.trainWagonCount
+      previewWagons
     )
 
     this.locomotivePreview = previewLoco

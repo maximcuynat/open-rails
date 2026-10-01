@@ -1613,16 +1613,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.selectTrain(true)
           redraw()
           return
-        } else if (store.isTrainSelected && store.tool !== 'locomotive') {
+        } else if (store.isTrainSelected) {
           store.selectTrain(false)
         }
-      }
-
-      if (e.button === 0 && store.tool === 'locomotive') {
-        const world = getWorldPos(e.clientX, e.clientY)
-        store.placeLocomotiveAt(world)
-        redraw()
-        return
       }
 
       if (e.button === 0 && store.tool === 'select') {
@@ -1775,9 +1768,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.checkTrainHover(rawWorld)
       }
 
-      // Update locomotive ghost preview during locomotive placement mode
-      if (store.tool === 'locomotive' && !store.isPlayMode) {
-        store.updateLocomotivePreview(rawWorld)
+      // Update train ghost preview ONLY if actively dragging a train item
+      if (store.draggingTrainItem && !store.isPlayMode) {
+        store.updateTrainDrag(rawWorld, { x: e.clientX, y: e.clientY })
       }
 
       // Dragging along 2D Gizmo axis (orthogonal constraint)
@@ -2031,6 +2024,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     const onUp = (e: PointerEvent) => {
+      // Finalize train item drag and drop
+      if (store.draggingTrainItem) {
+        const rawWorld = getWorldPos(e.clientX, e.clientY)
+        store.endTrainDrag(rawWorld)
+        redraw()
+        return
+      }
+
       // Finalize gizmo axis dragging
       if (store.gizmoDragAxis) {
         const moved = Math.abs(store.gizmoDragDelta.x) > 1e-4 || Math.abs(store.gizmoDragDelta.y) > 1e-4
@@ -2202,10 +2203,31 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('contextmenu', onContextMenu)
     canvas.addEventListener('dblclick', onDblClick)
+    const onGlobalPointerMove = (e: PointerEvent) => {
+      if (store.draggingTrainItem) {
+        const rawWorld = getWorldPos(e.clientX, e.clientY)
+        store.updateTrainDrag(rawWorld, { x: e.clientX, y: e.clientY })
+        redraw()
+      }
+    }
+
+    const onGlobalPointerUp = (e: PointerEvent) => {
+      if (store.draggingTrainItem) {
+        const rawWorld = getWorldPos(e.clientX, e.clientY)
+        store.endTrainDrag(rawWorld)
+        redraw()
+      }
+    }
+
+    window.addEventListener('pointermove', onGlobalPointerMove)
+    window.addEventListener('pointerup', onGlobalPointerUp)
+
     return () => {
       stopEdgePan()
       window.removeEventListener('keydown', handleKeyChange)
       window.removeEventListener('keyup', handleKeyChange)
+      window.removeEventListener('pointermove', onGlobalPointerMove)
+      window.removeEventListener('pointerup', onGlobalPointerUp)
       canvas.removeEventListener('pointerdown', onDown)
       canvas.removeEventListener('pointermove', onMove)
       canvas.removeEventListener('pointerup', onUp)
@@ -2226,7 +2248,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           e.dataTransfer.dropEffect = 'copy'
           const world = getWorldPos(e.clientX, e.clientY)
           store.cursorWorld = world
-          store.updateLocomotivePreview(world)
+          store.updateTrainDrag(world, { x: e.clientX, y: e.clientY })
           redraw()
         }}
         onDrop={(e) => {

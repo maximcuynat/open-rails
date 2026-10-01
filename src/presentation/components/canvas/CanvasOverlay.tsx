@@ -1,5 +1,6 @@
 import type { EditorStore } from '@application/state/editorStore'
 import { getLocomotiveFrontPos } from '@domain/models/locomotive'
+import { screenToWorld } from '@infrastructure/render/camera'
 import { TrainBuilderPalette } from '../train-builder/TrainBuilderPalette'
 
 /** Contextual hint shown at the bottom-center of the canvas. */
@@ -80,7 +81,57 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
   }
 
   return (
-    <div className="canvas-overlay" style={{ pointerEvents: 'none' }}>
+    <div
+      className="canvas-overlay"
+      style={{ pointerEvents: 'none' }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'copy'
+        const rect = e.currentTarget.getBoundingClientRect()
+        const world = screenToWorld(store.camera, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)
+        store.cursorWorld = world
+        store.updateTrainDrag(world, { x: e.clientX, y: e.clientY })
+        store.notify()
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        const itemType = (e.dataTransfer.getData('application/open-rails-train') ||
+          e.dataTransfer.getData('text/plain')) as 'tgv_loco' | 'tgv_wagon'
+        const rect = e.currentTarget.getBoundingClientRect()
+        const world = screenToWorld(store.camera, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)
+        if (itemType === 'tgv_loco' || itemType === 'tgv_wagon') {
+          store.handleDropTrainItem(itemType, world)
+          store.notify()
+        }
+      }}
+    >
+      {/* Floating Drag Badge following pointer */}
+      {store.draggingTrainItem && store.dragCursorScreen && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${store.dragCursorScreen.x + 14}px`,
+            top: `${store.dragCursorScreen.y + 14}px`,
+            pointerEvents: 'none',
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: '1.5px solid #38bdf8',
+            borderRadius: '8px',
+            padding: '4px 10px',
+            fontSize: '11.5px',
+            fontWeight: 700,
+            color: '#ffffff',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            userSelect: 'none',
+          }}
+        >
+          <span>{store.draggingTrainItem === 'tgv_loco' ? '🚄' : '🚃'}</span>
+          <span>{store.draggingTrainItem === 'tgv_loco' ? 'Poser Motrice TGV' : 'Ajouter Voiture'}</span>
+        </div>
+      )}
       {/* Live Engineering HUD during placement */}
       {isPlacing && activeNode && (
         <div className="hud-realtime-card">

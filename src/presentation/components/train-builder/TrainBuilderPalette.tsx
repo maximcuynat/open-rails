@@ -65,8 +65,17 @@ export function TrainBuilderPalette({ store }: { store: EditorStore }) {
         <div
           draggable
           onDragStart={(e) => handleDragStart(e, 'tgv_loco')}
+          onPointerDown={(e) => {
+            if (e.button === 0) {
+              store.startTrainDrag('tgv_loco', { x: e.clientX, y: e.clientY })
+            }
+          }}
           onClick={() => {
-            store.setTool('locomotive')
+            if (store.locomotive) {
+              store.selectTrain(true)
+            } else {
+              store.setTool('locomotive')
+            }
           }}
           style={{
             background: store.tool === 'locomotive' ? 'rgba(37, 99, 235, 0.25)' : 'rgba(30, 41, 59, 0.7)',
@@ -121,6 +130,11 @@ export function TrainBuilderPalette({ store }: { store: EditorStore }) {
         <div
           draggable
           onDragStart={(e) => handleDragStart(e, 'tgv_wagon')}
+          onPointerDown={(e) => {
+            if (e.button === 0) {
+              store.startTrainDrag('tgv_wagon', { x: e.clientX, y: e.clientY })
+            }
+          }}
           onClick={() => {
             if (hasTrain) {
               store.addTrainWagon()
