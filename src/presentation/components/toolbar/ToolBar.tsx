@@ -121,10 +121,13 @@ const TOOLS: ToolDef[] = [
 export function ToolBar({ store }: { store: EditorStore }) {
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [showGridMenu, setShowGridMenu] = useState(false)
+  const [showAngleMenu, setShowAngleMenu] = useState(false)
   const flyoutRef = useRef<HTMLDivElement>(null)
   const flyoutBtnRef = useRef<HTMLDivElement>(null)
+  const angleFlyoutRef = useRef<HTMLDivElement>(null)
+  const angleFlyoutBtnRef = useRef<HTMLDivElement>(null)
 
-  // Close flyout when clicking outside
+  // Close grid flyout when clicking outside
   useEffect(() => {
     if (!showGridMenu) return
     const onPointerDown = (e: PointerEvent) => {
@@ -140,6 +143,23 @@ export function ToolBar({ store }: { store: EditorStore }) {
     window.addEventListener('pointerdown', onPointerDown)
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [showGridMenu])
+
+  // Close angle flyout when clicking outside
+  useEffect(() => {
+    if (!showAngleMenu) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (
+        angleFlyoutRef.current &&
+        !angleFlyoutRef.current.contains(e.target as Node) &&
+        angleFlyoutBtnRef.current &&
+        !angleFlyoutBtnRef.current.contains(e.target as Node)
+      ) {
+        setShowAngleMenu(false)
+      }
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [showAngleMenu])
 
   // --- ÎLE 1 : RAILS & OUTILS ---
   const toolItems: ReactNode[] = []
@@ -643,6 +663,163 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 >
                   {store.snap ? 'Activé (G)' : 'Désactivé'}
                 </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="tb-sep" />
+
+        {/* Réglage de la sensibilité angulaire (pas d'angle) */}
+        <div
+          className="tb-btn-wrap"
+          ref={angleFlyoutBtnRef}
+          onMouseEnter={() => setHoverId('angle-step')}
+          onMouseLeave={() => setHoverId((h) => (h === 'angle-step' ? null : h))}
+        >
+          <button
+            className={`tb-step-btn${showAngleMenu ? ' active' : ''}`}
+            onClick={() => setShowAngleMenu(!showAngleMenu)}
+            title="Cliquer pour régler la sensibilité angulaire"
+            aria-label="Régler le pas d'angle"
+          >
+            <span style={{ fontSize: '8px', opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Angle</span>
+            <span>{store.angleSnapStep}°</span>
+          </button>
+
+          {hoverId === 'angle-step' && !showAngleMenu && (
+            <div className="tb-tooltip">
+              Sensibilité angulaire : <strong>{store.angleSnapStep}°</strong>
+              <span style={{ fontSize: '9px', opacity: 0.8, display: 'block' }}>
+                Cliquer pour régler le pas
+              </span>
+            </div>
+          )}
+
+          {/* Flyout de réglage de l'angle */}
+          {showAngleMenu && (
+            <div className="tb-flyout" ref={angleFlyoutRef} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                <span style={{ fontWeight: 700, fontSize: '12px' }}>Sensibilité d'angle</span>
+                <button
+                  onClick={() => setShowAngleMenu(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--ink)',
+                    opacity: 0.6,
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    lineHeight: 1,
+                    padding: '2px 4px',
+                  }}
+                  title="Fermer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Presets rapides */}
+              <div style={{ fontSize: '10px', fontWeight: 600, opacity: 0.7, marginTop: '2px' }}>
+                Pas prédéfinis :
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+                {[1, 5, 10, 15, 30, 45].map((val) => {
+                  const isSelected = store.angleSnapStep === val
+                  return (
+                    <button
+                      key={val}
+                      style={{
+                        padding: '4px 2px',
+                        fontSize: '10px',
+                        borderRadius: '4px',
+                        border: isSelected ? '1px solid var(--accent)' : '1px solid var(--border)',
+                        background: isSelected ? 'var(--accent)' : 'var(--panel-2)',
+                        color: isSelected ? 'var(--accent-fg)' : 'inherit',
+                        cursor: 'pointer',
+                        fontWeight: isSelected ? 700 : 500,
+                        textAlign: 'center',
+                      }}
+                      onClick={() => store.setAngleSnapStep(val)}
+                    >
+                      {val}°
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Stepper sur-mesure */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginTop: '4px', paddingTop: '6px', borderTop: '1px solid var(--border)' }}>
+                <span style={{ fontSize: '10px', opacity: 0.7 }}>Pas sur mesure :</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <button
+                    style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border)',
+                      background: 'var(--panel-2)',
+                      color: 'inherit',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                    }}
+                    onClick={() => {
+                      const next = Math.max(1, store.angleSnapStep - (store.angleSnapStep > 5 ? 5 : 1))
+                      store.setAngleSnapStep(next)
+                    }}
+                    title="Diminuer le pas d'angle"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    max="90"
+                    step="1"
+                    value={store.angleSnapStep}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      if (!isNaN(v) && v > 0) store.setAngleSnapStep(v)
+                    }}
+                    style={{
+                      width: '46px',
+                      padding: '2px 4px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      borderRadius: '4px',
+                      border: '1px solid var(--border)',
+                      background: 'var(--paper)',
+                      color: 'var(--ink)',
+                      textAlign: 'center',
+                    }}
+                  />
+                  <span style={{ fontSize: '10px', opacity: 0.8 }}>°</span>
+                  <button
+                    style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border)',
+                      background: 'var(--panel-2)',
+                      color: 'inherit',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                    }}
+                    onClick={() => {
+                      const next = Math.min(90, store.angleSnapStep + (store.angleSnapStep >= 5 ? 5 : 1))
+                      store.setAngleSnapStep(next)
+                    }}
+                    title="Augmenter le pas d'angle"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
             </div>
           )}

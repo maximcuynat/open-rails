@@ -206,3 +206,143 @@ export function computeParallelCurve(
     end: newEnd,
   }
 }
+
+export interface RotateCurveResult {
+  via: Point
+  valid: boolean
+  radius: number
+  angleDeg: number
+  clamped: boolean
+}
+
+function evaluateCurveTangentRotation(
+  p0: Point,
+  initialVia: Point,
+  p2: Point,
+  selectedIsEnd: boolean,
+  deltaRad: number,
+  minRadius: number
+): { via: Point; valid: boolean; radius: number; angleDeg: number } {
+  const v0x = initialVia.x - p0.x
+  const v0y = initialVia.y - p0.y
+  const l0 = Math.hypot(v0x, v0y)
+  const chordX = p2.x - p0.x
+  const chordY = p2.y - p0.y
+  const chordLen = Math.hypot(chordX, chordY)
+  if (chordLen < 1e-4) {
+    return { via: { ...initialVia }, valid: false, radius: Infinity, angleDeg: 0 }
+  }
+
+  const t0_init = l0 > 1e-6 ? { x: v0x / l0, y: v0y / l0 } : { x: chordX / chordLen, y: chordY / chordLen }
+
+  const v2x = p2.x - initialVia.x
+  const v2y = p2.y - initialVia.y
+  const l2 = Math.hypot(v2x, v2y)
+  const t2_init = l2 > 1e-6 ? { x: v2x / l2, y: v2y / l2 } : { x: chordX / chordLen, y: chordY / chordLen }
+
+  const det_init = t0_init.x * t2_init.y - t0_init.y * t2_init.x
+
+  let t0 = t0_init
+  let t2 = t2_init
+
+  if (selectedIsEnd) {
+    const angle2 = Math.atan2(t2_init.y, t2_init.x) + deltaRad
+    t2 = { x: Math.cos(angle2), y: Math.sin(angle2) }
+  } else {
+    const angle0 = Math.atan2(t0_init.y, t0_init.x) + deltaRad
+    t0 = { x: Math.cos(angle0), y: Math.sin(angle0) }
+  }
+
+  const det = t0.x * t2.y - t0.y * t2.x
+
+  if (Math.abs(det) < 1e-4) {
+    return { via: { ...initialVia }, valid: false, radius: Infinity, angleDeg: 0 }
+  }
+
+  if (Math.abs(det_init) > 1e-4 && det * det_init < 0) {
+    return { via: { ...initialVia }, valid: false, radius: Infinity, angleDeg: 0 }
+  }
+
+  const k = (chordX * t2.y - chordY * t2.x) / det
+  const m = (t0.x * chordY - t0.y * chordX) / det
+
+  if (k <= 0.1 || m <= 0.1) {
+    return { via: { ...initialVia }, valid: false, radius: Infinity, angleDeg: 0 }
+  }
+
+  const newVia: Point = {
+    x: p0.x + k * t0.x,
+    y: p0.y + k * t0.y,
+  }
+
+  const radius = minCurveRadius(p0, newVia, p2, 16)
+  if (radius < minRadius) {
+    return { via: newVia, valid: false, radius, angleDeg: 0 }
+  }
+
+  const dot = Math.max(-1, Math.min(1, t0.x * t2.x + t0.y * t2.y))
+  const angleDeg = (Math.acos(dot) * 180) / Math.PI
+
+  return { via: newVia, valid: true, radius, angleDeg }
+}
+
+/**
+ * Rotate the arrival/departure tangent of a curved segment at the selected node,
+ * keeping the selected node (and opposite node) fixed at their positions.
+ * Updates the quadratic Bezier control point (via) while ensuring the curve
+ * does not self-intersect, invert, or exceed the minimum radius of curvature.
+ */
+export function rotateCurveTangent(
+  p0: Point,
+  initialVia: Point,
+  p2: Point,
+  selectedIsEnd: boolean,
+  deltaRad: number,
+  minRadius = 15
+): RotateCurveResult {
+  const direct = evaluateCurveTangentRotation(p0, initialVia, p2, selectedIsEnd, deltaRad, minRadius)
+  if (direct.valid) {
+    return {
+      via: direct.via,
+      valid: true,
+      radius: direct.radius,
+      angleDeg: direct.angleDeg,
+      clamped: false,
+    }
+  }
+
+  if (Math.abs(deltaRad) < 1e-5) {
+    const base = evaluateCurveTangentRotation(p0, initialVia, p2, selectedIsEnd, 0, 0)
+    return {
+      via: { ...initialVia },
+      valid: true,
+      radius: base.radius,
+      angleDeg: base.angleDeg,
+      clamped: false,
+    }
+  }
+
+  let lo = 0
+  let hi = deltaRad
+  let best = evaluateCurveTangentRotation(p0, initialVia, p2, selectedIsEnd, 0, 0)
+
+  for (let iter = 0; iter < 16; iter++) {
+    const mid = (lo + hi) / 2
+    const test = evaluateCurveTangentRotation(p0, initialVia, p2, selectedIsEnd, mid, minRadius)
+    if (test.valid) {
+      best = test
+      lo = mid
+    } else {
+      hi = mid
+    }
+  }
+
+  return {
+    via: best.via,
+    valid: true,
+    radius: best.radius,
+    angleDeg: best.angleDeg,
+    clamped: true,
+  }
+}
+

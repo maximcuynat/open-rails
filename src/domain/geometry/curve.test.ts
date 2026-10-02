@@ -9,6 +9,7 @@ import {
   curveRadiusAt,
   minCurveRadius,
   clampVia,
+  rotateCurveTangent,
 } from '../geometry/curve'
 
 describe('bezierPoint', () => {
@@ -181,3 +182,48 @@ describe('clampVia', () => {
     expect(clamped.y).toBeCloseTo(0, 0)
   })
 })
+
+describe('rotateCurveTangent', () => {
+  const p0 = { x: 0, y: 0 }
+  const via = { x: 10, y: 0 }
+  const p2 = { x: 10, y: 10 }
+
+  it('keeps curve intact when deltaRad is 0', () => {
+    const res = rotateCurveTangent(p0, via, p2, true, 0, 5)
+    expect(res.valid).toBe(true)
+    expect(res.via.x).toBeCloseTo(via.x)
+    expect(res.via.y).toBeCloseTo(via.y)
+    expect(res.clamped).toBe(false)
+  })
+
+  it('rotates arrival tangent at end node and updates via position', () => {
+    // Rotate by +5 degrees (0.087 rad)
+    const delta = (5 * Math.PI) / 180
+    const res = rotateCurveTangent(p0, via, p2, true, delta, 5)
+    expect(res.valid).toBe(true)
+    // Tangent at p0 was along X (1, 0), so via must still lie on line y = 0
+    expect(res.via.y).toBeCloseTo(0)
+    // Tangent was rotated, so via.x should have moved
+    expect(res.via.x).not.toBeCloseTo(via.x)
+    expect(res.radius).toBeGreaterThan(5)
+  })
+
+  it('supports rotating start node departure tangent', () => {
+    const delta = (5 * Math.PI) / 180
+    const res = rotateCurveTangent(p0, via, p2, false, delta, 5)
+    expect(res.valid).toBe(true)
+    // Tangent arriving at p2 was along Y (0, 1), so via must still lie on line x = 10
+    expect(res.via.x).toBeCloseTo(10)
+    expect(res.radius).toBeGreaterThan(5)
+  })
+
+  it('clamps rotation when reaching minimum radius or invalid geometry', () => {
+    // Initial curve has radius ~7.07. Clamp when reaching minRadius 6
+    const extremeDelta = (80 * Math.PI) / 180
+    const res = rotateCurveTangent(p0, via, p2, true, extremeDelta, 6)
+    expect(res.valid).toBe(true)
+    expect(res.clamped).toBe(true)
+    expect(res.radius).toBeGreaterThanOrEqual(5.8)
+  })
+})
+

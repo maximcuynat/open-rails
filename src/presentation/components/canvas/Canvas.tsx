@@ -22,7 +22,7 @@ import {
   getStepPointsAlongSegment,
 } from '@domain/models/network'
 import type { Point, Network, RailNode } from '@domain/models/types'
-import { curveLength, bezierPoint, computeParallelCurve } from '@domain/geometry/curve'
+import { curveLength, bezierPoint, computeParallelCurve, rotateCurveTangent } from '@domain/geometry/curve'
 import {
   getTangentForPlacement,
   getTrackTangentAt,
@@ -908,6 +908,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           unit: store.unit,
           canvasWidth: rect.width,
           canvasHeight: rect.height,
+          hasCurve: !!gizmoAnchor.hasCurve,
+          rotationAngleDeg: store.gizmoInitialAngleDeg + store.gizmoRotationDelta,
+          rotationRadius: store.gizmoCurrentRadius,
+          isClamped: store.gizmoIsClamped,
         }
       )
     }
@@ -1026,7 +1030,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const rawWorld = getWorldPos(lastPointerClient.x, lastPointerClient.y)
         store.cursorWorld = rawWorld
 
-        if (store.gizmoDragAxis && store.dragStartWorld) {
+        if (store.gizmoDragAxis && store.dragStartWorld && store.gizmoDragAxis !== 'rotate') {
           const spacing = getSnapSpacing()
           const anchor = getGizmoAnchor(store.network, store.selection)
           const primaryInitPos = anchor ? anchor.worldPos : null
@@ -1138,29 +1142,50 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const py = e.clientY - rect.top
 
       // Priority 0: Check if click hit a 2D Gizmo translation arrow on selected node or section
+      // Priority 0: Check if click hit a 2D Gizmo translation arrow or rotation arc on selected node or section
       if (e.button === 0 && store.tool !== 'pan') {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
           const sy = (anchor.worldPos.y - store.camera.y) * store.camera.scale + rect.height / 2
-          const hitAxis = hitTestGizmo({ x: px, y: py }, { x: sx, y: sy })
+          const hitAxis = hitTestGizmo({ x: px, y: py }, { x: sx, y: sy }, 12, !!anchor.hasCurve)
           if (hitAxis) {
             store.gizmoDragAxis = hitAxis
             store.gizmoDragDelta = { x: 0, y: 0 }
             store.dragStartWorld = getWorldPos(e.clientX, e.clientY)
             store.draggedNodeInitialPositions.clear()
             store.draggedViaInitialPositions.clear()
-            for (const nid of anchor.nodeIds) {
-              const n = store.network.nodes.get(nid)
-              if (n) {
-                store.draggedNodeInitialPositions.set(nid, { ...n.pos })
+
+            if (hitAxis === 'rotate' && anchor.primaryCurveSegId) {
+              const seg = store.network.segments.get(anchor.primaryCurveSegId)
+              if (seg && seg.via) {
+                store.draggedViaInitialPositions.set(anchor.primaryCurveSegId, { ...seg.via })
+                const pointerAngle = Math.atan2(py - sy, px - sx)
+                store.gizmoInitialPointerAngle = pointerAngle
+                store.gizmoRotationDelta = 0
+                store.gizmoIsClamped = false
+                const otherNode = store.network.nodes.get(anchor.isEndNode ? seg.from : seg.to)
+                const thisNode = store.network.nodes.get(anchor.isEndNode ? seg.to : seg.from)
+                if (otherNode && thisNode) {
+                  const initRes = rotateCurveTangent(otherNode.pos, seg.via, thisNode.pos, !!anchor.isEndNode, 0, 15)
+                  store.gizmoInitialAngleDeg = initRes.angleDeg
+                  store.gizmoCurrentRadius = initRes.radius
+                }
+              }
+            } else {
+              for (const nid of anchor.nodeIds) {
+                const n = store.network.nodes.get(nid)
+                if (n) {
+                  store.draggedNodeInitialPositions.set(nid, { ...n.pos })
+                }
+              }
+              for (const [sid, initVia] of anchor.curvedSegments) {
+                store.draggedViaInitialPositions.set(sid, { ...initVia })
               }
             }
-            for (const [sid, initVia] of anchor.curvedSegments) {
-              store.draggedViaInitialPositions.set(sid, { ...initVia })
-            }
+
             canvas.setPointerCapture(e.pointerId)
-            canvas.style.cursor = hitAxis === 'x' ? 'ew-resize' : 'ns-resize'
+            canvas.style.cursor = hitAxis === 'x' ? 'ew-resize' : hitAxis === 'y' ? 'ns-resize' : 'crosshair'
             stopEdgePan()
             redraw()
             return
@@ -1773,45 +1798,89 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.updateTrainDrag(rawWorld, { x: e.clientX, y: e.clientY })
       }
 
-      // Dragging along 2D Gizmo axis (orthogonal constraint)
+      // Dragging along 2D Gizmo axis or rotation arc
       if (store.gizmoDragAxis && store.dragStartWorld) {
-        const spacing = getSnapSpacing()
-        const anchor = getGizmoAnchor(store.network, store.selection)
-        const primaryInitPos = anchor ? anchor.worldPos : null
+        if (store.gizmoDragAxis === 'rotate') {
+          const anchor = getGizmoAnchor(store.network, store.selection)
+          if (anchor && anchor.primaryCurveSegId) {
+            const seg = store.network.segments.get(anchor.primaryCurveSegId)
+            const initVia = store.draggedViaInitialPositions.get(anchor.primaryCurveSegId)
+            const otherNode = store.network.nodes.get(anchor.isEndNode ? seg?.from ?? '' : seg?.to ?? '')
+            const selectedNode = store.network.nodes.get(anchor.isEndNode ? seg?.to ?? '' : seg?.from ?? '')
 
-        if (primaryInitPos) {
-          const { delta } = constrainGizmoDrag(
-            store.gizmoDragAxis,
-            primaryInitPos,
-            store.gizmoDragAxis === 'x'
-              ? { x: primaryInitPos.x + (rawWorld.x - store.dragStartWorld.x), y: primaryInitPos.y }
-              : { x: primaryInitPos.x, y: primaryInitPos.y + (rawWorld.y - store.dragStartWorld.y) },
-            store.snap,
-            spacing
-          )
+            if (seg && initVia && otherNode && selectedNode) {
+              const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + vw / 2
+              const sy = (anchor.worldPos.y - store.camera.y) * store.camera.scale + vh / 2
+              const currentPointerAngle = Math.atan2(py - sy, px - sx)
+              let deltaAngle = currentPointerAngle - store.gizmoInitialPointerAngle
 
-          store.gizmoDragDelta = delta
+              while (deltaAngle > Math.PI) deltaAngle -= 2 * Math.PI
+              while (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI
 
-          for (const [nid, initPos] of store.draggedNodeInitialPositions) {
-            const node = store.network.nodes.get(nid)
-            if (node) {
-              node.pos.x = initPos.x + delta.x
-              node.pos.y = initPos.y + delta.y
+              const stepDeg = store.angleSnapStep || 5
+              const rawDeltaDeg = (deltaAngle * 180) / Math.PI
+              const snappedDeltaDeg = Math.round(rawDeltaDeg / stepDeg) * stepDeg
+              const snappedDeltaRad = (snappedDeltaDeg * Math.PI) / 180
+
+              const minRadius = store.scalePreset === '1:1' || !store.scalePreset ? 50 : 0.15
+              const res = rotateCurveTangent(
+                otherNode.pos,
+                initVia,
+                selectedNode.pos,
+                !!anchor.isEndNode,
+                snappedDeltaRad,
+                minRadius
+              )
+
+              seg.via = { ...res.via }
+              store.gizmoRotationDelta = snappedDeltaDeg
+              store.gizmoCurrentRadius = res.radius
+              store.gizmoIsClamped = res.clamped
+              store.markDirty()
+              draw()
+              store.notify()
+              return
+            }
+          }
+        } else {
+          const spacing = getSnapSpacing()
+          const anchor = getGizmoAnchor(store.network, store.selection)
+          const primaryInitPos = anchor ? anchor.worldPos : null
+
+          if (primaryInitPos) {
+            const { delta } = constrainGizmoDrag(
+              store.gizmoDragAxis,
+              primaryInitPos,
+              store.gizmoDragAxis === 'x'
+                ? { x: primaryInitPos.x + (rawWorld.x - store.dragStartWorld.x), y: primaryInitPos.y }
+                : { x: primaryInitPos.x, y: primaryInitPos.y + (rawWorld.y - store.dragStartWorld.y) },
+              store.snap,
+              spacing
+            )
+
+            store.gizmoDragDelta = delta
+
+            for (const [nid, initPos] of store.draggedNodeInitialPositions) {
+              const node = store.network.nodes.get(nid)
+              if (node) {
+                node.pos.x = initPos.x + delta.x
+                node.pos.y = initPos.y + delta.y
+              }
+            }
+
+            for (const [sid, initVia] of store.draggedViaInitialPositions) {
+              const seg = store.network.segments.get(sid)
+              if (seg && seg.via) {
+                seg.via.x = initVia.x + delta.x
+                seg.via.y = initVia.y + delta.y
+              }
             }
           }
 
-          for (const [sid, initVia] of store.draggedViaInitialPositions) {
-            const seg = store.network.segments.get(sid)
-            if (seg && seg.via) {
-              seg.via.x = initVia.x + delta.x
-              seg.via.y = initVia.y + delta.y
-            }
-          }
+          draw()
+          store.notify()
+          return
         }
-
-        draw()
-        store.notify()
-        return
       }
 
       // Gizmo arrow hover detection on selected node or section
@@ -1820,7 +1889,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + vw / 2
           const sy = (anchor.worldPos.y - store.camera.y) * store.camera.scale + vh / 2
-          const hoveredAxis = hitTestGizmo({ x: px, y: py }, { x: sx, y: sy })
+          const hoveredAxis = hitTestGizmo({ x: px, y: py }, { x: sx, y: sy }, 12, !!anchor.hasCurve)
           if (hoveredAxis !== store.gizmoHoverAxis) {
             store.gizmoHoverAxis = hoveredAxis
             draw()
@@ -1831,16 +1900,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (hoveredAxis === 'y') {
             canvas.style.cursor = 'ns-resize'
             return
-          } else if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize') {
+          } else if (hoveredAxis === 'rotate') {
+            canvas.style.cursor = 'crosshair'
+            return
+          } else if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize' || canvas.style.cursor === 'crosshair') {
             canvas.style.cursor = isSpaceDown ? 'grab' : ''
           }
         }
       } else if (store.gizmoHoverAxis !== null) {
         store.gizmoHoverAxis = null
-        if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize') {
+        if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize' || canvas.style.cursor === 'crosshair') {
           canvas.style.cursor = isSpaceDown ? 'grab' : ''
         }
-        draw()
       }
 
       // Dragging selected nodes in select tool
@@ -2032,11 +2103,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
-      // Finalize gizmo axis dragging
+      // Finalize gizmo axis or rotation dragging
       if (store.gizmoDragAxis) {
-        const moved = Math.abs(store.gizmoDragDelta.x) > 1e-4 || Math.abs(store.gizmoDragDelta.y) > 1e-4
+        const isRotate = store.gizmoDragAxis === 'rotate'
+        const moved = isRotate
+          ? Math.abs(store.gizmoRotationDelta) > 1e-4
+          : (Math.abs(store.gizmoDragDelta.x) > 1e-4 || Math.abs(store.gizmoDragDelta.y) > 1e-4)
+
         store.gizmoDragAxis = null
         store.gizmoDragDelta = { x: 0, y: 0 }
+        store.gizmoRotationDelta = 0
+        store.gizmoInitialAngleDeg = 0
+        store.gizmoCurrentRadius = 0
+        store.gizmoIsClamped = false
         store.dragStartWorld = null
         store.draggedNodeInitialPositions.clear()
         store.draggedViaInitialPositions.clear()

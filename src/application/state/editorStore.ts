@@ -152,10 +152,16 @@ export class EditorStore {
   draggedNodeInitialPositions = new Map<string, Point>()
   draggedViaInitialPositions = new Map<string, Point>()
 
-  // 2D Orthogonal Gizmo (Translation handles on selected node)
-  gizmoHoverAxis: 'x' | 'y' | null = null
-  gizmoDragAxis: 'x' | 'y' | null = null
+  // 2D Orthogonal & Rotation Gizmo (Translation & Angle handles on selected node)
+  gizmoHoverAxis: 'x' | 'y' | 'rotate' | null = null
+  gizmoDragAxis: 'x' | 'y' | 'rotate' | null = null
   gizmoDragDelta: Point = { x: 0, y: 0 }
+  gizmoRotationDelta = 0 // degrees
+  gizmoInitialAngleDeg = 0 // degrees
+  gizmoCurrentRadius = 0 // meters
+  gizmoIsClamped = false
+  gizmoInitialPointerAngle = 0 // radians
+  angleSnapStep = 5 // degrees (5° default sensitivity)
 
   // Box selection (Select tool)
   boxSelectStart: Point | null = null
@@ -491,6 +497,10 @@ export class EditorStore {
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
+    this.gizmoRotationDelta = 0
+    this.gizmoInitialAngleDeg = 0
+    this.gizmoCurrentRadius = 0
+    this.gizmoIsClamped = false
     this.hoverSegSteps = null
     this.hoverNodeId = null
     this.locomotivePreview = null
@@ -616,6 +626,13 @@ export class EditorStore {
     if (spacing > 0) {
       this.gridSpacing = spacing
       this.gridMode = 'fixed'
+      this.notify()
+    }
+  }
+
+  setAngleSnapStep = (step: number): void => {
+    if (step > 0) {
+      this.angleSnapStep = Math.max(0.5, Math.min(90, step))
       this.notify()
     }
   }
@@ -862,6 +879,10 @@ export class EditorStore {
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
+    this.gizmoRotationDelta = 0
+    this.gizmoInitialAngleDeg = 0
+    this.gizmoCurrentRadius = 0
+    this.gizmoIsClamped = false
     this.hoverSegSteps = null
     this.hoverNodeId = null
     this.isDraggingNode = false

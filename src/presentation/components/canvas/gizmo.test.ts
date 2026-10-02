@@ -54,6 +54,19 @@ describe('gizmo module', () => {
       expect(hitTestGizmo(center, nodeScreen)).toBe(null)
     })
 
+    it('detects hits on the bidirectional rotation arc when hasCurve is true', () => {
+      // Point at 45 degrees in upper-right quadrant at radius 32
+      const onArc = { x: nodeScreen.x + 22.6, y: nodeScreen.y - 22.6 }
+      expect(hitTestGizmo(onArc, nodeScreen, 12, true)).toBe('rotate')
+
+      // When hasCurve is false, rotation arc must not be detected
+      expect(hitTestGizmo(onArc, nodeScreen, 12, false)).toBe(null)
+
+      // Outside the arc radius and outside X/Y arrow shafts
+      const farFromArc = { x: nodeScreen.x + 15, y: nodeScreen.y - 15 }
+      expect(hitTestGizmo(farFromArc, nodeScreen, 12, true)).toBe(null)
+    })
+
     it('returns null outside both arrows', () => {
       expect(hitTestGizmo({ x: 50, y: 50 }, nodeScreen)).toBe(null)
       expect(hitTestGizmo({ x: nodeScreen.x - 30, y: nodeScreen.y }, nodeScreen)).toBe(null)
