@@ -25,8 +25,18 @@ import {
   getLocomotiveFrontPos,
   reverseTGVTrain,
   hitTestTGVTrain,
+  positionOnSegment,
   type TrainHitResult,
 } from '@domain/models/locomotive'
+import type { TrainSet } from '@domain/models/train'
+import {
+  createTrainSet,
+  tickTrainSet,
+  handleCouplingClick,
+  findNearestCoupler,
+  getAllCouplerPoints,
+  type CouplerPoint,
+} from '@domain/models/train'
 
 export type Tool =
   | 'select'
@@ -37,6 +47,7 @@ export type Tool =
   | 'measure'
   | 'pan'
   | 'locomotive'
+  | 'coupling'
 
 export type TrackMode = 'catalog' | 'freeform'
 
@@ -113,9 +124,10 @@ export class EditorStore {
   viewport: { w: number; h: number } = { w: 1200, h: 800 }
 
   // --- Locomotive / Simulation ---
+  /** @deprecated Use trains[] instead. Kept for backward compatibility with renderer. */
   locomotive: Locomotive | null = null
   locomotivePreview: Locomotive | null = null // Ghost preview along track on hover
-  trainWagonCount = 2 // 2 articulated passenger cars by default (full TGV train)
+  trainWagonCount = 2 // legacy: used only for loco preview during drag
   isPlayMode = false
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
@@ -127,7 +139,15 @@ export class EditorStore {
   draggingTrainItem: 'tgv_loco' | 'tgv_wagon' | null = null // Active item being dragged
   dragCursorScreen: Point | null = null // Screen position of cursor while dragging
 
-  // --- Locomotive Kinematics & Physics ---
+  // --- New: TrainSet fleet ---
+  /** All train sets on the layout (independent or coupled rakes) */
+  trains: TrainSet[] = []
+  /** ID of the train currently selected / driven */
+  selectedTrainId: string | null = null
+  /** Coupler points cache for coupling mode rendering */
+  couplerPoints: CouplerPoint[] = []
+
+  // --- Locomotive Kinematics & Physics (legacy — used by selected train via bridge) ---
   locomotiveCurrentSpeed = 0 // current speed in m/s (0 = stopped)
   locomotiveMaxSpeed = 500 / 3.6 // max speed in m/s (500 km/h)
   locomotiveAcceleration = 5.5 // m/s^2 (applied while holding ArrowUp)
@@ -1335,29 +1355,27 @@ export class EditorStore {
   /** Handle Drag & Drop of a train part onto the canvas world */
   handleDropTrainItem = (itemType: 'tgv_loco' | 'tgv_wagon', worldPos: Point): boolean => {
     if (itemType === 'tgv_loco') {
-      const placed = this.placeLocomotiveAt(worldPos)
+      // New fleet system: place independent loco TrainSet
+      const placed = this.placeTrainLoco(worldPos)
       if (placed) {
         this.isTrainSelected = true
+        // Legacy compat: also set locomotive for renderer (until renderer migrated)
+        const ts = this.selectedTrain
+        if (ts) {
+          const snap = snapToNearestTrack(this.network, worldPos)
+          if (snap) {
+            const loco = createLocomotive(this.network, snap.segId, snap.t, this.locomotiveLength, 14, 2)
+            if (loco) this.locomotive = loco
+          }
+        }
         this.notify()
       }
       return placed
     } else if (itemType === 'tgv_wagon') {
-      if (!this.locomotive) {
-        // Pas encore de train : poser une rame avec 1 wagon à l'endroit droppé
-        this.trainWagonCount = 1
-        const placed = this.placeLocomotiveAt(worldPos)
-        if (placed) {
-          this.isTrainSelected = true
-          this.notify()
-        }
-        return placed
-      } else {
-        // Train existant : ajouter un wagon articulé à la rame
-        this.addTrainWagon()
-        this.isTrainSelected = true
-        this.notify()
-        return true
-      }
+      // New fleet system: place independent wagon TrainSet
+      const placed = this.placeTrainWagon(worldPos)
+      if (placed) this.notify()
+      return placed
     }
     return false
   }
@@ -1545,6 +1563,127 @@ export class EditorStore {
       this.locomotiveLength = len
       this.notify()
     }
+  }
+
+  // ─── TrainSet fleet methods ──────────────────────────────────────────────────
+
+  /** Place a new independent locomotive TrainSet at worldPos */
+  placeTrainLoco = (worldPos: Point): boolean => {
+    const ts = createTrainSet(this.network, worldPos, 'loco')
+    if (!ts) return false
+    this.trains = [...this.trains, ts]
+    this.selectedTrainId = ts.id
+    this.refreshCouplerPoints()
+    this.notify()
+    return true
+  }
+
+  /** Place a new independent wagon TrainSet at worldPos */
+  placeTrainWagon = (worldPos: Point): boolean => {
+    const ts = createTrainSet(this.network, worldPos, 'wagon')
+    if (!ts) return false
+    this.trains = [...this.trains, ts]
+    this.selectedTrainId = ts.id
+    this.refreshCouplerPoints()
+    this.notify()
+    return true
+  }
+
+  /** Select a train by its id */
+  selectTrainById = (id: string | null): void => {
+    this.selectedTrainId = id
+    this.notify()
+  }
+
+  /** Remove a TrainSet from the layout */
+  removeTrainSet = (id: string): void => {
+    this.trains = this.trains.filter(t => t.id !== id)
+    if (this.selectedTrainId === id) {
+      this.selectedTrainId = this.trains.length > 0 ? this.trains[0].id : null
+    }
+    this.refreshCouplerPoints()
+    this.notify()
+  }
+
+  /** Get the currently selected TrainSet (for driving) */
+  get selectedTrain(): TrainSet | null {
+    if (!this.selectedTrainId) return null
+    return this.trains.find(t => t.id === this.selectedTrainId) ?? null
+  }
+
+  /** Set throttle on the selected train */
+  setSelectedTrainThrottle = (throttle: 1 | 0 | -1): void => {
+    const train = this.selectedTrain
+    if (train && train.throttle !== throttle) {
+      train.throttle = throttle
+      // Also sync legacy field for HUD
+      this.locomotiveThrottle = throttle
+      this.notify()
+    }
+  }
+
+  /** Toggle coupling mode on/off */
+  toggleCouplingMode = (): void => {
+    if (this.tool === 'coupling') {
+      this.tool = 'select'
+    } else {
+      this.tool = 'coupling'
+      this.isPlayMode = false
+      this.stopSimulationLoop()
+    }
+    this.refreshCouplerPoints()
+    this.notify()
+  }
+
+  /** Refresh the cached coupler points for rendering */
+  refreshCouplerPoints = (): void => {
+    if (this.tool === 'coupling') {
+      this.couplerPoints = getAllCouplerPoints(this.network, this.trains)
+    } else {
+      this.couplerPoints = []
+    }
+  }
+
+  /** Handle a click in coupling mode */
+  handleCouplingClick = (worldPos: Point): void => {
+    this.trains = handleCouplingClick(this.network, this.trains, worldPos)
+    this.refreshCouplerPoints()
+    // Update selected train id if it was merged/split
+    if (this.selectedTrainId && !this.trains.find(t => t.id === this.selectedTrainId)) {
+      this.selectedTrainId = this.trains.length > 0 ? this.trains[this.trains.length - 1].id : null
+    }
+    this.notify()
+  }
+
+  /** Find nearest coupler to a world position for hover highlight */
+  findNearestCouplerAt = (worldPos: Point): CouplerPoint | null => {
+    return findNearestCoupler(this.network, this.trains, worldPos)
+  }
+
+  /** Tick all TrainSets that are in play mode */
+  tickAllTrains = (dt: number): void => {
+    if (!this.isPlayMode || dt <= 0) return
+    for (const train of this.trains) {
+      if (train.currentSpeed > 0 || train.throttle !== 0) {
+        const moved = tickTrainSet(this.network, train, dt)
+        if (!moved) {
+          train.currentSpeed = 0
+          train.throttle = 0
+        }
+      }
+    }
+    // Sync camera to selected train's lead vehicle
+    if (this.followLocomotiveCamera && this.selectedTrain) {
+      const lead = this.selectedTrain.vehicles[0]
+      if (lead) {
+        const pos = positionOnSegment(this.network, lead.front.segId, lead.front.t)
+        if (pos) {
+          this.camera.x = pos.x
+          this.camera.y = pos.y
+        }
+      }
+    }
+    this.notify()
   }
 }
 

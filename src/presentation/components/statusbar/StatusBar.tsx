@@ -5,6 +5,7 @@ const TOOL_LABELS: Record<string, string> = {
   place: 'Voie droite',
   curve: 'Voie courbe',
   pan: 'Panoramique',
+  coupling: '🔗 Mode Couplage',
 }
 
 /** Compute a contextual status message for the current tool + state. */
@@ -26,6 +27,8 @@ function toolStatus(store: EditorStore): string {
       }
       return 'Prêt · Clic ou glisser pour sélectionner'
     }
+    case 'coupling':
+      return 'Cliquer deux extrémités proches pour coupler · Cliquer un joint vert pour découpler'
     case 'pan':
       return 'Glisser pour déplacer la vue'
     default:
@@ -34,6 +37,9 @@ function toolStatus(store: EditorStore): string {
 }
 
 export function StatusBar({ store }: { store: EditorStore }) {
+  // In play mode, the DrivingHUD takes over — hide status bar
+  if (store.isPlayMode) return null
+
   const cam = store.camera
   const cx = store.cursorWorld.x.toFixed(2)
   const cy = store.cursorWorld.y.toFixed(2)

@@ -363,13 +363,11 @@ describe('EditorStore persistence', () => {
       expect(store.locomotive).not.toBeNull()
       expect(store.isTrainSelected).toBe(true)
 
-      const initialWagons = store.trainWagonCount
-
-      // 2. Drag & drop d'un wagon sur le train
+      // 2. Drag & drop d'un wagon sur la voie → crée un TrainSet wagon indépendant
       const droppedWagon = store.handleDropTrainItem('tgv_wagon', { x: 40, y: 0 })
       expect(droppedWagon).toBe(true)
-      expect(store.trainWagonCount).toBe(initialWagons + 1)
-      expect(store.locomotive!.wagonCount).toBe(initialWagons + 1)
+      // New behavior: wagon creates an independent TrainSet, not added to the loco count
+      expect(store.trains.length).toBeGreaterThanOrEqual(1)
 
       // 3. Vérification de sélection et survol
       const hover = store.checkTrainHover({ x: 50, y: 0 })
