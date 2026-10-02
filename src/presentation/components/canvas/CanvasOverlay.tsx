@@ -210,9 +210,9 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
               fontSize: '12.5px',
               fontWeight: 800,
               cursor: 'pointer',
-              boxShadow: '0 6px 20px rgba(16, 185, 129, 0.55), 0 2px 6px rgba(0,0,0,0.35)',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
               whiteSpace: 'nowrap',
-              transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+              transition: 'transform 0.15s ease',
             }}
             title="Prendre les commandes du train (Espace)"
             onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.06)')}
