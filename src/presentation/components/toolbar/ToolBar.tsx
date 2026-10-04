@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react'
 import type { EditorStore, Tool } from '@application/state/editorStore'
+import type { ActionId } from '@application/keybindings/keybindings'
 
 interface ToolDef {
   id: Tool
   label: string
-  shortcut: string
   icon: ReactNode
   group: number
 }
@@ -12,8 +12,7 @@ interface ToolDef {
 const TOOLS: ToolDef[] = [
   {
     id: 'select',
-    label: 'Sélection & Déplacement (V) · Clic gauche pour déplacer la vue',
-    shortcut: 'V',
+    label: 'Sélection et déplacement · glisser le fond pour déplacer la vue',
     group: 0,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -23,8 +22,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     id: 'pan',
-    label: 'Déplacer la vue uniquement (H)',
-    shortcut: 'H',
+    label: 'Déplacer la vue uniquement',
     group: 0,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -37,7 +35,6 @@ const TOOLS: ToolDef[] = [
   {
     id: 'place',
     label: 'Tracé de voie (Smart Track)',
-    shortcut: 'N',
     group: 1,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -52,7 +49,6 @@ const TOOLS: ToolDef[] = [
   {
     id: 'curve',
     label: 'Voie courbe',
-    shortcut: 'C',
     group: 1,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -64,7 +60,6 @@ const TOOLS: ToolDef[] = [
   {
     id: 'turnout',
     label: 'Aiguillage parallèle',
-    shortcut: 'P',
     group: 2,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -76,7 +71,6 @@ const TOOLS: ToolDef[] = [
   {
     id: 'split',
     label: 'Ciseaux / Découpe',
-    shortcut: 'K',
     group: 3,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -91,7 +85,6 @@ const TOOLS: ToolDef[] = [
   {
     id: 'measure',
     label: 'Règle / Mesureur',
-    shortcut: 'M',
     group: 3,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -105,7 +98,6 @@ const TOOLS: ToolDef[] = [
   {
     id: 'locomotive',
     label: 'Locomotive (Pose & Simulation)',
-    shortcut: 'L',
     group: 4,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -119,6 +111,10 @@ const TOOLS: ToolDef[] = [
 ]
 
 export function ToolBar({ store }: { store: EditorStore }) {
+  const kbd = (action: ActionId) => {
+    const label = store.shortcutLabel(action)
+    return label ? <kbd>{label}</kbd> : null
+  }
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [showGridMenu, setShowGridMenu] = useState(false)
   const flyoutRef = useRef<HTMLDivElement>(null)
@@ -177,10 +173,39 @@ export function ToolBar({ store }: { store: EditorStore }) {
         {hoverId === t.id && (
           <div className="tb-tooltip">
             {t.label}
-            <kbd>{t.shortcut}</kbd>
+            {kbd(`tool.${t.id}` as ActionId)}
           </div>
         )}
       </div>,
+    )
+  }
+
+  // Driving: clean view, the toolbar is reduced to the stop control
+  if (store.isPlayMode) {
+    return (
+      <div className="toolbar-container">
+        <div className="toolbar-island">
+          <div
+            className="tb-btn-wrap"
+            onMouseEnter={() => setHoverId('play')}
+            onMouseLeave={() => setHoverId((h) => (h === 'play' ? null : h))}
+          >
+            <button
+              className="tb-train-btn active-danger"
+              onClick={() => store.togglePlayMode()}
+              aria-label="Arrêter la conduite"
+            >
+              <span style={{ fontSize: '15px' }}>⏹</span>
+            </button>
+            {hoverId === 'play' && (
+              <div className="tb-tooltip">
+                Arrêter la conduite
+                {kbd('drive.exit')}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -240,10 +265,9 @@ export function ToolBar({ store }: { store: EditorStore }) {
               )}
             </div>
 
-            {/* Outil 2 : Poser Locomotive TGV (Draggable & Clickable) — pas de pose pendant la conduite */}
+            {/* Outil 2 : Poser Locomotive TGV (Draggable & Clickable) */}
             <div
               className="tb-btn-wrap"
-              style={store.isPlayMode ? { display: 'none' } : undefined}
               onMouseEnter={() => setHoverId('train-loco')}
               onMouseLeave={() => setHoverId((h) => (h === 'train-loco' ? null : h))}
             >
@@ -273,10 +297,9 @@ export function ToolBar({ store }: { store: EditorStore }) {
               )}
             </div>
 
-            {/* Outil 3 : Poser Wagon Voyageurs (Draggable & Clickable) — pas de pose pendant la conduite */}
+            {/* Outil 3 : Poser Wagon Voyageurs (Draggable & Clickable) */}
             <div
               className="tb-btn-wrap"
-              style={store.isPlayMode ? { display: 'none' } : undefined}
               onMouseEnter={() => setHoverId('train-wagon')}
               onMouseLeave={() => setHoverId((h) => (h === 'train-wagon' ? null : h))}
             >
@@ -309,36 +332,34 @@ export function ToolBar({ store }: { store: EditorStore }) {
             </div>
 
             {/* Outil Inverser sens / orientation (R) */}
-            {!store.isPlayMode && (
-              <div
-                className="tb-btn-wrap"
-                onMouseEnter={() => setHoverId('flip')}
-                onMouseLeave={() => setHoverId((h) => (h === 'flip' ? null : h))}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('flip')}
+              onMouseLeave={() => setHoverId((h) => (h === 'flip' ? null : h))}
+            >
+              <button
+                className="tb-train-btn"
+                onClick={() => {
+                  if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
+                    store.flipTrainPlacementDirection()
+                  } else {
+                    store.flipLocomotiveDirection()
+                  }
+                }}
+                aria-label="Inverser le sens"
+                style={{ color: '#c084fc' }}
               >
-                <button
-                  className="tb-train-btn"
-                  onClick={() => {
-                    if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
-                      store.flipTrainPlacementDirection()
-                    } else {
-                      store.flipLocomotiveDirection()
-                    }
-                  }}
-                  aria-label="Inverser le sens"
-                  style={{ color: '#c084fc' }}
-                >
-                  <span style={{ fontSize: '16px' }}>⇄</span>
-                </button>
-                {hoverId === 'flip' && (
-                  <div className="tb-tooltip">
-                    {store.tool === 'locomotive' && store.trainToolSubMode === 'place'
-                      ? 'Inverser l’orientation de pose'
-                      : 'Inverser le sens de conduite'}
-                    <kbd>R</kbd>
-                  </div>
-                )}
-              </div>
-            )}
+                <span style={{ fontSize: '16px' }}>⇄</span>
+              </button>
+              {hoverId === 'flip' && (
+                <div className="tb-tooltip">
+                  {store.tool === 'locomotive' && store.trainToolSubMode === 'place'
+                    ? 'Inverser l’orientation de pose'
+                    : 'Inverser le sens de conduite'}
+                  <kbd>R</kbd>
+                </div>
+              )}
+            </div>
 
             <div className="tb-sep" />
 
@@ -369,39 +390,37 @@ export function ToolBar({ store }: { store: EditorStore }) {
             </div>
 
             {/* Outil 5 : Supprimer Véhicule / Train (Mode Suppression interactif) */}
-            {!store.isPlayMode && (
-              <div
-                className="tb-btn-wrap"
-                onMouseEnter={() => setHoverId('delete-train')}
-                onMouseLeave={() => setHoverId((h) => (h === 'delete-train' ? null : h))}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('delete-train')}
+              onMouseLeave={() => setHoverId((h) => (h === 'delete-train' ? null : h))}
+            >
+              <button
+                className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'delete' ? ' active-danger' : ''}`}
+                onClick={() => {
+                  store.setTrainToolSubMode(store.trainToolSubMode === 'delete' ? 'select' : 'delete')
+                }}
+                aria-label="Outil suppression de train"
               >
-                <button
-                  className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'delete' ? ' active-danger' : ''}`}
-                  onClick={() => {
-                    store.setTrainToolSubMode(store.trainToolSubMode === 'delete' ? 'select' : 'delete')
-                  }}
-                  aria-label="Outil suppression de train"
-                >
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    <line x1="10" y1="11" x2="10" y2="17" />
-                    <line x1="14" y1="11" x2="14" y2="17" />
-                  </svg>
-                </button>
-                {hoverId === 'delete-train' && (
-                  <div className="tb-tooltip">
-                    Outil Suppression
-                    <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
-                      {store.trainToolSubMode === 'delete'
-                        ? 'Mode suppression actif : survol rouge et clic pour supprimer'
-                        : 'Activer la suppression au survol (contour rouge) et clic'}
-                    </span>
-                    <kbd>Suppr</kbd>
-                  </div>
-                )}
-              </div>
-            )}
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </button>
+              {hoverId === 'delete-train' && (
+                <div className="tb-tooltip">
+                  Outil Suppression
+                  <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                    {store.trainToolSubMode === 'delete'
+                      ? 'Mode suppression actif : survol rouge et clic pour supprimer'
+                      : 'Activer la suppression au survol (contour rouge) et clic'}
+                  </span>
+                  <kbd>Suppr</kbd>
+                </div>
+              )}
+            </div>
 
             {/* Contrôles du train */}
             {(store.trains.length > 0 || store.locomotive) && (
@@ -415,21 +434,17 @@ export function ToolBar({ store }: { store: EditorStore }) {
                   onMouseLeave={() => setHoverId((h) => (h === 'play' ? null : h))}
                 >
                   <button
-                    className={`tb-train-btn${store.isPlayMode ? ' active' : ''}`}
-                    style={{
-                      color: store.isPlayMode ? '#ef4444' : '#10b981',
-                      background: store.isPlayMode ? 'rgba(239,68,68,0.2)' : 'transparent',
-                      borderColor: store.isPlayMode ? '#ef4444' : 'transparent',
-                    }}
+                    className="tb-train-btn"
+                    style={{ color: '#10b981' }}
                     onClick={() => store.togglePlayMode()}
-                    aria-label={store.isPlayMode ? 'Arrêter la conduite' : 'Piloter le train'}
+                    aria-label="Piloter le train"
                   >
-                    <span style={{ fontSize: '15px' }}>{store.isPlayMode ? '⏹' : '▶'}</span>
+                    <span style={{ fontSize: '15px' }}>▶</span>
                   </button>
                   {hoverId === 'play' && (
                     <div className="tb-tooltip">
-                      {store.isPlayMode ? 'Arrêter la conduite' : 'Prendre les commandes'}
-                      <kbd>{store.isPlayMode ? 'Espace' : 'F5'}</kbd>
+                      Prendre les commandes
+                      {kbd('sim.togglePlay')}
                     </div>
                   )}
                 </div>
@@ -450,7 +465,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                   {hoverId === 'debug' && (
                     <div className="tb-tooltip">
                       Squelette cinématique
-                      <kbd>D</kbd>
+                      {kbd('train.debug')}
                     </div>
                   )}
                 </div>
@@ -643,11 +658,11 @@ export function ToolBar({ store }: { store: EditorStore }) {
                   cursor: 'pointer',
                   width: '34px',
                 }}
-                title="Créer une voie double parallèle à partir des 2 nœuds sélectionnés (D)"
+                title={`Créer une voie double parallèle à partir des 2 nœuds sélectionnés${store.shortcutHint('edit.parallelTrack')}`}
                 onClick={() => store.createParallelTrackFromSelection()}
               >
                 <div>+2v</div>
-                <div style={{ fontSize: '8px', opacity: 0.8 }}>(D)</div>
+                <div style={{ fontSize: '8px', opacity: 0.8 }}>{store.shortcutHint('edit.parallelTrack').trim()}</div>
               </div>
             )}
           </div>
@@ -676,7 +691,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
           {hoverId === 'snap' && (
             <div className="tb-tooltip">
               Aimantation {store.snap ? '(active)' : '(inactive)'}
-              <kbd>G</kbd>
+              {kbd('view.toggleSnap')}
             </div>
           )}
         </div>
@@ -700,7 +715,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
           </button>
           {hoverId === 'grid' && (
             <div className="tb-tooltip">
-              Grille : {store.showGrid ? 'Visible' : 'Masquée'}
+              {store.showGrid ? 'Masquer la grille' : 'Afficher la grille'}
             </div>
           )}
         </div>
@@ -935,7 +950,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                     cursor: 'pointer',
                   }}
                 >
-                  {store.snap ? 'Activé (G)' : 'Désactivé'}
+                  {store.snap ? `Activé${store.shortcutHint('view.toggleSnap')}` : 'Désactivé'}
                 </button>
               </div>
             </div>

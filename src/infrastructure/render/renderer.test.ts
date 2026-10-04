@@ -3,9 +3,11 @@ import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import {
   renderNetwork,
+  renderScaleBar,
   renderTrainSet,
   renderLocomotive,
   renderCouplerPoints,
+  renderDrivingRoute,
   getSegmentRenderIntervals,
   subdivideStraight,
   subdivideCurve,
@@ -524,4 +526,240 @@ describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
   })
 })
 
+describe('Canvas display rules (driving view, gizmo, placement)', () => {
+  const noSelection = () => ({ nodes: new Set<string>(), segments: new Set<string>() })
+  const texts = (ctx: CanvasRenderingContext2D) => vi.mocked(ctx.fillText).mock.calls.map((call) => call[0] as string)
 
+  /** Two rails meeting at a right angle: a kinematic "Cassure" is reported on the corner node */
+  function kinkedTrack() {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const corner = addNode(net, { x: 100, y: 0 })
+    const c = addNode(net, { x: 100, y: 100 })
+    const seg = addSegment(net, a.id, corner.id)!
+    addSegment(net, corner.id, c.id)
+    return { net, corner, seg }
+  }
+
+  it('driving view: no section badge, end-of-track sign or diagnostic, even for a selected section', () => {
+    const { net, seg } = kinkedTrack()
+    const cam = createCamera(50, 50, 4)
+    const selection = { nodes: new Set<string>(), segments: new Set([seg.id]) }
+
+    const editCtx = createMockContext()
+    renderNetwork(editCtx, cam, 800, 600, net, selection, {}, { tool: 'select' })
+    expect(texts(editCtx).some((t) => t.startsWith('Section '))).toBe(true)
+    expect(texts(editCtx).some((t) => t.includes('Cassure'))).toBe(true)
+    // Screen position of the dead end at world (0, 0): its end-of-track sign is a disc there
+    const atDeadEnd = (ctx: CanvasRenderingContext2D) =>
+      vi.mocked(ctx.arc).mock.calls.filter((call) => call[0] === 200 && call[1] === 100)
+    // ... and of the corner at world (100, 0), where the warning diamond has its halo
+    const atCorner = (ctx: CanvasRenderingContext2D) =>
+      vi.mocked(ctx.arc).mock.calls.filter((call) => call[0] === 600 && call[1] === 100 && call[2] > 8)
+    expect(atDeadEnd(editCtx).length).toBeGreaterThan(0)
+    expect(atCorner(editCtx).length).toBeGreaterThan(0)
+
+    const driveCtx = createMockContext()
+    renderNetwork(driveCtx, cam, 800, 600, net, selection, {}, {
+      tool: 'select',
+      hideConstructionNodes: true,
+      hideSectionBadges: true,
+    })
+    expect(texts(driveCtx)).toEqual([])
+    expect(atDeadEnd(driveCtx)).toHaveLength(0)
+    expect(atCorner(driveCtx)).toHaveLength(0)
+  })
+
+  it('driving view: the position of a turnout stays visible (inactive branch dimmed)', () => {
+    const net = createNetwork()
+    const stem = addNode(net, { x: -50, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const div = addNode(net, { x: 100, y: 30 })
+    addSegment(net, stem.id, apex.id)
+    const sStraight = addSegment(net, apex.id, straight.id)!
+    const sDiv = addSegment(net, apex.id, div.id)!
+    addJunction(net, {
+      nodeId: apex.id,
+      straightNodeId: straight.id,
+      divergingNodeId: div.id,
+      straightSegmentId: sStraight.id,
+      divergingSegmentId: sDiv.id,
+      hand: 'right',
+      activeBranch: 'straight',
+    })
+
+    const ctx = createMockContext()
+    const alphas: number[] = []
+    Object.defineProperty(ctx, 'globalAlpha', { set: (v: number) => alphas.push(v), get: () => 1 })
+    renderNetwork(ctx, createCamera(25, 15, 4), 800, 600, net, noSelection(), {}, {
+      tool: 'select',
+      hideConstructionNodes: true,
+      hideSectionBadges: true,
+    })
+    expect(alphas).toContain(0.4)
+  })
+
+  it('the badge of a selected section is drawn below the gizmo footprint, never under it', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 200, y: 0 })
+    const seg = addSegment(net, n1.id, n2.id)!
+    const cam = createCamera(100, 0, 2)
+    const selection = { nodes: new Set<string>(), segments: new Set([seg.id]) }
+    // Screen position of the section middle = gizmo anchor
+    const anchor = { x: 400, y: 300 }
+    const badgeRects = (ctx: CanvasRenderingContext2D) =>
+      vi.mocked(ctx.roundRect).mock.calls.filter((call) => call[3] === 18)
+
+    const plainCtx = createMockContext()
+    renderNetwork(plainCtx, cam, 800, 600, net, selection, {}, { tool: 'select' })
+    const [, plainY] = badgeRects(plainCtx)[0]
+    expect(plainY).toBeLessThan(anchor.y) // above the track, where the gizmo arrows are
+
+    const keepOut = { x: anchor.x - 12, y: anchor.y - 76, w: 88, h: 88 }
+    const ctx = createMockContext()
+    renderNetwork(ctx, cam, 800, 600, net, selection, {}, { tool: 'select', badgeExclusion: keepOut })
+    const [, y] = badgeRects(ctx)[0]
+    expect(y).toBeGreaterThanOrEqual(keepOut.y + keepOut.h)
+    // The text follows the pill
+    const textCall = vi.mocked(ctx.fillText).mock.calls.find((call) => (call[0] as string).startsWith('Section '))!
+    expect(textCall[2]).toBeGreaterThan(keepOut.y + keepOut.h)
+  })
+
+  it('a badge away from the gizmo footprint is left where it is', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 200, y: 0 })
+    addSegment(net, n1.id, n2.id)
+    const cam = createCamera(100, 0, 2)
+
+    const ctx = createMockContext()
+    renderNetwork(ctx, cam, 800, 600, net, noSelection(), {}, {
+      tool: 'select',
+      badgeExclusion: { x: 0, y: 0, w: 88, h: 88 },
+    })
+    const badge = vi.mocked(ctx.roundRect).mock.calls.find((call) => call[3] === 18)!
+    expect(badge[1]).toBe(300 - 14 - 9)
+  })
+
+  it('no diagnostic warning on the node being built, the others keep theirs', () => {
+    const { net, corner } = kinkedTrack()
+    const cam = createCamera(50, 50, 4)
+
+    const ctx = createMockContext()
+    renderNetwork(ctx, cam, 800, 600, net, noSelection(), {}, { tool: 'place' })
+    expect(texts(ctx).filter((t) => t.includes('Cassure'))).toHaveLength(1)
+
+    const quietCtx = createMockContext()
+    renderNetwork(quietCtx, cam, 800, 600, net, noSelection(), {}, { tool: 'place', quietNodeIds: new Set([corner.id]) })
+    expect(texts(quietCtx).some((t) => t.includes('Cassure'))).toBe(false)
+
+    const otherCtx = createMockContext()
+    renderNetwork(otherCtx, cam, 800, 600, net, noSelection(), {}, { tool: 'place', quietNodeIds: new Set(['n_unknown']) })
+    expect(texts(otherCtx).filter((t) => t.includes('Cassure'))).toHaveLength(1)
+  })
+
+  it('the scale bar moves left by the width reserved on the right (driving console)', () => {
+    const cam = createCamera(0, 0, 2)
+    const labelX = (inset?: number) => {
+      const ctx = { ...createMockContext(), arcTo: vi.fn() } as unknown as CanvasRenderingContext2D
+      renderScaleBar(ctx, cam, 800, 600, inset)
+      return vi.mocked(ctx.fillText).mock.calls[0][1]
+    }
+    expect(labelX(232)).toBe(labelX() - 232)
+    expect(labelX(0)).toBe(labelX())
+  })
+})
+
+describe('renderDrivingRoute', () => {
+  /** Mock context that also records every stroke colour set on it */
+  function recordingContext() {
+    const ctx = createMockContext()
+    const strokeColors: string[] = []
+    Object.defineProperty(ctx, 'strokeStyle', {
+      set: (value: string) => { strokeColors.push(value) },
+      get: () => strokeColors[strokeColors.length - 1],
+    })
+    return { ctx, strokeColors }
+  }
+
+  function yNetwork() {
+    const net = createNetwork()
+    const nStem = addNode(net, { x: 0, y: 0 })
+    const nApex = addNode(net, { x: 30, y: 0 })
+    const nStraight = addNode(net, { x: 130, y: 0 })
+    const nDiv = addNode(net, { x: 130, y: 15 })
+    const sStem = addSegment(net, nStem.id, nApex.id)!
+    const sStraight = addSegment(net, nApex.id, nStraight.id)!
+    const sDiv = addSegment(net, nApex.id, nDiv.id)!
+    const junction = addJunction(net, {
+      nodeId: nApex.id,
+      stemNodeId: nStem.id,
+      straightNodeId: nStraight.id,
+      divergingNodeId: nDiv.id,
+      straightSegmentId: sStraight.id,
+      divergingSegmentId: sDiv.id,
+      hand: 'right',
+      frogNumber: 6,
+      activeBranch: 'straight',
+    })
+    return { net, sStem, sDiv, junction }
+  }
+
+  const AMBER = '#fbbf24'
+  const RED = '#ef4444'
+  const texts = (ctx: CanvasRenderingContext2D) => vi.mocked(ctx.fillText).mock.calls.map((c) => c[0])
+
+  it('marks the facing turnout ahead with its distance and keeps the route cyan on the straight branch', () => {
+    const { net, sStem } = yNetwork()
+    const cam = createCamera()
+    const { ctx, strokeColors } = recordingContext()
+
+    renderDrivingRoute(ctx, cam, 800, 600, net, { segId: sStem.id, t: 0, forward: true }, 0, 'm')
+
+    expect(texts(ctx)).toContain('30 m')
+    // Ring on the points
+    expect(ctx.arc).toHaveBeenCalledWith(400 + 30 * cam.scale, 300, 8, 0, Math.PI * 2)
+    expect(strokeColors).not.toContain(AMBER)
+    // The diverging branch of the pictogram is barred
+    expect(strokeColors).toContain(RED)
+  })
+
+  it('turns the route amber past a turnout set to its diverging branch', () => {
+    const { net, sStem, junction } = yNetwork()
+    toggleJunction(junction)
+    const { ctx, strokeColors } = recordingContext()
+
+    renderDrivingRoute(ctx, createCamera(), 800, 600, net, { segId: sStem.id, t: 0, forward: true }, 0, 'm')
+
+    expect(strokeColors).toContain(AMBER)
+    expect(strokeColors).toContain('#22d3ee')
+  })
+
+  it('flags a turnout met by a branch it is not set to', () => {
+    const { net, sDiv } = yNetwork()
+    const { ctx } = recordingContext()
+
+    // On the diverging branch, running towards the points set to the straight branch
+    renderDrivingRoute(ctx, createCamera(), 800, 600, net, { segId: sDiv.id, t: 0.5, forward: false }, 0, 'm')
+
+    expect(texts(ctx).some((t) => t.startsWith('Aiguille fermée'))).toBe(true)
+  })
+
+  it('draws only the route when there is no turnout ahead', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 500, y: 0 })
+    const seg = addSegment(net, a.id, b.id)!
+    const { ctx } = recordingContext()
+
+    // 6 s of travel at 40 m/s: 240 m of route
+    renderDrivingRoute(ctx, createCamera(), 800, 600, net, { segId: seg.id, t: 0, forward: true }, 40, 'm')
+
+    expect(ctx.arc).not.toHaveBeenCalled()
+    expect(ctx.fillText).not.toHaveBeenCalled()
+    const lastX = vi.mocked(ctx.lineTo).mock.calls.at(-1)![0]
+    expect(lastX).toBeCloseTo(400 + 240 * createCamera().scale)
+  })
+})

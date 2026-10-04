@@ -40,7 +40,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null
 
   return (
-    <div className="toast-container" style={{ zIndex: 'var(--z-tooltip)' }}>
+    <div className="toast-container">
       {toasts.map((toast) => (
         <div key={toast.id} className={`toast-item toast-${toast.type ?? 'info'}`}>
           <span className="toast-icon">

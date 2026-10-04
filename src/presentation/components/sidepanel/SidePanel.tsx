@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
-import { findJunctionAtNode, findJunctionBySegment, toggleTurnoutHand } from '@domain/models/junction'
+import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
@@ -14,7 +14,8 @@ import {
   SECTION_COLORS,
 } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
-import type { EditorStore } from '@application/state/editorStore'
+import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { showToast } from '../common/Toast'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>
@@ -180,7 +181,7 @@ function NetworkPanel({ store }: { store: EditorStore }) {
                 fontWeight: 600,
               }}
             >
-              {store.snap ? 'Actif (G)' : 'Inactif'}
+              {store.snap ? `Actif${store.shortcutHint('view.toggleSnap')}` : 'Inactif'}
             </button>
           }
         />
@@ -237,7 +238,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   }
 
   const isDeadEnd = adj.length === 1
-  const kinematicIssues = analyzeKinematics(store.network).filter((i) => i.nodeId === nodeId)
+  const kinematicIssues = analyzeKinematics(store.network, store.gauge).filter((i) => i.nodeId === nodeId)
 
   return (
     <>
@@ -352,10 +353,10 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                 color: 'var(--ink)',
                 cursor: 'pointer',
               }}
-              onClick={() => store.toggleActiveJunction(junction.id)}
-              title="Basculer l'aiguillage (Raccourci T)"
+              onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning') }}
+              title={`Basculer l'aiguillage${store.shortcutHint('edit.toggleJunction')}`}
             >
-              Aiguiller (T)
+              Aiguiller{store.shortcutHint('edit.toggleJunction')}
             </button>
             {junction.hand !== 'three_way' && (
               <button
@@ -372,9 +373,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                   cursor: 'pointer',
                 }}
                 onClick={() => {
-                  toggleTurnoutHand(store.network, junction.id)
-                  store.markDirty()
-                  store.notify()
+                  if (!store.toggleTurnoutHandAtSelection(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
                 }}
                 title="Inverser le côté de déviation"
               >
@@ -606,10 +605,10 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
               color: 'var(--ink)',
               cursor: 'pointer',
             }}
-            onClick={() => store.toggleActiveJunction(junction.id)}
-            title="Basculer l'aiguillage (Raccourci T)"
+            onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning') }}
+            title={`Basculer l'aiguillage${store.shortcutHint('edit.toggleJunction')}`}
           >
-            Aiguiller (T)
+            Aiguiller{store.shortcutHint('edit.toggleJunction')}
           </button>
         </div>
       )}
@@ -1061,13 +1060,13 @@ function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStor
               gap: '6px',
             }}
             onClick={() => store.createParallelTrackFromSelection()}
-            title="Génère la voie parallèle à gauche (+écartement). Raccourci : D"
+            title={`Génère la voie parallèle à gauche (+écartement)${store.shortcutHint('edit.parallelTrack')}`}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="3" y1="8" x2="21" y2="8" />
               <line x1="3" y1="16" x2="21" y2="16" />
             </svg>
-            Créer voie double (D)
+            Créer voie double{store.shortcutHint('edit.parallelTrack')}
           </button>
           <button
             className="sp-btn-compact"
@@ -1175,21 +1174,23 @@ export function SidePanel({ store }: { store: EditorStore }) {
 
   return (
     <>
-      {/* Floating toggle button on the right edge */}
-      <button
-        className={`sp-toggle-btn ${isOpen ? 'open' : 'closed'}`}
-        onClick={() => store.toggleSidePanel()}
-        title={isOpen ? 'Masquer l’inspecteur (I)' : 'Afficher l’inspecteur (I)'}
-        aria-label={isOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur'}
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          {isOpen ? (
-            <polyline points="9 18 15 12 9 6" />
-          ) : (
-            <polyline points="15 18 9 12 15 6" />
-          )}
-        </svg>
-      </button>
+      {/* Floating toggle button on the right edge (the inspector stays closed while driving) */}
+      {!store.isPlayMode && (
+        <button
+          className={`sp-toggle-btn ${isOpen ? 'open' : 'closed'}`}
+          onClick={() => store.toggleSidePanel()}
+          title={`${isOpen ? 'Masquer' : 'Afficher'} l’inspecteur${store.shortcutHint('view.toggleInspector')}`}
+          aria-label={isOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur'}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {isOpen ? (
+              <polyline points="9 18 15 12 9 6" />
+            ) : (
+              <polyline points="15 18 9 12 15 6" />
+            )}
+          </svg>
+        </button>
+      )}
 
       {/* Floating drawer side panel */}
       <div className={`side-panel ${isOpen ? 'open' : 'collapsed'}`}>
@@ -1198,7 +1199,7 @@ export function SidePanel({ store }: { store: EditorStore }) {
           <button
             className="sp-close-btn"
             onClick={() => store.setSidePanelOpen(false)}
-            title="Masquer l’inspecteur (I)"
+            title={`Masquer l’inspecteur${store.shortcutHint('view.toggleInspector')}`}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />

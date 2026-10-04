@@ -6,6 +6,7 @@ import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
+import { chordLabel, type ActionId } from '@application/keybindings/keybindings'
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -19,6 +20,17 @@ interface TopBarProps {
 }
 
 export function TopBar({ store, onFitView }: TopBarProps) {
+  /** Every key assigned to an action, for the shortcuts dialog */
+  const keys = (action: ActionId) => {
+    const chords = store.keybindings[action].filter((c) => c !== null)
+    if (chords.length === 0) return '—'
+    return chords.map((c, i) => (
+      <span key={i}>
+        {i > 0 && ' ou '}
+        <span className="shortcut-kbd">{chordLabel(c, store.keyLabels)}</span>
+      </span>
+    ))
+  }
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(store.projectName)
   const [showNewModal, setShowNewModal] = useState(false)
@@ -47,21 +59,21 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     { id: 'undo', label: 'Annuler', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
     { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Maj+Z', disabled: !store.canRedo, separatorAfter: true },
     { id: 'delete', label: 'Supprimer', shortcut: 'Suppr' },
-    { id: 'duplicate', label: 'Créer une voie parallèle', shortcut: 'D', disabled: !store.canCreateParallelTrack },
+    { id: 'duplicate', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack },
     { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A', separatorAfter: true },
     { id: 'reconcile', label: 'Réconcilier les jonctions & aiguillages', shortcut: 'R', separatorAfter: true },
     { id: 'clear', label: 'Désélectionner tout' },
   ]
 
   const viewItems: MenuItem[] = [
-    { id: 'fit', label: 'Ajuster à la vue', shortcut: 'F' },
+    { id: 'fit', label: 'Ajuster à la vue', shortcut: store.shortcutLabel('view.fit') },
     { id: 'fit-board', label: 'Cadrer le plateau de réseau', disabled: !store.boardEnabled },
     { id: 'zoom-100', label: 'Zoom par défaut', shortcut: 'Ctrl+0', separatorAfter: true },
     { id: 'toggle-grid', label: store.showGrid ? 'Masquer la grille' : 'Afficher la grille' },
-    { id: 'toggle-snap', label: store.snap ? 'Désactiver l’aimantation' : 'Activer l’aimantation', shortcut: 'G' },
+    { id: 'toggle-snap', label: store.snap ? 'Désactiver l’aimantation' : 'Activer l’aimantation', shortcut: store.shortcutLabel('view.toggleSnap') },
     { id: 'toggle-dimensions', label: store.showDimensions ? 'Masquer les cotes dynamiques' : 'Afficher les cotes dynamiques' },
     { id: 'toggle-minimap', label: store.showMinimap ? 'Masquer la mini-carte' : 'Afficher la mini-carte' },
-    { id: 'toggle-inspector', label: store.isSidePanelOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur', shortcut: 'I', separatorAfter: true },
+    { id: 'toggle-inspector', label: store.isSidePanelOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur', shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
     { id: 'open-settings', label: 'Paramètres & Échelles...', shortcut: 'Ctrl+,' },
   ]
 
@@ -319,33 +331,39 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       >
         <div className="shortcuts-grid">
           <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Outils</div>
-          <div><span className="shortcut-kbd">V</span></div>
+          <div>{keys('tool.select')}</div>
           <div>Sélection et déplacement</div>
-          <div><span className="shortcut-kbd">N</span></div>
+          <div>{keys('tool.place')}</div>
           <div>Voie droite</div>
-          <div><span className="shortcut-kbd">C</span></div>
+          <div>{keys('tool.curve')}</div>
           <div>Voie courbe</div>
-          <div><span className="shortcut-kbd">P</span></div>
+          <div>{keys('tool.turnout')}</div>
           <div>Aiguillage</div>
-          <div><span className="shortcut-kbd">K</span></div>
+          <div>{keys('tool.split')}</div>
           <div>Ciseaux (scinder une voie)</div>
-          <div><span className="shortcut-kbd">M</span></div>
+          <div>{keys('tool.measure')}</div>
           <div>Règle (mesurer)</div>
-          <div><span className="shortcut-kbd">H</span></div>
+          <div>{keys('tool.pan')}</div>
           <div>Déplacer la vue</div>
-          <div><span className="shortcut-kbd">L</span></div>
+          <div>{keys('tool.locomotive')}</div>
           <div>Trains (pose et sélection)</div>
           <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Pose des voies</div>
           <div><span className="shortcut-kbd">0</span>–<span className="shortcut-kbd">9</span> puis <span className="shortcut-kbd">Entrée</span></div>
           <div>Saisir la longueur exacte de la voie droite en cours</div>
           <div><span className="shortcut-kbd">Tab</span></div>
-          <div>Continuer en courbe depuis le nœud de la voie droite en cours</div>
+          <div>Continuer en courbe depuis le nœud de la voie droite en cours ; changer de côté (courbe, aiguillage)</div>
+          <div><span className="shortcut-kbd">Maj</span> + clic</div>
+          <div>Poser une voie double</div>
+          <div>{keys('edit.paramDecrease')} / {keys('edit.paramIncrease')}</div>
+          <div>Rayon précédent / suivant (courbe, aiguillage)</div>
+          <div>Clic droit</div>
+          <div>Terminer la pose en cours</div>
           <div><span className="shortcut-kbd">Échap</span></div>
           <div>Annuler la pose en cours, puis revenir à l’outil Sélection</div>
           <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Édition</div>
-          <div><span className="shortcut-kbd">T</span></div>
+          <div>{keys('edit.toggleJunction')}</div>
           <div>Basculer l’aiguillage sélectionné</div>
-          <div><span className="shortcut-kbd">D</span></div>
+          <div>{keys('edit.parallelTrack')}</div>
           <div>Créer une voie parallèle à la sélection</div>
           <div><span className="shortcut-kbd">R</span></div>
           <div>Réconcilier les jonctions et aiguillages</div>
@@ -357,30 +375,46 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           <div>Annuler</div>
           <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Maj</span> + <span className="shortcut-kbd">Z</span> ou <span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Y</span></div>
           <div>Rétablir</div>
+          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Trains</div>
+          <div><span className="shortcut-kbd">R</span> ou <span className="shortcut-kbd">Tab</span></div>
+          <div>Inverser le sens du véhicule à poser</div>
+          <div><span className="shortcut-kbd">Suppr</span></div>
+          <div>Supprimer le véhicule sélectionné</div>
+          <div>{keys('train.debug')}</div>
+          <div>Afficher / masquer le squelette des trains</div>
           <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Affichage</div>
           <div><span className="shortcut-kbd">Espace</span> + glisser</div>
           <div>Déplacer la vue</div>
-          <div><span className="shortcut-kbd">F</span></div>
+          <div>{keys('view.fit')}</div>
           <div>Ajuster tout le réseau à la vue</div>
           <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">0</span></div>
           <div>Zoom par défaut</div>
-          <div><span className="shortcut-kbd">G</span></div>
+          <div>{keys('view.toggleSnap')}</div>
           <div>Activer / désactiver l’aimantation</div>
-          <div><span className="shortcut-kbd">I</span></div>
+          <div>{keys('view.toggleInspector')}</div>
           <div>Afficher / masquer l’inspecteur</div>
           <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">,</span> ou <span className="shortcut-kbd">,</span></div>
           <div>Paramètres du réseau (échelles, unités)</div>
           <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Conduite</div>
-          <div><span className="shortcut-kbd">F5</span></div>
+          <div>{keys('sim.togglePlay')}</div>
           <div>Entrer en mode conduite / le quitter</div>
-          <div><span className="shortcut-kbd">↑</span> / <span className="shortcut-kbd">↓</span></div>
-          <div>Manipulateur : un cran de traction / de freinage</div>
-          <div><span className="shortcut-kbd">Maj</span> + <span className="shortcut-kbd">↑</span> / <span className="shortcut-kbd">↓</span></div>
-          <div>Inverseur (avant · neutre · arrière)</div>
-          <div><span className="shortcut-kbd">Retour arrière</span></div>
+          <div>{keys('drive.exit')} ou <span className="shortcut-kbd">Échap</span></div>
+          <div>Quitter la conduite</div>
+          <div>{keys('drive.notchUp')}</div>
+          <div>Manipulateur : un cran vers la traction</div>
+          <div>{keys('drive.notchDown')}</div>
+          <div>Manipulateur : un cran vers le frein</div>
+          <div>{keys('drive.reverserForward')}</div>
+          <div>Inverseur vers l’avant</div>
+          <div>{keys('drive.reverserBackward')}</div>
+          <div>Inverseur vers l’arrière</div>
+          <div>{keys('drive.emergencyBrake')}</div>
           <div>Arrêt d’urgence</div>
-          <div><span className="shortcut-kbd">←</span> / <span className="shortcut-kbd">→</span></div>
+          <div>{keys('drive.steerLeft')} / {keys('drive.steerRight')}</div>
           <div>Orienter le prochain aiguillage</div>
+          <div style={{ gridColumn: '1 / -1', marginTop: '6px', opacity: 0.8 }}>
+            Les touches de conduite et d’outils se modifient dans les paramètres (Ctrl + ,).
+          </div>
         </div>
       </Modal>
       <SettingsModal

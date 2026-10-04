@@ -9,6 +9,7 @@ import {
   renderDetailedRailLines,
   renderLocomotive,
   renderTrainSet,
+  renderDrivingRoute,
   renderCouplerPoints,
   renderCouplerSnapIndicator,
   pickSpacing,
@@ -24,17 +25,16 @@ import {
   snapToGrid,
   getStepPointsAlongSegment,
 } from '@domain/models/network'
-import type { Point, Network, RailNode } from '@domain/models/types'
+import type { Point } from '@domain/models/types'
 import { bezierPoint, computeParallelCurve, splitCurveIntoArcPieces, type CurvePiece } from '@domain/geometry/curve'
-import { getTangentForPlacement, getTrackTangentAt } from '@domain/geometry/tangent'
-import { computeCurveToolGeometry } from '@domain/geometry/curveTool'
+import { getTangentForPlacement } from '@domain/geometry/tangent'
+import { curvePiecesTo } from '@domain/geometry/curveTool'
 import { applyNodeTransform, collectAffectedVias } from '@domain/geometry/nodeTransform'
 import { snapStraightLength, computeStraightPiece } from '@domain/profiles/profiles'
 import {
   splitSegment,
   findJunctionAtNode,
   findJunctionBySegment,
-  toggleJunction,
 } from '@domain/models/junction'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
 import {
@@ -42,12 +42,11 @@ import {
   applyFreeformParallelTurnout,
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
-import { formatDistance, formatRadius, formatAngle, parseDistance } from '@domain/models/units'
-import { trainDriveTelemetry } from '@domain/models/train'
+import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
+import { trainDriveTelemetry, trainRouteStart } from '@domain/models/train'
 import {
   renderStraightDimension,
   renderCurveDimension,
-  renderParallelSpacingDimension,
 } from './dimensionOverlay'
 import {
   hitTestGizmo,
@@ -55,40 +54,21 @@ import {
   rotateGizmoDrag,
   renderTranslationGizmo,
   getGizmoAnchor,
+  gizmoFootprint,
 } from './gizmo'
-import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { DRIVING_HUD_FOOTPRINT } from '../hud/DrivingHUD'
+import { wheelIntent } from './wheelIntent'
+import {
+  findNearestNode,
+  snapDirection,
+  resolveCurveTool,
+  resolvePlaceTool,
+  describeCurve,
+  pendingPlacementNodeId,
+} from './placementPreview'
+import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
 
-
-/** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
-function findNearestNode(net: Network, worldPos: Point, maxScreenPx: number, cam: Camera): RailNode | null {
-  // Cap snap radius to 0.80m in world space (half UIC track gauge) so distant nodes never grab the cursor
-  const maxDistWorld = Math.min(0.80, maxScreenPx / cam.scale)
-  let best: RailNode | null = null
-  let bestD = maxDistWorld
-  for (const node of net.nodes.values()) {
-    const d = Math.hypot(worldPos.x - node.pos.x, worldPos.y - node.pos.y)
-    if (d < bestD) {
-      bestD = d
-      best = node
-    }
-  }
-  return best
-}
-
-/** Snap a direction vector to standard angles (0°, 15°, 30°, 45°, 90°...). */
-function snapDirection(dir: Point, stepDeg = 15, tolDeg = 6): Point {
-  const angleRad = Math.atan2(dir.y, dir.x)
-  let angleDeg = (angleRad * 180) / Math.PI
-  if (angleDeg < 0) angleDeg += 360
-  const nearest = Math.round(angleDeg / stepDeg) * stepDeg
-  const diff = Math.abs(angleDeg - nearest)
-  if (diff <= tolDeg || Math.abs(diff - 360) <= tolDeg) {
-    const rad = (nearest * Math.PI) / 180
-    return { x: Math.cos(rad), y: Math.sin(rad) }
-  }
-  return dir
-}
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
 function renderSnapIndicator(
@@ -136,40 +116,6 @@ function renderSnapIndicator(
     ctx.stroke()
   }
   ctx.restore()
-}
-
-/**
- * Curve tool geometry for the current editor state and a cursor position.
- * Single source for the preview, the click and the hover snap, so they cannot diverge.
- */
-function resolveCurveTool(store: EditorStore, startId: string, cursor: Point) {
-  const startNode = store.network.nodes.get(startId)
-  if (!startNode) return null
-  const cam = store.camera
-  const trackTarget = getTrackTangentAt(store.network, cursor, 24 / cam.scale, startId)
-  const startTangent = getTangentForPlacement(store.network, startId, cursor)
-  const dx = cursor.x - startNode.pos.x
-  const dy = cursor.y - startNode.pos.y
-  const len = Math.hypot(dx, dy)
-  const fallbackTangent = len > 0.01
-    ? (store.snap ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: dx / len, y: dy / len })
-    : { x: 1, y: 0 }
-  // Magnetic end: an existing node under the cursor becomes the target
-  const closeNode = findNearestNode(store.network, cursor, 16, cam)
-  const target = closeNode && closeNode.id !== startId ? closeNode.pos : cursor
-  const geom = computeCurveToolGeometry({
-    startPos: startNode.pos,
-    startTangent,
-    fallbackTangent,
-    trackTarget,
-    cursor: target,
-    trackMode: store.trackMode,
-    radius: store.selectedCurveRadius,
-    angle: store.selectedCurveAngle,
-    side: store.autoCurveSide ? 'auto' : store.curveSide,
-    limits: store.getPlacementThresholds(),
-  })
-  return { startNode, trackTarget, geom }
 }
 
 /** Render a straight rail preview to the candidate end. */
@@ -249,20 +195,22 @@ function renderPlacePreview(
     ctx.stroke()
   }
 
-  // Length label near snapped end
-  ctx.font = '600 11px Archivo, system-ui, sans-serif'
-  const labelW = ctx.measureText(labelText).width
-  const lx = w2sX(snappedEnd.x) + 14
-  const ly = w2sY(snappedEnd.y) - 10
+  // Length label near snapped end (omitted when the dimension line already says it)
+  if (labelText) {
+    ctx.font = '600 11px Archivo, system-ui, sans-serif'
+    const labelW = ctx.measureText(labelText).width
+    const lx = w2sX(snappedEnd.x) + 14
+    const ly = w2sY(snappedEnd.y) - 10
 
-  ctx.fillStyle = isClosedToNode ? 'rgba(16, 185, 129, 0.9)' : 'rgba(37, 99, 235, 0.85)'
-  ctx.beginPath()
-  ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
-  ctx.fill()
-  ctx.fillStyle = paper
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-  ctx.fillText(labelText, lx, ly - 4)
+    ctx.fillStyle = isClosedToNode ? 'rgba(16, 185, 129, 0.9)' : 'rgba(37, 99, 235, 0.85)'
+    ctx.beginPath()
+    ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
+    ctx.fill()
+    ctx.fillStyle = paper
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillText(labelText, lx, ly - 4)
+  }
 
   ctx.restore()
 }
@@ -334,20 +282,22 @@ function renderCurvePreview(
     ctx.fill()
   }
 
-  // Label near end
-  ctx.font = '600 11px Archivo, system-ui, sans-serif'
-  const labelW = ctx.measureText(labelText).width
-  const lx = w2sX(end.x) + 14
-  const ly = w2sY(end.y) - 10
+  // Label near end (omitted when the dimension already says it)
+  if (labelText) {
+    ctx.font = '600 11px Archivo, system-ui, sans-serif'
+    const labelW = ctx.measureText(labelText).width
+    const lx = w2sX(end.x) + 14
+    const ly = w2sY(end.y) - 10
 
-  ctx.fillStyle = isGreen ? 'rgba(16, 185, 129, 0.95)' : isInvalid ? 'rgba(239, 68, 68, 0.9)' : 'rgba(37, 99, 235, 0.85)'
-  ctx.beginPath()
-  ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
-  ctx.fill()
-  ctx.fillStyle = paper
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-  ctx.fillText(labelText, lx, ly - 4)
+    ctx.fillStyle = isGreen ? 'rgba(16, 185, 129, 0.95)' : isInvalid ? 'rgba(239, 68, 68, 0.9)' : 'rgba(37, 99, 235, 0.85)'
+    ctx.beginPath()
+    ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
+    ctx.fill()
+    ctx.fillStyle = paper
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.fillText(labelText, lx, ly - 4)
+  }
 
   ctx.restore()
 }
@@ -381,7 +331,40 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
     }
 
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { tool: store.tool })
+    // The gizmo is drawn last, on the selection anchor: section badges keep clear of it
+    const gizmoAnchor = store.tool === 'select' && !store.isPlayMode ? getGizmoAnchor(store.network, store.selection) : null
+    const gizmoScreen = gizmoAnchor
+      ? {
+          x: (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2,
+          y: (gizmoAnchor.worldPos.y - cam.y) * cam.scale + rect.height / 2,
+        }
+      : null
+    const pendingNodeId = pendingPlacementNodeId(store)
+
+    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, {
+      tool: store.tool,
+      gauge: store.gauge,
+      // Driving: clean view, only the track (turnout positions included) and the trains
+      ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
+      badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
+      quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
+    })
+
+    // Driving aid: route ahead of the driven train and the turnout the steering keys throw
+    if (store.isPlayMode) {
+      const driven = store.selectedTrain
+      const loco = store.trains.length === 0 ? store.locomotive : null
+      if (driven) {
+        const routeStart = trainRouteStart(driven)
+        if (routeStart) {
+          renderDrivingRoute(ctx, cam, rect.width, rect.height, store.network, routeStart, driven.currentSpeed, store.unit)
+        }
+      } else if (loco) {
+        // Same end and direction as the legacy steering (`findUpcomingJunction`)
+        const routeStart = loco.direction === 1 ? loco.front : { ...loco.front, forward: !loco.front.forward }
+        renderDrivingRoute(ctx, cam, rect.width, rect.height, store.network, routeStart, store.locomotiveCurrentSpeed, store.unit)
+      }
+    }
 
     // Render trains on top of the track network
     if (store.trains.length > 0) {
@@ -521,129 +504,70 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
       const isIntCoord = Math.abs(Math.round(nearest.x) - nearest.x) < 1e-3 && Math.abs(Math.round(nearest.y) - nearest.y) < 1e-3
       const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
-      ctx.font = '600 10px Archivo, system-ui, sans-serif'
-      ctx.fillStyle = accent
-      ctx.globalAlpha = 0.95
-      ctx.textBaseline = 'bottom'
-      ctx.textAlign = 'center'
-      ctx.fillText(`${coordLabel}+${formatDistance(distFromStart, store.unit)}`, w2sX(nearest.x), w2sY(nearest.y) - 12)
+      // The label only shows before the first click: once a placement is under way the single
+      // text near the cursor is its dimension. Turnout and scissors draw their own hover label.
+      if (!store.hasPendingPlacement && store.tool !== 'turnout' && store.tool !== 'split') {
+        ctx.font = '600 10px Archivo, system-ui, sans-serif'
+        ctx.fillStyle = accent
+        ctx.globalAlpha = 0.95
+        ctx.textBaseline = 'bottom'
+        ctx.textAlign = 'center'
+        ctx.fillText(`${coordLabel}+${formatDistance(distFromStart, store.unit)}`, w2sX(nearest.x), w2sY(nearest.y) - 12)
+      }
       ctx.restore()
     }
 
     // Place tool preview: rail from last node, snapped to Kato length or freeform
-    if (store.tool === 'place' && store.lastNodeId) {
-      const startNode = store.network.nodes.get(store.lastNodeId)
-      if (startNode) {
-        const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-        const tangent = getTangentForPlacement(store.network, store.lastNodeId, cursor)
-        let dir: Point
-        let snappedLen: number
-        let candidateEnd: Point
-        const dx = cursor.x - startNode.pos.x
-        const dy = cursor.y - startNode.pos.y
-        const minLen = store.getMinTrackLength()
+    const place = store.tool === 'place' ? resolvePlaceTool(store) : null
+    if (place) {
+      const { startNode, end: candidateEnd, length: snappedLen, isJoinNode, hitSegId } = place
+      const isJoin = isJoinNode || hitSegId !== null
+      // One text near the cursor: the dimension line, or this label when dimensions are off
+      const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
+      const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
+      const labelText = store.showDimensions ? '' : `${prefix}${formatDistance(snappedLen, store.unit)}${joinSuffix}`
+      renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
 
-        const typedLen = store.isNumericInputActive ? parseDistance(store.numericInput, store.unit) : NaN
-        const hasTypedLen = !isNaN(typedLen) && typedLen > 0
+      // Live CAD dimensioning overlay
+      if (store.showDimensions) {
+        renderStraightDimension(
+          ctx,
+          cam,
+          rect.width,
+          rect.height,
+          startNode.pos,
+          candidateEnd,
+          snappedLen,
+          store.unit,
+          { showAngle: true },
+        )
+      }
 
-        if (tangent) {
-          dir = tangent
-          const proj = dx * dir.x + dy * dir.y
-          const dist = Math.max(minLen, proj)
-          if (hasTypedLen) {
-            snappedLen = typedLen
-          } else if (store.trackMode === 'freeform') {
-            snappedLen = store.snap ? Math.max(minLen, Math.round(dist * 10) / 10) : Math.max(minLen, dist)
-          } else if (store.selectedStraightLength !== 'auto') {
-            snappedLen = store.selectedStraightLength
-          } else {
-            snappedLen = snapStraightLength(dist)
-          }
-          candidateEnd = computeStraightPiece(startNode.pos, dir, snappedLen)
-        } else {
-          if (store.trackMode === 'freeform' && !hasTypedLen) {
-            candidateEnd = cursor
-            const rawDist = Math.hypot(dx, dy)
-            snappedLen = store.snap ? Math.max(minLen, Math.round(rawDist * 10) / 10) : Math.max(minLen, rawDist)
-          } else {
-            const dist = Math.hypot(dx, dy)
-            dir = dist > 0.01
-              ? (store.snap ? snapDirection({ x: dx / dist, y: dy / dist }, 15, 6) : { x: dx / dist, y: dy / dist })
-              : { x: 1, y: 0 }
-            if (hasTypedLen) {
-              snappedLen = typedLen
-            } else if (store.selectedStraightLength !== 'auto') {
-              snappedLen = store.selectedStraightLength
-            } else {
-              snappedLen = store.snap ? snapStraightLength(dist) : Math.max(minLen, dist)
-            }
-            candidateEnd = computeStraightPiece(startNode.pos, dir, snappedLen)
-          }
-        }
-        const closeNode = findNearestNode(store.network, candidateEnd, 16, cam)
-        const isJoinNode = closeNode !== null && closeNode.id !== store.lastNodeId
-        const hitSegId = !isJoinNode ? hitSegment(store.network, candidateEnd, 16 / cam.scale) : null
-        const isJoin = isJoinNode || hitSegId !== null
-        const prefix = store.trackMode === 'freeform' ? 'Flex ' : ''
-        const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-        const modeLabel = store.parallelMode ? '  | Double voie' : ''
-        const formattedDist = formatDistance(snappedLen, store.unit)
-        const labelText = `${prefix}${formattedDist}${joinSuffix}${modeLabel}`
-        renderPlacePreview(ctx, cam, rect.width, rect.height, startNode.pos, candidateEnd, labelText, isJoin)
-
-        // Live CAD dimensioning overlay
-        if (store.showDimensions) {
-          renderStraightDimension(
-            ctx,
-            cam,
-            rect.width,
-            rect.height,
-            startNode.pos,
-            candidateEnd,
-            snappedLen,
-            store.unit,
-            { showAngle: true },
-          )
-        }
-
-        // Preview de la voie secondaire parallele si mode double voie actif ou touche Shift/Ctrl maintenue
-        const showParallelPreview = store.parallelMode || isModifierDownRef.current
-        if (showParallelPreview) {
-          const dxp = candidateEnd.x - startNode.pos.x
-          const dyp = candidateEnd.y - startNode.pos.y
-          const lenp = Math.hypot(dxp, dyp)
-          if (lenp > store.getMinTrackLength()) {
-            const uxp = dxp / lenp
-            const uyp = dyp / lenp
-            const nxp = -uyp
-            const nyp = uxp
-            const off = store.parallelOffset
-            // Noeud de depart secondaire (soit parallelLastNodeId, soit decale du startNode)
-            const secStartNode = store.parallelLastNodeId
-              ? store.network.nodes.get(store.parallelLastNodeId)
-              : null
-            const secStart = secStartNode
-              ? secStartNode.pos
-              : { x: startNode.pos.x + nxp * off, y: startNode.pos.y + nyp * off }
-            const secEnd = { x: candidateEnd.x + nxp * off, y: candidateEnd.y + nyp * off }
-            ctx.save()
-            ctx.globalAlpha = 0.55
-            renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, 'Voie 2', false)
-            ctx.restore()
-
-            if (store.showDimensions) {
-              renderParallelSpacingDimension(
-                ctx,
-                cam,
-                rect.width,
-                rect.height,
-                candidateEnd,
-                secEnd,
-                store.parallelOffset,
-                store.unit,
-              )
-            }
-          }
+      // Preview de la voie secondaire parallele si mode double voie actif ou touche Shift/Ctrl maintenue
+      // (l'entraxe est affiché dans la barre contextuelle)
+      const showParallelPreview = store.isParallelActive || isModifierDownRef.current
+      if (showParallelPreview) {
+        const dxp = candidateEnd.x - startNode.pos.x
+        const dyp = candidateEnd.y - startNode.pos.y
+        const lenp = Math.hypot(dxp, dyp)
+        if (lenp > store.getMinTrackLength()) {
+          const uxp = dxp / lenp
+          const uyp = dyp / lenp
+          const nxp = -uyp
+          const nyp = uxp
+          const off = store.parallelOffset
+          // Noeud de depart secondaire (soit parallelLastNodeId, soit decale du startNode)
+          const secStartNode = store.parallelLastNodeId
+            ? store.network.nodes.get(store.parallelLastNodeId)
+            : null
+          const secStart = secStartNode
+            ? secStartNode.pos
+            : { x: startNode.pos.x + nxp * off, y: startNode.pos.y + nyp * off }
+          const secEnd = { x: candidateEnd.x + nxp * off, y: candidateEnd.y + nyp * off }
+          ctx.save()
+          ctx.globalAlpha = 0.55
+          renderPlacePreview(ctx, cam, rect.width, rect.height, secStart, secEnd, '', false)
+          ctx.restore()
         }
       }
     }
@@ -654,56 +578,28 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const cursor = store.snap ? store.snappedCursor : store.cursorWorld
       const res = resolveCurveTool(store, cs.startId, cursor)
       if (res) {
-        const { startNode, trackTarget, geom } = res
+        const { startNode, geom } = res
         const { end, via, radius, angle, pieces } = geom
-        const len = geom.length
-        const sideLabel = geom.side === -1 ? 'Gauche' : 'Droite'
-        const onTrack = geom.kind === 'lock' || geom.kind === 'reverse'
-        const closeNode = onTrack ? null : findNearestNode(store.network, end, 16, cam)
-        const isJoinNode = onTrack ? trackTarget?.nodeId !== undefined : closeNode !== null && closeNode.id !== cs.startId
-        const hitSegId = !onTrack && !isJoinNode ? hitSegment(store.network, end, 16 / cam.scale) : null
-        const isJoin = onTrack || isJoinNode || hitSegId !== null
-        const dims = `${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})`
+        const readout = describeCurve(store, cs.startId, res)
 
-        let labelText: string
-        if (!geom.valid) {
-          labelText = `Rayon trop serré : ${formatRadius(radius, store.unit)} (min ${formatRadius(store.getPlacementThresholds().minRadius, store.unit)})`
-        } else if (geom.kind === 'lock') {
-          labelText = `Aiguillage verrouillé (0°)  ${dims}  → Jonction tangente`
-        } else if (geom.kind === 'reverse') {
-          const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent (0°)'
-          labelText = radius === Infinity
-            ? `Ligne droite ${formatDistance(len, store.unit)}${joinSuffix}`
-            : `Courbe ${sideLabel} ${dims}${joinSuffix}`
-        } else {
-          const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-          labelText = geom.kind === 'freeform'
-            ? (radius === Infinity
-                ? `Flex ${formatDistance(len, store.unit)}${joinSuffix}`
-                : `Flex ${sideLabel} ${dims}${joinSuffix}`)
-            : `Courbe ${sideLabel} ${dims}${joinSuffix}`
+        // One text near the cursor: the refusal reason, else the dimension (or the label when
+        // dimensions are off). The preview draws the same arc pieces the click will insert.
+        const showDimension = store.showDimensions && !readout.refused
+        const color = !geom.valid ? '#ef4444' : readout.onTrack ? '#10b981' : undefined
+        renderCurvePreview(ctx, cam, rect.width, rect.height, pieces, showDimension ? '' : readout.text, geom.valid && readout.isJoin, color)
+
+        if (showDimension) {
+          renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, geom.length, store.unit)
         }
 
-        // The preview draws the same arc pieces the click will insert
-        const color = !geom.valid ? '#ef4444' : onTrack ? '#10b981' : undefined
-        renderCurvePreview(ctx, cam, rect.width, rect.height, pieces, labelText, geom.valid && isJoin, color)
-
-        if (store.showDimensions) {
-          renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
-        }
-
-        if (geom.valid && (store.parallelMode || isModifierDownRef.current)) {
+        if (geom.valid && (store.isParallelActive || isModifierDownRef.current)) {
           const parPieces = pieces.map((p) => computeParallelCurve(p.start, p.via, p.end, store.parallelOffset))
           const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
           if (secStartNode) parPieces[0] = { ...parPieces[0], start: secStartNode.pos }
           ctx.save()
           ctx.globalAlpha = 0.55
-          renderCurvePreview(ctx, cam, rect.width, rect.height, parPieces, 'Voie 2', false)
+          renderCurvePreview(ctx, cam, rect.width, rect.height, parPieces, '', false)
           ctx.restore()
-
-          if (store.showDimensions) {
-            renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, parPieces[parPieces.length - 1].end, store.parallelOffset, store.unit)
-          }
         }
       }
     }
@@ -902,13 +798,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
-    const gizmoAnchor = store.tool === 'select' ? getGizmoAnchor(store.network, store.selection) : null
-    if (gizmoAnchor) {
-      const sx = (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2
-      const sy = (gizmoAnchor.worldPos.y - cam.y) * cam.scale + rect.height / 2
+    if (gizmoScreen) {
       renderTranslationGizmo(
         ctx,
-        { x: sx, y: sy },
+        gizmoScreen,
         store.gizmoHoverAxis,
         store.gizmoDragAxis,
         {
@@ -921,7 +814,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       )
     }
 
-    renderScaleBar(ctx, cam, rect.width, rect.height)
+    // While driving, the console sits in the bottom-right corner: the scale bar moves left of it
+    renderScaleBar(ctx, cam, rect.width, rect.height, store.isPlayMode ? DRIVING_HUD_FOOTPRINT : 0)
   }, [store])
 
   const getWorldPos = useCallback(
@@ -1293,40 +1187,30 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const res = resolveCurveTool(store, cs.startId, cursor)
           // A curve below the minimum radius is shown as invalid by the preview and refused here
           if (res && res.geom.valid) {
-            const { startNode, trackTarget, geom } = res
-            const hitTol = 24 / store.camera.scale
+            const { startNode, geom, endJoin } = res
             const endPos = geom.end
-            const viaPos = geom.via
 
             // Auto-snap destination: connect to existing node if close (closes loops!)
             // Or if close to an existing segment, split that segment and connect to midNode!
             let endId: string
             // Only a curve ending in open space is chained; joining existing track ends the pose
             let endsInOpenSpace = false
-            if (trackTarget?.nodeId && trackTarget.nodeId !== cs.startId) {
-              endId = trackTarget.nodeId
+            if (endJoin?.nodeId) {
+              endId = endJoin.nodeId
+            } else if (endJoin?.segId) {
+              const splitRes = splitSegment(store.network, endJoin.segId, endPos)
+              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
             } else {
-              const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
-              if (closeNode && closeNode.id !== cs.startId) {
-                endId = closeNode.id
-              } else {
-                const targetSegId = trackTarget?.segId ?? hitSegment(store.network, endPos, hitTol)
-                if (targetSegId) {
-                  const splitRes = splitSegment(store.network, targetSegId, endPos)
-                  endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
-                } else {
-                  const endNode = addNode(store.network, endPos)
-                  endId = endNode.id
-                  endsInOpenSpace = true
-                }
-              }
+              const endNode = addNode(store.network, endPos)
+              endId = endNode.id
+              endsInOpenSpace = true
             }
             // Insert the curve as arc pieces, fitted to where the end node actually is
             const endNodePos = store.network.nodes.get(endId)?.pos ?? endPos
-            const pieces = splitCurveIntoArcPieces(startNode.pos, viaPos, endNodePos)
+            const pieces = curvePiecesTo(geom, startNode.pos, endNodePos)
             addCurveChain(store.network, cs.startId, endId, pieces)
 
-            const isParallelKey = e.shiftKey || e.ctrlKey || store.parallelMode
+            const isParallelKey = e.shiftKey || e.ctrlKey || store.isParallelActive
 
             if (isParallelKey) {
               // Offset piece by piece: both tracks stay concentric and share their radial joints
@@ -1367,7 +1251,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       if (e.button === 0 && store.tool === 'place') {
         const world = getWorldPos(e.clientX, e.clientY)
-        const isParallelKey = e.shiftKey || e.ctrlKey || store.parallelMode
+        const isParallelKey = e.shiftKey || e.ctrlKey || store.isParallelActive
 
         // Shift+Click ou Ctrl+Click ou mode double-voie : pose de voie double continue
         if (isParallelKey) {
@@ -1703,8 +1587,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
           if (existingJunc && store.selection.nodes.has(nodeId) && !isMulti) {
-            toggleJunction(existingJunc)
-            store.markDirty()
+            if (!store.toggleActiveJunction(existingJunc.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
           }
           if (isMulti) {
             const newNodes = new Set(store.selection.nodes)
@@ -2307,9 +2190,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const vw = rect.width
       const vh = rect.height
 
-      // If user does horizontal trackpad swipe without modifiers, pan horizontally
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey && !e.metaKey) {
+      // Two-finger trackpad slide pans; mouse wheel and trackpad pinch zoom
+      if (wheelIntent(e) === 'pan') {
         cam.x += e.deltaX / cam.scale
+        cam.y += e.deltaY / cam.scale
       } else {
         // Natural Google Maps / CAD zoom centered on cursor
         const worldX = cam.x + (px - vw / 2) / cam.scale
@@ -2524,12 +2408,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             left: `${renamingSection.x}px`,
             top: `${renamingSection.y}px`,
             transform: 'translate(-50%, -120%)',
-            background: 'var(--panel-bg, #181c24)',
-            border: '1px solid var(--accent, #3b82f6)',
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+            background: 'var(--panel)',
+            border: '1px solid var(--accent)',
+            boxShadow: 'var(--shadow)',
             borderRadius: '6px',
             padding: '8px 10px',
-            zIndex: 100,
+            zIndex: 'var(--z-popover)',
             display: 'flex',
             flexDirection: 'column',
             gap: '6px',
@@ -2538,7 +2422,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--ink)', opacity: 0.7 }}>
             Renommer la section
           </div>
           <form
@@ -2570,9 +2454,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 padding: '5px 8px',
                 fontSize: '12px',
                 fontWeight: 600,
-                background: 'var(--input-bg, #0f172a)',
-                color: 'var(--ink, #f8fafc)',
-                border: '1px solid var(--border, #334155)',
+                background: 'var(--paper)',
+                color: 'var(--ink)',
+                border: '1px solid var(--border)',
                 borderRadius: '4px',
                 outline: 'none',
                 width: '100%',
@@ -2587,9 +2471,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   fontSize: '10px',
                   padding: '3px 8px',
                   background: 'transparent',
-                  border: '1px solid var(--border, #334155)',
+                  border: '1px solid var(--border)',
                   borderRadius: '3px',
-                  color: 'var(--text-muted, #94a3b8)',
+                  color: 'var(--ink)',
                   cursor: 'pointer',
                 }}
               >
@@ -2600,10 +2484,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 style={{
                   fontSize: '10px',
                   padding: '3px 8px',
-                  background: 'var(--accent, #3b82f6)',
+                  background: 'var(--accent)',
                   border: 'none',
                   borderRadius: '3px',
-                  color: '#fff',
+                  color: 'var(--accent-fg)',
                   fontWeight: 600,
                   cursor: 'pointer',
                 }}

@@ -478,6 +478,17 @@ export interface RenderNetworkOptions {
   hideConstructionNodes?: boolean
   hideSectionCenterline?: boolean
   onlyRenamedSectionBadges?: boolean
+  /** No section badge at all, selected section included (driving view) */
+  hideSectionBadges?: boolean
+  /**
+   * Screen rectangle kept free of section badges (the gizmo of the selection): a badge that
+   * would overlap it is drawn just below instead.
+   */
+  badgeExclusion?: { x: number; y: number; w: number; h: number }
+  /** Nodes that get no diagnostic warning: the start node of the placement in progress */
+  quietNodeIds?: ReadonlySet<string>
+  /** Rail gauge of the layout: scales the distance thresholds of the diagnostics */
+  gauge?: number
 }
 
 export function renderNetwork(
@@ -641,7 +652,7 @@ export function renderNetwork(
     // - 1.0 <= Scale < 3.0 (Overview): compact badge (name + arrow) only if section is >= 45px on screen
     // - Scale >= 3.0 (Detailed view): full badge with type prefix, name, arrow, and exact length
     const showAllBadges = cam.scale >= 1.0
-    for (const sec of trackSections) {
+    for (const sec of options?.hideSectionBadges ? [] : trackSections) {
       if (sec.segmentIds.length === 0) continue
       const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
 
@@ -690,7 +701,15 @@ export function renderNetwork(
       const metrics = ctx.measureText(text)
       const bgW = metrics.width + 12
       const bgH = 18
-      const badgeY = sy - 14
+      let badgeY = sy - 14
+      const keepOut = options?.badgeExclusion
+      if (
+        keepOut &&
+        sx + bgW / 2 > keepOut.x && sx - bgW / 2 < keepOut.x + keepOut.w &&
+        badgeY + bgH / 2 > keepOut.y && badgeY - bgH / 2 < keepOut.y + keepOut.h
+      ) {
+        badgeY = keepOut.y + keepOut.h + bgH / 2 + 2
+      }
 
       // Pill background
       ctx.fillStyle = isSecSelected ? sec.color : sec.type === 'station_stop' ? 'rgba(8, 51, 68, 0.92)' : 'rgba(30, 41, 59, 0.85)'
@@ -943,8 +962,9 @@ export function renderNetwork(
 
   // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
   if (!hideConstructionNodes) {
-    const kinematicIssues = analyzeKinematics(net)
+    const kinematicIssues = analyzeKinematics(net, options?.gauge)
     for (const issue of kinematicIssues) {
+      if (options?.quietNodeIds?.has(issue.nodeId)) continue
       const node = net.nodes.get(issue.nodeId)
       if (!node || !isPointInBounds(node.pos, bounds)) continue
 
@@ -985,7 +1005,7 @@ export function renderNetwork(
       // Label badge above if zoom is reasonable
       if (cam.scale >= 0.9) {
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const label = issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
+        const label = issue.kind === 'track_gap' ? 'Voie interrompue' : issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
         const tw = ctx.measureText(label).width
         const ty = sy - signR - 10
 
@@ -1494,6 +1514,8 @@ export function renderScaleBar(
   cam: Camera,
   vw: number,
   vh: number,
+  /** Width in pixels reserved on the right of the canvas (an overlay sits there) */
+  rightInset = 0,
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const panel = getCanvasStyle(ctx.canvas, '--panel', '#f5f5f5')
@@ -1504,7 +1526,8 @@ export function renderScaleBar(
 
   const margin = 16
   const barH = 8
-  const x = vw - barPx - margin
+  const right = vw - rightInset
+  const x = right - barPx - margin
   const y = vh - margin
 
   ctx.save()
@@ -1514,7 +1537,7 @@ export function renderScaleBar(
   const labelW = ctx.measureText(label).width
   const pillW = Math.max(barPx, labelW) + 16
   const pillH = barH + 24
-  const pillX = vw - pillW - margin / 2
+  const pillX = right - pillW - margin / 2
   const pillY = vh - pillH - margin / 2
   ctx.fillStyle = panel
   ctx.globalAlpha = 0.85
@@ -2900,6 +2923,7 @@ import {
   getFullTGVTrain,
   getTrackCurvatureAt,
   sampleForwardTrack,
+  findJunctionAhead,
   type BogieFrame,
   type TGVDetails,
   type TGVAccordion,
@@ -4374,6 +4398,187 @@ export function renderTrainDynamicVectors(
         drawVectorBadge(toSx(lastP), toSy(lastP) - 18, alertText, alertColor, alertBg, fontSize)
       }
       ctx.restore()
+    }
+  }
+
+  ctx.restore()
+}
+
+// ─────────────────── Driving route & next turnout ───────────────────
+
+const ROUTE_STRAIGHT_COLOR = '#22d3ee'
+const ROUTE_DIVERTED_COLOR = '#fbbf24'
+const ROUTE_CLOSED_COLOR = '#ef4444'
+const ROUTE_BADGE_BG = 'rgba(15, 23, 42, 0.92)'
+/** The route is shown this many seconds of travel ahead, within these bounds (meters) */
+const ROUTE_REACH_SECONDS = 6
+const ROUTE_MIN_REACH = 50
+const ROUTE_MAX_REACH = 400
+/** Angle (degrees) between two neighbouring branches of the turnout pictogram */
+const ROUTE_PICTO_SPREAD_DEG = 38
+
+/**
+ * Driving aid drawn ahead of the driven train: the route it will follow, and the turnout the
+ * steering keys throw.
+ * - The route is cyan, and amber past a facing turnout set to a diverging branch.
+ * - A facing turnout gets a ring on its points and a pictogram of its branches, laid out from left
+ *   to right as the driver meets them, with the routed branch lit and the others barred. The
+ *   pictogram has a fixed screen size and spread, so it reads at any zoom and frog angle.
+ * - A turnout met by a branch it is not set to ends the route: its ring is red and labelled.
+ * `start` is the leading end of the train oriented along its travel direction (`trainRouteStart`).
+ */
+export function renderDrivingRoute(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  start: TrackPosition,
+  speed: number,
+  unit: Unit,
+): void {
+  const toSx = (p: Point) => (p.x - cam.x) * cam.scale + vw / 2
+  const toSy = (p: Point) => (p.y - cam.y) * cam.scale + vh / 2
+
+  const ahead = findJunctionAhead(net, start, 1)
+  const diverted = ahead !== null && ahead.facing && ahead.activeBranch !== 'straight'
+  const reach = Math.min(ROUTE_MAX_REACH, Math.max(ROUTE_MIN_REACH, Math.abs(speed) * ROUTE_REACH_SECONDS))
+  const pts = sampleForwardTrack(net, start, 1, reach, Math.max(1, reach / 100))
+
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  // ─── Route: split at the points when the turnout diverts it ───
+  let splitIdx = pts.length - 1
+  if (diverted) {
+    let travelled = 0
+    for (let i = 1; i < pts.length; i++) {
+      travelled += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+      if (travelled >= ahead.distance - 1e-6) {
+        splitIdx = i
+        break
+      }
+    }
+  }
+  const strokeRoute = (from: number, to: number, color: string) => {
+    if (to - from < 1) return
+    ctx.beginPath()
+    ctx.moveTo(toSx(pts[from]), toSy(pts[from]))
+    for (let i = from + 1; i <= to; i++) ctx.lineTo(toSx(pts[i]), toSy(pts[i]))
+    ctx.strokeStyle = color
+    ctx.globalAlpha = 0.25
+    ctx.lineWidth = 7
+    ctx.stroke()
+    ctx.globalAlpha = 0.9
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+    ctx.globalAlpha = 1
+  }
+  strokeRoute(0, splitIdx, ROUTE_STRAIGHT_COLOR)
+  strokeRoute(splitIdx, pts.length - 1, ROUTE_DIVERTED_COLOR)
+
+  // ─── Turnout the steering keys throw ───
+  const apex = ahead ? net.nodes.get(ahead.junction.nodeId) : undefined
+  if (ahead && apex) {
+    const ax = toSx(apex.pos)
+    const ay = toSy(apex.pos)
+    const color = !ahead.open ? ROUTE_CLOSED_COLOR : diverted ? ROUTE_DIVERTED_COLOR : ROUTE_STRAIGHT_COLOR
+    const distanceLabel = formatUnitsDistance(ahead.distance, unit, unit === 'm' ? 0 : undefined)
+
+    const drawLabel = (text: string, cx: number, cy: number) => {
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const tw = ctx.measureText(text).width
+      ctx.fillStyle = ROUTE_BADGE_BG
+      ctx.fillRect(cx - tw / 2 - 5, cy - 8, tw + 10, 16)
+      ctx.fillStyle = color
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, cx, cy)
+    }
+
+    // Ring on the points
+    ctx.beginPath()
+    ctx.arc(ax, ay, 8, 0, Math.PI * 2)
+    ctx.strokeStyle = ROUTE_BADGE_BG
+    ctx.lineWidth = 5
+    ctx.stroke()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+
+    if (!ahead.facing) {
+      if (!ahead.open) drawLabel(`Aiguille fermée · ${distanceLabel}`, ax, ay - 22)
+    } else {
+      const h = ahead.heading
+      const right = { x: -h.y, y: h.x }
+      // The pictogram sits beside the points, on the side that is up on screen
+      const side = right.y < 0 ? 1 : -1
+      const discR = 20
+      const cx = ax + right.x * side * 46
+      const cy = ay + right.y * side * 46
+
+      ctx.beginPath()
+      ctx.moveTo(ax + right.x * side * 8, ay + right.y * side * 8)
+      ctx.lineTo(cx - right.x * side * discR, cy - right.y * side * discR)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.arc(cx, cy, discR, 0, Math.PI * 2)
+      ctx.fillStyle = ROUTE_BADGE_BG
+      ctx.fill()
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // Fork: stem from behind, then one stroke per branch, fanned out around the straight one
+      const ox = cx - h.x * 8
+      const oy = cy - h.y * 8
+      const straightIdx = ahead.branches.indexOf('straight')
+      const branchLen = 17
+      const drawBranch = (index: number, active: boolean) => {
+        const angle = ((index - straightIdx) * ROUTE_PICTO_SPREAD_DEG * Math.PI) / 180
+        const dx = h.x * Math.cos(angle) + right.x * Math.sin(angle)
+        const dy = h.y * Math.cos(angle) + right.y * Math.sin(angle)
+        const ex = ox + dx * branchLen
+        const ey = oy + dy * branchLen
+        ctx.beginPath()
+        ctx.moveTo(ox, oy)
+        ctx.lineTo(ex, ey)
+        ctx.strokeStyle = active ? color : '#64748b'
+        ctx.lineWidth = active ? 3.5 : 2
+        ctx.stroke()
+        if (active) {
+          // Arrow head
+          ctx.beginPath()
+          ctx.moveTo(ex + dx * 5, ey + dy * 5)
+          ctx.lineTo(ex - dx * 3 - dy * 5, ey - dy * 3 + dx * 5)
+          ctx.lineTo(ex - dx * 3 + dy * 5, ey - dy * 3 - dx * 5)
+          ctx.closePath()
+          ctx.fillStyle = color
+          ctx.fill()
+        } else {
+          // Stop bar across a branch the points are not set to
+          ctx.beginPath()
+          ctx.moveTo(ex - dy * 4, ey + dx * 4)
+          ctx.lineTo(ex + dy * 4, ey - dx * 4)
+          ctx.strokeStyle = ROUTE_CLOSED_COLOR
+          ctx.lineWidth = 2
+          ctx.stroke()
+        }
+      }
+      ctx.beginPath()
+      ctx.moveTo(ox - h.x * 9, oy - h.y * 9)
+      ctx.lineTo(ox, oy)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 3.5
+      ctx.stroke()
+      ahead.branches.forEach((b, i) => { if (b !== ahead.activeBranch) drawBranch(i, false) })
+      drawBranch(ahead.branches.indexOf(ahead.activeBranch), true)
+
+      drawLabel(distanceLabel, cx, cy - discR - 11)
     }
   }
 

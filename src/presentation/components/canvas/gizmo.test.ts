@@ -5,7 +5,10 @@ import {
   rotateGizmoDrag,
   rotatePoint,
   GIZMO_LENGTH,
+  GIZMO_OFFSET,
+  GIZMO_ROT_RADIUS,
   getGizmoAnchor,
+  gizmoFootprint,
 } from './gizmo'
 
 describe('gizmo module', () => {
@@ -249,5 +252,27 @@ describe('gizmo module', () => {
       }
       expect(getGizmoAnchor(net, selection)).toBeNull()
     })
+  })
+})
+
+describe('gizmoFootprint', () => {
+  it('covers every handle a pointer can grab: both arrows and the rotation arc', () => {
+    const anchor = { x: 200, y: 300 }
+    const box = gizmoFootprint(anchor)
+    const inside = (p: { x: number; y: number }) =>
+      p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h
+
+    for (let x = 0; x <= 400; x += 2) {
+      for (let y = 100; y <= 400; y += 2) {
+        if (hitTestGizmo({ x, y }, anchor) !== null) expect(inside({ x, y })).toBe(true)
+      }
+    }
+    // Tips of the arrows and the arc handle
+    const reach = GIZMO_OFFSET + GIZMO_LENGTH
+    expect(inside({ x: anchor.x + reach, y: anchor.y })).toBe(true)
+    expect(inside({ x: anchor.x, y: anchor.y - reach })).toBe(true)
+    expect(inside({ x: anchor.x + GIZMO_ROT_RADIUS * Math.SQRT1_2, y: anchor.y - GIZMO_ROT_RADIUS * Math.SQRT1_2 })).toBe(true)
+    // It leaves the area below the anchor free (that is where a section badge goes)
+    expect(inside({ x: anchor.x, y: anchor.y + 20 })).toBe(false)
   })
 })

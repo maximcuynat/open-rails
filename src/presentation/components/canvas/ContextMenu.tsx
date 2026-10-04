@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import type { ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../common/Toast'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
-import { toggleTurnoutHand } from '@domain/models/junction'
 
 interface ContextMenuProps {
   store: EditorStore
@@ -11,6 +11,10 @@ interface ContextMenuProps {
 export function ContextMenu({ store }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const { isOpen, x, y, target } = store.contextMenu
+  const kbd = (action: ActionId) => {
+    const label = store.shortcutLabel(action)
+    return label ? <kbd className="ctx-kbd">{label}</kbd> : null
+  }
 
   // Close when clicking outside or pressing Escape
   useEffect(() => {
@@ -88,19 +92,12 @@ export function ContextMenu({ store }: ContextMenuProps) {
   }
 
   const handleToggleTurnout = () => {
-    if (target.id) {
-      store.toggleActiveJunction(target.id)
-    } else {
-      store.toggleActiveJunction()
-    }
+    if (!store.toggleActiveJunction(target.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
     store.closeContextMenu()
   }
 
   const handleFlipTurnoutHand = () => {
-    if (target.id) {
-      toggleTurnoutHand(store.network, target.id)
-      store.markDirty()
-    }
+    if (target.id && !store.toggleTurnoutHandAtSelection(target.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
     store.closeContextMenu()
   }
 
@@ -120,24 +117,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
     <div
       ref={menuRef}
       className="context-menu"
-      style={{
-        position: 'fixed',
-        left: `${safeX}px`,
-        top: `${safeY}px`,
-        zIndex: 1000,
-        minWidth: `${menuWidth}px`,
-        background: 'rgba(15, 23, 42, 0.94)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(56, 189, 248, 0.28)',
-        borderRadius: '8px',
-        padding: '6px',
-        boxShadow: '0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '2px',
-        userSelect: 'none',
-        animation: 'context-pop 120ms cubic-bezier(0.16, 1, 0.3, 1)',
-      }}
+      style={{ left: `${safeX}px`, top: `${safeY}px`, minWidth: `${menuWidth}px` }}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
     >
@@ -147,7 +127,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
           <button className="ctx-item" onClick={handleCutTrack}>
             <span className="ctx-icon">✂</span>
             <span className="ctx-label">Scinder la voie ici</span>
-            <kbd className="ctx-kbd">K</kbd>
+            {kbd('tool.split')}
           </button>
           <button
             className="ctx-item"
@@ -155,7 +135,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
           >
             <span className="ctx-icon">🛤</span>
             <span className="ctx-label">Créer voie parallèle</span>
-            <kbd className="ctx-kbd">D</kbd>
+            {kbd('edit.parallelTrack')}
           </button>
           <button className="ctx-item" onClick={handlePlaceTrain}>
             <span className="ctx-icon">🚄</span>
@@ -176,7 +156,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
           <button className="ctx-item" onClick={handleToggleTurnout}>
             <span className="ctx-icon">🔀</span>
             <span className="ctx-label">Basculer la voie</span>
-            <kbd className="ctx-kbd">T</kbd>
+            {kbd('edit.toggleJunction')}
           </button>
           <button className="ctx-item" onClick={handleFlipTurnoutHand}>
             <span className="ctx-icon">⇄</span>
@@ -204,7 +184,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
           >
             <span className="ctx-icon">✏</span>
             <span className="ctx-label">Prolonger la voie</span>
-            <kbd className="ctx-kbd">N</kbd>
+            {kbd('tool.place')}
           </button>
           <div className="ctx-sep" />
           <button className="ctx-item ctx-danger" onClick={handleDelete}>
@@ -221,7 +201,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
           <button className="ctx-item" onClick={handleFitView}>
             <span className="ctx-icon">🔍</span>
             <span className="ctx-label">Ajuster la vue (Centrer)</span>
-            <kbd className="ctx-kbd">F</kbd>
+            {kbd('view.fit')}
           </button>
           <button
             className="ctx-item"
@@ -253,7 +233,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
           >
             <span className="ctx-icon">🧲</span>
             <span className="ctx-label">{store.snap ? 'Désactiver l’aimantation' : 'Activer l’aimantation'}</span>
-            <kbd className="ctx-kbd">G</kbd>
+            {kbd('view.toggleSnap')}
           </button>
           <div className="ctx-sep" />
           <button

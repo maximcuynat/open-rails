@@ -199,7 +199,7 @@ export function TrainBuilderPalette({ store }: { store: EditorStore }) {
               padding: '4px 7px',
               cursor: 'pointer',
             }}
-            title="Mode squelette debug (D)"
+            title={`Mode squelette debug${store.shortcutHint('train.debug')}`}
           >
             ⚙ Debug
           </button>
@@ -224,7 +224,7 @@ export function TrainBuilderPalette({ store }: { store: EditorStore }) {
               alignItems: 'center',
               gap: '4px',
             }}
-            title="Prendre les commandes (F5)"
+            title={`Prendre les commandes${store.shortcutHint('sim.togglePlay')}`}
           >
             <span>{store.isPlayMode ? '⏹' : '🎮'}</span>
             <span>{store.isPlayMode ? 'Stop' : 'Piloter'}</span>

@@ -42,7 +42,7 @@ export function Modal({
   if (!isOpen) return null
 
   return (
-    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 'var(--z-modal)' }}>
+    <div className="modal-backdrop" onClick={onClose}>
       <div className={`modal-dialog ${dialogClassName ?? ''}`.trim()} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3 className="modal-title">{title}</h3>

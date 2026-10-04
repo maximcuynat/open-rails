@@ -9,7 +9,6 @@ import { CanvasOverlay } from '@presentation/components/canvas/CanvasOverlay'
 import { MiniMap } from '@presentation/components/minimap/MiniMap'
 import { ToastContainer } from '@presentation/components/common/Toast'
 import { DrivingHUD } from '@presentation/components/hud/DrivingHUD'
-import { StatusBar } from '@presentation/components/statusbar/StatusBar'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
@@ -77,11 +76,10 @@ export default function App() {
           <CanvasOverlay store={store} />
           <SidePanel store={store} />
           {store.showMinimap && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
+          <DrivingHUD store={store} />
         </div>
       </div>
-      <StatusBar store={store} />
       <ToastContainer />
-      <DrivingHUD store={store} />
     </div>
   )
 }

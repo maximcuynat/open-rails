@@ -1,486 +1,407 @@
 import type { CSSProperties } from 'react'
 import type { EditorStore, TrainDebugOptions } from '@application/state/editorStore'
 import type { Reverser, TrainSet } from '@domain/models/train'
-import { MAX_NOTCH, commandedAcceleration, isTrainStopped } from '@domain/models/train'
+import { MAX_NOTCH, commandedAcceleration, isTrainStopped, stoppingDistance } from '@domain/models/train'
+import { formatDistance } from '@domain/models/units'
+import type { ActionId } from '@application/keybindings/keybindings'
 
 interface DrivingHUDProps {
   store: EditorStore
 }
 
+const HUD_WIDTH = 220
+const HUD_MARGIN = 12
+/** Width the console takes at the bottom-right of the canvas: what is drawn there moves left of it. */
+export const DRIVING_HUD_FOOTPRINT = HUD_WIDTH + HUD_MARGIN
+
 const GREEN = '#22c55e'
 const RED = '#ef4444'
-const AMBER = '#f59e0b'
 const MUTED = '#64748b'
 
-const REVERSER_POSITIONS: { value: Reverser; label: string; title: string }[] = [
-  { value: 'reverse', label: 'AR', title: 'Marche arrière' },
-  { value: 'neutral', label: 'N', title: 'Neutre' },
-  { value: 'forward', label: 'AV', title: 'Marche avant' },
+const REVERSER_ORDER: Reverser[] = ['reverse', 'neutral', 'forward']
+const REVERSER_LABEL: Record<Reverser, string> = { forward: '▲ AV', neutral: 'N', reverse: '▼ AR' }
+
+const TRAIN_COMMANDS: [actions: ActionId[], label: string][] = [
+  [['drive.notchUp', 'drive.notchDown'], 'Cran'],
+  [['drive.reverserForward', 'drive.reverserBackward'], 'Inverseur'],
+  [['drive.emergencyBrake'], 'Urgence'],
+  [['drive.steerLeft', 'drive.steerRight'], 'Aiguillage'],
+  [['train.debug'], 'Debug'],
+  [['drive.exit'], 'Quitter'],
 ]
 
-/** Handle positions from full traction down to full service brake */
-const NOTCHES = Array.from({ length: 2 * MAX_NOTCH + 1 }, (_, i) => MAX_NOTCH - i)
-
-const TRAIN_COMMANDS: [keys: string, action: string][] = [
-  ['↑ / ↓', 'Cran traction / frein'],
-  ['Maj + ↑ / ↓', 'Inverseur AV / AR'],
-  ['⌫', 'Arrêt d’urgence'],
-  ['← / →', 'Aiguillage gauche / droite'],
-  ['D', 'Squelette debug'],
-  ['Espace', 'Quitter le pilotage'],
+const LEGACY_COMMANDS: [actions: ActionId[], label: string][] = [
+  [['drive.notchUp', 'drive.notchDown'], 'Accél. / frein'],
+  [['drive.flipLegacy'], 'Inverser'],
+  [['drive.steerLeft', 'drive.steerRight'], 'Aiguillage'],
+  [['train.debug'], 'Debug'],
+  [['drive.exit'], 'Quitter'],
 ]
 
-const LEGACY_COMMANDS: [keys: string, action: string][] = [
-  ['↑ / ↓', 'Accélérer / freiner (maintenir)'],
-  ['R', 'Inverser le sens'],
-  ['← / →', 'Aiguillage gauche / droite'],
-  ['D', 'Squelette debug'],
-  ['Espace', 'Quitter le pilotage'],
-]
+// Speed dial geometry (SVG user units). Angles in degrees, clockwise from +x.
+const DIAL_W = 200
+const DIAL_H = 122
+const DIAL_CX = 100
+const DIAL_CY = 92
+const DIAL_R = 78
+const DIAL_START = 160
+const DIAL_SWEEP = 220
+const DIAL_TICKS = 5
 
-const sectionLabel: CSSProperties = {
-  fontSize: '9px',
-  color: MUTED,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase',
-  marginBottom: '4px',
+function dialPoint(ratio: number, radius: number): { x: number; y: number } {
+  const a = ((DIAL_START + DIAL_SWEEP * ratio) * Math.PI) / 180
+  return { x: DIAL_CX + radius * Math.cos(a), y: DIAL_CY + radius * Math.sin(a) }
+}
+
+/** SVG path of the dial arc from 0 up to `ratio` (0..1) of the full scale */
+function dialArc(ratio: number): string {
+  const from = dialPoint(0, DIAL_R)
+  const to = dialPoint(ratio, DIAL_R)
+  const largeArc = DIAL_SWEEP * ratio > 180 ? 1 : 0
+  return `M ${from.x} ${from.y} A ${DIAL_R} ${DIAL_R} 0 ${largeArc} 1 ${to.x} ${to.y}`
+}
+
+const panel: CSSProperties = {
+  background: 'rgba(10, 15, 28, 0.92)',
+  backdropFilter: 'blur(10px)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  borderRadius: '10px',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+}
+
+const iconButton: CSSProperties = {
+  background: 'rgba(255,255,255,0.06)',
+  border: '1px solid rgba(255,255,255,0.15)',
+  borderRadius: '4px',
+  color: '#94a3b8',
+  fontSize: '10px',
+  lineHeight: 1,
+  padding: '3px 5px',
+  cursor: 'pointer',
+  fontFamily: 'monospace',
 }
 
 const kbd: CSSProperties = {
-  justifySelf: 'start',
-  padding: '1px 5px',
+  padding: '0 4px',
   background: 'rgba(255,255,255,0.08)',
   border: '1px solid rgba(255,255,255,0.16)',
-  borderRadius: '4px',
+  borderRadius: '3px',
   color: '#e2e8f0',
-  fontSize: '10px',
   whiteSpace: 'nowrap',
 }
 
-function notchLabel(notch: number): string {
-  return notch > 0 ? `P${notch}` : notch < 0 ? `B${-notch}` : 'N'
-}
-
-/** What the train is doing right now, for the status line under the speed */
-function driveStatus(train: TrainSet): { label: string; color: string } {
-  if (train.emergencyBrake) return { label: 'ARRÊT D’URGENCE', color: RED }
-  if (train.notch < 0) return { label: `FREINAGE ${notchLabel(train.notch)}`, color: RED }
-  if (train.notch > 0) {
-    return train.reverser === 'neutral'
-      ? { label: 'INVERSEUR AU NEUTRE', color: AMBER }
-      : { label: `TRACTION ${notchLabel(train.notch)}`, color: GREEN }
-  }
-  return isTrainStopped(train) ? { label: 'À L’ARRÊT', color: MUTED } : { label: 'INERTIE', color: '#06b6d4' }
+/** Text and colour of the single handle field: P1..P5, N, B1..B5 or URG */
+function handleField(train: TrainSet): { label: string; color: string; fill: number } {
+  if (train.emergencyBrake) return { label: 'URG', color: RED, fill: 1 }
+  const fill = Math.abs(train.notch) / MAX_NOTCH
+  if (train.notch > 0) return { label: `P${train.notch}`, color: GREEN, fill }
+  if (train.notch < 0) return { label: `B${-train.notch}`, color: RED, fill }
+  return { label: 'N', color: '#94a3b8', fill: 0 }
 }
 
 /**
- * DrivingHUD — piloting panel shown bottom-right in play mode: speed, reverser,
- * combined power/brake handle, emergency brake and the keyboard commands.
- * Replaces the StatusBar technical info while driving.
+ * DrivingHUD — compact piloting panel shown bottom-right in play mode: keyboard
+ * commands on top, then a speed dial with the reverser, the handle notch and
+ * the emergency brake.
  */
 export function DrivingHUD({ store }: DrivingHUDProps) {
   const train = store.selectedTrain
   if (!store.isPlayMode) return null
 
-  const kmh = train
-    ? Math.round(train.currentSpeed * 3.6)
-    : Math.round(store.locomotiveCurrentSpeed * 3.6)
-
-  const maxKmh = train
-    ? Math.round(train.maxSpeed * 3.6)
-    : Math.round(store.locomotiveMaxSpeed * 3.6)
+  const speed = train ? train.currentSpeed : store.locomotiveCurrentSpeed
+  const maxSpeed = train ? train.maxSpeed : store.locomotiveMaxSpeed
+  const kmh = Math.round(speed * 3.6)
+  const maxKmh = Math.round(maxSpeed * 3.6)
+  const speedRatio = Math.min(speed / Math.max(maxSpeed, 1e-6), 1)
 
   const locoCount = train?.vehicles.filter(v => v.kind === 'loco').length ?? 1
   const wagonCount = train ? train.vehicles.filter(v => v.kind === 'wagon').length : (store.locomotive?.wagonCount ?? 0)
 
-  const speedRatio = Math.min(kmh / Math.max(maxKmh, 1), 1)
-
-  const speedColor = kmh > maxKmh * 0.85
-    ? RED
-    : kmh > maxKmh * 0.6
-    ? AMBER
-    : GREEN
-
   const legacyThrottle = store.locomotiveThrottle
-  const status = train
-    ? driveStatus(train)
+  const field = train
+    ? handleField(train)
     : legacyThrottle === 1
-    ? { label: 'ACCÉLÉRATION', color: GREEN }
+    ? { label: 'ACCÉL.', color: GREEN, fill: 1 }
     : legacyThrottle === -1
-    ? { label: 'FREINAGE', color: RED }
-    : { label: 'INERTIE', color: MUTED }
+    ? { label: 'FREIN', color: RED, fill: 1 }
+    : { label: 'INERTIE', color: '#94a3b8', fill: 0 }
 
   const accel = train ? commandedAcceleration(train) : 0
   const reverserLocked = train ? !isTrainStopped(train) || train.notch > 0 : false
   const emergencyReleasable = train ? train.emergencyBrake && isTrainStopped(train) : false
+  // Traction asked for with the reverser in neutral: flag the reverser, nothing will move
+  const reverserNeeded = train ? train.notch > 0 && train.reverser === 'neutral' : false
+
+  const selectTrainByOffset = (offset: number) => {
+    const curIdx = store.trains.findIndex(t => t.id === store.selectedTrainId)
+    const nextIdx = (curIdx + offset + store.trains.length) % store.trains.length
+    store.selectTrainById(store.trains[nextIdx].id)
+  }
+
+  const stepButton: CSSProperties = { ...iconButton, width: '26px', fontSize: '14px', padding: 0 }
 
   return (
     <div
       style={{
-        position: 'fixed',
-        bottom: '16px',
-        right: '16px',
-        width: '300px',
-        background: 'rgba(10, 15, 28, 0.92)',
-        backdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        borderRadius: '12px',
-        padding: '14px 16px',
+        // Bottom-right corner of the canvas area (its parent), below menus and dialogs
+        position: 'absolute',
+        bottom: `${HUD_MARGIN}px`,
+        right: `${HUD_MARGIN}px`,
+        width: `${HUD_WIDTH}px`,
+        maxHeight: `calc(100% - ${2 * HUD_MARGIN}px)`,
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
         color: '#f8fafc',
         fontFamily: 'monospace',
-        zIndex: 1000,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        zIndex: 'var(--z-driving)',
         userSelect: 'none',
       }}
     >
-      {/* Header — train identity */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-        <span style={{ fontSize: '18px' }}>🚂</span>
-        <div>
-          <div style={{ fontSize: '12px', fontWeight: 700, color: '#f8fafc', letterSpacing: '0.04em' }}>
-            {train ? `Train · ${locoCount} motrice${locoCount > 1 ? 's' : ''}` : 'Locomotive'}
+      {/* Keyboard commands */}
+      <div style={{
+        ...panel,
+        padding: '6px 8px',
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        columnGap: '8px',
+        rowGap: '3px',
+        fontSize: '9px',
+        color: '#94a3b8',
+      }}>
+        {(train ? TRAIN_COMMANDS : LEGACY_COMMANDS).map(([actions, label]) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+            <span style={kbd}>{actions.map((a) => store.shortcutLabel(a) || '—').join(' ')}</span>
+            <span>{label}</span>
           </div>
-          <div style={{ fontSize: '10px', color: '#64748b' }}>
-            {wagonCount > 0
-              ? `${wagonCount} voiture${wagonCount > 1 ? 's' : ''} voyageur`
-              : 'sans wagon'}
+        ))}
+      </div>
+
+      <div style={{ ...panel, padding: '8px 10px' }}>
+        {/* Header — train identity and tools */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span
+            style={{ fontSize: '10px', color: '#cbd5e1', marginRight: 'auto', whiteSpace: 'nowrap' }}
+            title={`${locoCount} motrice${locoCount > 1 ? 's' : ''}, ${wagonCount} voiture${wagonCount > 1 ? 's' : ''}`}
+          >
+            🚂 {locoCount}M · {wagonCount}V
+          </span>
+
+          {/* Train switcher for multi-train fleet */}
+          {store.trains.length > 1 && (
+            <>
+              <button onClick={() => selectTrainByOffset(-1)} style={iconButton} title="Train précédent">◀</button>
+              <span style={{ fontSize: '10px', color: '#38bdf8', fontWeight: 600 }}>
+                {store.trains.findIndex(t => t.id === store.selectedTrainId) + 1}/{store.trains.length}
+              </span>
+              <button onClick={() => selectTrainByOffset(1)} style={iconButton} title="Train suivant">▶</button>
+            </>
+          )}
+
+          <button
+            onClick={() => {
+              store.togglePlayMode()
+              store.toggleCouplingMode()
+            }}
+            style={iconButton}
+            title="Mode couplage"
+          >
+            🔗
+          </button>
+          <button
+            onClick={() => store.toggleTrainDebug()}
+            style={{
+              ...iconButton,
+              color: store.showTrainDebug ? '#38bdf8' : '#94a3b8',
+              borderColor: store.showTrainDebug ? '#38bdf8' : 'rgba(255,255,255,0.15)',
+            }}
+            title={`Squelette debug${store.shortcutHint('train.debug')}`}
+          >
+            ⚙
+          </button>
+          <button
+            onClick={() => store.togglePlayMode()}
+            style={{ ...iconButton, color: RED, borderColor: 'rgba(239, 68, 68, 0.4)' }}
+            title={`Quitter le mode pilotage${store.shortcutHint('drive.exit')}`}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Speed dial */}
+        <div style={{ position: 'relative', marginTop: '2px' }}>
+          <svg viewBox={`0 0 ${DIAL_W} ${DIAL_H}`} style={{ display: 'block', width: '100%' }}>
+            <path d={dialArc(1)} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth={6} strokeLinecap="round" />
+            {speedRatio > 0.001 && (
+              <path d={dialArc(speedRatio)} fill="none" stroke="#38bdf8" strokeWidth={6} strokeLinecap="round" />
+            )}
+            {Array.from({ length: DIAL_TICKS + 1 }, (_, i) => {
+              const ratio = i / DIAL_TICKS
+              const inner = dialPoint(ratio, DIAL_R - 9)
+              const outer = dialPoint(ratio, DIAL_R - 5)
+              const label = dialPoint(ratio, DIAL_R - 18)
+              return (
+                <g key={i}>
+                  <line x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke="#64748b" strokeWidth={1} />
+                  <text x={label.x} y={label.y} fill="#64748b" fontSize={8} textAnchor="middle" dominantBaseline="middle">
+                    {Math.round(maxKmh * ratio)}
+                  </text>
+                </g>
+              )
+            })}
+            {/* Max speed marker */}
+            <circle cx={dialPoint(1, DIAL_R).x} cy={dialPoint(1, DIAL_R).y} r={4} fill={RED} />
+          </svg>
+
+          <div style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: '6px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '2px',
+          }}>
+            {train ? (
+              <button
+                onClick={() => store.setSelectedTrainReverser(
+                  REVERSER_ORDER[(REVERSER_ORDER.indexOf(train.reverser) + 1) % REVERSER_ORDER.length]
+                )}
+                disabled={reverserLocked}
+                style={{
+                  ...iconButton,
+                  color: train.reverser === 'neutral' ? '#94a3b8' : '#ede9fe',
+                  borderColor: reverserNeeded ? '#f59e0b' : train.reverser === 'neutral' ? 'rgba(255,255,255,0.15)' : '#a78bfa',
+                  background: train.reverser === 'neutral' ? 'rgba(255,255,255,0.06)' : 'rgba(167, 139, 250, 0.25)',
+                  fontWeight: 700,
+                  minWidth: '44px',
+                  cursor: reverserLocked ? 'not-allowed' : 'pointer',
+                }}
+                title={reverserLocked
+                  ? 'Inverseur verrouillé : à l’arrêt, manipulateur hors traction'
+                  : `Inverseur (${store.shortcutLabel('drive.reverserForward') || '—'} / ${store.shortcutLabel('drive.reverserBackward') || '—'})`}
+              >
+                {REVERSER_LABEL[train.reverser]}
+              </button>
+            ) : (
+              <button onClick={() => store.flipLocomotiveDirection()} style={iconButton} title={`Inverser le sens${store.shortcutHint('drive.flipLegacy')}`}>
+                ⇄ Sens
+              </button>
+            )}
+            <div style={{ fontSize: '32px', fontWeight: 800, lineHeight: 1, letterSpacing: '-0.02em' }}>{kmh}</div>
+            <div style={{ fontSize: '9px', color: '#94a3b8' }}>km/h</div>
           </div>
         </div>
 
-        {/* Train switcher for multi-train fleet */}
-        {store.trains.length > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto', marginRight: '6px' }}>
-            <button
-              onClick={() => {
-                const curIdx = store.trains.findIndex(t => t.id === store.selectedTrainId)
-                const nextIdx = (curIdx - 1 + store.trains.length) % store.trains.length
-                store.selectTrainById(store.trains[nextIdx].id)
-              }}
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: '4px',
-                color: '#94a3b8',
-                fontSize: '10px',
-                padding: '2px 5px',
-                cursor: 'pointer',
-              }}
-              title="Train précédent"
-            >
-              ◀
-            </button>
-            <span style={{ fontSize: '10px', color: '#38bdf8', fontWeight: 600 }}>
-              {(store.trains.findIndex(t => t.id === store.selectedTrainId) + 1)}/{store.trains.length}
-            </span>
-            <button
-              onClick={() => {
-                const curIdx = store.trains.findIndex(t => t.id === store.selectedTrainId)
-                const nextIdx = (curIdx + 1) % store.trains.length
-                store.selectTrainById(store.trains[nextIdx].id)
-              }}
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.15)',
-                borderRadius: '4px',
-                color: '#94a3b8',
-                fontSize: '10px',
-                padding: '2px 5px',
-                cursor: 'pointer',
-              }}
-              title="Train suivant"
-            >
-              ▶
-            </button>
-          </div>
-        )}
-
-        {/* Exit play mode */}
-        <button
-          onClick={() => store.togglePlayMode()}
-          style={{
-            marginLeft: store.trains.length > 1 ? '0' : 'auto',
-            background: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.4)',
-            borderRadius: '6px',
-            color: '#ef4444',
-            fontSize: '10px',
-            padding: '3px 7px',
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-          }}
-          title="Quitter le mode pilotage (Espace)"
-        >
-          ✕ Stop
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '10px' }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {/* Speed */}
-          <div>
-            <div style={sectionLabel}>Vitesse</div>
-            <div style={{ fontSize: '30px', fontWeight: 800, color: speedColor, lineHeight: 1, letterSpacing: '-0.02em' }}>
-              {kmh}
-              <span style={{ fontSize: '11px', fontWeight: 400, color: '#94a3b8', marginLeft: '4px' }}>km/h</span>
-            </div>
-            <div style={{
-              height: '6px',
-              marginTop: '6px',
-              background: 'rgba(255,255,255,0.08)',
-              borderRadius: '3px',
-              overflow: 'hidden',
-            }}>
-              <div style={{
-                height: '100%',
-                width: `${speedRatio * 100}%`,
-                background: speedColor,
-                borderRadius: '3px',
-                transition: 'width 0.1s ease, background 0.2s ease',
-              }} />
-            </div>
-            <div style={{ fontSize: '9px', color: '#475569', marginTop: '2px', textAlign: 'right' }}>max {maxKmh} km/h</div>
-          </div>
-
-          {/* Drive status */}
-          <div style={{
-            padding: '5px 8px',
-            background: 'rgba(255,255,255,0.04)',
-            borderRadius: '6px',
-            border: `1px solid ${status.color}55`,
-          }}>
-            <div style={{ fontSize: '11px', color: status.color, fontWeight: 700 }}>{status.label}</div>
-            {train && (
-              <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '2px' }}>
-                a = {accel > 0 ? '+' : ''}{accel.toFixed(1)} m/s²
-              </div>
-            )}
-          </div>
-
-          {/* Reverser */}
+        {/* Handle notch — single field */}
+        <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
           {train && (
-            <div>
-              <div style={sectionLabel}>Inverseur{reverserLocked ? ' · verrouillé' : ''}</div>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                {REVERSER_POSITIONS.map(({ value, label, title }) => {
-                  const active = train.reverser === value
-                  return (
-                    <button
-                      key={value}
-                      onClick={() => store.setSelectedTrainReverser(value)}
-                      disabled={reverserLocked && !active}
-                      style={{
-                        flex: 1,
-                        background: active ? 'rgba(167, 139, 250, 0.25)' : 'rgba(255,255,255,0.04)',
-                        border: `1px solid ${active ? '#a78bfa' : 'rgba(255,255,255,0.1)'}`,
-                        borderRadius: '6px',
-                        color: active ? '#ede9fe' : MUTED,
-                        fontSize: '11px',
-                        fontWeight: active ? 700 : 400,
-                        padding: '5px 0',
-                        cursor: reverserLocked && !active ? 'not-allowed' : 'pointer',
-                        opacity: reverserLocked && !active ? 0.45 : 1,
-                        fontFamily: 'monospace',
-                      }}
-                      title={reverserLocked ? `${title} — à l’arrêt, manipulateur hors traction` : title}
-                    >
-                      {label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+            <button onClick={() => store.stepSelectedTrainNotch(-1)} style={stepButton} title={`Un cran vers le frein${store.shortcutHint('drive.notchDown')}`}>
+              −
+            </button>
           )}
-
-          {/* Emergency brake */}
+          <div
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              fontSize: '16px',
+              fontWeight: 800,
+              padding: '3px 0',
+              borderRadius: '6px',
+              border: `1px solid ${field.color}`,
+              // Tint deepens with the notch
+              background: `${field.color}${Math.round(field.fill * 0.6 * 255).toString(16).padStart(2, '0')}`,
+              color: field.fill > 0.7 ? '#fff' : field.color,
+            }}
+            title="Manipulateur traction / frein"
+          >
+            {field.label}
+          </div>
           {train && (
+            <button onClick={() => store.stepSelectedTrainNotch(1)} style={stepButton} title={`Un cran vers la traction${store.shortcutHint('drive.notchUp')}`}>
+              +
+            </button>
+          )}
+        </div>
+
+        {train && (
+          <>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              marginTop: '5px',
+              fontSize: '9px',
+              color: '#94a3b8',
+            }}>
+              <span>{accel > 0 ? '+' : ''}{accel.toFixed(1)} m/s²</span>
+              <span title="Distance d’arrêt au frein maximal">arrêt {formatDistance(stoppingDistance(train), 'm', 0)}</span>
+            </div>
+
+            {/* Emergency brake */}
             <button
               onClick={() => store.toggleSelectedTrainEmergencyBrake()}
               style={{
+                width: '100%',
+                marginTop: '6px',
                 background: train.emergencyBrake ? RED : 'rgba(239, 68, 68, 0.15)',
                 border: `1px solid ${RED}`,
                 borderRadius: '6px',
                 color: train.emergencyBrake ? '#fff' : RED,
-                fontSize: '11px',
+                fontSize: '10px',
                 fontWeight: 700,
-                padding: '7px 0',
+                padding: '5px 0',
                 cursor: 'pointer',
                 fontFamily: 'monospace',
               }}
-              title="Arrêt d’urgence (Retour arrière)"
+              title={`Arrêt d’urgence${store.shortcutHint('drive.emergencyBrake')}`}
             >
               {!train.emergencyBrake ? '⛔ ARRÊT D’URGENCE' : emergencyReleasable ? 'RÉARMER' : 'URGENCE EN COURS…'}
             </button>
-          )}
-        </div>
+          </>
+        )}
 
-        {/* Combined power / brake handle */}
-        {train && (
-          <div style={{ width: '56px' }}>
-            <div style={sectionLabel}>Manip.</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {NOTCHES.map(n => {
-                const active = train.notch === n
-                // Cells between N and the current notch are lit, like a bar graph
-                const lit = n !== 0 && Math.sign(n) === Math.sign(train.notch) && Math.abs(n) <= Math.abs(train.notch)
-                const color = n > 0 ? GREEN : n < 0 ? RED : '#94a3b8'
-                return (
-                  <button
-                    key={n}
-                    onClick={() => store.setSelectedTrainNotch(n)}
-                    style={{
-                      height: '17px',
-                      background: active ? color : lit ? `${color}40` : 'rgba(255,255,255,0.04)',
-                      border: `1px solid ${active || lit ? color : 'rgba(255,255,255,0.08)'}`,
-                      borderRadius: '3px',
-                      color: active ? '#0a0f1c' : color,
-                      fontSize: '10px',
-                      fontWeight: active ? 800 : 500,
-                      lineHeight: 1,
-                      padding: 0,
-                      cursor: 'pointer',
-                      fontFamily: 'monospace',
-                    }}
-                    title={n > 0 ? `Traction cran ${n}` : n < 0 ? `Frein cran ${-n}` : 'Neutre'}
-                  >
-                    {notchLabel(n)}
-                  </button>
-                )
-              })}
-            </div>
+        {/* Sous-options du mode debug */}
+        {store.showTrainDebug && (
+          <div style={{
+            marginTop: '6px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '3px',
+          }}>
+            {[
+              { key: 'vectors', label: '↗ Vecteurs', title: 'Vitesse V, accélération a, centrifuge ac, ruban d’arrêt' },
+              { key: 'yawAngles', label: '∠ Angles Δθ', title: 'Angles de lacet bogies et articulation inter-caisses' },
+              { key: 'gauge', label: '📐 Gabarit', title: 'Gabarit cinématique de libre passage et balayage' },
+              { key: 'lookahead', label: '🔭 Trajet 50m', title: 'Projection anticipée et détection heurtoir / fin de voie' },
+              { key: 'xray', label: '🩻 Rayons X', title: 'Carrosserie transparente laissant voir les essieux' },
+            ].map(({ key, label, title }) => {
+              const active = store.trainDebugOptions[key as keyof TrainDebugOptions]
+              return (
+                <button
+                  key={key}
+                  onClick={() => store.toggleTrainDebugOption(key as keyof TrainDebugOptions)}
+                  style={{
+                    background: active ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${active ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
+                    borderRadius: '4px',
+                    color: active ? '#e0f2fe' : MUTED,
+                    fontSize: '9px',
+                    fontWeight: active ? 600 : 400,
+                    padding: '3px 2px',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={title}
+                >
+                  {label}
+                </button>
+              )
+            })}
           </div>
         )}
-      </div>
-
-      {/* Tools */}
-      <div style={{ display: 'flex', gap: '6px' }}>
-        {!train && (
-          <button
-            onClick={() => store.flipLocomotiveDirection()}
-            style={{
-              flex: 1,
-              background: 'rgba(167, 139, 250, 0.1)',
-              border: '1px solid rgba(167, 139, 250, 0.3)',
-              borderRadius: '6px',
-              color: '#a78bfa',
-              fontSize: '10px',
-              padding: '5px 0',
-              cursor: 'pointer',
-              fontFamily: 'monospace',
-            }}
-            title="Inverser le sens (R)"
-          >
-            ⇄ Sens
-          </button>
-        )}
-
-        {/* Coupling mode */}
-        <button
-          onClick={() => {
-            store.togglePlayMode()
-            store.toggleCouplingMode()
-          }}
-          style={{
-            flex: 1,
-            background: 'rgba(56, 189, 248, 0.1)',
-            border: '1px solid rgba(56, 189, 248, 0.3)',
-            borderRadius: '6px',
-            color: '#38bdf8',
-            fontSize: '10px',
-            padding: '5px 0',
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-          }}
-          title="Mode couplage"
-        >
-          🔗 Coupler
-        </button>
-
-        {/* Debug skeleton */}
-        <button
-          onClick={() => store.toggleTrainDebug()}
-          style={{
-            flex: 1,
-            background: store.showTrainDebug ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.04)',
-            border: `1px solid ${store.showTrainDebug ? '#38bdf8' : 'rgba(255,255,255,0.1)'}`,
-            borderRadius: '6px',
-            color: store.showTrainDebug ? '#38bdf8' : MUTED,
-            fontSize: '10px',
-            padding: '5px 0',
-            cursor: 'pointer',
-            fontFamily: 'monospace',
-          }}
-          title="Squelette debug (D)"
-        >
-          ⚙ Debug
-        </button>
-      </div>
-
-      {/* Sous-options du mode debug */}
-      {store.showTrainDebug && (
-        <div style={{
-          marginTop: '6px',
-          padding: '5px',
-          background: 'rgba(15, 23, 42, 0.75)',
-          borderRadius: '6px',
-          border: '1px solid rgba(56, 189, 248, 0.25)',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: '4px',
-        }}>
-          {[
-            { key: 'vectors', label: '↗ Vecteurs', title: 'Vitesse V, accélération a, centrifuge ac, ruban d’arrêt' },
-            { key: 'yawAngles', label: '∠ Angles Δθ', title: 'Angles de lacet bogies et articulation inter-caisses' },
-            { key: 'gauge', label: '📐 Gabarit', title: 'Gabarit cinématique de libre passage et balayage' },
-            { key: 'lookahead', label: '🔭 Trajet 50m', title: 'Projection anticipée et détection heurtoir / fin de voie' },
-            { key: 'xray', label: '🩻 Rayons X', title: 'Carrosserie transparente laissant voir les essieux' },
-          ].map(({ key, label, title }) => {
-            const active = store.trainDebugOptions[key as keyof TrainDebugOptions]
-            return (
-              <button
-                key={key}
-                onClick={() => store.toggleTrainDebugOption(key as keyof TrainDebugOptions)}
-                style={{
-                  background: active ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.04)',
-                  border: `1px solid ${active ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
-                  borderRadius: '4px',
-                  color: active ? '#e0f2fe' : '#64748b',
-                  fontSize: '9px',
-                  fontWeight: active ? 600 : 400,
-                  padding: '3px 2px',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  whiteSpace: 'nowrap',
-                }}
-                title={title}
-              >
-                {label}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Keyboard commands */}
-      <div style={{
-        marginTop: '10px',
-        paddingTop: '8px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
-      }}>
-        <div style={sectionLabel}>Commandes</div>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'auto 1fr',
-          columnGap: '8px',
-          rowGap: '3px',
-          alignItems: 'center',
-          fontSize: '10px',
-          color: '#94a3b8',
-        }}>
-          {(train ? TRAIN_COMMANDS : LEGACY_COMMANDS).flatMap(([keys, action]) => [
-            <span key={keys} style={kbd}>{keys}</span>,
-            <span key={action}>{action}</span>,
-          ])}
-        </div>
       </div>
     </div>
   )

@@ -84,6 +84,21 @@ export const GIZMO_ROT_COLOR = '#38bdf8' // Sky blue
 export const GIZMO_ROT_HOVER = '#67e8f9' // Bright cyan
 
 /**
+ * Screen rectangle the gizmo handles occupy around their anchor (arrows towards +X and up,
+ * rotation arc in the top-right quadrant), grab tolerance included. Nothing else should be
+ * drawn there while the gizmo is shown.
+ */
+export function gizmoFootprint(nodeScreen: Point): { x: number; y: number; w: number; h: number } {
+  const reach = Math.max(GIZMO_OFFSET + GIZMO_LENGTH, GIZMO_ROT_RADIUS) + GIZMO_HIT_TOLERANCE
+  return {
+    x: nodeScreen.x - GIZMO_HIT_TOLERANCE,
+    y: nodeScreen.y - reach,
+    w: reach + GIZMO_HIT_TOLERANCE,
+    h: reach + GIZMO_HIT_TOLERANCE,
+  }
+}
+
+/**
  * Hit-test to see if screen-space pointer (px, py) is over one of the gizmo handles:
  * - 'x' arrow (horizontal right)
  * - 'y' arrow (vertical up)

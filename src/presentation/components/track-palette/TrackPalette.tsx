@@ -12,7 +12,7 @@ export function TrackPalette({ store }: { store: EditorStore }) {
           <button
             className={`tp-tab-btn ${isPlace ? 'active' : ''}`}
             onClick={() => store.setTool('place')}
-            title="Poser voie droite (Raccourci N)"
+            title={`Poser voie droite${store.shortcutHint('tool.place')}`}
           >
             <svg className="tp-svg-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="2" y1="9" x2="22" y2="9" />
@@ -26,7 +26,7 @@ export function TrackPalette({ store }: { store: EditorStore }) {
           <button
             className={`tp-tab-btn ${isCurve ? 'active' : ''}`}
             onClick={() => store.setTool('curve')}
-            title="Poser courbe libre (Raccourci C)"
+            title={`Poser courbe libre${store.shortcutHint('tool.curve')}`}
           >
             <svg className="tp-svg-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 19C4 19 8 5 20 5" />

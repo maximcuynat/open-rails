@@ -37,13 +37,18 @@
   --transition-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Niveaux d'élévation z-index */
-  --z-canvas: 1;
-  --z-canvas-overlay: 10;
-  --z-minimap: 15;
-  --z-panel: 20;
-  --z-toolbar: 25;
-  --z-topbar: 30;
-  --z-modal: 100;
-  --z-tooltip: 200;
+  /*
+   * Empilement : une seule échelle, du fond vers l'avant. Tout élément positionné prend
+   * l'un de ces niveaux (jamais de valeur écrite en dur).
+   */
+  --z-canvas: 0; /* dessin */
+  --z-minimap: 10; /* mini-carte */
+  --z-panel: 20; /* barre d'outils, inspecteur */
+  --z-context-bar: 30; /* barre contextuelle */
+  --z-driving: 40; /* poste de conduite */
+  --z-popover: 50; /* volets, menus déroulants, infobulles, champ de renommage */
+  --z-context-menu: 60; /* menu contextuel */
+  --z-modal: 70; /* fenêtres */
+  --z-toast: 80; /* notifications */
+  --z-drag: 90; /* badge de glisser-déposer */
 }
