@@ -17,7 +17,7 @@ import {
   STORAGE_KEY,
 } from './persistence'
 import { createCamera } from '@infrastructure/render/camera'
-import { createVehicle, makeTrainSet, setNotch, setReverser } from '../../domain/models/train'
+import { advanceTrainSet, createVehicle, makeTrainSet, setNotch, setReverser } from '../../domain/models/train'
 import { generateId } from '../../domain/models/network'
 
 describe('persistence module', () => {
@@ -198,6 +198,8 @@ describe('persistence module', () => {
         createVehicle(net, seg.id, 0.5, 'loco')!,
         createVehicle(net, seg.id, 0.4, 'wagon')!,
       ])
+      // Lay the trailer out behind the power car: loading re-lays every rake from its lead
+      advanceTrainSet(net, train, 0)
       return { net, seg, train }
     }
 

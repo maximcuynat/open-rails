@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react'
 import type { EditorStore, Tool } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
+import { ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
 
 interface ToolDef {
   id: Tool
@@ -330,6 +331,33 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 </div>
               )}
             </div>
+
+            {/* Matériel des véhicules posés : TGV Duplex / TGV M */}
+            {(Object.keys(ROLLING_STOCK) as RollingStockModel[]).map((model) => (
+              <div
+                key={model}
+                className="tb-btn-wrap"
+                onMouseEnter={() => setHoverId(`train-model-${model}`)}
+                onMouseLeave={() => setHoverId((h) => (h === `train-model-${model}` ? null : h))}
+              >
+                <button
+                  onClick={() => store.setTrainPlacementModel(model)}
+                  className={`tb-train-btn${store.trainPlacementModel === model ? ' active' : ''}`}
+                  aria-label={ROLLING_STOCK[model].label}
+                  aria-pressed={store.trainPlacementModel === model}
+                >
+                  <span style={{ fontSize: '9px', fontWeight: 700 }}>{ROLLING_STOCK[model].label.replace('TGV ', '')}</span>
+                </button>
+                {hoverId === `train-model-${model}` && (
+                  <div className="tb-tooltip">
+                    {ROLLING_STOCK[model].label}
+                    <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                      Matériel des motrices et remorques posées ensuite
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))}
 
             {/* Outil Inverser sens / orientation (R) */}
             <div

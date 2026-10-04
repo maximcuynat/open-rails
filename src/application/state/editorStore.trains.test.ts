@@ -166,6 +166,38 @@ describe('EditorStore trains', () => {
     })
   })
 
+  describe('rolling stock of the placed vehicles', () => {
+    it('places TGV Duplex vehicles by default and the chosen model afterwards, ghost and placement alike', () => {
+      const { store } = storeWithStraightTrack()
+      expect(store.trainPlacementModel).toBe('duplex')
+      store.placeTrainItem({ x: 800, y: 0 })
+      expect(store.trains[0].vehicles[0].model).toBe('duplex')
+
+      // Far from the first train: a new one, of the model chosen in between
+      store.setTrainPlacementModel('tgvm')
+      store.updateLocomotivePreview({ x: 400, y: 0 })
+      expect(store.trainPlacementPreview!.vehicles[0].model).toBe('tgvm')
+      store.placeTrainItem({ x: 400, y: 0 })
+      store.setTrainPlacementKind('tgv_wagon')
+      store.placeTrainItem({ x: 380, y: 0 })
+      store.updateLocomotivePreview({ x: 360, y: 0 })
+      const ghost = store.trainPlacementPreview!.vehicles[0]
+      store.placeTrainItem({ x: 360, y: 0 })
+
+      expect(store.trains).toHaveLength(2)
+      const [loco, first, second] = store.trains[1].vehicles
+      expect(store.trains[1].vehicles.map(v => v.model)).toEqual(['tgvm', 'tgvm', 'tgvm'])
+      // TGV M power car: 11.38 m between its bogies; the two trailers share the bogie between them
+      const x = (t: number) => t * 1000
+      expect(x(loco.front.t) - x(loco.rear.t)).toBeCloseTo(11.38, 6)
+      expect(second.front).toEqual(first.rear)
+      expect(x(second.front.t) - x(second.rear.t)).toBeCloseTo(17.7, 6)
+      // The ghost stood exactly where the trailer was placed
+      expect(second.front).toEqual(ghost.front)
+      expect(second.rear).toEqual(ghost.rear)
+    })
+  })
+
   describe('no editing while driving', () => {
     it('the inspector closes for the drive, cannot be reopened, and comes back as it was on exit', () => {
       const { store } = storeWithStraightTrack()
@@ -362,8 +394,9 @@ describe('EditorStore trains', () => {
     it('decoupling and coupling are one undo step each', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
-      store.setTrainPlacementKind('tgv_wagon')
+      // A second power car behind the first: the only kind of joint that can be uncoupled
       store.placeTrainItem({ x: 60, y: 0 })
+      expect(store.trains).toHaveLength(1)
       store.toggleCouplingMode()
       const joint = store.couplerPoints.find(cp => cp.coupled)!.pos
 
@@ -579,5 +612,66 @@ describe('EditorStore trains', () => {
       expect(divergingEnd.pos.y).toBeCloseTo(-sideBefore, 9)
       bogies(store).forEach((p, i) => expect(Math.hypot(p.x - before[i].x, p.y - before[i].y)).toBe(0))
     })
+  })
+})
+
+describe('EditorStore trains on reshaped rails', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+  })
+
+  /** World position of every bogie of the fleet */
+  function bogies(store: EditorStore): { x: number; y: number }[] {
+    return store.trains.flatMap((train) =>
+      train.vehicles.flatMap((veh) => [veh.front, veh.rear].map((p) => positionOnSegment(store.network, p.segId, p.t)!)),
+    )
+  }
+
+  function storeWithRake(): { store: EditorStore; segId: string } {
+    const { store, segId } = storeWithStraightTrack(400)
+    const lead = createVehicle(store.network, segId, 0.9, 'loco')!
+    const train = makeTrainSet('t1', [
+      lead,
+      { ...lead, id: 'w1', kind: 'wagon' },
+      { ...lead, id: 'w2', kind: 'wagon' },
+    ])
+    expect(advanceTrainSet(store.network, train, 0)).toBe(true)
+    store.trains = [train]
+    return { store, segId }
+  }
+
+  it.each([
+    ['the far end node is dragged away', 'to', 800],
+    ['the far end node is dragged closer', 'to', 380],
+    ['the node behind the train is dragged away', 'from', -300],
+  ] as const)('the train does not move when %s: only the rail changes', (_label, end, x) => {
+    const { store, segId } = storeWithRake()
+    const before = bogies(store)
+
+    store.pinTrains()
+    const seg = store.network.segments.get(segId)!
+    store.network.nodes.get(seg[end])!.pos.x = x
+    // Positions are fractions of the segment: without a re-lay the train is carried and stretched
+    expect(bogies(store)[0].x).not.toBeCloseTo(before[0].x, 3)
+
+    store.realignTrains()
+    store.unpinTrains()
+    bogies(store).forEach((p, i) => {
+      expect(p.x).toBeCloseTo(before[i].x, 6)
+      expect(p.y).toBeCloseTo(before[i].y, 6)
+    })
+  })
+
+  it('leaves a train untouched when the rail becomes too short for it', () => {
+    const { store, segId } = storeWithRake()
+    const seg = store.network.segments.get(segId)!
+    const fractions = () => store.trains[0].vehicles.map((v) => [v.front.t, v.rear.t])
+    const before = fractions()
+
+    store.pinTrains()
+    store.network.nodes.get(seg.to)!.pos.x = 20
+    store.realignTrains()
+    expect(fractions()).toEqual(before)
   })
 })

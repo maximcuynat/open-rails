@@ -1,4 +1,4 @@
-import type { Network, NodeId, Point, SegmentId, Junction } from './types'
+import type { Network, NodeId, Point, Segment, SegmentId, Junction } from './types'
 import { generateId } from './network'
 import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength, isTransitionAllowed } from '../services/pathfinding'
@@ -598,7 +598,14 @@ export function getLocomotivePolygon(net: Network, loco: Locomotive): Point[] | 
   return details ? details.polygon : null
 }
 
-export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null {
+/** Body dimensions of a power car, when they do not follow from `loco.length` (meters) */
+export interface TGVBodyShape {
+  noseOverhang: number
+  rearOverhang: number
+  halfWidth: number
+}
+
+export function getTGVDetails(net: Network, loco: Locomotive, shape?: TGVBodyShape): TGVDetails | null {
   const pFront = getLocomotiveFrontPos(net, loco)
   const pRear = getLocomotiveRearPos(net, loco)
   if (!pFront || !pRear) return null
@@ -619,20 +626,21 @@ export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null
   const rearPivot = forwardDir === 1 ? pRear : pFront
 
   const totalLength = Math.max(loco.length, loco.bogieDistance + 4)
-  const overhangFront = (totalLength - loco.bogieDistance) * 0.62 // long nez profilé (~3.7m)
-  const overhangRear = totalLength - loco.bogieDistance - overhangFront // arrière (~2.3m)
+  const overhangFront = shape?.noseOverhang ?? (totalLength - loco.bogieDistance) * 0.62 // long nez profilé (~3.7m)
+  const overhangRear = shape?.rearOverhang ?? totalLength - loco.bogieDistance - overhangFront // arrière (~2.3m)
 
-  const w = 1.15 // demi-largeur de caisse profilée TGV (2.30m, silhouette affinée)
+  const w = shape?.halfWidth ?? 1.15 // demi-largeur de caisse profilée TGV (2.30m, silhouette affinée)
+  const k = w / 1.15 // the nose narrows in proportion to the body width
 
   // Points du contour aérodynamique TGV (8 sommets)
   // Museau avant
-  const noseTipL = { x: frontPivot.x + ux * overhangFront + nx * 0.32, y: frontPivot.y + uy * overhangFront + ny * 0.32 }
-  const noseTipR = { x: frontPivot.x + ux * overhangFront - nx * 0.32, y: frontPivot.y + uy * overhangFront - ny * 0.32 }
+  const noseTipL = { x: frontPivot.x + ux * overhangFront + nx * 0.32 * k, y: frontPivot.y + uy * overhangFront + ny * 0.32 * k }
+  const noseTipR = { x: frontPivot.x + ux * overhangFront - nx * 0.32 * k, y: frontPivot.y + uy * overhangFront - ny * 0.32 * k }
 
   // Épaules aérodynamiques du nez
   const shoulderDist = overhangFront * 0.55
-  const shoulderL = { x: frontPivot.x + ux * shoulderDist + nx * 0.90, y: frontPivot.y + uy * shoulderDist + ny * 0.90 }
-  const shoulderR = { x: frontPivot.x + ux * shoulderDist - nx * 0.90, y: frontPivot.y + uy * shoulderDist - ny * 0.90 }
+  const shoulderL = { x: frontPivot.x + ux * shoulderDist + nx * 0.90 * k, y: frontPivot.y + uy * shoulderDist + ny * 0.90 * k }
+  const shoulderR = { x: frontPivot.x + ux * shoulderDist - nx * 0.90 * k, y: frontPivot.y + uy * shoulderDist - ny * 0.90 * k }
 
   // Base du nez au niveau du bogie avant
   const bodyFrontL = { x: frontPivot.x + nx * w, y: frontPivot.y + ny * w }
@@ -1248,6 +1256,53 @@ export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'l
   return true
 }
 
+/** Closest point of one segment to a world position: its parameter `t` and the point itself. */
+export function projectOnSegment(net: Network, seg: Segment, worldPos: Point): { t: number; point: Point } | null {
+  const from = net.nodes.get(seg.from)
+  const to = net.nodes.get(seg.to)
+  if (!from || !to) return null
+
+  let t: number
+  let p: Point
+  if (seg.kind === 'straight' || !seg.via) {
+    // Exact orthogonal projection on the straight rail
+    const dx = to.pos.x - from.pos.x
+    const dy = to.pos.y - from.pos.y
+    const len2 = dx * dx + dy * dy
+    t = len2 === 0 ? 0 : ((worldPos.x - from.pos.x) * dx + (worldPos.y - from.pos.y) * dy) / len2
+    t = Math.max(0, Math.min(1, t))
+    p = { x: from.pos.x + dx * t, y: from.pos.y + dy * t }
+  } else {
+    // Curve: coarse sampling, then refine around the best sample
+    const via = seg.via
+    const distAt = (u: number) => {
+      const q = bezierPoint(u, from.pos, via, to.pos)
+      return Math.hypot(q.x - worldPos.x, q.y - worldPos.y)
+    }
+    const N = 32
+    t = 0
+    let best = Infinity
+    for (let i = 0; i <= N; i++) {
+      const d = distAt(i / N)
+      if (d < best) {
+        best = d
+        t = i / N
+      }
+    }
+    let lo = Math.max(0, t - 1 / N)
+    let hi = Math.min(1, t + 1 / N)
+    for (let iter = 0; iter < 24; iter++) {
+      const m1 = lo + (hi - lo) / 3
+      const m2 = hi - (hi - lo) / 3
+      if (distAt(m1) < distAt(m2)) hi = m2
+      else lo = m1
+    }
+    t = (lo + hi) / 2
+    p = bezierPoint(t, from.pos, via, to.pos)
+  }
+  return { t, point: p }
+}
+
 export function snapToNearestTrack(
   net: Network,
   worldPos: Point,
@@ -1258,48 +1313,9 @@ export function snapToNearestTrack(
   let minDist = maxDist
 
   for (const seg of net.segments.values()) {
-    const from = net.nodes.get(seg.from)
-    const to = net.nodes.get(seg.to)
-    if (!from || !to) continue
-
-    let t: number
-    let p: Point
-    if (seg.kind === 'straight' || !seg.via) {
-      // Exact orthogonal projection on the straight rail
-      const dx = to.pos.x - from.pos.x
-      const dy = to.pos.y - from.pos.y
-      const len2 = dx * dx + dy * dy
-      t = len2 === 0 ? 0 : ((worldPos.x - from.pos.x) * dx + (worldPos.y - from.pos.y) * dy) / len2
-      t = Math.max(0, Math.min(1, t))
-      p = { x: from.pos.x + dx * t, y: from.pos.y + dy * t }
-    } else {
-      // Curve: coarse sampling, then refine around the best sample
-      const via = seg.via
-      const distAt = (u: number) => {
-        const q = bezierPoint(u, from.pos, via, to.pos)
-        return Math.hypot(q.x - worldPos.x, q.y - worldPos.y)
-      }
-      const N = 32
-      t = 0
-      let best = Infinity
-      for (let i = 0; i <= N; i++) {
-        const d = distAt(i / N)
-        if (d < best) {
-          best = d
-          t = i / N
-        }
-      }
-      let lo = Math.max(0, t - 1 / N)
-      let hi = Math.min(1, t + 1 / N)
-      for (let iter = 0; iter < 24; iter++) {
-        const m1 = lo + (hi - lo) / 3
-        const m2 = hi - (hi - lo) / 3
-        if (distAt(m1) < distAt(m2)) hi = m2
-        else lo = m1
-      }
-      t = (lo + hi) / 2
-      p = bezierPoint(t, from.pos, via, to.pos)
-    }
+    const proj = projectOnSegment(net, seg, worldPos)
+    if (!proj) continue
+    const { t, point: p } = proj
 
     const dist = Math.hypot(p.x - worldPos.x, p.y - worldPos.y)
     if (dist < minDist) {

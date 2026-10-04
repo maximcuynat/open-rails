@@ -4751,193 +4751,37 @@ function drawTrainSetAccordion(
   }
 }
 
-function drawTrainSetCar(
+/** Body of a vehicle as a plain outline (no livery yet): the look of the debug x-ray view */
+function drawTrainSetBody(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   toSx: (p: Point) => number,
   toSy: (p: Point) => number,
-  car: { polygon: Point[]; windowsLeft?: { p1: Point; p2: Point }[]; windowsRight?: { p1: Point; p2: Point }[] },
-  isGhost = false,
+  polygon: Point[],
   isDebugSkeleton = false,
   telemetry?: TrainTelemetry,
 ): void {
+  if (polygon.length === 0) return
   ctx.beginPath()
-  ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
-  for (let pi = 1; pi < car.polygon.length; pi++) {
-    ctx.lineTo(toSx(car.polygon[pi]), toSy(car.polygon[pi]))
+  ctx.moveTo(toSx(polygon[0]), toSy(polygon[0]))
+  for (let pi = 1; pi < polygon.length; pi++) {
+    ctx.lineTo(toSx(polygon[pi]), toSy(polygon[pi]))
   }
   ctx.closePath()
 
-  if (isDebugSkeleton) {
-    const isXray = telemetry?.debugOptions?.xray !== false
-    if (isXray) {
-      ctx.fillStyle = 'rgba(14, 165, 233, 0.07)'
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.40)'
-      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
-      ctx.stroke()
-    } else {
-      ctx.setLineDash([3, 3])
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)'
-      ctx.lineWidth = 0.75
-      ctx.stroke()
-      ctx.setLineDash([])
-    }
-  } else {
-    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.92)'
-    ctx.fill()
-    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
-    ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
+  if (isDebugSkeleton && telemetry?.debugOptions?.xray === false) {
+    ctx.setLineDash([3, 3])
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)'
+    ctx.lineWidth = 0.75
     ctx.stroke()
-
-    if (car.polygon.length >= 4) {
-      ctx.beginPath()
-      ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
-      ctx.lineTo(toSx(car.polygon[3]), toSy(car.polygon[3]))
-      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.moveTo(toSx(car.polygon[1]), toSy(car.polygon[1]))
-      ctx.lineTo(toSx(car.polygon[2]), toSy(car.polygon[2]))
-      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
-      ctx.stroke()
-    }
-
-    const drawWindows = (wins?: { p1: Point; p2: Point }[]) => {
-      if (!wins) return
-      for (const w of wins) {
-        ctx.beginPath()
-        ctx.moveTo(toSx(w.p1), toSy(w.p1))
-        ctx.lineTo(toSx(w.p2), toSy(w.p2))
-        ctx.strokeStyle = '#0f172a'
-        ctx.lineWidth = Math.max(1.2, 1.8 * Math.sqrt(cam.scale))
-        ctx.stroke()
-      }
-    }
-    drawWindows(car.windowsLeft)
-    drawWindows(car.windowsRight)
+    ctx.setLineDash([])
+    return
   }
-}
-
-function drawTrainSetLoco(
-  ctx: CanvasRenderingContext2D,
-  cam: Camera,
-  toSx: (p: Point) => number,
-  toSy: (p: Point) => number,
-  tgv: TGVDetails,
-  isLead: boolean,
-  trainDirection: number,
-  isGhost = false,
-  isDebugSkeleton = false,
-  telemetry?: TrainTelemetry,
-): void {
-  ctx.beginPath()
-  ctx.moveTo(toSx(tgv.polygon[0]), toSy(tgv.polygon[0]))
-  for (let i = 1; i < tgv.polygon.length; i++) {
-    ctx.lineTo(toSx(tgv.polygon[i]), toSy(tgv.polygon[i]))
-  }
-  ctx.closePath()
-
-  if (isDebugSkeleton) {
-    const isXray = telemetry?.debugOptions?.xray !== false
-    if (isXray) {
-      ctx.fillStyle = 'rgba(14, 165, 233, 0.09)'
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.50)'
-      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
-      ctx.stroke()
-    } else {
-      ctx.setLineDash([3, 3])
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)'
-      ctx.lineWidth = 0.75
-      ctx.stroke()
-      ctx.setLineDash([])
-    }
-  } else {
-    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.90)'
-    ctx.fill()
-    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
-    ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
-    ctx.stroke()
-
-    if (tgv.polygon.length >= 9) {
-      ctx.beginPath()
-      ctx.moveTo(toSx(tgv.polygon[1]), toSy(tgv.polygon[1]))
-      ctx.lineTo(toSx(tgv.polygon[2]), toSy(tgv.polygon[2]))
-      ctx.lineTo(toSx(tgv.polygon[3]), toSy(tgv.polygon[3]))
-      ctx.lineTo(toSx(tgv.polygon[4]), toSy(tgv.polygon[4]))
-      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.moveTo(toSx(tgv.polygon[5]), toSy(tgv.polygon[5]))
-      ctx.lineTo(toSx(tgv.polygon[6]), toSy(tgv.polygon[6]))
-      ctx.lineTo(toSx(tgv.polygon[7]), toSy(tgv.polygon[7]))
-      ctx.lineTo(toSx(tgv.polygon[8]), toSy(tgv.polygon[8]))
-      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
-      ctx.stroke()
-    }
-
-    ctx.beginPath()
-    ctx.moveTo(toSx(tgv.windshield[0]), toSy(tgv.windshield[0]))
-    for (let i = 1; i < tgv.windshield.length; i++) {
-      ctx.lineTo(toSx(tgv.windshield[i]), toSy(tgv.windshield[i]))
-    }
-    ctx.closePath()
-    ctx.fillStyle = '#0f172a'
-    ctx.fill()
-    ctx.strokeStyle = '#334155'
-    ctx.lineWidth = 1
-    ctx.stroke()
-
-    const hlR = Math.max(2, 2.8 * Math.sqrt(cam.scale))
-    const isLitWhite = (isLead && trainDirection === 1) || (!isLead && trainDirection === -1)
-    const hlColor = isLitWhite ? '#fef08a' : '#ef4444'
-    const hlBorder = isLitWhite ? '#eab308' : '#991b1b'
-
-    ctx.beginPath()
-    ctx.arc(toSx(tgv.headlights.left), toSy(tgv.headlights.left), hlR, 0, Math.PI * 2)
-    ctx.fillStyle = hlColor
-    ctx.fill()
-    ctx.strokeStyle = hlBorder
-    ctx.lineWidth = 1
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.arc(toSx(tgv.headlights.right), toSy(tgv.headlights.right), hlR, 0, Math.PI * 2)
-    ctx.fillStyle = hlColor
-    ctx.fill()
-    ctx.strokeStyle = hlBorder
-    ctx.lineWidth = 1
-    ctx.stroke()
-
-    const panto = tgv.pantograph
-    ctx.beginPath()
-    ctx.moveTo(toSx(panto.armStart), toSy(panto.armStart))
-    ctx.lineTo(toSx(panto.center), toSy(panto.center))
-    ctx.lineTo(toSx(panto.armEnd), toSy(panto.armEnd))
-    ctx.strokeStyle = isGhost ? 'rgba(71, 85, 105, 0.6)' : '#475569'
-    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.moveTo(toSx(panto.bowLeft), toSy(panto.bowLeft))
-    ctx.lineTo(toSx(panto.bowRight), toSy(panto.bowRight))
-    ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
-    ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
-    ctx.stroke()
-
-    ctx.beginPath()
-    ctx.arc(toSx(panto.bowLeft), toSy(panto.bowLeft), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
-    ctx.arc(toSx(panto.bowRight), toSy(panto.bowRight), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
-    ctx.fillStyle = '#d97706'
-    ctx.fill()
-  }
+  ctx.fillStyle = 'rgba(14, 165, 233, 0.09)'
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.50)'
+  ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+  ctx.stroke()
 }
 
 /**
@@ -5007,7 +4851,7 @@ export function renderTrainSet(
     }
   }
 
-  // 1. Bogies
+  // 1. Bogies: each physical bogie once (two trailers share one), the first is the lead bogie
   for (let i = 0; i < visuals.bogies.length; i++) {
     drawTrainSetBogie(ctx, cam, toSx, toSy, visuals.bogies[i], i === 0, isGhost)
   }
@@ -5018,14 +4862,8 @@ export function renderTrainSet(
   }
 
   // 3. Vehicles
-  for (let i = 0; i < visuals.vehicles.length; i++) {
-    const v = visuals.vehicles[i]
-    if (v.kind === 'loco' && v.tgvDetails) {
-      const isLead = i === 0
-      drawTrainSetLoco(ctx, cam, toSx, toSy, v.tgvDetails, isLead, train.direction, isGhost, isDebugSkeleton, telemetry)
-    } else {
-      drawTrainSetCar(ctx, cam, toSx, toSy, v, isGhost, isDebugSkeleton, telemetry)
-    }
+  for (const v of visuals.vehicles) {
+    drawTrainSetBody(ctx, cam, toSx, toSy, v.polygon, isDebugSkeleton, telemetry)
   }
 
   // 3.5 Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
@@ -5082,6 +4920,8 @@ export function renderTrainSet(
     const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
     ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
 
+    // Distance between consecutive bogies along the rake: the pivots of a vehicle, or the spacing
+    // of a joint between two vehicles that each have their own bogie
     for (let bi = 0; bi < visuals.bogies.length - 1; bi++) {
       const bA = visuals.bogies[bi].center
       const bB = visuals.bogies[bi + 1].center

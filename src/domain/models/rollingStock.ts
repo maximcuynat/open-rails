@@ -90,6 +90,11 @@ export interface StockVehicle {
 
 export type JointKind = 'articulated' | 'coupled' | 'unit'
 
+/** True for a model of the table (saved data may carry anything). */
+export function isRollingStockModel(value: unknown): value is RollingStockModel {
+  return typeof value === 'string' && Object.keys(ROLLING_STOCK).includes(value)
+}
+
 export function stockSpec(veh: StockVehicle): RollingStockSpec {
   return ROLLING_STOCK[veh.model ?? DEFAULT_ROLLING_STOCK]
 }

@@ -14,7 +14,7 @@ import {
   isInactiveBranchAtNode,
   TURNOUT_ZONE_LENGTH,
 } from '@infrastructure/render/renderer'
-import { createTrainSet, getAllCouplerPoints, MAX_NOTCH } from '@domain/models/train'
+import { createTrainSet, findCouplerSnap, getAllCouplerPoints, vehicleRearEndPos, MAX_NOTCH } from '@domain/models/train'
 import { createLocomotive } from '@domain/models/locomotive'
 import { addJunction, toggleJunction } from '@domain/models/junction'
 import { bezierPoint } from '@domain/geometry/curve'
@@ -356,6 +356,37 @@ describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
       expect(mockCtx.fillText).toHaveBeenCalled()
       const fillCalls = vi.mocked(mockCtx.fillText).mock.calls.map(c => c[0])
       expect(fillCalls.some(t => typeof t === 'string' && t.includes('FREINAGE'))).toBe(true)
+    })
+
+    it('draws an articulated rake as plain outlines, each bogie once, with no 0.00 m label on a shared bogie', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 400, y: 0 })
+      addSegment(net, n1.id, n2.id)
+
+      // Power car + 3 trailers: 2 + 2 + 1 + 1 = 6 bogies
+      const ts = createTrainSet(net, { x: 300, y: 0 }, 'loco')!
+      for (let i = 0; i < 3; i++) {
+        const tail = vehicleRearEndPos(net, ts.vehicles[ts.vehicles.length - 1])!
+        ts.vehicles.push(findCouplerSnap(net, [ts], tail, 'wagon')!.snappedVehicle)
+      }
+      const cam = createCamera()
+
+      // Normal view: every body is filled and stroked with the outline style, nothing else on it
+      const plainCtx = createMockContext()
+      const fills: unknown[] = []
+      vi.mocked(plainCtx.fill).mockImplementation(() => { fills.push(plainCtx.fillStyle) })
+      renderTrainSet(plainCtx, cam, 800, 600, net, ts, false, false, false)
+      expect(fills.filter(f => f === 'rgba(14, 165, 233, 0.09)')).toHaveLength(4)
+      // Windscreen, headlights and liveries are gone
+      expect(fills).not.toContain('#fef08a')
+      expect(fills).not.toContain('rgba(248, 250, 252, 0.90)')
+
+      // Debug view: one distance label per pair of consecutive bogies, and one dot per bogie
+      const debugCtx = createMockContext()
+      renderTrainSet(debugCtx, cam, 800, 600, net, ts, false, false, true)
+      const labels = vi.mocked(debugCtx.fillText).mock.calls.map(c => c[0]).filter((t): t is string => typeof t === 'string' && / m$/.test(t))
+      expect(labels).toEqual(['14.00 m', '6.29 m', '18.70 m', '18.70 m', '18.70 m'])
     })
 
     it('renders track lookahead trajectory and detects buffer stop dead-end within 50m', () => {

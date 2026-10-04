@@ -931,6 +931,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
       }
       applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, { kind: 'translate', delta })
+      store.realignTrains()
     }
 
     const stepEdgePan = (time: number) => {
@@ -965,6 +966,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             )
             store.gizmoDragDelta = delta
             applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, { kind: 'translate', delta })
+            store.realignTrains()
           }
         } else if (store.isDraggingNode && store.dragStartWorld) {
           dragSelectedNodes(rawWorld, store.dragStartWorld)
@@ -1052,6 +1054,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             store.gizmoDragDelta = { x: 0, y: 0 }
             store.gizmoRotateDelta = 0
             store.dragStartWorld = getWorldPos(e.clientX, e.clientY)
+            store.pinTrains()
             store.draggedNodeInitialPositions.clear()
             store.draggedViaInitialPositions.clear()
             for (const nid of anchor.nodeIds) {
@@ -1603,6 +1606,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.isDraggingNode = true
           store.dragStartWorld = world
           dragPrimaryNodeId = nodeId
+          store.pinTrains()
           store.draggedNodeInitialPositions.clear()
           for (const nid of store.selection.nodes) {
             const node = store.network.nodes.get(nid)
@@ -1794,6 +1798,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             center: anchor.worldPos,
             angleRad,
           })
+          store.realignTrains()
         }
         draw()
         store.notify()
@@ -1823,6 +1828,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.gizmoDragDelta = delta
 
           applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, { kind: 'translate', delta })
+          store.realignTrains()
         }
 
         draw()
@@ -2080,6 +2086,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.gizmoDragDelta = { x: 0, y: 0 }
         store.gizmoRotateDelta = 0
         store.dragStartWorld = null
+        store.unpinTrains()
         store.draggedNodeInitialPositions.clear()
         store.draggedViaInitialPositions.clear()
         if (canvas.hasPointerCapture(e.pointerId)) {
@@ -2107,6 +2114,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
         store.isDraggingNode = false
         store.dragStartWorld = null
+        store.unpinTrains()
         store.draggedNodeInitialPositions.clear()
         store.draggedViaInitialPositions.clear()
         if (canvas.hasPointerCapture(e.pointerId)) {

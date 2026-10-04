@@ -34,6 +34,7 @@ import {
   type TrainHitResult,
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
+import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
   makeTrainSet,
@@ -46,6 +47,8 @@ import {
   createVehicle,
   findCouplerSnap,
   advanceTrainSet,
+  trainAnchors,
+  realignTrains,
   tickTrainSet,
   handleCouplingClick,
   findNearestCoupler,
@@ -205,6 +208,7 @@ export class EditorStore {
   draggingTrainItem: 'tgv_loco' | 'tgv_wagon' | null = null // Active item being dragged
   dragCursorScreen: Point | null = null // Screen position of cursor while dragging
   trainPlacementKind: 'tgv_loco' | 'tgv_wagon' = 'tgv_loco' // Selected vehicle kind for train placement
+  trainPlacementModel: RollingStockModel = DEFAULT_ROLLING_STOCK // Rolling stock of the vehicles placed next
 
   // --- New: TrainSet fleet ---
   /** All train sets on the layout (independent or coupled rakes) */
@@ -1258,6 +1262,8 @@ export class EditorStore {
         seg.via.y = initVia.y
       }
     }
+    if (this.draggedNodeInitialPositions.size > 0) this.realignTrains()
+    this.unpinTrains()
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
@@ -1693,25 +1699,26 @@ export class EditorStore {
   private computeTrainPlacement(worldPos: Point, kind: VehicleKind): { snap: CouplerSnapTarget | null; vehicle: Vehicle } | null {
     // Coupled to a train, the chosen heading turns the vehicle around within the rake
     const flipped = this.trainPlacementDirection === -1
+    const model = this.trainPlacementModel
 
     // 1. Train in progress: its free ends reach further, so the next click along the track extends it
     const chain = this.trainChain
     if (chain) {
       const chainSnapDist = Math.max(TRAIN_CHAIN_SNAP_DISTANCE, 60 / this.camera.scale)
-      const snap = findCouplerSnap(this.network, [chain], worldPos, kind, chainSnapDist, flipped)
+      const snap = findCouplerSnap(this.network, [chain], worldPos, kind, chainSnapDist, flipped, model)
       if (snap) return { snap, vehicle: snap.snappedVehicle }
     }
 
     // 2. Magnetic coupler snap with any train
     const maxCouplerSnapDist = Math.max(6.0, 30 / this.camera.scale)
-    const snap = findCouplerSnap(this.network, this.trains, worldPos, kind, maxCouplerSnapDist, flipped)
+    const snap = findCouplerSnap(this.network, this.trains, worldPos, kind, maxCouplerSnapDist, flipped, model)
     if (snap) return { snap, vehicle: snap.snappedVehicle }
 
     // 3. Free placement on the track under the cursor, with the chosen heading: a new train
     const maxTrackSnapDist = Math.max(12.0, 45 / this.camera.scale)
     const trackSnap = snapToNearestTrack(this.network, worldPos, maxTrackSnapDist)
     if (!trackSnap) return null
-    const vehicle = createVehicle(this.network, trackSnap.segId, trackSnap.t, kind, this.trainPlacementDirection)
+    const vehicle = createVehicle(this.network, trackSnap.segId, trackSnap.t, kind, this.trainPlacementDirection, model)
     return vehicle ? { snap: null, vehicle } : null
   }
 
@@ -2126,6 +2133,29 @@ export class EditorStore {
     if (this.trainChainId && !this.trainChain) this.trainChainId = null
   }
 
+  /** Where every train stood when the current node drag started (see pinTrains) */
+  private trainAnchors: Map<string, Point> | null = null
+
+  /** Start of a rail reshape (node drag, gizmo): remember where the trains stand */
+  pinTrains = (): void => {
+    this.trainAnchors = this.trains.length > 0 ? trainAnchors(this.network, this.trains) : null
+  }
+
+  /** End of the rail reshape started by pinTrains */
+  unpinTrains = (): void => {
+    this.trainAnchors = null
+  }
+
+  /**
+   * Re-lay the trains after rails were reshaped under them: each train stays where it stood
+   * when the reshape started and keeps its length, only the rail changes.
+   */
+  realignTrains = (): void => {
+    if (this.trains.length === 0) return
+    realignTrains(this.network, this.trains, this.trainAnchors ?? undefined)
+    this.refreshCouplerPoints()
+  }
+
   /** Drop the vehicles whose rails were removed by a network edit */
   private syncTrainsWithNetwork(): void {
     if (this.trains.length === 0) return
@@ -2422,6 +2452,15 @@ export class EditorStore {
     this.trainToolSubMode = 'place'
     this.hoveredTrainDeleteVehicle = null
     this.refreshCouplerPoints()
+    this.notify()
+  }
+
+  /** Choose the rolling stock (TGV Duplex, TGV M) of the vehicles placed from now on */
+  setTrainPlacementModel = (model: RollingStockModel): void => {
+    this.trainPlacementModel = model
+    if (this.lastMouseWorld) {
+      this.updateLocomotivePreview(this.lastMouseWorld)
+    }
     this.notify()
   }
 

@@ -15,6 +15,7 @@ import type {
   BogieFrame,
   TGVDetails,
   TGVAccordion,
+  WalkOptions,
 } from './locomotive'
 import {
   steerJunction,
@@ -29,8 +30,21 @@ import {
   computeBogieFrame,
   getTGVDetails,
   isPointNearPolygon,
+  projectOnSegment,
 } from './locomotive'
 import { generateId } from './network'
+import type { RollingStockModel, StockVehicle } from './rollingStock'
+import {
+  UNIT_COUPLING_GAP,
+  bodyWidth,
+  bogieDistance,
+  endOverhang,
+  isRollingStockModel,
+  jointKind,
+  jointSpacing,
+  stockSpec,
+  vehicleEndOverhang,
+} from './rollingStock'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,19 +53,11 @@ export type TrainSetId = string
 
 export type VehicleKind = 'loco' | 'wagon'
 
-/** Physical lengths (meters) for each vehicle kind */
-export const VEHICLE_BOGIE_DISTANCE: Record<VehicleKind, number> = {
-  loco: 14,   // entraxe bogies motrice TGV
-  wagon: 11.92, // entraxe bogies wagon (CAR_BOGIE_DIST)
-}
-
-export const VEHICLE_OVERHANG: Record<VehicleKind, number> = {
-  loco: 3.04,
-  wagon: 3.04,
-}
-
-/** Spacing between two consecutive vehicles (accordion gap, meters) */
-export const COUPLING_GAP = 0.80
+/**
+ * Gap (meters) between the power cars of two coupled trainsets; also the distance a train stops
+ * short of another one. Vehicle dimensions and joint spacings come from `rollingStock.ts`.
+ */
+export const COUPLING_GAP = UNIT_COUPLING_GAP
 
 /** Maximum distance (meters) between two vehicle ends to allow coupling */
 export const MAX_COUPLE_DISTANCE = 3.5
@@ -75,6 +81,8 @@ export interface Vehicle {
    * `front` / `rear` always follow the order of the train, whatever the body faces.
    */
   flipped?: boolean
+  /** Rolling stock the vehicle belongs to; absent = TGV Duplex */
+  model?: RollingStockModel
 }
 
 /** An ordered set of coupled vehicles forming a train */
@@ -138,14 +146,16 @@ export function createVehicle(
   segId: SegmentId,
   t: number,
   kind: VehicleKind,
-  direction: 1 | -1 = 1
+  direction: 1 | -1 = 1,
+  model?: RollingStockModel
 ): Vehicle | null {
-  const bogieDistance = VEHICLE_BOGIE_DISTANCE[kind]
-  const loco = createLocomotive(net, segId, t, bogieDistance + 2 * VEHICLE_OVERHANG[kind], bogieDistance, 0, direction)
+  const stock = model ? { kind, model } : { kind }
+  const pivots = bogieDistance(stock)
+  const loco = createLocomotive(net, segId, t, pivots, pivots, 0, direction)
   if (!loco) return null
   return {
     id: generateId('veh'),
-    kind,
+    ...stock,
     front: loco.front,
     rear: loco.rear,
   }
@@ -157,11 +167,12 @@ export function createTrainSet(
   worldPos: Point,
   kind: VehicleKind,
   maxDist: number = Infinity,
-  direction: 1 | -1 = 1
+  direction: 1 | -1 = 1,
+  model?: RollingStockModel
 ): TrainSet | null {
   const snap = snapToNearestTrack(net, worldPos, maxDist)
   if (!snap) return null
-  const vehicle = createVehicle(net, snap.segId, snap.t, kind, direction)
+  const vehicle = createVehicle(net, snap.segId, snap.t, kind, direction, model)
   if (!vehicle) return null
   return makeTrainSet(generateId('train'), [vehicle])
 }
@@ -264,24 +275,46 @@ export function trainOccupancy(net: Network, train: TrainSet): WalkTrace {
   const options = { trace, stayOn: bogieSegments(train) }
 
   const lead = train.vehicles[0]
-  walkForward(net, lead.front.segId, lead.front.t, lead.front.forward, VEHICLE_OVERHANG[lead.kind], options)
+  walkForward(net, lead.front.segId, lead.front.t, lead.front.forward, endOverhang(train.vehicles, 0, 'front'), options)
 
   let prev: Vehicle | null = null
   for (const veh of train.vehicles) {
     if (prev) {
-      const gap = VEHICLE_OVERHANG[prev.kind] + COUPLING_GAP + VEHICLE_OVERHANG[veh.kind]
-      walkBackward(net, prev.rear.segId, prev.rear.t, prev.rear.forward, gap, options)
+      // Nothing to cover on an articulated joint: both vehicles stand on the same bogie
+      walkBackward(net, prev.rear.segId, prev.rear.t, prev.rear.forward, jointSpacing(prev, veh), options)
     }
-    walkBackward(net, veh.front.segId, veh.front.t, veh.front.forward, VEHICLE_BOGIE_DISTANCE[veh.kind], options)
+    walkBackward(net, veh.front.segId, veh.front.t, veh.front.forward, bogieDistance(veh), options)
     // The stored bogie positions always count, even where the track can no longer be walked
     trace.spans.push({ segId: veh.front.segId, t0: veh.front.t, t1: veh.front.t })
     trace.spans.push({ segId: veh.rear.segId, t0: veh.rear.t, t1: veh.rear.t })
     prev = veh
   }
 
-  const last = train.vehicles[train.vehicles.length - 1]
-  walkBackward(net, last.rear.segId, last.rear.t, last.rear.forward, VEHICLE_OVERHANG[last.kind], options)
+  const lastIdx = train.vehicles.length - 1
+  const last = train.vehicles[lastIdx]
+  walkBackward(net, last.rear.segId, last.rear.t, last.rear.forward, endOverhang(train.vehicles, lastIdx, 'rear'), options)
   return trace
+}
+
+/** Body length of the i-th vehicle of a rake, over both ends */
+function vehicleLength(vehicles: readonly Vehicle[], i: number): number {
+  return endOverhang(vehicles, i, 'front') + bogieDistance(vehicles[i]) + endOverhang(vehicles, i, 'rear')
+}
+
+/**
+ * Front bogie of `next` placed behind the rear bogie of `prev`. On an articulated joint it is the
+ * same bogie: the position is copied, nothing is walked.
+ */
+function followerFront(
+  net: Network,
+  prev: StockVehicle,
+  prevRear: TrackPosition,
+  next: StockVehicle,
+  options?: WalkOptions,
+): TrackPosition | null {
+  const spacing = jointSpacing(prev, next)
+  if (spacing === 0) return { ...prevRear }
+  return walkBackward(net, prevRear.segId, prevRear.t, prevRear.forward, spacing, options)
 }
 
 /** Segments the bogies of a train stand on */
@@ -324,8 +357,9 @@ function freeDistanceAhead(
 ): number | null {
   // The end of the train that leads the move: nose of the lead vehicle, or tail of the last one in reverse
   const reversing = train.direction === -1
-  const veh = reversing ? train.vehicles[train.vehicles.length - 1] : train.vehicles[0]
-  const overhang = VEHICLE_OVERHANG[veh.kind]
+  const lastIdx = train.vehicles.length - 1
+  const veh = reversing ? train.vehicles[lastIdx] : train.vehicles[0]
+  const overhang = reversing ? endOverhang(train.vehicles, lastIdx, 'rear') : endOverhang(train.vehicles, 0, 'front')
   const ahead: WalkTrace = { spans: [], nodes: [] }
   if (reversing) walkBackward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, overhang + reach, { trace: ahead })
   else walkForward(net, veh.front.segId, veh.front.t, veh.front.forward, overhang + reach, { trace: ahead })
@@ -394,8 +428,8 @@ export function advanceTrainSet(
   // Build a temporary Locomotive for the lead vehicle to reuse advanceLocomotive
   const tempLoco = {
     id: lead.id,
-    length: VEHICLE_BOGIE_DISTANCE[lead.kind] + 2 * VEHICLE_OVERHANG[lead.kind],
-    bogieDistance: VEHICLE_BOGIE_DISTANCE[lead.kind],
+    length: vehicleLength(train.vehicles, 0),
+    bogieDistance: bogieDistance(lead),
     front: lead.front,
     rear: lead.rear,
     direction: train.direction,
@@ -409,31 +443,20 @@ export function advanceTrainSet(
   // Nothing is written to the train until every vehicle has found its place.
   const placed: { front: TrackPosition; rear: TrackPosition }[] = [{ front: tempLoco.front, rear: tempLoco.rear }]
   let referencePos: TrackPosition = tempLoco.rear
-  let prevKind = lead.kind
 
   for (let i = 1; i < train.vehicles.length; i++) {
     const veh = train.vehicles[i]
-    const prevOverhang = VEHICLE_OVERHANG[prevKind]
-    const vehOverhang = VEHICLE_OVERHANG[veh.kind]
-    const bogieDistance = VEHICLE_BOGIE_DISTANCE[veh.kind]
 
-    // Front bogie of this vehicle = gap behind previous vehicle rear bogie
-    const newFront = walkBackward(
-      net,
-      referencePos.segId,
-      referencePos.t,
-      referencePos.forward,
-      prevOverhang + COUPLING_GAP + vehOverhang,
-      { stayOn }
-    )
+    // Front bogie of this vehicle: the joint spacing behind the previous rear bogie (the same
+    // bogie when the two are articulated)
+    const newFront = followerFront(net, train.vehicles[i - 1], referencePos, veh, { stayOn })
     if (!newFront) return false
 
-    const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, bogieDistance, { stayOn })
+    const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, bogieDistance(veh), { stayOn })
     if (!newRear) return false
 
     placed.push({ front: newFront, rear: newRear })
     referencePos = newRear
-    prevKind = veh.kind
   }
 
   train.vehicles.forEach((veh, i) => {
@@ -478,8 +501,11 @@ export function tickTrainSet(
 
 // ─── Coupling ─────────────────────────────────────────────────────────────────
 
-/** World position of the rear end (rear bogie + overhang) of a vehicle */
-export function vehicleRearEndPos(net: Network, veh: Vehicle): Point | null {
+/**
+ * World position of the rear end (rear bogie + overhang) of a vehicle. The overhang of a trailer
+ * depends on the vehicle it faces there: `neighbour` is the next one in the rake, null at a free end.
+ */
+export function vehicleRearEndPos(net: Network, veh: Vehicle, neighbour: Vehicle | null = null): Point | null {
   const pF = positionOnSegment(net, veh.front.segId, veh.front.t)
   const pR = positionOnSegment(net, veh.rear.segId, veh.rear.t)
   if (!pR) return null
@@ -488,12 +514,12 @@ export function vehicleRearEndPos(net: Network, veh: Vehicle): Point | null {
   const dy = pF.y - pR.y
   const len = Math.hypot(dx, dy)
   if (len === 0) return pR
-  const overhang = VEHICLE_OVERHANG[veh.kind]
+  const overhang = vehicleEndOverhang(veh, 'rear', neighbour)
   return { x: pR.x - (dx / len) * overhang, y: pR.y - (dy / len) * overhang }
 }
 
-/** World position of the front end (front bogie + overhang) of a vehicle */
-export function vehicleFrontEndPos(net: Network, veh: Vehicle): Point | null {
+/** World position of the front end (front bogie + overhang) of a vehicle; `neighbour` as for the rear end */
+export function vehicleFrontEndPos(net: Network, veh: Vehicle, neighbour: Vehicle | null = null): Point | null {
   const pF = positionOnSegment(net, veh.front.segId, veh.front.t)
   const pR = positionOnSegment(net, veh.rear.segId, veh.rear.t)
   if (!pF) return null
@@ -502,7 +528,7 @@ export function vehicleFrontEndPos(net: Network, veh: Vehicle): Point | null {
   const dy = pF.y - pR.y
   const len = Math.hypot(dx, dy)
   if (len === 0) return pF
-  const overhang = VEHICLE_OVERHANG[veh.kind]
+  const overhang = vehicleEndOverhang(veh, 'front', neighbour)
   return { x: pF.x + (dx / len) * overhang, y: pF.y + (dy / len) * overhang }
 }
 
@@ -516,14 +542,15 @@ export interface CouplerPoint {
   /** 'front' = front end of vehicle[0], 'rear' = rear end of vehicle[last] */
   end: 'front' | 'rear'
   pos: Point
-  /** Is this end already coupled to another vehicle within this trainset? */
+  /** Is this the joint between two coupled trainsets, where the train can be split? */
   coupled: boolean
 }
 
 /**
- * Compute all free coupler endpoints across all trains.
+ * Compute all coupler points across all trains.
  * A "free" coupler is the front end of the lead vehicle OR the rear end of the last vehicle.
- * Internal couplers (between vehicles inside a trainset) are shown as "coupled=true".
+ * Inside a train only the joint between two power cars (two trainsets coupled together) is a
+ * coupler, shown as "coupled=true": a trainset itself cannot be split.
  */
 export function getAllCouplerPoints(net: Network, trains: TrainSet[]): CouplerPoint[] {
   const points: CouplerPoint[] = []
@@ -537,11 +564,16 @@ export function getAllCouplerPoints(net: Network, trains: TrainSet[]): CouplerPo
       points.push({ trainId: train.id, vehicleIndex: 0, end: 'front', pos: leadFront, coupled: false })
     }
 
-    // Internal rear ends (coupled to next vehicle)
+    // Joints between two trainsets: halfway between the facing ends of the two power cars
     for (let i = 0; i < train.vehicles.length - 1; i++) {
-      const rearPos = vehicleRearEndPos(net, train.vehicles[i])
-      if (rearPos) {
-        points.push({ trainId: train.id, vehicleIndex: i, end: 'rear', pos: rearPos, coupled: true })
+      const veh = train.vehicles[i]
+      const next = train.vehicles[i + 1]
+      if (jointKind(veh, next) !== 'unit') continue
+      const rearPos = vehicleRearEndPos(net, veh, next)
+      const frontPos = vehicleFrontEndPos(net, next, veh)
+      if (rearPos && frontPos) {
+        const pos = { x: (rearPos.x + frontPos.x) / 2, y: (rearPos.y + frontPos.y) / 2 }
+        points.push({ trainId: train.id, vehicleIndex: i, end: 'rear', pos, coupled: true })
       }
     }
 
@@ -615,7 +647,8 @@ export interface CouplerSnapTarget {
 
 /**
  * Check if worldPos is within maxDist of any free coupler endpoint in any train,
- * and if so compute the snapped Vehicle placed flush against that coupler (gap = COUPLING_GAP).
+ * and if so compute the snapped Vehicle laid out against that end as `advanceTrainSet` will lay it:
+ * a trailer next to a trailer stands on the bogie that is already there.
  * With `flipped` the vehicle is coupled turned around, its nose away from the head of the train.
  */
 export function findCouplerSnap(
@@ -624,11 +657,16 @@ export function findCouplerSnap(
   worldPos: Point,
   kind: VehicleKind,
   maxDist: number = 5.0,
-  flipped: boolean = false
+  flipped: boolean = false,
+  model?: RollingStockModel
 ): CouplerSnapTarget | null {
   let bestTarget: CouplerSnapTarget | null = null
   let bestDist = maxDist
-  const orientation = flipped ? { flipped: true } : {}
+  // The vehicle to place, without its bogies yet
+  const ghost = { kind, ...(flipped ? { flipped: true } : {}), ...(model ? { model } : {}) }
+  const makeSnapped = (front: TrackPosition, rear: TrackPosition): Vehicle => (
+    { id: generateId('veh_preview'), ...ghost, front, rear }
+  )
 
   for (const train of trains) {
     if (train.vehicles.length === 0) continue
@@ -640,17 +678,16 @@ export function findCouplerSnap(
       const d = Math.hypot(rearPos.x - worldPos.x, rearPos.y - worldPos.y)
       if (d < bestDist) {
         // Compute position for new vehicle behind lastVeh
-        const distToNewFront = VEHICLE_OVERHANG[lastVeh.kind] + COUPLING_GAP + VEHICLE_OVERHANG[kind]
-        const newFront = walkBackward(net, lastVeh.rear.segId, lastVeh.rear.t, lastVeh.rear.forward, distToNewFront)
+        const newFront = followerFront(net, lastVeh, lastVeh.rear, ghost)
         if (newFront) {
-          const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, VEHICLE_BOGIE_DISTANCE[kind])
+          const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, bogieDistance(ghost))
           if (newRear) {
             bestDist = d
             bestTarget = {
               train,
               end: 'rear',
               couplerPos: rearPos,
-              snappedVehicle: { id: generateId('veh_preview'), kind, front: newFront, rear: newRear, ...orientation },
+              snappedVehicle: makeSnapped(newFront, newRear),
             }
           }
         }
@@ -664,17 +701,19 @@ export function findCouplerSnap(
       const d = Math.hypot(frontPos.x - worldPos.x, frontPos.y - worldPos.y)
       if (d < bestDist) {
         // Compute position for new vehicle in front of firstVeh
-        const distToNewRear = VEHICLE_OVERHANG[firstVeh.kind] + COUPLING_GAP + VEHICLE_OVERHANG[kind]
-        const newRear = walkForward(net, firstVeh.front.segId, firstVeh.front.t, firstVeh.front.forward, distToNewRear)
+        const spacing = jointSpacing(ghost, firstVeh)
+        const newRear = spacing === 0
+          ? { ...firstVeh.front }
+          : walkForward(net, firstVeh.front.segId, firstVeh.front.t, firstVeh.front.forward, spacing)
         if (newRear) {
-          const newFront = walkForward(net, newRear.segId, newRear.t, newRear.forward, VEHICLE_BOGIE_DISTANCE[kind])
+          const newFront = walkForward(net, newRear.segId, newRear.t, newRear.forward, bogieDistance(ghost))
           if (newFront) {
             bestDist = d
             bestTarget = {
               train,
               end: 'front',
               couplerPos: frontPos,
-              snappedVehicle: { id: generateId('veh_preview'), kind, front: newFront, rear: newRear, ...orientation },
+              snappedVehicle: makeSnapped(newFront, newRear),
             }
           }
         }
@@ -718,8 +757,9 @@ export function coupleTrains(
     vehicles: [...a.vehicles, ...b.vehicles],
   }
 
-  // Align merged followers
-  advanceTrainSet(net, merged, 0)
+  // Lay the merged rake out again so the new joint gets its spacing (a shared bogie between two
+  // trailers); nothing is coupled when the rake does not fit on the track that way
+  if (!advanceTrainSet(net, merged, 0)) return trains
 
   return trains
     .filter((_, i) => i !== aIdx && i !== bIdx)
@@ -728,13 +768,15 @@ export function coupleTrains(
 
 /**
  * Decouple a TrainSet at position `vehicleIndex` (between vehicle[vehicleIndex] and vehicle[vehicleIndex+1]).
- * Returns two new TrainSets: [front half, rear half].
+ * Returns two new TrainSets: [front half, rear half], or null when the joint is not the coupling
+ * of two trainsets (power car to power car): an articulated or permanently coupled joint cannot be split.
  */
 export function decoupleAt(
   train: TrainSet,
   vehicleIndex: number
 ): [TrainSet, TrainSet] | null {
   if (vehicleIndex < 0 || vehicleIndex >= train.vehicles.length - 1) return null
+  if (jointKind(train.vehicles[vehicleIndex], train.vehicles[vehicleIndex + 1]) !== 'unit') return null
 
   const front: TrainSet = {
     ...train,
@@ -754,7 +796,7 @@ export function decoupleAt(
 /**
  * Handle a click in coupling mode on worldPos.
  * - If clicking a free coupler near another free coupler → couple the two trains
- * - If clicking a coupled joint → decouple at that joint
+ * - If clicking the joint between two coupled trainsets → decouple at that joint
  * Returns the updated trains array.
  */
 export function handleCouplingClick(
@@ -818,8 +860,6 @@ export interface TrainVehicleVisual {
   id: string
   kind: 'loco' | 'wagon'
   polygon: Point[]
-  windowsLeft?: { p1: Point; p2: Point }[]
-  windowsRight?: { p1: Point; p2: Point }[]
   windshield?: Point[]
   headlights?: { left: Point; right: Point }
   tgvDetails?: TGVDetails
@@ -832,9 +872,12 @@ export interface TrainSetVisuals {
   bogies: BogieFrame[]
 }
 
+/** Trailer body pulled back from the pivot at an articulated or free end, so the gangway shows over the bogie */
+const TRAILER_END_MARGIN = 0.35
+
 /**
- * Compute the complete visual geometry for a TrainSet:
- * individual car bodies, TGV aerodynamic noses, bogies with axles, and connecting accordions.
+ * Compute the complete visual geometry for a TrainSet: body outlines, bogies with axles (a bogie
+ * shared by two trailers appears once) and one gangway per joint.
  */
 export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisuals | null {
   if (train.vehicles.length === 0) return null
@@ -843,30 +886,37 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
   const bogies: BogieFrame[] = []
   const accordions: TGVAccordion[] = []
 
-  // Store rear and front connection frames for each vehicle to generate accordions
-  const vehicleFrames: { rear: [Point, Point]; front: [Point, Point] }[] = []
+  // Left/right corners of both body ends of each vehicle, to hang the gangways on
+  const vehicleFrames: ({ rear: [Point, Point]; front: [Point, Point] } | null)[] = []
 
   for (let i = 0; i < train.vehicles.length; i++) {
     const veh = train.vehicles[i]
+    vehicleFrames.push(null)
 
-    // Bogies for this vehicle
-    const bFront = computeBogieFrame(net, veh.front)
+    // Bogies for this vehicle; on an articulated joint the front one is the previous vehicle's rear one
+    const sharedFront = i > 0 && jointKind(train.vehicles[i - 1], veh) === 'articulated'
+    const bFront = sharedFront ? null : computeBogieFrame(net, veh.front)
     const bRear = computeBogieFrame(net, veh.rear)
     if (bFront) bogies.push(bFront)
     if (bRear) bogies.push(bRear)
 
     if (veh.kind === 'loco') {
+      const spec = stockSpec(veh).powerCar
       const tempLoco = {
         id: veh.id,
-        length: VEHICLE_BOGIE_DISTANCE.loco + 2 * VEHICLE_OVERHANG.loco,
-        bogieDistance: VEHICLE_BOGIE_DISTANCE.loco,
+        length: spec.length,
+        bogieDistance: spec.bogieDistance,
         front: veh.front,
         rear: veh.rear,
         // The body is drawn from its bogies and its own orientation, never from the travel
         // direction: reversing pushes the train back (refoulement), it does not turn it around.
         direction: veh.flipped ? (-1 as const) : (1 as const),
       }
-      const tgv = getTGVDetails(net, tempLoco)
+      const tgv = getTGVDetails(net, tempLoco, {
+        noseOverhang: spec.noseOverhang,
+        rearOverhang: spec.rearOverhang,
+        halfWidth: spec.width / 2,
+      })
       if (tgv) {
         visuals.push({
           id: veh.id,
@@ -877,19 +927,19 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
           tgvDetails: tgv,
         })
 
-        // Frame: front is nose base; rear is flat back
-        // tgv.polygon: 2=bodyFrontL, 7=bodyFrontR, 4=backL, 5=backR
+        // Body ends: the tip of the nose and the flat back
+        // tgv.polygon: 0=noseTipL, 9=noseTipR, 4=backL, 5=backR
+        const tipL = tgv.polygon[0]
+        const tipR = tgv.polygon[9]
         const backL = tgv.polygon[4]
         const backR = tgv.polygon[5]
-        const frontL = tgv.polygon[2]
-        const frontR = tgv.polygon[7]
         // Turned around, the flat back faces the head of the train and left/right swap sides
-        vehicleFrames.push(veh.flipped
-          ? { front: [backR, backL], rear: [frontR, frontL] }
-          : { front: [frontL, frontR], rear: [backL, backR] })
+        vehicleFrames[i] = veh.flipped
+          ? { front: [backR, backL], rear: [tipR, tipL] }
+          : { front: [tipL, tipR], rear: [backL, backR] }
       }
     } else {
-      // Wagon
+      // Trailer: a rectangle along the chord between its two pivots
       const pF = positionOnSegment(net, veh.front.segId, veh.front.t)
       const pR = positionOnSegment(net, veh.rear.segId, veh.rear.t)
       if (pF && pR) {
@@ -901,60 +951,41 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
           const uy = dy / len
           const nx = -uy
           const ny = ux
-          const overhang = VEHICLE_OVERHANG.wagon
-          const w = 1.15 // demi-largeur caisse TGV affinée (2.30m)
+          const w = bodyWidth(veh) / 2
+          // Beyond the pivot towards a power car, short of it over a shared bogie or at a free end
+          const frontOverhang = endOverhang(train.vehicles, i, 'front')
+          const rearOverhang = endOverhang(train.vehicles, i, 'rear')
+          const frontReach = frontOverhang > 0 ? frontOverhang : -TRAILER_END_MARGIN
+          const rearReach = rearOverhang > 0 ? rearOverhang : -TRAILER_END_MARGIN
 
-          const cFrontCenter = { x: pF.x + ux * overhang, y: pF.y + uy * overhang }
-          const cRearCenter = { x: pR.x - ux * overhang, y: pR.y - uy * overhang }
+          const cFrontCenter = { x: pF.x + ux * frontReach, y: pF.y + uy * frontReach }
+          const cRearCenter = { x: pR.x - ux * rearReach, y: pR.y - uy * rearReach }
 
           const c1 = { x: cFrontCenter.x + nx * w, y: cFrontCenter.y + ny * w }
           const c2 = { x: cFrontCenter.x - nx * w, y: cFrontCenter.y - ny * w }
           const c3 = { x: cRearCenter.x - nx * w, y: cRearCenter.y - ny * w }
           const c4 = { x: cRearCenter.x + nx * w, y: cRearCenter.y + ny * w }
 
-          const numWindows = 6
-          const totalLen = len + 2 * overhang
-          const winSpan = Math.max(2, totalLen - 3.0)
-          const winStep = winSpan / numWindows
-          const winLen = winStep * 0.7
-          const windowsLeft: { p1: Point; p2: Point }[] = []
-          const windowsRight: { p1: Point; p2: Point }[] = []
-
-          for (let wi = 0; wi < numWindows; wi++) {
-            const d = 1.5 + wi * winStep
-            const pStart = { x: cRearCenter.x + ux * d, y: cRearCenter.y + uy * d }
-            const pEnd = { x: cRearCenter.x + ux * (d + winLen), y: cRearCenter.y + uy * (d + winLen) }
-            windowsLeft.push({
-              p1: { x: pStart.x + nx * (w - 0.08), y: pStart.y + ny * (w - 0.08) },
-              p2: { x: pEnd.x + nx * (w - 0.08), y: pEnd.y + ny * (w - 0.08) },
-            })
-            windowsRight.push({
-              p1: { x: pStart.x - nx * (w - 0.08), y: pStart.y - ny * (w - 0.08) },
-              p2: { x: pEnd.x - nx * (w - 0.08), y: pEnd.y - ny * (w - 0.08) },
-            })
-          }
-
           visuals.push({
             id: veh.id,
             kind: 'wagon',
             polygon: [c1, c2, c3, c4],
-            windowsLeft,
-            windowsRight,
           })
 
-          vehicleFrames.push({
+          vehicleFrames[i] = {
             front: [c1, c2],
             rear: [c4, c3],
-          })
+          }
         }
       }
     }
   }
 
-  // Build accordions between consecutive vehicles
+  // One gangway per joint, between the facing body ends of the two neighbours
   for (let i = 0; i < vehicleFrames.length - 1; i++) {
     const fA = vehicleFrames[i]
     const fB = vehicleFrames[i + 1]
+    if (!fA || !fB) continue
     const rL = fA.rear[0]
     const rR = fA.rear[1]
     const fL = fB.front[0]
@@ -1017,6 +1048,39 @@ export function hitTestTrainVehicle(
   return null
 }
 
+/** World position of the lead bogie of every train: where each train stands, whatever its rails become. */
+export function trainAnchors(net: Network, trains: TrainSet[]): Map<TrainSetId, Point> {
+  const anchors = new Map<TrainSetId, Point>()
+  for (const train of trains) {
+    const lead = train.vehicles[0]
+    const pos = lead && positionOnSegment(net, lead.front.segId, lead.front.t)
+    if (pos) anchors.set(train.id, pos)
+  }
+  return anchors
+}
+
+/**
+ * Re-lay the trains after the rails under them were reshaped (node moved, curve refitted).
+ * Positions are stored as a fraction of their segment, so a segment that changes length would
+ * otherwise carry, stretch or squeeze the train standing on it. With `anchors` (taken before the
+ * reshape) the lead bogie is put back on the rail at the spot where it stood: the train stays
+ * where it is and only the rail changes. A train that no longer fits is left untouched.
+ */
+export function realignTrains(net: Network, trains: TrainSet[], anchors?: Map<TrainSetId, Point>): void {
+  for (const train of trains) {
+    const lead = train.vehicles[0]
+    if (!lead) continue
+    const previousT = lead.front.t
+    const anchor = anchors?.get(train.id)
+    const seg = net.segments.get(lead.front.segId)
+    if (anchor && seg) {
+      const proj = projectOnSegment(net, seg, anchor)
+      if (proj) lead.front.t = proj.t
+    }
+    if (!advanceTrainSet(net, train, 0)) lead.front.t = previousT
+  }
+}
+
 /** Remove a specific vehicle from a TrainSet and realign remaining vehicles */
 export function removeVehicleFromTrainSet(
   net: Network,
@@ -1062,12 +1126,13 @@ export function steerTrainSetJunction(
 ): boolean {
   if (train.vehicles.length === 0) return false
   const reversing = train.direction === -1
-  const veh = reversing ? train.vehicles[train.vehicles.length - 1] : train.vehicles[0]
+  const vehIdx = reversing ? train.vehicles.length - 1 : 0
+  const veh = train.vehicles[vehIdx]
   // Probe locomotive whose nose is the end of the train that enters the junction first
   const probe: Locomotive = {
     id: veh.id,
-    length: VEHICLE_BOGIE_DISTANCE[veh.kind] + 2 * VEHICLE_OVERHANG[veh.kind],
-    bogieDistance: VEHICLE_BOGIE_DISTANCE[veh.kind],
+    length: vehicleLength(train.vehicles, vehIdx),
+    bogieDistance: bogieDistance(veh),
     front: trainRouteStart(train) ?? veh.front,
     rear: reversing ? veh.front : veh.rear,
     direction: 1,
@@ -1094,10 +1159,14 @@ export function serializeTrains(trains: TrainSet[]): SerializedTrain[] {
   }))
 }
 
-/** Plain copy of a vehicle with only its saved fields; `flipped` is written only when set */
+/**
+ * Plain copy of a vehicle with only its saved fields; `flipped` and `model` are written only when
+ * set (a model that is not in the table is dropped: the vehicle falls back to the default one)
+ */
 function copyVehicle(v: Vehicle): Vehicle {
   const copy: Vehicle = { id: v.id, kind: v.kind, front: { ...v.front }, rear: { ...v.rear } }
   if (v.flipped === true) copy.flipped = true
+  if (isRollingStockModel(v.model)) copy.model = v.model
   return copy
 }
 
@@ -1127,8 +1196,8 @@ function isVehicleOnNetwork(net: Network, veh: unknown): veh is Vehicle {
 
 /**
  * Drop the vehicles standing on segments that no longer exist. A train cut in the middle is split
- * into the rakes that remain, each one stopped; a train left without vehicles disappears.
- * Returns the same array when every train is intact.
+ * into the rakes that remain, each one stopped and laid out again from its lead; a train left
+ * without vehicles disappears. Returns the same array when every train is intact.
  */
 export function pruneTrainsToNetwork(net: Network, trains: TrainSet[]): TrainSet[] {
   if (trains.every((train) => train.vehicles.length > 0 && train.vehicles.every((v) => isVehicleOnNetwork(net, v)))) {
@@ -1155,6 +1224,7 @@ export function pruneTrainsToNetwork(net: Network, trains: TrainSet[]): TrainSet
     rakes.forEach((vehicles, i) => {
       const piece: TrainSet = { ...train, id: i === 0 ? train.id : generateId('train'), vehicles }
       resetTrainControls(piece)
+      advanceTrainSet(net, piece, 0)
       result.push(piece)
     })
   }
@@ -1163,7 +1233,8 @@ export function pruneTrainsToNetwork(net: Network, trains: TrainSet[]): TrainSet
 
 /**
  * Rebuild trains from saved data on a network: every train comes back stopped with its controls at rest,
- * and anything malformed or standing on a missing segment is dropped.
+ * and anything malformed or standing on a missing segment is dropped. Each rake is laid out again
+ * from its lead, so a save made with another vehicle geometry is realigned on the current one.
  */
 export function deserializeTrains(net: Network, data: unknown): TrainSet[] {
   if (!Array.isArray(data)) return []
@@ -1177,5 +1248,8 @@ export function deserializeTrains(net: Network, data: unknown): TrainSet[] {
     if (raw.direction === -1) train.direction = -1
     trains.push(train)
   }
-  return pruneTrainsToNetwork(net, trains)
+  const loaded = pruneTrainsToNetwork(net, trains)
+  // All-or-nothing: a rake that no longer fits behind its lead keeps its stored positions
+  for (const train of loaded) advanceTrainSet(net, train, 0)
+  return loaded
 }

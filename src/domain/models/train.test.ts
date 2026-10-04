@@ -35,9 +35,13 @@ import {
   reverseTrainSet,
   COUPLING_GAP,
   type TrainSet,
+  type Vehicle,
+  type VehicleKind,
 } from './train'
-import { walkForward, snapToNearestTrack, positionOnSegment, findJunctionAhead } from './locomotive'
-import { removeSegment } from './network'
+import { walkForward, snapToNearestTrack, positionOnSegment, tangentOnSegment, findJunctionAhead } from './locomotive'
+import type { TrackPosition } from './locomotive'
+import { removeSegment, addArcCurve } from './network'
+import { ROLLING_STOCK, type RollingStockModel } from './rollingStock'
 import { addJunction, placeTurnout, autoDetectJunctions } from './junction'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
@@ -334,8 +338,9 @@ describe('driving controls', () => {
 
   it('decoupled rear half is left with its controls at rest', () => {
     const { net, ts } = makeTrain()
-    const wagon = createTrainSet(net, { x: 900, y: 0 }, 'wagon')!
-    const coupled = { ...ts, vehicles: [...ts.vehicles, ...wagon.vehicles] }
+    // Two trainsets coupled together: only a power car to power car joint can be split
+    const second = createTrainSet(net, { x: 900, y: 0 }, 'loco')!
+    const coupled = { ...ts, vehicles: [...ts.vehicles, ...second.vehicles] }
     setReverser(coupled, 'forward')
     setNotch(coupled, 3)
     coupled.currentSpeed = 12
@@ -393,17 +398,26 @@ describe('decoupleAt', () => {
     void na; void nb
 
     const ts = createTrainSet(net2, { x: 250, y: 0 }, 'loco')!
-    const wagon = createVehicle(net2, seg!.id, 0.3, 'wagon')!
-    ts.vehicles.push(wagon)
+    const second = createVehicle(net2, seg!.id, 0.3, 'loco')!
+    ts.vehicles.push(second)
 
     const result = decoupleAt(ts, 0)
     expect(result).not.toBeNull()
     const [front, rear] = result!
     expect(front.vehicles).toHaveLength(1)
     expect(rear.vehicles).toHaveLength(1)
-    expect(front.vehicles[0].kind).toBe('loco')
-    expect(rear.vehicles[0].kind).toBe('wagon')
+    expect(front.vehicles[0].id).toBe(ts.vehicles[0].id)
+    expect(rear.vehicles[0].id).toBe(second.id)
     expect(rear.currentSpeed).toBe(0)
+  })
+
+  it('refuses to split a trainset: power car to trailer and trailer to trailer joints', () => {
+    const { net, segId } = makeStraightNetwork(500)
+    const ts = createTrainSet(net, { x: 250, y: 0 }, 'loco')!
+    ts.vehicles.push(createVehicle(net, segId, 0.3, 'wagon')!, createVehicle(net, segId, 0.2, 'wagon')!)
+
+    expect(decoupleAt(ts, 0)).toBeNull()
+    expect(decoupleAt(ts, 1)).toBeNull()
   })
 
   it('returns null for invalid index', () => {
@@ -427,23 +441,28 @@ describe('getAllCouplerPoints', () => {
     expect(ends.has('rear')).toBe(true)
   })
 
-  it('returns internal coupled point for two-vehicle train', () => {
-    resetIdCounter()
-    const net = createNetwork()
-    const na = addNode(net, { x: 0, y: 0 })
-    const nb = addNode(net, { x: 500, y: 0 })
-    const seg = addSegment(net, na.id, nb.id)
-    void na; void nb
-
+  it('returns an internal coupled point between two power cars', () => {
+    const { net, segId } = makeStraightNetwork(500)
     const ts = createTrainSet(net, { x: 250, y: 0 }, 'loco')!
-    const wagon = createVehicle(net, seg!.id, 0.3, 'wagon')!
-    ts.vehicles.push(wagon)
+    ts.vehicles.push(createVehicle(net, segId, 0.3, 'loco')!)
 
     const pts = getAllCouplerPoints(net, [ts])
-    // 2 vehicles → 1 free front + 1 internal (coupled) + 1 free rear = 3 points
+    // 2 power cars → 1 free front + 1 internal (coupled) + 1 free rear = 3 points
     expect(pts).toHaveLength(3)
     const coupled = pts.filter(p => p.coupled)
     expect(coupled).toHaveLength(1)
+    expect(coupled[0].vehicleIndex).toBe(0)
+  })
+
+  it('offers no internal point inside a trainset', () => {
+    const { net, segId } = makeStraightNetwork(500)
+    const ts = createTrainSet(net, { x: 250, y: 0 }, 'loco')!
+    ts.vehicles.push(createVehicle(net, segId, 0.3, 'wagon')!, createVehicle(net, segId, 0.2, 'wagon')!)
+
+    const pts = getAllCouplerPoints(net, [ts])
+    // Power car – trailer and trailer – trailer joints cannot be uncoupled: only the two free ends
+    expect(pts).toHaveLength(2)
+    expect(pts.every(p => !p.coupled)).toBe(true)
   })
 })
 
@@ -794,7 +813,7 @@ describe('advanceTrainSet is all-or-nothing', () => {
     const lead = createVehicle(net, segId, 0.05, 'loco')! // 30 m from the buffer: no room for a wagon behind
     const train = makeTrainSet('t', [lead, { id: 'w', kind: 'wagon', front: { ...lead.rear }, rear: { ...lead.rear } }])
     const before = JSON.stringify(train.vehicles)
-    // 30 m of track behind the nose cannot hold 14 + 6.88 + 11.92 m of bogie spacing
+    // 30 m of track behind the lead bogie cannot hold 14 + 6.29 + 18.70 m of bogie spacing
     expect(advanceTrainSet(net, train, 0.5)).toBe(false)
     expect(JSON.stringify(train.vehicles)).toBe(before)
   })
@@ -851,7 +870,10 @@ describe('collision between trains', () => {
   it('lets a train in contact drive away, and couple with the train it touches', () => {
     const { net, segId } = makeStraightNetwork(1000)
     const a = consist(net, segId, 0.3, 1, 1, 'A')
-    const b = consist(net, segId, 0.6, 1, 1, 'B')
+    // A lone power car ahead: its flat back and A's nose form the joint of two coupled trainsets,
+    // whose spacing is the distance a train stops at (a trailer end would be pulled in, see
+    // 'articulated trainsets')
+    const b = consist(net, segId, 0.6, 0, 1, 'B')
     for (let i = 0; i < 1000; i++) advanceTrainSet(net, a, 0.5, [a, b])
     expect(advanceTrainSet(net, a, 0.5, [a, b])).toBe(false)
 
@@ -860,7 +882,7 @@ describe('collision between trains', () => {
     const before = [...bogiePoints(net, b), ...bogiePoints(net, a)]
     const coupled = handleCouplingClick(net, [a, b], contact)
     expect(coupled).toHaveLength(1)
-    expect(coupled[0].vehicles).toHaveLength(4)
+    expect(coupled[0].vehicles).toHaveLength(3)
     bogiePoints(net, coupled[0]).forEach((p, i) => expect(p.x).toBeCloseTo(before[i].x, 6))
 
     // Uncoupled, A backs away freely
@@ -1118,7 +1140,10 @@ describe('turned-around vehicles', () => {
     const merged = result[0]
     expect(merged.vehicles.map((v) => v.id)).toEqual([a.vehicles[0].id, 'Aw0', 'Bw0', b.vehicles[0].id])
     expect(merged.vehicles.map((v) => v.flipped === true)).toEqual([false, false, true, true])
-    sortedX(net, [merged]).forEach((x, i) => expect(x).toBeCloseTo(before[i], 3))
+    // The two trailers now rest on one bogie: A stays put, B (the four leftmost bogies) closes the
+    // gap that separated the two tails
+    expect(merged.vehicles[2].front).toEqual(merged.vehicles[1].rear)
+    sortedX(net, [merged]).forEach((x, i) => expect(x).toBeCloseTo(before[i] + (i < 4 ? COUPLING_GAP : 0), 3))
   })
 
   it('coupling mode joins two trains standing nose to nose, the clicked one keeping its orientation', () => {
@@ -1148,12 +1173,17 @@ describe('turned-around vehicles', () => {
 
   it('an uncoupled tail loco becomes an ordinary train, nose first, where it stood', () => {
     const { net, segId } = makeStraightNetwork(1000)
-    const train = pushPull(net, segId)
+    // The tail loco of a trainset cannot be uncoupled from its trailers
+    expect(decoupleAt(pushPull(net, segId), 1)).toBeNull()
+
+    // Two power cars back to back: the second one is a trainset of its own, coupled turned around
+    const train = consist(net, segId, 0.5, 0)
+    train.vehicles.push(findCouplerSnap(net, [train], rearEnd(net, train), 'loco', 5, true)!.snappedVehicle)
     const tailEnd = rearEnd(net, train)
 
-    const [front, rear] = decoupleAt(train, 1)!
+    const [front, rear] = decoupleAt(train, 0)!
 
-    expect(front.vehicles).toHaveLength(2)
+    expect(front.vehicles).toHaveLength(1)
     expect(rear.vehicles).toHaveLength(1)
     expect(rear.vehicles[0].flipped).toBeUndefined()
     expect(frontEnd(net, rear).x).toBeCloseTo(tailEnd.x, 6)
@@ -1181,5 +1211,451 @@ describe('turned-around vehicles', () => {
 
     const [loaded] = deserializeTrains(net, saved)
     expect(loaded.vehicles.map((v) => v.flipped === true)).toEqual([false, false, true])
+  })
+})
+
+// ─── Articulated trainsets (shared bogies between trailers) ───────────────────
+
+describe('articulated trainsets', () => {
+  /**
+   * A rake built the way the editor builds it: a lead vehicle, then each next one snapped behind
+   * the last. Power cars after the lead are coupled turned around (nose towards the tail).
+   */
+  function buildRake(net: Network, lead: Vehicle, kinds: VehicleKind[], model?: RollingStockModel, id = 'R'): TrainSet {
+    const train = makeTrainSet(id, [lead])
+    for (const kind of kinds) {
+      const snap = findCouplerSnap(net, [train], rearEnd(net, train), kind, 5, kind === 'loco', model)!
+      expect(snap.end).toBe('rear')
+      train.vehicles.push(snap.snappedVehicle)
+    }
+    // Laying the rake out again from its lead moves nothing: the snap used the same rule
+    const built = JSON.stringify(train.vehicles)
+    expect(advanceTrainSet(net, train, 0)).toBe(true)
+    expectSamePivots(net, train, JSON.parse(built))
+    return train
+  }
+
+  /** Power car + `trailers` trailers + power car, heading +x with its lead bogie at `t` */
+  function trainset(net: Network, segId: string, t: number, trailers: number, model?: RollingStockModel, direction: 1 | -1 = 1, id = 'R'): TrainSet {
+    const kinds: VehicleKind[] = [...Array<VehicleKind>(trailers).fill('wagon'), 'loco']
+    return buildRake(net, createVehicle(net, segId, t, 'loco', direction, model)!, kinds, model, id)
+  }
+
+  const pivot = (net: Network, pos: TrackPosition) => positionOnSegment(net, pos.segId, pos.t)!
+
+  function expectSamePivots(net: Network, train: TrainSet, expected: Vehicle[]) {
+    train.vehicles.forEach((veh, i) => {
+      for (const end of ['front', 'rear'] as const) {
+        const p = pivot(net, veh[end])
+        const q = pivot(net, expected[i][end])
+        expect(Math.hypot(p.x - q.x, p.y - q.y)).toBeLessThan(1e-4)
+      }
+    })
+  }
+
+  /** Every articulated joint rests on a single bogie: the same track position on both vehicles */
+  function expectSharedBogies(train: TrainSet): number {
+    let shared = 0
+    for (let i = 1; i < train.vehicles.length; i++) {
+      const prev = train.vehicles[i - 1]
+      const next = train.vehicles[i]
+      if (prev.kind !== 'wagon' || next.kind !== 'wagon') continue
+      expect(next.front).toEqual(prev.rear)
+      shared++
+    }
+    return shared
+  }
+
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
+  const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+
+  describe('trainset length and bogies', () => {
+    it('a Duplex M + 8 R + M is 200.19 m over both noses and stands on 13 bogies', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const train = trainset(net, segId, 0.6, 8)
+      expect(train.vehicles.map((v) => v.kind)).toEqual(['loco', ...Array(8).fill('wagon'), 'loco'])
+      expect(train.vehicles.every((v) => v.model === undefined)).toBe(true)
+
+      expect(frontEnd(net, train).x - rearEnd(net, train).x).toBeCloseTo(200.19, 2)
+
+      const visuals = getTrainSetVisuals(net, train)!
+      const xs = visuals.vehicles.flatMap((v) => v.polygon.map((p) => p.x))
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(200.19, 2)
+      expect(visuals.vehicles).toHaveLength(10)
+      expect(visuals.accordions).toHaveLength(9)
+      expect(visuals.bogies).toHaveLength(13)
+      // No bogie drawn twice
+      const centres = visuals.bogies.map((b) => b.center.x).sort((a, b) => a - b)
+      centres.slice(1).forEach((x, i) => expect(x - centres[i]).toBeGreaterThan(1))
+    })
+
+    it('a TGV M with 9 trailers is 202 m', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const train = trainset(net, segId, 0.6, 9, 'tgvm')
+      expect(train.vehicles.every((v) => v.model === 'tgvm')).toBe(true)
+
+      expect(frontEnd(net, train).x - rearEnd(net, train).x).toBeCloseTo(202, 2)
+      const visuals = getTrainSetVisuals(net, train)!
+      const xs = visuals.vehicles.flatMap((v) => v.polygon.map((p) => p.x))
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(202, 2)
+      expect(visuals.bogies).toHaveLength(14)
+    })
+
+    it('bodies take their width from the rolling stock table', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const visuals = getTrainSetVisuals(net, trainset(net, segId, 0.6, 2))!
+      const width = (polygon: { y: number }[]) => Math.max(...polygon.map((p) => p.y)) - Math.min(...polygon.map((p) => p.y))
+      expect(width(visuals.vehicles[0].polygon)).toBeCloseTo(ROLLING_STOCK.duplex.powerCar.width, 6)
+      expect(width(visuals.vehicles[1].polygon)).toBeCloseTo(ROLLING_STOCK.duplex.trailer.width, 6)
+    })
+  })
+
+  describe('shared bogie', () => {
+    it('two neighbouring trailers keep the same bogie when placed, advanced and reversed', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const train = trainset(net, segId, 0.5, 8)
+      expect(expectSharedBogies(train)).toBe(7)
+
+      for (let i = 0; i < 40; i++) expect(advanceTrainSet(net, train, 0.7)).toBe(true)
+      expect(expectSharedBogies(train)).toBe(7)
+      expect(frontEnd(net, train).x - rearEnd(net, train).x).toBeCloseTo(200.19, 2)
+
+      train.direction = -1
+      for (let i = 0; i < 40; i++) expect(advanceTrainSet(net, train, 0.7)).toBe(true)
+      expect(expectSharedBogies(train)).toBe(7)
+
+      // Seen from its other end the rake is still articulated, and laying it out again moves nothing
+      const reversed = reverseTrainSet(train)
+      expect(expectSharedBogies(reversed)).toBe(7)
+      const before = JSON.parse(JSON.stringify(reversed.vehicles))
+      expect(advanceTrainSet(net, reversed, 0)).toBe(true)
+      expectSamePivots(net, reversed, before)
+      expect(expectSharedBogies(reversed)).toBe(7)
+    })
+
+    it('stays shared through the diverging branch of a turnout, with the pivots on the rails', () => {
+      resetIdCounter()
+      const net = createNetwork()
+      const stem0 = addNode(net, { x: -400, y: 0 })
+      const apex = addNode(net, { x: 0, y: 0 })
+      const stem = addSegment(net, stem0.id, apex.id)!
+      const t = placeTurnout(net, { startPos: apex.pos, direction: { x: 1, y: 0 }, frogNumber: 6, hand: 'left', stemNodeId: apex.id })
+      autoDetectJunctions(net)
+      const junction = [...net.junctions.values()][0]
+      // Extend the diverging branch along its end tangent
+      const via = net.segments.get(junction.divergingSegmentId)!.via!
+      const end = t.divergingNode.pos
+      const len = Math.hypot(end.x - via.x, end.y - via.y)
+      const far = addNode(net, { x: end.x + ((end.x - via.x) / len) * 400, y: end.y + ((end.y - via.y) / len) * 400 })
+      const divergingExt = addSegment(net, t.divergingNode.id, far.id)!
+
+      const train = buildRake(net, createVehicle(net, stem.id, 0.6, 'loco')!, ['wagon', 'wagon', 'wagon', 'wagon', 'loco'])
+      junction.activeBranch = 'diverging'
+
+      const pitch = ROLLING_STOCK.duplex.trailer.pitch
+      let straddled = 0
+      for (let i = 0; i < 1000; i++) {
+        expect(advanceTrainSet(net, train, 0.5)).toBe(true)
+        expect(expectSharedBogies(train)).toBe(3)
+        const wagons = train.vehicles.filter((v) => v.kind === 'wagon')
+        if (wagons.some((v) => v.front.segId !== v.rear.segId)) straddled++
+        // A trailer never stretches: its two pivots are at most one pitch apart (the chord of a curve)
+        for (const v of wagons) expect(dist(pivot(net, v.front), pivot(net, v.rear))).toBeLessThanOrEqual(pitch + 1e-4)
+      }
+      expect(straddled).toBeGreaterThan(0)
+      expect(train.vehicles.every((v) => v.front.segId === divergingExt.id && v.rear.segId === divergingExt.id)).toBe(true)
+    })
+
+    it('on a 150 m curve the two body ends of an articulated joint are centred on the shared bogie', () => {
+      resetIdCounter()
+      const net = createNetwork()
+      const R = 150
+      const a = addNode(net, { x: -300, y: 0 })
+      const b = addNode(net, { x: 0, y: 0 })
+      const c = addNode(net, { x: R, y: R })
+      const d = addNode(net, { x: R, y: R + 300 })
+      addSegment(net, a.id, b.id)
+      // Quarter circle of radius 150 m, laid as arc pieces of bounded deflection
+      const arc = addArcCurve(net, b.id, c.id, { x: R, y: 0 })!
+      expect(arc.segments.length).toBeGreaterThan(1)
+      const exit = addSegment(net, c.id, d.id)!
+
+      // Lead bogie 10 m past the curve: the trailers behind it all stand in the arc
+      const lead = createVehicle(net, exit.id, 10 / 300, 'loco')!
+      const train = buildRake(net, lead, ['wagon', 'wagon', 'wagon', 'wagon'])
+      const arcIds = new Set(arc.segments.map((s) => s.id))
+      const visuals = getTrainSetVisuals(net, train)!
+
+      let joints = 0
+      for (let i = 1; i < train.vehicles.length - 1; i++) {
+        const prev = train.vehicles[i]
+        const next = train.vehicles[i + 1]
+        expect(arcIds.has(prev.rear.segId)).toBe(true)
+        expect(next.front).toEqual(prev.rear)
+
+        const bogie = pivot(net, prev.rear)
+        // Trailer polygon: [frontLeft, frontRight, rearRight, rearLeft]
+        const prevRearEnd = mid(visuals.vehicles[i].polygon[2], visuals.vehicles[i].polygon[3])
+        const nextFrontEnd = mid(visuals.vehicles[i + 1].polygon[0], visuals.vehicles[i + 1].polygon[1])
+
+        // Both ends sit at the same small distance from the pivot, on either side of it …
+        expect(dist(prevRearEnd, bogie)).toBeCloseTo(0.35, 6)
+        expect(dist(nextFrontEnd, bogie)).toBeCloseTo(0.35, 6)
+        // … and face each other along the track: no lateral offset between them
+        const tan = tangentOnSegment(net, prev.rear.segId, prev.rear.t)!
+        const tanLen = Math.hypot(tan.x, tan.y)
+        const lateral = Math.abs((prevRearEnd.x - nextFrontEnd.x) * tan.y - (prevRearEnd.y - nextFrontEnd.y) * tan.x) / tanLen
+        expect(lateral).toBeLessThan(0.005)
+        // The two bodies are really at an angle there (about 18.7 / 150 rad)
+        const heading = (v: Vehicle) => {
+          const f = pivot(net, v.front)
+          const r = pivot(net, v.rear)
+          return Math.atan2(f.y - r.y, f.x - r.x)
+        }
+        expect(Math.abs(heading(prev) - heading(next))).toBeGreaterThan(0.1)
+        // The gangway joins those two ends
+        const acc = visuals.accordions[i]
+        expect(dist(mid(acc.frontFrame[0], acc.frontFrame[1]), prevRearEnd)).toBeLessThan(1e-9)
+        expect(dist(mid(acc.rearFrame[0], acc.rearFrame[1]), nextFrontEnd)).toBeLessThan(1e-9)
+        joints++
+      }
+      expect(joints).toBe(3)
+    })
+  })
+
+  describe('two trainsets coupled nose to nose', () => {
+    function twoTrainsets() {
+      const { net, segId } = makeStraightNetwork(1000)
+      const a = trainset(net, segId, 0.45, 8, undefined, 1, 'A') // heading +x, nose at about x = 455
+      // B faces A: slide it until the two noses are a coupling gap apart
+      const probe = trainset(net, segId, 0.7, 8, undefined, -1, 'P')
+      const t = 0.7 + (frontEnd(net, a).x + COUPLING_GAP - frontEnd(net, probe).x) / 1000
+      const b = trainset(net, segId, t, 8, undefined, -1, 'B')
+      return { net, a, b }
+    }
+
+    it('leaves a coupling gap between the noses and moves no vehicle', () => {
+      const { net, a, b } = twoTrainsets()
+      const before = [...bogiePoints(net, a), ...bogiePoints(net, b)].map((p) => p.x).sort((x, y) => x - y)
+
+      const result = handleCouplingClick(net, [a, b], frontEnd(net, a))
+      expect(result).toHaveLength(1)
+      const merged = result[0]
+      expect(merged.vehicles).toHaveLength(20)
+
+      const after = bogiePoints(net, merged).map((p) => p.x).sort((x, y) => x - y)
+      after.forEach((x, i) => expect(x).toBeCloseTo(before[i], 4))
+      expect(Math.abs(frontEnd(net, merged).x - rearEnd(net, merged).x)).toBeCloseTo(2 * 200.19 + COUPLING_GAP, 2)
+
+      // The noses of the two middle power cars, in the visuals
+      const visuals = getTrainSetVisuals(net, merged)!
+      const noseA = mid(visuals.vehicles[9].polygon[0], visuals.vehicles[9].polygon[9])
+      const noseB = mid(visuals.vehicles[10].polygon[0], visuals.vehicles[10].polygon[9])
+      expect(dist(noseA, noseB)).toBeCloseTo(COUPLING_GAP, 4)
+      expect(visuals.bogies).toHaveLength(26)
+    })
+
+    it('can only be uncoupled between the two trainsets, which gives the two rakes back', () => {
+      const { net, a, b } = twoTrainsets()
+      const idsA = a.vehicles.map((v) => v.id)
+      const idsB = b.vehicles.map((v) => v.id)
+      const [merged] = handleCouplingClick(net, [a, b], frontEnd(net, a))
+
+      const joints = getAllCouplerPoints(net, [merged]).filter((p) => p.coupled)
+      expect(joints).toHaveLength(1)
+      expect(joints[0].vehicleIndex).toBe(9)
+      for (let i = 0; i < merged.vehicles.length - 1; i++) {
+        expect(decoupleAt(merged, i) === null).toBe(i !== 9)
+      }
+
+      // A click on a joint inside a trainset does nothing
+      const inside = pivot(net, merged.vehicles[4].rear)
+      const trains = [merged]
+      expect(handleCouplingClick(net, trains, inside)).toBe(trains)
+
+      const split = handleCouplingClick(net, trains, joints[0].pos)
+      expect(split).toHaveLength(2)
+      // The clicked train (A) kept its orientation, so B came first in the merged rake
+      expect(split.map((t) => t.vehicles.map((v) => v.id).sort())).toEqual([[...idsB].sort(), [...idsA].sort()])
+      // Each half is a trainset again, its lead power car nose first
+      for (const half of split) {
+        expect(half.vehicles[0].kind).toBe('loco')
+        expect(half.vehicles[0].flipped).toBeUndefined()
+        expect(Math.abs(frontEnd(net, half).x - rearEnd(net, half).x)).toBeCloseTo(200.19, 2)
+        expect(expectSharedBogies(half)).toBe(7)
+      }
+    })
+  })
+
+  describe('construction', () => {
+    const { pitch, endExtension } = ROLLING_STOCK.duplex.trailer
+    const power = ROLLING_STOCK.duplex.powerCar
+
+    it('a trailer alone is a valid rake', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const train = makeTrainSet('R', [createVehicle(net, segId, 0.5, 'wagon')!])
+      expect(advanceTrainSet(net, train, 5)).toBe(true)
+      expect(bogiePoints(net, train).map((p) => p.x)).toEqual([505, expect.closeTo(505 - pitch, 6)])
+      // No overhang at a free end: the rake is one pitch long
+      expect(frontEnd(net, train).x - rearEnd(net, train).x).toBeCloseTo(pitch, 6)
+      const visuals = getTrainSetVisuals(net, train)!
+      expect(visuals.bogies).toHaveLength(2)
+      expect(visuals.accordions).toHaveLength(0)
+    })
+
+    it('a trailer added behind a trailer lands on its rear bogie, at either end of the rake', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const first = createVehicle(net, segId, 0.5, 'wagon')!
+      const train = makeTrainSet('R', [first])
+
+      const behind = findCouplerSnap(net, [train], rearEnd(net, train), 'wagon')!
+      expect(behind.end).toBe('rear')
+      expect(behind.snappedVehicle.front).toEqual(first.rear)
+      expect(pivot(net, behind.snappedVehicle.rear).x).toBeCloseTo(500 - 2 * pitch, 6)
+
+      const ahead = findCouplerSnap(net, [train], frontEnd(net, train), 'wagon')!
+      expect(ahead.end).toBe('front')
+      expect(ahead.snappedVehicle.rear).toEqual(first.front)
+      expect(pivot(net, ahead.snappedVehicle.front).x).toBeCloseTo(500 + pitch, 6)
+
+      train.vehicles.push(behind.snappedVehicle)
+      train.vehicles.unshift(ahead.snappedVehicle)
+      const built = JSON.parse(JSON.stringify(train.vehicles))
+      expect(advanceTrainSet(net, train, 0)).toBe(true)
+      expectSamePivots(net, train, built)
+      expect(getTrainSetVisuals(net, train)!.bogies).toHaveLength(4)
+    })
+
+    it('a trailer added behind a power car stands on its own bogies', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const loco = createVehicle(net, segId, 0.5, 'loco')!
+      const train = makeTrainSet('R', [loco])
+
+      const snap = findCouplerSnap(net, [train], rearEnd(net, train), 'wagon')!
+      const locoRear = pivot(net, loco.rear).x
+      // Power car rear overhang + end extension of the trailer, no extra gap
+      expect(locoRear - pivot(net, snap.snappedVehicle.front).x).toBeCloseTo(power.rearOverhang + endExtension, 6)
+      expect(pivot(net, snap.snappedVehicle.front).x - pivot(net, snap.snappedVehicle.rear).x).toBeCloseTo(pitch, 6)
+
+      train.vehicles.push(snap.snappedVehicle)
+      const visuals = getTrainSetVisuals(net, train)!
+      expect(visuals.bogies).toHaveLength(4)
+      // The trailer body reaches the back of the power car on that side and stops short of its free end
+      const trailerXs = visuals.vehicles[1].polygon.map((p) => p.x)
+      expect(Math.max(...trailerXs)).toBeCloseTo(locoRear - power.rearOverhang, 6)
+      expect(Math.min(...trailerXs)).toBeCloseTo(pivot(net, snap.snappedVehicle.rear).x + 0.35, 6)
+    })
+
+    it('removing a middle trailer closes the rake on a shared bogie', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const train = trainset(net, segId, 0.5, 4)
+      const nose = frontEnd(net, train).x
+      const removed = train.vehicles[2].id
+
+      const closed = removeVehicleFromTrainSet(net, train, removed)!
+
+      expect(closed.vehicles.map((v) => v.kind)).toEqual(['loco', 'wagon', 'wagon', 'wagon', 'loco'])
+      expect(closed.vehicles.some((v) => v.id === removed)).toBe(false)
+      expect(expectSharedBogies(closed)).toBe(2)
+      // The head has not moved and the rake is one trailer shorter
+      expect(frontEnd(net, closed).x).toBeCloseTo(nose, 6)
+      expect(frontEnd(net, closed).x - rearEnd(net, closed).x).toBeCloseTo(2 * power.length + 3 * pitch + 2 * endExtension, 4)
+      expect(getTrainSetVisuals(net, closed)!.bogies).toHaveLength(8)
+    })
+
+    it('removing the trailer between a power car and a trailer gives the next one its own bogie', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const train = trainset(net, segId, 0.5, 3)
+
+      const closed = removeVehicleFromTrainSet(net, train, train.vehicles[1].id)!
+
+      const [loco, trailer] = closed.vehicles
+      expect(pivot(net, loco.rear).x - pivot(net, trailer.front).x).toBeCloseTo(power.rearOverhang + endExtension, 6)
+      expect(expectSharedBogies(closed)).toBe(1)
+    })
+
+    it('cutting the track under a rake leaves articulated pieces', () => {
+      resetIdCounter()
+      const net = createNetwork()
+      const nodes = [0, 400, 420, 1000].map((x) => addNode(net, { x, y: 0 }))
+      const segs = [0, 1, 2].map((i) => addSegment(net, nodes[i].id, nodes[i + 1].id)!)
+      const train = trainset(net, segs[2].id, 0.1, 8) // nose near x = 483, tail near x = 283
+      removeSegment(net, segs[1].id)
+
+      const pieces = pruneTrainsToNetwork(net, [train])
+
+      expect(pieces.length).toBe(2)
+      expect(pieces.reduce((n, p) => n + p.vehicles.length, 0)).toBeLessThan(10)
+      for (const piece of pieces) {
+        expectSharedBogies(piece)
+        const before = JSON.parse(JSON.stringify(piece.vehicles))
+        expect(advanceTrainSet(net, piece, 0)).toBe(true)
+        expectSamePivots(net, piece, before)
+      }
+    })
+  })
+
+  describe('persistence', () => {
+    it('saves the model only when it is set and restores it', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      const duplex = trainset(net, segId, 0.3, 1, undefined, 1, 'D')
+      const tgvm = trainset(net, segId, 0.8, 1, 'tgvm', 1, 'M')
+
+      const saved = JSON.parse(JSON.stringify(serializeTrains([duplex, tgvm])))
+      expect(saved[0].vehicles.every((v: object) => !('model' in v))).toBe(true)
+      expect(saved[1].vehicles.every((v: { model?: string }) => v.model === 'tgvm')).toBe(true)
+
+      const [loadedDuplex, loadedTgvm] = deserializeTrains(net, saved)
+      expect(loadedDuplex.vehicles).toEqual(duplex.vehicles)
+      expect(loadedTgvm.vehicles).toEqual(tgvm.vehicles)
+
+      // A model that is not in the table falls back to the default one instead of breaking the load
+      saved[1].vehicles[0].model = 'tgv_2n3'
+      const [, unknown] = deserializeTrains(net, saved)
+      expect(unknown.vehicles[0].model).toBeUndefined()
+      expect(getTrainSetVisuals(net, unknown)).not.toBeNull()
+    })
+
+    it('realigns a save laid out with the old geometry (two own bogies per wagon)', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      // Old layout: wagons 11.92 m between bogies, 3.04 m overhangs and a 0.80 m gap at every joint
+      const at = (x: number): TrackPosition => ({ segId, t: x / 1000, forward: true })
+      let x = 600
+      const old = ['loco', 'wagon', 'wagon', 'loco'].map((kind, i) => {
+        const pivots = kind === 'loco' ? 14 : 11.92
+        const veh = { id: `old_${i}`, kind, front: at(x), rear: at(x - pivots), ...(i === 3 ? { flipped: true } : {}) }
+        x -= pivots + 3.04 + 0.8 + 3.04
+        return veh
+      })
+
+      const [loaded] = deserializeTrains(net, [{ id: 'train_old', direction: 1, vehicles: old }])
+
+      expect(loaded.vehicles.map((v) => v.id)).toEqual(['old_0', 'old_1', 'old_2', 'old_3'])
+      // The lead bogie stays where it was saved; everything behind follows the articulated layout
+      expect(pivot(net, loaded.vehicles[0].front).x).toBeCloseTo(600, 6)
+      expect(loaded.vehicles[2].front).toEqual(loaded.vehicles[1].rear)
+      for (const trailer of loaded.vehicles.slice(1, 3)) {
+        expect(pivot(net, trailer.front).x - pivot(net, trailer.rear).x).toBeCloseTo(ROLLING_STOCK.duplex.trailer.pitch, 6)
+      }
+      const spec = ROLLING_STOCK.duplex
+      expect(frontEnd(net, loaded).x - rearEnd(net, loaded).x).toBeCloseTo(
+        2 * spec.powerCar.length + 2 * spec.trailer.pitch + 2 * spec.trailer.endExtension,
+        4,
+      )
+    })
+
+    it('keeps the stored positions of a rake that cannot be laid out again', () => {
+      const { net, segId } = makeStraightNetwork(1000)
+      // Saved 5 m from the buffer stop: 38 m behind the lead bogie cannot hold 14 + 6.29 + 18.70 m
+      const at = (x: number): TrackPosition => ({ segId, t: x / 1000, forward: true })
+      const vehicles = [
+        { id: 'l', kind: 'loco', front: at(38), rear: at(24) },
+        { id: 'w', kind: 'wagon', front: at(17.12), rear: at(5.2) },
+      ]
+
+      const [loaded] = deserializeTrains(net, [{ id: 'train_tight', direction: 1, vehicles }])
+
+      expect(loaded.vehicles).toEqual(vehicles)
+    })
   })
 })
