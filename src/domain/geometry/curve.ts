@@ -206,3 +206,116 @@ export function computeParallelCurve(
     end: newEnd,
   }
 }
+
+/** Largest deflection a single quadratic Bezier piece is allowed to cover (degrees). */
+export const MAX_ARC_PIECE_DEG = 15
+
+/** Relative difference between the two tangent lengths above which a curve is not treated as a circular arc. */
+const ARC_SYMMETRY_TOLERANCE = 1e-4
+
+export interface CurvePiece {
+  start: Point
+  via: Point
+  end: Point
+}
+
+/** Deflection (total turn, radians, unsigned) between the start and end tangents of a quadratic Bezier. */
+export function curveDeflection(start: Point, via: Point, end: Point): number {
+  const ax = via.x - start.x
+  const ay = via.y - start.y
+  const bx = end.x - via.x
+  const by = end.y - via.y
+  return Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by))
+}
+
+/**
+ * Cut a curve defined by its tangent-intersection control point into pieces of at most
+ * `maxPieceDeg` of deflection each.
+ *
+ * A single quadratic Bezier only follows a circle for small angles (apex radius = R·cos(θ/2)),
+ * so a symmetric curve (|start−via| = |end−via|) is rebuilt as the true circular arc: the joints
+ * lie exactly on the circle and every piece gets its own tangent-intersection control point.
+ * A non-symmetric curve is not an arc; it is subdivided uniformly (De Casteljau) so the drawn
+ * shape is preserved.
+ */
+export function splitCurveIntoArcPieces(
+  start: Point,
+  via: Point,
+  end: Point,
+  maxPieceDeg = MAX_ARC_PIECE_DEG,
+): CurvePiece[] {
+  const single: CurvePiece[] = [{ start: { ...start }, via: { ...via }, end: { ...end } }]
+  const a = Math.hypot(via.x - start.x, via.y - start.y)
+  const b = Math.hypot(end.x - via.x, end.y - via.y)
+  if (a < 1e-12 || b < 1e-12) return single
+
+  const theta = curveDeflection(start, via, end)
+  const n = Math.ceil((theta * 180) / Math.PI / maxPieceDeg - 1e-9)
+  if (n <= 1) return single
+
+  const pieces: CurvePiece[] = []
+
+  if (Math.abs(a - b) > ARC_SYMMETRY_TOLERANCE * Math.max(a, b)) {
+    // Not an arc: uniform parametric subdivision, control point of [t0, t1] is the blossom b(t0, t1)
+    let prev = { ...start }
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n
+      const t1 = (i + 1) / n
+      const w0 = (1 - t0) * (1 - t1)
+      const w1 = t0 * (1 - t1) + t1 * (1 - t0)
+      const w2 = t0 * t1
+      const pieceEnd = i === n - 1 ? { ...end } : bezierPoint(t1, start, via, end)
+      pieces.push({
+        start: prev,
+        via: {
+          x: w0 * start.x + w1 * via.x + w2 * end.x,
+          y: w0 * start.y + w1 * via.y + w2 * end.y,
+        },
+        end: pieceEnd,
+      })
+      prev = { ...pieceEnd }
+    }
+    return pieces
+  }
+
+  // Circular arc tangent to both control legs: R = a / tan(θ/2)
+  const tx = (via.x - start.x) / a
+  const ty = (via.y - start.y) / a
+  const sign = tx * (end.y - via.y) - ty * (end.x - via.x) >= 0 ? 1 : -1
+  const radius = a / Math.tan(theta / 2)
+  const cx = start.x - ty * sign * radius
+  const cy = start.y + tx * sign * radius
+  const step = (sign * theta) / n
+  const legLen = radius * Math.tan(theta / (2 * n))
+
+  let prev = { ...start }
+  for (let i = 0; i < n; i++) {
+    const cos0 = Math.cos(step * i)
+    const sin0 = Math.sin(step * i)
+    const cos1 = Math.cos(step * (i + 1))
+    const sin1 = Math.sin(step * (i + 1))
+    // Tangent direction at the start of this piece
+    const dx = tx * cos0 - ty * sin0
+    const dy = tx * sin0 + ty * cos0
+    const pieceEnd = i === n - 1
+      ? { ...end }
+      : {
+          x: cx + (start.x - cx) * cos1 - (start.y - cy) * sin1,
+          y: cy + (start.x - cx) * sin1 + (start.y - cy) * cos1,
+        }
+    pieces.push({
+      start: prev,
+      via: { x: prev.x + dx * legLen, y: prev.y + dy * legLen },
+      end: pieceEnd,
+    })
+    prev = { ...pieceEnd }
+  }
+  return pieces
+}
+
+/** Total length of a chain of curve pieces. */
+export function curvePiecesLength(pieces: CurvePiece[]): number {
+  let len = 0
+  for (const p of pieces) len += curveLength(p.start, p.via, p.end)
+  return len
+}

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { hitTestGizmo, constrainGizmoDrag, GIZMO_LENGTH, getGizmoAnchor } from './gizmo'
+import {
+  hitTestGizmo,
+  constrainGizmoDrag,
+  rotateGizmoDrag,
+  rotatePoint,
+  GIZMO_LENGTH,
+  getGizmoAnchor,
+} from './gizmo'
 
 describe('gizmo module', () => {
   const nodeScreen = { x: 200, y: 300 }
@@ -49,6 +56,16 @@ describe('gizmo module', () => {
       expect(hitTestGizmo(pastTip, nodeScreen)).toBe(null)
     })
 
+    it('detects hits along the rotation arc', () => {
+      // 45 degrees in top-right quadrant at radius GIZMO_ROT_RADIUS (58px)
+      const rad = (45 * Math.PI) / 180
+      const onArc = {
+        x: nodeScreen.x + Math.round(58 * Math.cos(rad)),
+        y: nodeScreen.y - Math.round(58 * Math.sin(rad)),
+      }
+      expect(hitTestGizmo(onArc, nodeScreen)).toBe('rotate')
+    })
+
     it('returns null at the node center (reserved for node selection / free move)', () => {
       const center = { x: nodeScreen.x, y: nodeScreen.y }
       expect(hitTestGizmo(center, nodeScreen)).toBe(null)
@@ -58,6 +75,21 @@ describe('gizmo module', () => {
       expect(hitTestGizmo({ x: 50, y: 50 }, nodeScreen)).toBe(null)
       expect(hitTestGizmo({ x: nodeScreen.x - 30, y: nodeScreen.y }, nodeScreen)).toBe(null)
       expect(hitTestGizmo({ x: nodeScreen.x, y: nodeScreen.y + 30 }, nodeScreen)).toBe(null)
+    })
+  })
+
+  describe('rotateGizmoDrag and rotatePoint', () => {
+    it('calculates rotation angle delta and snaps to 15 degrees', () => {
+      const anchor = { x: 0, y: 0 }
+      const start = { x: 10, y: 0 } // 0 deg
+      const current = { x: 0, y: 10 } // 90 deg
+      const res = rotateGizmoDrag(anchor, start, current, true, 15)
+      expect(res.angleDeg).toBeCloseTo(90)
+
+      const pt = { x: 10, y: 0 }
+      const rotated = rotatePoint(pt, anchor, (90 * Math.PI) / 180)
+      expect(rotated.x).toBeCloseTo(0)
+      expect(rotated.y).toBeCloseTo(10)
     })
   })
 
@@ -165,6 +197,43 @@ describe('gizmo module', () => {
       expect(anchor?.worldPos.y).toBeCloseTo(0)
       expect(anchor?.nodeIds.has('n1')).toBe(true)
       expect(anchor?.nodeIds.has('n2')).toBe(true)
+    })
+
+    it('snapshots the curves attached to a selected node so their control points can follow', () => {
+      const net = {
+        nodes: new Map([
+          ['n1', { id: 'n1', pos: { x: 0, y: 0 } }],
+          ['n2', { id: 'n2', pos: { x: 50, y: 50 } }],
+          ['n3', { id: 'n3', pos: { x: 50, y: 150 } }],
+        ]),
+        segments: new Map([
+          ['s1', { id: 's1', from: 'n1', to: 'n2', kind: 'curve' as const, via: { x: 50, y: 0 } }],
+          ['s2', { id: 's2', from: 'n2', to: 'n3', kind: 'straight' as const }],
+        ]),
+        adjacency: new Map([
+          ['n1', ['s1']],
+          ['n2', ['s1', 's2']],
+          ['n3', ['s2']],
+        ]),
+        junctions: new Map(),
+      }
+
+      // Single node
+      const nodeAnchor = getGizmoAnchor(net, { nodes: new Set(['n1']), segments: new Set<string>() })
+      expect(nodeAnchor?.curvedSegments.get('s1')).toEqual({ x: 50, y: 0 })
+
+      // Section selection as Canvas builds it: node ids and segment ids together
+      const sectionAnchor = getGizmoAnchor(net, { nodes: new Set(['n1', 'n2']), segments: new Set(['s1']) })
+      expect(sectionAnchor?.curvedSegments.get('s1')).toEqual({ x: 50, y: 0 })
+
+      // Segment-only selection of the straight: the adjacent curve is covered too (it will be refitted)
+      const straightAnchor = getGizmoAnchor(net, { nodes: new Set<string>(), segments: new Set(['s2']) })
+      expect(straightAnchor?.type).toBe('section')
+      expect(straightAnchor?.curvedSegments.get('s1')).toEqual({ x: 50, y: 0 })
+
+      // The snapshot is a copy
+      nodeAnchor!.curvedSegments.get('s1')!.x = 0
+      expect(net.segments.get('s1')!.via).toEqual({ x: 50, y: 0 })
     })
 
     it('returns null when nothing is selected', () => {

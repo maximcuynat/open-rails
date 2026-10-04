@@ -13,13 +13,22 @@ export function useKeyboardShortcuts(store: EditorStore): void {
 
       // --- Play mode controls (highest priority when active) ---
       if (store.isPlayMode) {
-        if (e.key === 'ArrowUp') {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           e.preventDefault()
-          store.setLocomotiveThrottle(1)
+          const step = e.key === 'ArrowUp' ? 1 : -1
+          if (!store.selectedTrain) {
+            // Legacy locomotive: throttle held while the key is down
+            store.setLocomotiveThrottle(step)
+          } else if (e.shiftKey) {
+            store.shiftSelectedTrainReverser(step)
+          } else if (!e.repeat) {
+            // One notch per key press: holding the key must not sweep the whole handle
+            store.stepSelectedTrainNotch(step)
+          }
           return
-        } else if (e.key === 'ArrowDown') {
+        } else if (e.key === 'Backspace') {
           e.preventDefault()
-          store.setLocomotiveThrottle(-1)
+          store.toggleSelectedTrainEmergencyBrake()
           return
         } else if (e.key === 'ArrowLeft') {
           e.preventDefault()
@@ -39,7 +48,8 @@ export function useKeyboardShortcuts(store: EditorStore): void {
           return
         } else if (e.key === 'r' || e.key === 'R' || e.key === 'Tab') {
           e.preventDefault()
-          store.flipLocomotiveDirection()
+          // TrainSets change direction through the reverser (Shift+↑/↓)
+          if (!store.selectedTrain) store.flipLocomotiveDirection()
           return
         } else if (e.key === 'Escape') {
           store.togglePlayMode()
@@ -47,13 +57,35 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         }
       }
 
-      if (e.code === 'Space') {
-        e.preventDefault()
-        // If locomotive is placed but play mode is off, toggle play mode
-        if (store.locomotive && !store.isPlayMode) {
-          store.togglePlayMode()
+      // Numeric CAD input live typing during track placement
+      const isPlacing = (store.tool === 'place' && store.lastNodeId !== null) ||
+                        (store.tool === 'curve' && store.curveState.phase === 1)
+      if (isPlacing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (/^[0-9.,]$/.test(e.key)) {
+          e.preventDefault()
+          store.setNumericInput(store.numericInput + (e.key === ',' ? '.' : e.key))
+          return
+        } else if (e.key === 'Backspace' && store.isNumericInputActive) {
+          e.preventDefault()
+          store.setNumericInput(store.numericInput.slice(0, -1))
+          return
+        } else if (e.key === 'Enter' && store.isNumericInputActive) {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent('rail:commit-numeric-placement'))
           return
         }
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault()
+        // Space is strictly reserved for Canvas Pan in editor mode!
+        return
+      } else if (e.key === 'F5') {
+        e.preventDefault()
+        if (store.locomotive || store.trains.length > 0) {
+          store.togglePlayMode()
+        }
+        return
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         store.deleteSelection()
@@ -106,12 +138,20 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         e.preventDefault()
         store.toggleSettings()
       } else if (e.key === 'Tab') {
-        if (store.tool === 'curve') {
+        if (store.tool === 'place' && store.lastNodeId) {
+          e.preventDefault()
+          store.setTool('curve')
+          store.curveState = { phase: 1, startId: store.lastNodeId }
+          store.notify()
+        } else if (store.tool === 'curve') {
           e.preventDefault()
           store.flipCurveSide()
         } else if (store.tool === 'turnout') {
           e.preventDefault()
           store.toggleTurnoutSide()
+        } else if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
+          e.preventDefault()
+          store.flipTrainPlacementDirection()
         }
       } else if (e.key === 'd' || e.key === 'D') {
         if (!e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -128,7 +168,13 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if (e.key === 'r' || e.key === 'R') {
         if (!e.ctrlKey && !e.metaKey) {
           e.preventDefault()
-          store.reconcileTopology()
+          if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
+            store.flipTrainPlacementDirection()
+          } else if (store.isTrainSelected || store.tool === 'coupling') {
+            store.flipLocomotiveDirection()
+          } else {
+            store.reconcileTopology()
+          }
         }
       } else if (e.key === '[') {
         if (store.tool === 'curve') store.cycleCurveProfile(-1)

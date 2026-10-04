@@ -1,4 +1,4 @@
-import type { EditorStore } from '@application/state/editorStore'
+import type { EditorStore, TrainDebugOptions } from '@application/state/editorStore'
 
 export function TrainBuilderPalette({ store }: { store: EditorStore }) {
   const hasTrains = store.trains.length > 0 || store.locomotive !== null
@@ -231,6 +231,50 @@ export function TrainBuilderPalette({ store }: { store: EditorStore }) {
           </button>
         )}
       </div>
+
+      {/* Train debug sub-layer toggles */}
+      {hasTrains && store.showTrainDebug && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '4px',
+          padding: '6px',
+          background: 'rgba(15, 23, 42, 0.75)',
+          borderRadius: '6px',
+          border: '1px solid rgba(56, 189, 248, 0.25)',
+        }}>
+          {[
+            { key: 'vectors', label: '↗ Vecteurs', title: 'Vitesse V, accélération a, centrifuge ac, ruban d’arrêt' },
+            { key: 'yawAngles', label: '∠ Angles Δθ', title: 'Angles de lacet bogies et articulation inter-caisses' },
+            { key: 'gauge', label: '📐 Gabarit', title: 'Gabarit cinématique de libre passage et balayage' },
+            { key: 'lookahead', label: '🔭 Trajet 50m', title: 'Projection anticipée et détection heurtoir / fin de voie' },
+            { key: 'xray', label: '🩻 Rayons X', title: 'Carrosserie transparente laissant voir les essieux' },
+          ].map(({ key, label, title }) => {
+            const active = store.trainDebugOptions[key as keyof TrainDebugOptions]
+            return (
+              <button
+                key={key}
+                onClick={() => store.toggleTrainDebugOption(key as keyof TrainDebugOptions)}
+                style={{
+                  background: active ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+                  border: `1px solid ${active ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
+                  borderRadius: '4px',
+                  color: active ? '#e0f2fe' : '#64748b',
+                  fontSize: '9.5px',
+                  fontWeight: active ? 600 : 400,
+                  padding: '3px 2px',
+                  cursor: 'pointer',
+                  textAlign: 'center',
+                  whiteSpace: 'nowrap',
+                }}
+                title={title}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* Coupling mode hint */}
       {isCoupling && (

@@ -1,7 +1,8 @@
 import type { EditorStore } from '@application/state/editorStore'
 import { getLocomotiveFrontPos } from '@domain/models/locomotive'
 import { screenToWorld } from '@infrastructure/render/camera'
-import { TrainBuilderPalette } from '../train-builder/TrainBuilderPalette'
+import { FloatingActionBar } from './FloatingActionBar'
+import { ContextMenu } from './ContextMenu'
 
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
@@ -29,17 +30,39 @@ function hintText(store: EditorStore): string {
         : 'Clic pour fixer le point de départ de la mesure'
     case 'select':
       return store.selection.nodes.size > 0
-        ? 'Glisser les flèches orthogonales (X/Y) pour déplacer le nœud · Glisser le centre pour déplacement libre · Suppr pour effacer'
-        : 'Clic pour sélectionner un élément · Glissez un train ou un wagon sur les rails'
+        ? 'Glisser les axes (X/Y) ou l’arc pour pivoter · Glisser le fond pour déplacer la vue · Suppr pour effacer'
+        : 'Clic gauche pour sélectionner · Glisser le fond pour déplacer la vue · Shift + glisser pour rectangle de sélection · Molette pour zoomer'
     case 'pan':
       return store.selection.nodes.size > 0
-        ? 'Glisser les flèches (X/Y) pour déplacer le nœud · Glisser le fond pour déplacer la vue'
-        : 'Glisser pour déplacer la vue · Clic sur un nœud pour afficher ses flèches de déplacement'
+        ? 'Glisser les axes (X/Y) pour déplacer le nœud · Glisser le fond pour déplacer la vue'
+        : 'Glisser pour déplacer la vue · Molette pour zoomer'
     default:
       if (store.tool === 'locomotive' || store.isTrainSelected) {
-        return store.locomotive
-          ? 'Glissez un wagon sur le train ou cliquez sur la motrice pour Prendre le contrôle (Espace)'
-          : 'Glissez une motrice ou un wagon sur les rails pour poser le train'
+        if (store.couplerSnapTarget) {
+          return '🔗 Aimanté au convoi · Clic pour atteler · Éloignez le curseur pour poser librement'
+        }
+        if (store.trainToolSubMode === 'place') {
+          if (store.trainPlacementPreview) {
+            return store.trainPlacementKind === 'tgv_wagon'
+              ? 'Clic pour poser le wagon · R pour inverser le sens'
+              : 'Clic pour poser la motrice · R pour inverser le sens'
+          }
+          return 'Approchez un rail pour prévisualiser · R pour inverser le sens'
+        }
+        if (store.trainToolSubMode === 'delete') {
+          return store.hoveredTrainDeleteVehicle
+            ? '🔴 Véhicule ciblé (contour rouge) · Clic pour le supprimer'
+            : 'Mode Suppression · Survolez une motrice ou un wagon pour le supprimer'
+        }
+        if (store.trainToolSubMode === 'select') {
+          return store.selectedTrainVehicleId && store.selectedTrain
+            ? `Véhicule sélectionné (${store.selectedTrain.vehicles.find(v => v.id === store.selectedTrainVehicleId)?.kind === 'loco' ? 'Motrice' : 'Wagon'}) · Suppr pour effacer`
+            : 'Cliquez sur un convoi ou un wagon pour le sélectionner'
+        }
+        return 'Glissez ou cliquez une motrice/wagon depuis la barre latérale pour poser sur la voie'
+      }
+      if (store.tool === 'coupling') {
+        return 'Mode Couplage · Cliquez deux extrémités proches pour coupler · Cliquez une pastille orange pour découpler'
       }
       return ''
   }
@@ -224,21 +247,6 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
         </div>
       )}
 
-      {/* Train Builder Palette (Drag & drop motrice + wagons + controls) */}
-      {(store.tool === 'locomotive' || store.isTrainSelected) && !store.isPlayMode && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '54px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 40,
-            pointerEvents: 'auto',
-          }}
-        >
-          <TrainBuilderPalette store={store} />
-        </div>
-      )}
 
       {/* Live Play Mode HUD */}
       {store.isPlayMode && store.locomotive && (
@@ -332,6 +340,42 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
       {curvePhase !== null && (
         <div className="phase-badge">{curvePhase === 0 ? '1/2' : '2/2'}</div>
       )}
+
+      {/* Floating CAD Numeric Input pill (AutoCAD/Blender style) */}
+      {store.isNumericInputActive && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${(store.cursorWorld.x - store.camera.x) * store.camera.scale + store.viewport.w / 2 + 20}px`,
+            top: `${(store.cursorWorld.y - store.camera.y) * store.camera.scale + store.viewport.h / 2 - 25}px`,
+            background: 'rgba(15, 23, 42, 0.95)',
+            border: '1.5px solid #38bdf8',
+            borderRadius: '6px',
+            padding: '3px 8px',
+            color: '#38bdf8',
+            fontSize: '12px',
+            fontWeight: 700,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+            zIndex: 100,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            animation: 'action-pill-pop 100ms ease',
+          }}
+        >
+          <span style={{ fontSize: '10px', color: '#94a3b8' }}>Longueur :</span>
+          <span>{store.numericInput}</span>
+          <span style={{ fontSize: '10px' }}>m ↵</span>
+        </div>
+      )}
+
+      {/* Contextual Floating Action Bar above selected track / junction */}
+      <FloatingActionBar store={store} viewport={store.viewport} />
+
+      {/* Context Menu on right-click without drag */}
+      <ContextMenu store={store} />
+
       {hint && <div className="canvas-hint">{hint}</div>}
     </div>
   )

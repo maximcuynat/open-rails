@@ -101,12 +101,13 @@ export function computeFreeformCurve(
   start: { x: number; y: number },
   tangent: { x: number; y: number },
   target: { x: number; y: number },
+  minChord = 5,
 ): { end: { x: number; y: number }; via: { x: number; y: number }; radius: number; angle: number } {
   const dx = target.x - start.x
   const dy = target.y - start.y
   const chordLen = Math.hypot(dx, dy)
 
-  if (chordLen < 5) {
+  if (chordLen < minChord) {
     return {
       end: target,
       via: { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 },
@@ -155,12 +156,13 @@ export function computeReverseFreeformCurve(
   start: { x: number; y: number },
   target: { x: number; y: number },
   targetTangent: { x: number; y: number },
+  minChord = 5,
 ): { end: { x: number; y: number }; via: { x: number; y: number }; radius: number; angle: number } {
   const dx = target.x - start.x
   const dy = target.y - start.y
   const chordLen = Math.hypot(dx, dy)
 
-  if (chordLen < 5) {
+  if (chordLen < minChord) {
     return {
       end: target,
       via: { x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 },

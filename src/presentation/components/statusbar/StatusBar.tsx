@@ -25,7 +25,7 @@ function toolStatus(store: EditorStore): string {
         if (sel.segments.size) parts.push(`${sel.segments.size} rail${sel.segments.size > 1 ? 's' : ''}`)
         return `${parts.join(', ')} sélectionné${parts.length > 1 ? 's' : ''}`
       }
-      return 'Prêt · Clic ou glisser pour sélectionner'
+      return 'Prêt · Clic pour sélectionner · Glisser pour déplacer la vue'
     }
     case 'coupling':
       return 'Cliquer deux extrémités proches pour coupler · Cliquer un joint vert pour découpler'

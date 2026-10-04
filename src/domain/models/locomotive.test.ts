@@ -21,6 +21,8 @@ import {
   getFullTGVTrain,
   reverseTGVTrain,
   hitTestTGVTrain,
+  getTrackCurvatureAt,
+  sampleForwardTrack,
 } from './locomotive'
 
 describe('locomotive', () => {
@@ -522,4 +524,41 @@ describe('locomotive', () => {
     expect(hitNone.hit).toBe(false)
     expect(hitNone.part).toBe('none')
   })
+
+  it('getTrackCurvatureAt returns Infinity on straight tracks and finite radius on curves', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 100, y: 0 })
+    const straight = addSegment(net, n1.id, n2.id)!
+
+    const straightCurv = getTrackCurvatureAt(net, { segId: straight.id, t: 0.5, forward: true })
+    expect(straightCurv.radius).toBe(Infinity)
+    expect(straightCurv.side).toBe('straight')
+
+    // Add a curved track: (100, 0) to (200, 100) with via (200, 0)
+    const n3 = addNode(net, { x: 200, y: 100 })
+    const curve = addCurveSegment(net, n2.id, n3.id, { x: 200, y: 0 })!
+
+    const curveCurv = getTrackCurvatureAt(net, { segId: curve.id, t: 0.5, forward: true })
+    expect(Number.isFinite(curveCurv.radius)).toBe(true)
+    expect(curveCurv.radius).toBeGreaterThan(0)
+    expect(curveCurv.radius).toBeLessThan(1000)
+    expect(curveCurv.outwardNormal).toBeDefined()
+    expect(Math.hypot(curveCurv.outwardNormal.x, curveCurv.outwardNormal.y)).toBeCloseTo(1, 2)
+  })
+
+  it('sampleForwardTrack samples consecutive points forward along segments', () => {
+    const net = createNetwork()
+    const n1 = addNode(net, { x: 0, y: 0 })
+    const n2 = addNode(net, { x: 50, y: 0 })
+    const n3 = addNode(net, { x: 100, y: 0 })
+    const s1 = addSegment(net, n1.id, n2.id)!
+    addSegment(net, n2.id, n3.id)!
+
+    const pts = sampleForwardTrack(net, { segId: s1.id, t: 0, forward: true }, 1, 60, 5)
+    expect(pts.length).toBeGreaterThan(5)
+    expect(pts[0].x).toBeCloseTo(0)
+    expect(pts[pts.length - 1].x).toBeCloseTo(60, 0.5)
+  })
 })
+

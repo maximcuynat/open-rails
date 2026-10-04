@@ -8,6 +8,9 @@ import {
   renderDetailedCurveRails,
   renderDetailedRailLines,
   renderLocomotive,
+  renderTrainSet,
+  renderCouplerPoints,
+  renderCouplerSnapIndicator,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
   GAUGE,
@@ -15,33 +18,24 @@ import {
 import {
   addNode,
   addSegment,
-  addCurveSegment,
+  addCurveChain,
   hitNode,
   hitSegment,
   snapToGrid,
   getStepPointsAlongSegment,
 } from '@domain/models/network'
 import type { Point, Network, RailNode } from '@domain/models/types'
-import { curveLength, bezierPoint, computeParallelCurve } from '@domain/geometry/curve'
-import {
-  getTangentForPlacement,
-  getTrackTangentAt,
-  computeTurnoutIntersectionLock,
-  computeReverseFreeNodeLock,
-} from '@domain/geometry/tangent'
-import {
-  snapStraightLength,
-  computeStraightPiece,
-  computeCurvePiece,
-  computeFreeformCurve,
-  computeReverseFreeformCurve,
-} from '@domain/profiles/profiles'
+import { bezierPoint, computeParallelCurve, splitCurveIntoArcPieces, type CurvePiece } from '@domain/geometry/curve'
+import { getTangentForPlacement, getTrackTangentAt } from '@domain/geometry/tangent'
+import { computeCurveToolGeometry } from '@domain/geometry/curveTool'
+import { applyNodeTransform, collectAffectedVias } from '@domain/geometry/nodeTransform'
+import { snapStraightLength, computeStraightPiece } from '@domain/profiles/profiles'
 import {
   splitSegment,
   findJunctionAtNode,
+  findJunctionBySegment,
   toggleJunction,
 } from '@domain/models/junction'
-import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
 import {
   computeFreeformParallelTurnout,
@@ -49,6 +43,7 @@ import {
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatRadius, formatAngle } from '@domain/models/units'
+import { trainDriveTelemetry } from '@domain/models/train'
 import {
   renderStraightDimension,
   renderCurveDimension,
@@ -57,6 +52,7 @@ import {
 import {
   hitTestGizmo,
   constrainGizmoDrag,
+  rotateGizmoDrag,
   renderTranslationGizmo,
   getGizmoAnchor,
 } from './gizmo'
@@ -141,16 +137,38 @@ function renderSnapIndicator(
   ctx.restore()
 }
 
-/** Determine which side of the tangent the cursor is on.
- *  Returns -1 (left / Gauche) or 1 (right / Droite) based on 2D cross product in screen coordinates (Y down). */
-function computeSide(tangent: Point, start: Point, cursor: Point): 1 | -1 {
-  const dx = cursor.x - start.x
-  const dy = cursor.y - start.y
-  // Cross product in screen coordinates (+X right, +Y down):
-  // tangent.x * dy - tangent.y * dx < 0 means cursor is to the LEFT (side = -1)
-  // tangent.x * dy - tangent.y * dx >= 0 means cursor is to the RIGHT (side = 1)
-  const cross = tangent.x * dy - tangent.y * dx
-  return cross < 0 ? -1 : 1
+/**
+ * Curve tool geometry for the current editor state and a cursor position.
+ * Single source for the preview, the click and the hover snap, so they cannot diverge.
+ */
+function resolveCurveTool(store: EditorStore, startId: string, cursor: Point) {
+  const startNode = store.network.nodes.get(startId)
+  if (!startNode) return null
+  const cam = store.camera
+  const trackTarget = getTrackTangentAt(store.network, cursor, 24 / cam.scale, startId)
+  const startTangent = getTangentForPlacement(store.network, startId, cursor)
+  const dx = cursor.x - startNode.pos.x
+  const dy = cursor.y - startNode.pos.y
+  const len = Math.hypot(dx, dy)
+  const fallbackTangent = len > 0.01
+    ? (store.snap ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: dx / len, y: dy / len })
+    : { x: 1, y: 0 }
+  // Magnetic end: an existing node under the cursor becomes the target
+  const closeNode = findNearestNode(store.network, cursor, 16, cam)
+  const target = closeNode && closeNode.id !== startId ? closeNode.pos : cursor
+  const geom = computeCurveToolGeometry({
+    startPos: startNode.pos,
+    startTangent,
+    fallbackTangent,
+    trackTarget,
+    cursor: target,
+    trackMode: store.trackMode,
+    radius: store.selectedCurveRadius,
+    angle: store.selectedCurveAngle,
+    side: store.autoCurveSide ? 'auto' : store.curveSide,
+    limits: store.getPlacementThresholds(),
+  })
+  return { startNode, trackTarget, geom }
 }
 
 /** Render a straight rail preview to the candidate end. */
@@ -253,17 +271,19 @@ function renderCurvePreview(
   cam: Camera,
   vw: number,
   vh: number,
-  start: Point,
-  via: Point,
-  end: Point,
+  pieces: CurvePiece[],
   labelText: string,
   isClosedToNode = false,
   colorOverride?: string,
 ): void {
+  if (pieces.length === 0) return
+  const start = pieces[0].start
+  const end = pieces[pieces.length - 1].end
+  const isInvalid = colorOverride === '#ef4444'
   const defaultAccent = getComputedStyle(ctx.canvas).getPropertyValue('--accent').trim() || '#2563eb'
   const accent = colorOverride ?? defaultAccent
   const isGreen = colorOverride === '#10b981' || isClosedToNode
-  const railColor = isGreen ? '#10b981' : (getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071')
+  const railColor = isGreen ? '#10b981' : isInvalid ? '#ef4444' : (getComputedStyle(ctx.canvas).getPropertyValue('--rail').trim() || '#526071')
   const paper = getComputedStyle(ctx.canvas).getPropertyValue('--paper').trim() || '#fff'
   const w2sX = (wx: number) => (wx - cam.x) * cam.scale + vw / 2
   const w2sY = (wy: number) => (wy - cam.y) * cam.scale + vh / 2
@@ -289,12 +309,16 @@ function renderCurvePreview(
     ctx.setLineDash(isGreen ? [] : [6, 4])
     ctx.beginPath()
     ctx.moveTo(w2sX(start.x), w2sY(start.y))
-    ctx.quadraticCurveTo(w2sX(via.x), w2sY(via.y), w2sX(end.x), w2sY(end.y))
+    for (const p of pieces) {
+      ctx.quadraticCurveTo(w2sX(p.via.x), w2sY(p.via.y), w2sX(p.end.x), w2sY(p.end.y))
+    }
     ctx.stroke()
     ctx.setLineDash([])
   } else {
     ctx.globalAlpha = 0.95
-    renderDetailedCurveRails(ctx, cam, start, via, end, vw, vh, isGreen, railColor, accent, 0, 0, '#ffffff', GAUGE)
+    for (const p of pieces) {
+      renderDetailedCurveRails(ctx, cam, p.start, p.via, p.end, vw, vh, isGreen, railColor, accent, 0, 0, '#ffffff', GAUGE)
+    }
     ctx.globalAlpha = 1
   }
 
@@ -315,7 +339,7 @@ function renderCurvePreview(
   const lx = w2sX(end.x) + 14
   const ly = w2sY(end.y) - 10
 
-  ctx.fillStyle = isGreen ? 'rgba(16, 185, 129, 0.95)' : 'rgba(37, 99, 235, 0.85)'
+  ctx.fillStyle = isGreen ? 'rgba(16, 185, 129, 0.95)' : isInvalid ? 'rgba(239, 68, 68, 0.9)' : 'rgba(37, 99, 235, 0.85)'
   ctx.beginPath()
   ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
   ctx.fill()
@@ -358,14 +382,74 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, { tool: store.tool })
 
-    // Render locomotive on top of the track network
-    if (store.locomotive) {
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected)
+    // Render trains on top of the track network
+    if (store.trains.length > 0) {
+      for (const t of store.trains) {
+        const isSelected = store.isTrainSelected && t.id === store.selectedTrainId
+        const deleteVehicleId = (store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle?.train.id === t.id)
+          ? store.hoveredTrainDeleteVehicle.vehicleId
+          : null
+        renderTrainSet(
+          ctx,
+          cam,
+          rect.width,
+          rect.height,
+          store.network,
+          t,
+          isSelected,
+          false,
+          store.showTrainDebug,
+          {
+            speed: t.currentSpeed,
+            maxSpeed: t.maxSpeed,
+            ...trainDriveTelemetry(t),
+            debugOptions: store.trainDebugOptions,
+          },
+          isSelected ? store.selectedTrainVehicleId : null,
+          deleteVehicleId,
+        )
+      }
+    } else if (store.locomotive) {
+      const isDeleteHovered = store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle !== null
+      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected, {
+        speed: store.locomotiveCurrentSpeed,
+        maxSpeed: store.locomotiveMaxSpeed,
+        throttle: store.locomotiveThrottle,
+        acceleration: store.locomotiveAcceleration,
+        braking: store.locomotiveBraking,
+        debugOptions: store.trainDebugOptions,
+      }, isDeleteHovered)
     }
 
-    // Ghost preview when placing a locomotive
-    if (store.tool === 'locomotive' && store.locomotivePreview && !store.isPlayMode) {
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotivePreview, true, store.showTrainDebug, false)
+    // Render coupler points in coupling mode
+    if (store.tool === 'coupling') {
+      renderCouplerPoints(ctx, cam, rect.width, rect.height, store.couplerPoints, store.hoveredCouplerPoint)
+    }
+
+    // Ghost preview when placing a vehicle (locomotive or wagon)
+    if (store.tool === 'locomotive' && store.trainToolSubMode === 'place' && !store.isPlayMode) {
+      if (store.trainPlacementPreview) {
+        renderTrainSet(
+          ctx,
+          cam,
+          rect.width,
+          rect.height,
+          store.network,
+          store.trainPlacementPreview,
+          false,
+          true, // isGhost
+          store.showTrainDebug
+        )
+      }
+      if (store.couplerSnapTarget) {
+        renderCouplerSnapIndicator(
+          ctx,
+          cam,
+          rect.width,
+          rect.height,
+          store.couplerSnapTarget.couplerPos
+        )
+      }
     }
 
     // Box selection rectangle
@@ -458,11 +542,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const dy = cursor.y - startNode.pos.y
         const minLen = store.getMinTrackLength()
 
+        const typedLen = store.isNumericInputActive ? parseFloat(store.numericInput) : NaN
+        const hasTypedLen = !isNaN(typedLen) && typedLen > 0
+
         if (tangent) {
           dir = tangent
           const proj = dx * dir.x + dy * dir.y
           const dist = Math.max(minLen, proj)
-          if (store.trackMode === 'freeform') {
+          if (hasTypedLen) {
+            snappedLen = typedLen
+          } else if (store.trackMode === 'freeform') {
             snappedLen = store.snap ? Math.max(minLen, Math.round(dist * 10) / 10) : Math.max(minLen, dist)
           } else if (store.selectedStraightLength !== 'auto') {
             snappedLen = store.selectedStraightLength
@@ -471,7 +560,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           }
           candidateEnd = computeStraightPiece(startNode.pos, dir, snappedLen)
         } else {
-          if (store.trackMode === 'freeform') {
+          if (store.trackMode === 'freeform' && !hasTypedLen) {
             candidateEnd = cursor
             const rawDist = Math.hypot(dx, dy)
             snappedLen = store.snap ? Math.max(minLen, Math.round(rawDist * 10) / 10) : Math.max(minLen, rawDist)
@@ -480,7 +569,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             dir = dist > 0.01
               ? (store.snap ? snapDirection({ x: dx / dist, y: dy / dist }, 15, 6) : { x: dx / dist, y: dy / dist })
               : { x: 1, y: 0 }
-            if (store.selectedStraightLength !== 'auto') {
+            if (hasTypedLen) {
+              snappedLen = typedLen
+            } else if (store.selectedStraightLength !== 'auto') {
               snappedLen = store.selectedStraightLength
             } else {
               snappedLen = store.snap ? snapStraightLength(dist) : Math.max(minLen, dist)
@@ -520,7 +611,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const dxp = candidateEnd.x - startNode.pos.x
           const dyp = candidateEnd.y - startNode.pos.y
           const lenp = Math.hypot(dxp, dyp)
-          if (lenp > 0.5) {
+          if (lenp > store.getMinTrackLength()) {
             const uxp = dxp / lenp
             const uyp = dyp / lenp
             const nxp = -uyp
@@ -559,152 +650,58 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     // Curve preview — UIC catalog piece or freeform tangent arc
     const cs = store.curveState
     if (cs.phase === 1 && cs.startId) {
-      const startNode = store.network.nodes.get(cs.startId)
-      if (startNode) {
-        const cursor = store.snap ? store.snappedCursor : store.cursorWorld
-        const hitTol = 24 / cam.scale
-        const trackTarget = getTrackTangentAt(store.network, cursor, hitTol, cs.startId)
-        const startTan = getTangentForPlacement(store.network, cs.startId, cursor)
-        const fallbackTangent = startTan ?? (() => {
-          const dx = cursor.x - startNode.pos.x
-          const dy = cursor.y - startNode.pos.y
-          const len = Math.hypot(dx, dy)
-          return len > 0.01
-            ? (store.snap ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: dx / len, y: dy / len })
-            : { x: 1, y: 0 }
-        })()
+      const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+      const res = resolveCurveTool(store, cs.startId, cursor)
+      if (res) {
+        const { startNode, trackTarget, geom } = res
+        const { end, via, radius, angle, pieces } = geom
+        const len = geom.length
+        const sideLabel = geom.side === -1 ? 'Gauche' : 'Droite'
+        const onTrack = geom.kind === 'lock' || geom.kind === 'reverse'
+        const closeNode = onTrack ? null : findNearestNode(store.network, end, 16, cam)
+        const isJoinNode = onTrack ? trackTarget?.nodeId !== undefined : closeNode !== null && closeNode.id !== cs.startId
+        const hitSegId = !onTrack && !isJoinNode ? hitSegment(store.network, end, 16 / cam.scale) : null
+        const isJoin = onTrack || isJoinNode || hitSegId !== null
+        const dims = `${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})`
 
-        const showParallelPreview = store.parallelMode || isModifierDownRef.current
-
-        if (trackTarget) {
-          const targetPoint = trackTarget.pointOnTrack
-          const lock = startTan
-            ? computeTurnoutIntersectionLock(startNode.pos, startTan, targetPoint, trackTarget.tangent)
-            : (store.trackMode === 'catalog'
-                ? computeReverseFreeNodeLock(startNode.pos, targetPoint, trackTarget.tangent, store.selectedCurveRadius)
-                : null)
-
-          if (lock && lock.valid) {
-            const end = lock.lockPoint
-            const via = lock.via
-            const len = curveLength(startNode.pos, via, end)
-            const labelText = `Aiguillage verrouillé (0°)  ${formatRadius(lock.radius, store.unit)}  ${formatAngle(lock.angleDeg)} (${formatDistance(len, store.unit)})  → Jonction tangente`
-            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
-
-            if (store.showDimensions) {
-              renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, lock.radius, lock.angleDeg, len, store.unit)
-            }
-
-            if (showParallelPreview) {
-              const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
-              const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
-              const secStart = secStartNode ? secStartNode.pos : par.start
-              ctx.save()
-              ctx.globalAlpha = 0.55
-              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
-              ctx.restore()
-
-              if (store.showDimensions) {
-                renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
-              }
-            }
-          } else {
-            const { end, via, radius, angle } = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
-            const isJoinNode = trackTarget.nodeId !== undefined
-            const len = curveLength(startNode.pos, via, end)
-            const initTan = { x: via.x - startNode.pos.x, y: via.y - startNode.pos.y }
-            const side = computeSide(initTan, startNode.pos, end)
-            const sideLabel = side === -1 ? 'Gauche' : 'Droite'
-            const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent (0°)'
-            const labelText = radius === Infinity
-              ? `Ligne droite ${formatDistance(len, store.unit)}${joinSuffix}`
-              : `Courbe ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
-            renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, true, '#10b981')
-
-            if (store.showDimensions) {
-              renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
-            }
-
-            if (showParallelPreview) {
-              const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
-              const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
-              const secStart = secStartNode ? secStartNode.pos : par.start
-              ctx.save()
-              ctx.globalAlpha = 0.55
-              renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
-              ctx.restore()
-
-              if (store.showDimensions) {
-                renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
-              }
-            }
-          }
-        } else if (store.trackMode === 'freeform') {
-          const tangent = fallbackTangent
-          const closeNode = findNearestNode(store.network, cursor, 16, cam)
-          const target = closeNode && closeNode.id !== cs.startId ? closeNode.pos : cursor
-          const { end, via, radius, angle } = computeFreeformCurve(startNode.pos, tangent, target)
-          const isJoinNode = closeNode !== null && closeNode.id !== cs.startId
-          const hitSegId = !isJoinNode ? hitSegment(store.network, end, 16 / cam.scale) : null
-          const isJoin = isJoinNode || hitSegId !== null
-          const len = curveLength(startNode.pos, via, end)
-          const side = computeSide(tangent, startNode.pos, target)
-          const sideLabel = side === -1 ? 'Gauche' : 'Droite'
-          const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-          const labelText = radius === Infinity
-            ? `Flex ${formatDistance(len, store.unit)}${joinSuffix}`
-            : `Flex ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
-
-          if (store.showDimensions) {
-            renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
-          }
-
-          if (showParallelPreview) {
-            const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
-            const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
-            const secStart = secStartNode ? secStartNode.pos : par.start
-            ctx.save()
-            ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
-            ctx.restore()
-
-            if (store.showDimensions) {
-              renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
-            }
-          }
+        let labelText: string
+        if (!geom.valid) {
+          labelText = `Rayon trop serré : ${formatRadius(radius, store.unit)} (min ${formatRadius(store.getPlacementThresholds().minRadius, store.unit)})`
+        } else if (geom.kind === 'lock') {
+          labelText = `Aiguillage verrouillé (0°)  ${dims}  → Jonction tangente`
+        } else if (geom.kind === 'reverse') {
+          const joinSuffix = isJoinNode ? '  → Jonction tangente' : '  → Raccordement tangent (0°)'
+          labelText = radius === Infinity
+            ? `Ligne droite ${formatDistance(len, store.unit)}${joinSuffix}`
+            : `Courbe ${sideLabel} ${dims}${joinSuffix}`
         } else {
-          const tangent = fallbackTangent
-          const radius = store.selectedCurveRadius
-          const angle = store.selectedCurveAngle
-          const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, cursor) : store.curveSide
-          const sideLabel = side === -1 ? 'Gauche' : 'Droite'
-          const { end, via } = computeCurvePiece(startNode.pos, tangent, radius, side, angle)
-          const closeNode = findNearestNode(store.network, end, 16, cam)
-          const isJoinNode = closeNode !== null && closeNode.id !== cs.startId
-          const hitSegId = !isJoinNode ? hitSegment(store.network, end, 16 / cam.scale) : null
-          const isJoin = isJoinNode || hitSegId !== null
-          const len = curveLength(startNode.pos, via, end)
           const joinSuffix = isJoinNode ? '  → Jonction' : hitSegId ? '  → Aiguillage sur voie' : ''
-          const labelText = `Courbe ${sideLabel} ${formatRadius(radius, store.unit)}  ${formatAngle(angle)} (${formatDistance(len, store.unit)})${joinSuffix}`
-          renderCurvePreview(ctx, cam, rect.width, rect.height, startNode.pos, via, end, labelText, isJoin)
+          labelText = geom.kind === 'freeform'
+            ? (radius === Infinity
+                ? `Flex ${formatDistance(len, store.unit)}${joinSuffix}`
+                : `Flex ${sideLabel} ${dims}${joinSuffix}`)
+            : `Courbe ${sideLabel} ${dims}${joinSuffix}`
+        }
+
+        // The preview draws the same arc pieces the click will insert
+        const color = !geom.valid ? '#ef4444' : onTrack ? '#10b981' : undefined
+        renderCurvePreview(ctx, cam, rect.width, rect.height, pieces, labelText, geom.valid && isJoin, color)
+
+        if (store.showDimensions) {
+          renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
+        }
+
+        if (geom.valid && (store.parallelMode || isModifierDownRef.current)) {
+          const parPieces = pieces.map((p) => computeParallelCurve(p.start, p.via, p.end, store.parallelOffset))
+          const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
+          if (secStartNode) parPieces[0] = { ...parPieces[0], start: secStartNode.pos }
+          ctx.save()
+          ctx.globalAlpha = 0.55
+          renderCurvePreview(ctx, cam, rect.width, rect.height, parPieces, 'Voie 2', false)
+          ctx.restore()
 
           if (store.showDimensions) {
-            renderCurveDimension(ctx, cam, rect.width, rect.height, startNode.pos, via, end, radius, angle, len, store.unit)
-          }
-
-          if (showParallelPreview) {
-            const par = computeParallelCurve(startNode.pos, via, end, store.parallelOffset)
-            const secStartNode = store.parallelLastNodeId ? store.network.nodes.get(store.parallelLastNodeId) : null
-            const secStart = secStartNode ? secStartNode.pos : par.start
-            ctx.save()
-            ctx.globalAlpha = 0.55
-            renderCurvePreview(ctx, cam, rect.width, rect.height, secStart, par.via, par.end, 'Voie 2', false)
-            ctx.restore()
-
-            if (store.showDimensions) {
-              renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, par.end, store.parallelOffset, store.unit)
-            }
+            renderParallelSpacingDimension(ctx, cam, rect.width, rect.height, end, parPieces[parPieces.length - 1].end, store.parallelOffset, store.unit)
           }
         }
       }
@@ -719,13 +716,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const startNode = store.network.nodes.get(store.turnoutStartId)
         if (startNode) {
           const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
-          const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
-          if (geom && geom.valid) {
+          const limits = store.getPlacementThresholds()
+          const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor, limits)
+          if (geom) {
+            // Below the minimum radius the turnout is refused on click: show it in red
+            const previewRail = geom.valid ? railColor : '#ef4444'
             ctx.save()
             ctx.globalAlpha = 0.85
-            // Real double steel rails for the 2 curved segments:
-            renderDetailedCurveRails(ctx, cam, geom.startPos, geom.via1, geom.midPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', GAUGE)
-            renderDetailedCurveRails(ctx, cam, geom.midPos, geom.via2, geom.endPos, rect.width, rect.height, false, railColor, accent, 0, 0, '#ffffff', GAUGE)
+            // Real double steel rails for the 2 curved halves, drawn as the arc pieces that will be inserted:
+            const turnoutPieces = [
+              ...splitCurveIntoArcPieces(geom.startPos, geom.via1, geom.midPos),
+              ...splitCurveIntoArcPieces(geom.midPos, geom.via2, geom.endPos),
+            ]
+            for (const p of turnoutPieces) {
+              renderDetailedCurveRails(ctx, cam, p.start, p.via, p.end, rect.width, rect.height, false, previewRail, accent, 0, 0, '#ffffff', GAUGE)
+            }
             ctx.globalAlpha = 1
 
             const p0x = (geom.startPos.x - cam.x) * cam.scale + rect.width / 2
@@ -734,7 +739,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const pey = (geom.endPos.y - cam.y) * cam.scale + rect.height / 2
 
             // Start turnout node & end node markers
-            ctx.fillStyle = '#10b981'
+            ctx.fillStyle = geom.valid ? '#10b981' : '#ef4444'
             ctx.beginPath()
             ctx.arc(p0x, p0y, 5, 0, Math.PI * 2)
             ctx.arc(pex, pey, 5, 0, Math.PI * 2)
@@ -757,12 +762,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             ctx.globalAlpha = 1
 
             // Floating label badge near end
-            const labelTxt = `Espacement: ${formatDistance(Math.abs(geom.offset), store.unit)} · Longueur: ${formatDistance(geom.dx, store.unit)} (R${formatRadius(geom.radius, store.unit)})`
+            const labelTxt = geom.valid
+              ? `Espacement: ${formatDistance(Math.abs(geom.offset), store.unit)} · Longueur: ${formatDistance(geom.dx, store.unit)} (${formatRadius(geom.radius, store.unit)})`
+              : `Rayon trop serré : ${formatRadius(geom.radius, store.unit)} (min ${formatRadius(limits.minRadius, store.unit)})`
             ctx.font = '600 11px Archivo, system-ui, sans-serif'
             const labelW = ctx.measureText(labelTxt).width
             const lx = pex + 14
             const ly = pey - 10
-            ctx.fillStyle = 'rgba(37, 99, 235, 0.85)'
+            ctx.fillStyle = geom.valid ? 'rgba(37, 99, 235, 0.85)' : 'rgba(239, 68, 68, 0.9)'
             ctx.beginPath()
             ctx.roundRect(lx - 6, ly - 14, labelW + 12, 20, 4)
             ctx.fill()
@@ -894,7 +901,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
-    const gizmoAnchor = store.tool === 'pan' ? null : getGizmoAnchor(store.network, store.selection)
+    const gizmoAnchor = store.tool === 'select' ? getGizmoAnchor(store.network, store.selection) : null
     if (gizmoAnchor) {
       const sx = (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2
       const sy = (gizmoAnchor.worldPos.y - cam.y) * cam.scale + rect.height / 2
@@ -905,6 +912,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.gizmoDragAxis,
         {
           delta: store.gizmoDragDelta,
+          angleDeg: store.gizmoRotateDelta,
           unit: store.unit,
           canvasWidth: rect.width,
           canvasHeight: rect.height,
@@ -1013,6 +1021,23 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       lastEdgePanTime = 0
     }
 
+    // Free drag of the selected nodes: one rigid translation (snapped on the grabbed node),
+    // curve control points follow through applyNodeTransform
+    let dragPrimaryNodeId: string | null = null
+    const dragSelectedNodes = (rawWorld: Point, dragStart: Point) => {
+      const delta = { x: rawWorld.x - dragStart.x, y: rawWorld.y - dragStart.y }
+      if (store.snap) {
+        const primaryInit = (dragPrimaryNodeId ? store.draggedNodeInitialPositions.get(dragPrimaryNodeId) : undefined)
+          ?? store.draggedNodeInitialPositions.values().next().value
+        if (primaryInit) {
+          const snapped = snapToGrid({ x: primaryInit.x + delta.x, y: primaryInit.y + delta.y }, getSnapSpacing())
+          delta.x = snapped.x - primaryInit.x
+          delta.y = snapped.y - primaryInit.y
+        }
+      }
+      applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, { kind: 'translate', delta })
+    }
+
     const stepEdgePan = (time: number) => {
       if (lastEdgePanTime === 0) lastEdgePanTime = time
       const dt = Math.min((time - lastEdgePanTime) / 1000, 0.1)
@@ -1029,7 +1054,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (store.gizmoDragAxis && store.dragStartWorld) {
           const spacing = getSnapSpacing()
           const anchor = getGizmoAnchor(store.network, store.selection)
-          const primaryInitPos = anchor ? anchor.worldPos : null
+          // The anchor follows the drag: subtract the applied delta to get its start position
+          const primaryInitPos = anchor
+            ? { x: anchor.worldPos.x - store.gizmoDragDelta.x, y: anchor.worldPos.y - store.gizmoDragDelta.y }
+            : null
           if (primaryInitPos) {
             const { delta } = constrainGizmoDrag(
               store.gizmoDragAxis,
@@ -1041,39 +1069,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               spacing
             )
             store.gizmoDragDelta = delta
-            for (const [nid, initPos] of store.draggedNodeInitialPositions) {
-              const node = store.network.nodes.get(nid)
-              if (node) {
-                node.pos.x = initPos.x + delta.x
-                node.pos.y = initPos.y + delta.y
-              }
-            }
-            for (const [sid, initVia] of store.draggedViaInitialPositions) {
-              const seg = store.network.segments.get(sid)
-              if (seg && seg.via) {
-                seg.via.x = initVia.x + delta.x
-                seg.via.y = initVia.y + delta.y
-              }
-            }
+            applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, { kind: 'translate', delta })
           }
         } else if (store.isDraggingNode && store.dragStartWorld) {
-          const dx = rawWorld.x - store.dragStartWorld.x
-          const dy = rawWorld.y - store.dragStartWorld.y
-          const spacing = getSnapSpacing()
-          for (const [nid, initPos] of store.draggedNodeInitialPositions) {
-            const node = store.network.nodes.get(nid)
-            if (node) {
-              let nx = initPos.x + dx
-              let ny = initPos.y + dy
-              if (store.snap) {
-                const snapped = snapToGrid({ x: nx, y: ny }, spacing)
-                nx = snapped.x
-                ny = snapped.y
-              }
-              node.pos.x = nx
-              node.pos.y = ny
-            }
-          }
+          dragSelectedNodes(rawWorld, store.dragStartWorld)
         } else if (store.snap) {
           const spacing = getSnapSpacing()
           store.snappedCursor = snapToGrid(rawWorld, spacing)
@@ -1124,12 +1123,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     window.addEventListener('keydown', handleKeyChange)
     window.addEventListener('keyup', handleKeyChange)
 
+    const rightDragStart = { x: 0, y: 0 }
+    let isRightDragging = false
+    let hasRightMoved = false
+
     const onDown = (e: PointerEvent) => {
       if (e.button === 2) {
-        // Right click: cancel placement chain, curve, or any construction tool and prune orphans
-        store.cancelInteraction()
+        store.closeContextMenu()
+        rightDragStart.x = e.clientX
+        rightDragStart.y = e.clientY
+        hasRightMoved = false
+        isRightDragging = true
+        lastX = e.clientX
+        lastY = e.clientY
+        canvas.setPointerCapture(e.pointerId)
         stopEdgePan()
-        redraw()
         return
       }
 
@@ -1137,8 +1145,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const px = e.clientX - rect.left
       const py = e.clientY - rect.top
 
-      // Priority 0: Check if click hit a 2D Gizmo translation arrow on selected node or section
-      if (e.button === 0 && store.tool !== 'pan') {
+      // Priority 0: Check if click hit a 2D Gizmo translation/rotation handle on selected node or section
+      if (e.button === 0 && store.tool === 'select') {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
@@ -1147,6 +1155,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           if (hitAxis) {
             store.gizmoDragAxis = hitAxis
             store.gizmoDragDelta = { x: 0, y: 0 }
+            store.gizmoRotateDelta = 0
             store.dragStartWorld = getWorldPos(e.clientX, e.clientY)
             store.draggedNodeInitialPositions.clear()
             store.draggedViaInitialPositions.clear()
@@ -1160,7 +1169,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.draggedViaInitialPositions.set(sid, { ...initVia })
             }
             canvas.setPointerCapture(e.pointerId)
-            canvas.style.cursor = hitAxis === 'x' ? 'ew-resize' : 'ns-resize'
+            canvas.style.cursor = hitAxis === 'x' ? 'ew-resize' : hitAxis === 'y' ? 'ns-resize' : 'crosshair'
             stopEdgePan()
             redraw()
             return
@@ -1177,6 +1186,64 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         canvas.setPointerCapture(e.pointerId)
         canvas.style.cursor = 'grabbing'
         stopEdgePan()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'coupling') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        store.handleCouplingClick(world)
+        redraw()
+        return
+      }
+
+      if (e.button === 0 && store.tool === 'locomotive') {
+        const world = getWorldPos(e.clientX, e.clientY)
+
+        // Delete mode: click deletes the hovered vehicle
+        if (store.trainToolSubMode === 'delete') {
+          const deleted = store.deleteVehicleAt(world)
+          if (deleted) {
+            store.updateTrainDeleteHover(world)
+            canvas.style.cursor = store.hoveredTrainDeleteVehicle ? 'pointer' : 'crosshair'
+          }
+          redraw()
+          return
+        }
+
+        // Select mode: click selects vehicle or train, clicking empty space deselects
+        if (store.trainToolSubMode === 'select') {
+          const hitVehicle = store.trains.length > 0 ? store.findVehicleAt(world) : null
+          if (hitVehicle) {
+            store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
+            store.selectTrain(true)
+          } else {
+            store.selectTrainById(null)
+            store.selectTrain(false)
+          }
+          redraw()
+          return
+        }
+
+        // Place mode:
+        // 1. If snapped to a magnetic coupler, place/couple immediately!
+        if (store.couplerSnapTarget) {
+          store.placeTrainItem(world)
+          redraw()
+          return
+        }
+
+        // 2. If clicking directly on an existing vehicle, select it
+        const hitVehicle = store.trains.length > 0 ? store.findVehicleAt(world) : null
+        if (hitVehicle) {
+          store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
+          store.selectTrain(true)
+          redraw()
+          return
+        }
+
+        // 3. Place new vehicle on track
+        store.placeTrainItem(world)
+        redraw()
         return
       }
 
@@ -1212,56 +1279,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.markDirty()
           redraw()
         } else if (cs.phase === 1 && cs.startId) {
-          const startNode = store.network.nodes.get(cs.startId)
-          if (startNode) {
-            const cursor = store.snap ? store.snappedCursor : world
+          const cursor = store.snap ? store.snappedCursor : world
+          const res = resolveCurveTool(store, cs.startId, cursor)
+          // A curve below the minimum radius is shown as invalid by the preview and refused here
+          if (res && res.geom.valid) {
+            const { startNode, trackTarget, geom } = res
             const hitTol = 24 / store.camera.scale
-            const trackTarget = getTrackTangentAt(store.network, cursor, hitTol, cs.startId)
-            const startTan = getTangentForPlacement(store.network, cs.startId, cursor)
-            const fallbackTangent = startTan ?? (() => {
-              const dx = world.x - startNode.pos.x
-              const dy = world.y - startNode.pos.y
-              const len = Math.hypot(dx, dy)
-              return len > 1 ? snapDirection({ x: dx / len, y: dy / len }, 15, 6) : { x: 1, y: 0 }
-            })()
-
-            let endPos: Point
-            let viaPos: Point
-
-            if (trackTarget) {
-              const targetPoint = trackTarget.pointOnTrack
-              const lock = startTan
-                ? computeTurnoutIntersectionLock(startNode.pos, startTan, targetPoint, trackTarget.tangent)
-                : (store.trackMode === 'catalog'
-                    ? computeReverseFreeNodeLock(startNode.pos, targetPoint, trackTarget.tangent, store.selectedCurveRadius)
-                    : null)
-
-              if (lock && lock.valid) {
-                endPos = lock.lockPoint
-                viaPos = lock.via
-              } else {
-                const curve = computeReverseFreeformCurve(startNode.pos, targetPoint, trackTarget.tangent)
-                endPos = curve.end
-                viaPos = curve.via
-              }
-            } else if (store.trackMode === 'freeform') {
-              const spacing = getSnapSpacing()
-              const snappedWorld = store.snap ? snapToGrid(world, spacing) : world
-              const closeTarget = findNearestNode(store.network, snappedWorld, 16, store.camera)
-              const target = closeTarget && closeTarget.id !== cs.startId ? closeTarget.pos : snappedWorld
-              const tangent = fallbackTangent
-              const curve = computeFreeformCurve(startNode.pos, tangent, target)
-              endPos = curve.end
-              viaPos = curve.via
-            } else {
-              const tangent = fallbackTangent
-              const radius = store.selectedCurveRadius
-              const angle = store.selectedCurveAngle
-              const side = store.autoCurveSide ? computeSide(tangent, startNode.pos, world) : store.curveSide
-              const curve = computeCurvePiece(startNode.pos, tangent, radius, side, angle)
-              endPos = curve.end
-              viaPos = curve.via
-            }
+            const endPos = geom.end
+            const viaPos = geom.via
 
             // Auto-snap destination: connect to existing node if close (closes loops!)
             // Or if close to an existing segment, split that segment and connect to midNode!
@@ -1283,26 +1308,30 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 }
               }
             }
-            addCurveSegment(store.network, cs.startId, endId, viaPos)
+            // Insert the curve as arc pieces, fitted to where the end node actually is
+            const endNodePos = store.network.nodes.get(endId)?.pos ?? endPos
+            const pieces = splitCurveIntoArcPieces(startNode.pos, viaPos, endNodePos)
+            addCurveChain(store.network, cs.startId, endId, pieces)
 
             const isParallelKey = e.shiftKey || e.ctrlKey || store.parallelMode
 
             if (isParallelKey) {
-              const par = computeParallelCurve(startNode.pos, viaPos, endPos, store.parallelOffset)
+              // Offset piece by piece: both tracks stay concentric and share their radial joints
+              const parPieces = pieces.map((p) => computeParallelCurve(p.start, p.via, p.end, store.parallelOffset))
               let secStartId = store.parallelLastNodeId
               if (!secStartId) {
-                const s2 = addNode(store.network, par.start)
+                const s2 = addNode(store.network, parPieces[0].start)
                 secStartId = s2.id
               }
-              const endNode2 = addNode(store.network, par.end)
+              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end)
 
-              addCurveSegment(store.network, secStartId, endNode2.id, par.via)
+              addCurveChain(store.network, secStartId, endNode2.id, parPieces)
 
               store.parallelMode = true
               store.parallelLastNodeId = endNode2.id
             }
 
-            reconcileNetworkIntersections(store.network)
+            store.reconcileNetwork()
             store.markDirty()
             // Finish curve: release cursor so it does not auto-continue
             store.curveState = { phase: 0, startId: null }
@@ -1331,7 +1360,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 const dx = snappedWorld.x - startNode.pos.x
                 const dy = snappedWorld.y - startNode.pos.y
                 const len = Math.hypot(dx, dy)
-                if (len > 0.5) {
+                if (len > store.getMinTrackLength()) {
                   const ux = dx / len
                   const uy = dy / len
                   // Vecteur normal perpendiculaire (gauche)
@@ -1359,7 +1388,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   store.lastNodeId = endNode.id
                   store.parallelLastNodeId = endNode2.id
                   store.selection = { nodes: new Set([endNode.id, endNode2.id]), segments: new Set() }
-                  reconcileNetworkIntersections(store.network)
+                  store.reconcileNetwork()
                   store.markDirty()
                 }
               }
@@ -1383,7 +1412,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.lastNodeId = startNodeId
               store.parallelMode = false // attend le prochain point pour créer la paire parallèle
               store.selection = { nodes: new Set([startNodeId]), segments: new Set() }
-              reconcileNetworkIntersections(store.network)
+              store.reconcileNetwork()
               store.markDirty()
             }
           } else {
@@ -1395,7 +1424,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 const dx = snappedWorld.x - mainStart.pos.x
                 const dy = snappedWorld.y - mainStart.pos.y
                 const len = Math.hypot(dx, dy)
-                if (len > 0.5) {
+                if (len > store.getMinTrackLength()) {
                   const ux = dx / len
                   const uy = dy / len
                   const nx = -uy
@@ -1414,7 +1443,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   store.lastNodeId = endNode.id
                   store.parallelLastNodeId = endNode2.id
                   store.selection = { nodes: new Set([endNode.id, endNode2.id]), segments: new Set() }
-                  reconcileNetworkIntersections(store.network)
+                  store.reconcileNetwork()
                   store.markDirty()
                 }
               }
@@ -1435,7 +1464,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           // If already extending from another node, clicking this node completes the segment and finishes!
           if (store.lastNodeId && store.lastNodeId !== clickedNode.id) {
             addSegment(store.network, store.lastNodeId, clickedNode.id)
-            reconcileNetworkIntersections(store.network)
+            store.reconcileNetwork()
             store.markDirty()
             store.lastNodeId = null
             store.selection = { nodes: new Set(), segments: new Set() }
@@ -1457,12 +1486,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const dx = snappedWorld.x - startNode.pos.x
             const dy = snappedWorld.y - startNode.pos.y
 
+            const typedLen = store.isNumericInputActive ? parseFloat(store.numericInput) : NaN
+            const hasTypedLen = !isNaN(typedLen) && typedLen > 0
             const minLen = store.getMinTrackLength()
+
             if (tangent) {
               dir = tangent
               const proj = dx * dir.x + dy * dir.y
               const dist = Math.max(minLen, proj)
-              if (store.trackMode === 'freeform') {
+              if (hasTypedLen) {
+                snappedLen = typedLen
+              } else if (store.trackMode === 'freeform') {
                 snappedLen = store.snap ? Math.max(minLen, Math.round(dist * 10) / 10) : Math.max(minLen, dist)
               } else if (store.selectedStraightLength !== 'auto') {
                 snappedLen = store.selectedStraightLength
@@ -1471,7 +1505,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               }
               endPos = computeStraightPiece(startNode.pos, dir, snappedLen)
             } else {
-              if (store.trackMode === 'freeform') {
+              if (store.trackMode === 'freeform' && !hasTypedLen) {
                 const closeTarget = findNearestNode(store.network, snappedWorld, 16, store.camera)
                 endPos = closeTarget && closeTarget.id !== store.lastNodeId ? closeTarget.pos : snappedWorld
               } else {
@@ -1479,7 +1513,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 dir = rawDist > 0.01
                   ? (store.snap ? snapDirection({ x: dx / rawDist, y: dy / rawDist }, 15, 6) : { x: dx / rawDist, y: dy / rawDist })
                   : { x: 1, y: 0 }
-                if (store.selectedStraightLength !== 'auto') {
+                if (hasTypedLen) {
+                  snappedLen = typedLen
+                } else if (store.selectedStraightLength !== 'auto') {
                   snappedLen = store.selectedStraightLength
                 } else {
                   snappedLen = store.snap ? snapStraightLength(rawDist) : Math.max(minLen, rawDist)
@@ -1507,7 +1543,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               }
             }
             addSegment(store.network, store.lastNodeId, endId)
-            reconcileNetworkIntersections(store.network)
+            store.reconcileNetwork()
+            store.clearNumericInput()
             store.markDirty()
             // Finish straight segment: release cursor so it does not auto-continue
             store.lastNodeId = null
@@ -1546,9 +1583,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const startNode = store.network.nodes.get(store.turnoutStartId)
           if (startNode) {
             const tangent = getTangentForPlacement(store.network, startNode.id, cursor) ?? { x: 1, y: 0 }
-            const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor)
+            const limits = store.getPlacementThresholds()
+            const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor, limits)
             if (geom && geom.valid) {
-              const res = applyFreeformParallelTurnout(store.network, startNode.id, geom)
+              const res = applyFreeformParallelTurnout(store.network, startNode.id, geom, limits.reconcileTolerance)
               store.lastNodeId = res.endNode.id
               store.turnoutStartId = null
               store.markDirty()
@@ -1582,9 +1620,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const targetPos = (store.snap && store.hoverSegSteps?.nearest)
           ? store.hoverSegSteps.nearest
           : (store.snap ? store.snappedCursor : world)
-        const success = performTrackCut(store.network, targetPos, 18 / store.camera.scale)
+        const success = performTrackCut(store.network, targetPos, 18 / store.camera.scale, store.getPlacementThresholds().detachGap)
         if (success) {
-          reconcileNetworkIntersections(store.network)
+          store.reconcileNetwork()
           store.markDirty()
         }
         redraw()
@@ -1606,15 +1644,24 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
-      if (e.button === 0 && store.locomotive && !store.isPlayMode) {
+      if (e.button === 0 && (store.trains.length > 0 || store.locomotive)) {
         const world = getWorldPos(e.clientX, e.clientY)
-        const trainHit = store.checkTrainHover(world)
-        if (trainHit.hit) {
-          store.selectTrain(true)
-          redraw()
-          return
-        } else if (store.isTrainSelected) {
-          store.selectTrain(false)
+        if (store.trains.length > 0) {
+          const hitVehicle = store.findVehicleAt(world)
+          if (hitVehicle) {
+            store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
+            store.selectTrain(true)
+            store.setTool('locomotive')
+            redraw()
+            return
+          }
+        } else if (store.locomotive && !store.isPlayMode) {
+          const trainHit = store.checkTrainHover(world)
+          if (trainHit.hit) {
+            store.selectTrain(true)
+            redraw()
+            return
+          }
         }
       }
 
@@ -1642,6 +1689,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           // Start dragging selected nodes!
           store.isDraggingNode = true
           store.dragStartWorld = world
+          dragPrimaryNodeId = nodeId
           store.draggedNodeInitialPositions.clear()
           for (const nid of store.selection.nodes) {
             const node = store.network.nodes.get(nid)
@@ -1649,6 +1697,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.draggedNodeInitialPositions.set(nid, { ...node.pos })
             }
           }
+          // Every curve touching a dragged node can be reshaped: snapshot them for the move and for cancel
+          store.draggedViaInitialPositions = collectAffectedVias(store.network, store.draggedNodeInitialPositions.keys())
           canvas.setPointerCapture(e.pointerId)
           redraw()
           return
@@ -1691,15 +1741,27 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           redraw()
           return
         }
-        // Empty click: start box selection (not panning)
-        store.isBoxSelecting = true
-        store.boxSelectStart = world
-        store.boxSelectEnd = world
-        if (!isMulti) {
-          store.selection = { nodes: new Set(), segments: new Set() }
+
+        // Empty click: Shift/Ctrl/Cmd + drag initiates box selection
+        if (isMulti) {
+          store.isBoxSelecting = true
+          store.boxSelectStart = world
+          store.boxSelectEnd = world
+          canvas.setPointerCapture(e.pointerId)
+          canvas.style.cursor = 'crosshair'
+          redraw()
+          return
         }
+
+        // Natural Google Maps / CAD background drag: pan the canvas
+        store.panning = true
+        lastX = e.clientX
+        lastY = e.clientY
+        store.moved = false
         canvas.setPointerCapture(e.pointerId)
-        redraw()
+        canvas.style.cursor = 'grabbing'
+        stopEdgePan()
+        return
       }
     }
 
@@ -1712,6 +1774,24 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const py = e.clientY - rect.top
       const vw = rect.width
       const vh = rect.height
+
+      // Right-drag universal pan (works across all tools without mode switching)
+      if (isRightDragging) {
+        const dx = e.clientX - lastX
+        const dy = e.clientY - lastY
+        if (Math.hypot(e.clientX - rightDragStart.x, e.clientY - rightDragStart.y) > 4) {
+          hasRightMoved = true
+          canvas.style.cursor = 'grabbing'
+        }
+        lastX = e.clientX
+        lastY = e.clientY
+        const cam = store.camera
+        cam.x -= dx / cam.scale
+        cam.y -= dy / cam.scale
+        draw()
+        store.notify()
+        return
+      }
 
       // Edge auto-panning: smoothly glide when cursor approaches canvas borders during active construction or dragging
       const isInteracting =
@@ -1764,8 +1844,22 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       store.cursorWorld = rawWorld
 
       // Update train hover detection (for pilot button and inspection)
-      if (store.locomotive && !store.isPlayMode) {
+      if ((store.locomotive || store.trains.length > 0) && !store.isPlayMode) {
         store.checkTrainHover(rawWorld)
+      }
+
+      // Update coupler hover detection in coupling mode
+      if (store.tool === 'coupling') {
+        const nearest = store.findNearestCouplerAt(rawWorld)
+        canvas.style.cursor = nearest ? 'pointer' : 'crosshair'
+        redraw()
+      }
+
+      // Update train delete hover detection in delete mode
+      if (store.tool === 'locomotive' && store.trainToolSubMode === 'delete') {
+        store.updateTrainDeleteHover(rawWorld)
+        canvas.style.cursor = store.hoveredTrainDeleteVehicle ? 'pointer' : 'crosshair'
+        redraw()
       }
 
       // Update train ghost preview ONLY if actively dragging a train item
@@ -1773,11 +1867,34 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.updateTrainDrag(rawWorld, { x: e.clientX, y: e.clientY })
       }
 
+      // Dragging along 2D Gizmo rotation
+      if (store.gizmoDragAxis === 'rotate' && store.dragStartWorld) {
+        const anchor = getGizmoAnchor(store.network, store.selection)
+        if (anchor) {
+          const snapAngle = store.snap && !e.shiftKey
+          const { angleRad, angleDeg } = rotateGizmoDrag(anchor.worldPos, store.dragStartWorld, rawWorld, snapAngle, 15)
+          store.gizmoRotateDelta = angleDeg
+
+          // A single selected node pivots its track direction; several nodes rotate rigidly about the anchor
+          applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, {
+            kind: 'rotate',
+            center: anchor.worldPos,
+            angleRad,
+          })
+        }
+        draw()
+        store.notify()
+        return
+      }
+
       // Dragging along 2D Gizmo axis (orthogonal constraint)
-      if (store.gizmoDragAxis && store.dragStartWorld) {
+      if ((store.gizmoDragAxis === 'x' || store.gizmoDragAxis === 'y') && store.dragStartWorld) {
         const spacing = getSnapSpacing()
         const anchor = getGizmoAnchor(store.network, store.selection)
-        const primaryInitPos = anchor ? anchor.worldPos : null
+        // The anchor follows the drag: subtract the applied delta to get its start position
+        const primaryInitPos = anchor
+          ? { x: anchor.worldPos.x - store.gizmoDragDelta.x, y: anchor.worldPos.y - store.gizmoDragDelta.y }
+          : null
 
         if (primaryInitPos) {
           const { delta } = constrainGizmoDrag(
@@ -1792,21 +1909,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
           store.gizmoDragDelta = delta
 
-          for (const [nid, initPos] of store.draggedNodeInitialPositions) {
-            const node = store.network.nodes.get(nid)
-            if (node) {
-              node.pos.x = initPos.x + delta.x
-              node.pos.y = initPos.y + delta.y
-            }
-          }
-
-          for (const [sid, initVia] of store.draggedViaInitialPositions) {
-            const seg = store.network.segments.get(sid)
-            if (seg && seg.via) {
-              seg.via.x = initVia.x + delta.x
-              seg.via.y = initVia.y + delta.y
-            }
-          }
+          applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, { kind: 'translate', delta })
         }
 
         draw()
@@ -1815,7 +1918,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       // Gizmo arrow hover detection on selected node or section
-      if (store.tool !== 'pan' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis) {
+      if (store.tool === 'select' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis) {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + vw / 2
@@ -1831,13 +1934,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (hoveredAxis === 'y') {
             canvas.style.cursor = 'ns-resize'
             return
-          } else if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize') {
+          } else if (hoveredAxis === 'rotate') {
+            canvas.style.cursor = 'crosshair'
+            return
+          } else if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize' || canvas.style.cursor === 'crosshair') {
             canvas.style.cursor = isSpaceDown ? 'grab' : ''
           }
         }
       } else if (store.gizmoHoverAxis !== null) {
         store.gizmoHoverAxis = null
-        if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize') {
+        if (canvas.style.cursor === 'ew-resize' || canvas.style.cursor === 'ns-resize' || canvas.style.cursor === 'crosshair') {
           canvas.style.cursor = isSpaceDown ? 'grab' : ''
         }
         draw()
@@ -1845,23 +1951,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       // Dragging selected nodes in select tool
       if (store.isDraggingNode && store.dragStartWorld) {
-        const dx = rawWorld.x - store.dragStartWorld.x
-        const dy = rawWorld.y - store.dragStartWorld.y
-        const spacing = getSnapSpacing()
-        for (const [nid, initPos] of store.draggedNodeInitialPositions) {
-          const node = store.network.nodes.get(nid)
-          if (node) {
-            let nx = initPos.x + dx
-            let ny = initPos.y + dy
-            if (store.snap) {
-              const snapped = snapToGrid({ x: nx, y: ny }, spacing)
-              nx = snapped.x
-              ny = snapped.y
-            }
-            node.pos.x = nx
-            node.pos.y = ny
-          }
-        }
+        dragSelectedNodes(rawWorld, store.dragStartWorld)
         draw()
         store.notify()
         return
@@ -1885,7 +1975,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const hitTol = 14 / store.camera.scale
           const hoveredNodeId = hitNode(store.network, rawWorld, hitTol)
           const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
-          if (hoveredNodeId || hoveredSegId) {
+          const hoveredVehicle = store.trains.length > 0 ? store.findVehicleAt(rawWorld) : null
+          if (hoveredNodeId || hoveredSegId || hoveredVehicle) {
             canvas.style.cursor = 'pointer'
           } else if (canvas.style.cursor === 'pointer') {
             canvas.style.cursor = isSpaceDown ? 'grab' : ''
@@ -1907,7 +1998,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           if (hitSegId) {
           if (!isCurvePhase1 && (store.snap || e.shiftKey)) {
             const spacing = getSnapSpacing()
-            const { points, nearest } = getStepPointsAlongSegment(hitSegId, store.network, spacing, rawWorld)
+            const { points, nearest } = getStepPointsAlongSegment(hitSegId, store.network, spacing, rawWorld, store.getPlacementThresholds().stepMargin)
             store.hoverSegSteps = { segId: hitSegId, points, nearest }
             if (nearest) {
               store.snappedCursor = { ...nearest }
@@ -1917,25 +2008,18 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else {
             store.hoverSegSteps = null
             if (isCurvePhase1 && store.curveState.startId) {
-              const csNode = store.network.nodes.get(store.curveState.startId)
-              const hitTolTrack = 24 / store.camera.scale
-              const trTan = getTrackTangentAt(store.network, rawWorld, hitTolTrack, store.curveState.startId)
-              const sTan = csNode ? getTangentForPlacement(store.network, store.curveState.startId, rawWorld) : null
-              if (csNode && trTan) {
-                const lock = sTan
-                  ? computeTurnoutIntersectionLock(csNode.pos, sTan, trTan.pointOnTrack, trTan.tangent)
-                  : (store.trackMode === 'catalog'
-                      ? computeReverseFreeNodeLock(csNode.pos, trTan.pointOnTrack, trTan.tangent, store.selectedCurveRadius)
-                      : null)
-                if (lock && lock.valid) {
-                  const dLock = Math.hypot(rawWorld.x - lock.lockPoint.x, rawWorld.y - lock.lockPoint.y) * store.camera.scale
+              const res = resolveCurveTool(store, store.curveState.startId, rawWorld)
+              if (res && res.trackTarget) {
+                const { geom, trackTarget } = res
+                if (geom.kind === 'lock' && geom.valid) {
+                  const dLock = Math.hypot(rawWorld.x - geom.end.x, rawWorld.y - geom.end.y) * store.camera.scale
                   if (dLock < 120) {
-                    store.snappedCursor = { ...lock.lockPoint }
+                    store.snappedCursor = { ...geom.end }
                   } else {
-                    store.snappedCursor = { ...trTan.pointOnTrack }
+                    store.snappedCursor = { ...trackTarget.pointOnTrack }
                   }
                 } else {
-                  store.snappedCursor = { ...trTan.pointOnTrack }
+                  store.snappedCursor = { ...trackTarget.pointOnTrack }
                 }
               } else {
                 store.snappedCursor = rawWorld
@@ -2001,6 +2085,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
         ) {
+          if (store.tool === 'locomotive') {
+            if (store.trainToolSubMode === 'delete') {
+              store.updateTrainDeleteHover(rawWorld)
+              canvas.style.cursor = store.hoveredTrainDeleteVehicle ? 'pointer' : 'crosshair'
+            } else {
+              store.updateLocomotivePreview(rawWorld)
+            }
+          }
           draw()
         }
         if (store.isBoxSelecting) {
@@ -2024,6 +2116,39 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     const onUp = (e: PointerEvent) => {
+      // Handle right drag pan / right click
+      if (isRightDragging || e.button === 2) {
+        if (canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId)
+        }
+        isRightDragging = false
+        canvas.style.cursor = isSpaceDown ? 'grab' : ''
+        if (!hasRightMoved) {
+          // Short right-click -> Open context menu or cancel placement
+          const world = getWorldPos(e.clientX, e.clientY)
+          const hitTol = 14 / store.camera.scale
+          const nodeId = hitNode(store.network, world, hitTol)
+          const segId = hitSegment(store.network, world, 12 / store.camera.scale)
+          const junc = nodeId ? findJunctionAtNode(store.network, nodeId) : (segId ? findJunctionBySegment(store.network, segId) : null)
+
+          if (junc) {
+            store.openContextMenu(e.clientX, e.clientY, { type: 'junction', id: junc.id, worldPos: world })
+          } else if (nodeId) {
+            store.openContextMenu(e.clientX, e.clientY, { type: 'node', id: nodeId, worldPos: world })
+          } else if (segId) {
+            store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
+          } else {
+            if (store.lastNodeId || store.curveState.phase !== 0 || store.turnoutStartId) {
+              store.cancelInteraction()
+            } else {
+              store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })
+            }
+          }
+        }
+        redraw()
+        return
+      }
+
       // Finalize train item drag and drop
       if (store.draggingTrainItem) {
         const rawWorld = getWorldPos(e.clientX, e.clientY)
@@ -2032,11 +2157,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
-      // Finalize gizmo axis dragging
+      // Finalize gizmo axis / rotation dragging
       if (store.gizmoDragAxis) {
-        const moved = Math.abs(store.gizmoDragDelta.x) > 1e-4 || Math.abs(store.gizmoDragDelta.y) > 1e-4
+        const moved =
+          Math.abs(store.gizmoDragDelta.x) > 1e-4 ||
+          Math.abs(store.gizmoDragDelta.y) > 1e-4 ||
+          Math.abs(store.gizmoRotateDelta) > 1e-4
         store.gizmoDragAxis = null
         store.gizmoDragDelta = { x: 0, y: 0 }
+        store.gizmoRotateDelta = 0
         store.dragStartWorld = null
         store.draggedNodeInitialPositions.clear()
         store.draggedViaInitialPositions.clear()
@@ -2045,7 +2174,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
         canvas.style.cursor = isSpaceDown ? 'grab' : ''
         if (moved) {
-          reconcileNetworkIntersections(store.network)
+          store.reconcileNetwork()
           store.pushHistorySnapshot()
           store.markDirty()
         }
@@ -2058,10 +2187,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.isDraggingNode = false
         store.dragStartWorld = null
         store.draggedNodeInitialPositions.clear()
+        store.draggedViaInitialPositions.clear()
         if (canvas.hasPointerCapture(e.pointerId)) {
           canvas.releasePointerCapture(e.pointerId)
         }
-        reconcileNetworkIntersections(store.network)
+        store.reconcileNetwork()
         store.pushHistorySnapshot()
         store.markDirty()
         redraw()
@@ -2110,11 +2240,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       stopEdgePan()
+      const wasPanning = store.panning
       store.panning = false
       if (canvas.hasPointerCapture(e.pointerId)) {
         canvas.releasePointerCapture(e.pointerId)
       }
       canvas.style.cursor = isSpaceDown ? 'grab' : ''
+
+      if (wasPanning && !store.moved && e.button === 0 && store.tool === 'select') {
+        store.selection = { nodes: new Set(), segments: new Set() }
+        if (store.isTrainSelected && !store.isPlayMode) {
+          store.selectTrain(false)
+          store.selectTrainById(null)
+        }
+        redraw()
+      }
     }
 
     const onWheel = (e: WheelEvent) => {
@@ -2128,26 +2268,26 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const vw = rect.width
       const vh = rect.height
 
-      // When pinching on a trackpad or holding Ctrl/Cmd, browser triggers wheel with ctrlKey: true
-      if (e.ctrlKey || e.metaKey) {
+      // If user does horizontal trackpad swipe without modifiers, pan horizontally
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && !e.ctrlKey && !e.metaKey) {
+        cam.x += e.deltaX / cam.scale
+      } else {
+        // Natural Google Maps / CAD zoom centered on cursor
         const worldX = cam.x + (px - vw / 2) / cam.scale
         const worldY = cam.y + (py - vh / 2) / cam.scale
 
-        // Smooth exponential zoom for pinch gesture
-        const zoomDelta = -e.deltaY * 0.01
+        let dy = e.deltaY
+        if (e.deltaMode === 1) dy *= 33 // DOM_DELTA_LINE
+        else if (e.deltaMode === 2) dy *= 600 // DOM_DELTA_PAGE
+
+        // Normalize zoom factor: ~15% zoom per mouse wheel notch, smooth exponential for trackpad pinch
+        const isTrackpadPinch = e.ctrlKey || e.metaKey
+        const zoomDelta = -dy * (isTrackpadPinch ? 0.008 : 0.0016)
         const factor = Math.exp(Math.max(-0.4, Math.min(0.4, zoomDelta)))
         cam.scale = clampScale(cam.scale * factor)
 
         cam.x = worldX - (px - vw / 2) / cam.scale
         cam.y = worldY - (py - vh / 2) / cam.scale
-      } else {
-        // Natural 2-finger scroll on trackpad (or mouse wheel scroll):
-        // Horizontal trackpad gesture sets deltaX, vertical sets deltaY
-        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX
-        const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY
-
-        cam.x += dx / cam.scale
-        cam.y += dy / cam.scale
       }
 
       const world = getWorldPos(e.clientX, e.clientY)
@@ -2156,6 +2296,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.snappedCursor = snapToGrid(world, spacing)
       } else {
         store.snappedCursor = world
+      }
+
+      if (store.tool === 'locomotive') {
+        if (store.trainToolSubMode === 'delete') {
+          store.updateTrainDeleteHover(world)
+          canvas.style.cursor = store.hoveredTrainDeleteVehicle ? 'pointer' : 'crosshair'
+        } else {
+          store.updateLocomotivePreview(world)
+        }
       }
 
       draw()
@@ -2190,8 +2339,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     const onLeave = () => {
       stopEdgePan()
-      if (store.locomotivePreview) {
+      if (store.locomotivePreview || store.trainPlacementPreview || store.couplerSnapTarget || store.hoveredTrainDeleteVehicle) {
         store.locomotivePreview = null
+        store.trainPlacementPreview = null
+        store.couplerSnapTarget = null
+        store.hoveredTrainDeleteVehicle = null
         draw()
       }
     }
@@ -2219,11 +2371,66 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
+    const onCommitNumeric = () => {
+      if (store.tool === 'place' && store.lastNodeId && store.isNumericInputActive) {
+        const val = parseFloat(store.numericInput)
+        if (!isNaN(val) && val > 0) {
+          const startNode = store.network.nodes.get(store.lastNodeId)
+          if (startNode) {
+            const cursor = store.snap ? store.snappedCursor : store.cursorWorld
+            const tangent = getTangentForPlacement(store.network, store.lastNodeId, cursor)
+            let dir: Point
+            if (tangent) {
+              dir = tangent
+            } else {
+              const dx = cursor.x - startNode.pos.x
+              const dy = cursor.y - startNode.pos.y
+              const rawDist = Math.hypot(dx, dy)
+              dir = rawDist > 0.01 ? { x: dx / rawDist, y: dy / rawDist } : { x: 1, y: 0 }
+            }
+            const endPos = computeStraightPiece(startNode.pos, dir, val)
+            const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
+            let endId: string
+            if (closeNode && closeNode.id !== store.lastNodeId) {
+              endId = closeNode.id
+            } else {
+              const hitTol = 16 / store.camera.scale
+              const hitSegId = hitSegment(store.network, endPos, hitTol)
+              if (hitSegId) {
+                const splitRes = splitSegment(store.network, hitSegId, endPos)
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+              } else {
+                const endNode = addNode(store.network, endPos)
+                endId = endNode.id
+              }
+            }
+            addSegment(store.network, store.lastNodeId, endId)
+            store.reconcileNetwork()
+            store.pushHistorySnapshot()
+            store.markDirty()
+            store.lastNodeId = null
+            store.selection = { nodes: new Set(), segments: new Set() }
+            store.clearNumericInput()
+            redraw()
+          }
+        }
+      } else if (store.tool === 'curve' && store.curveState.startId && store.isNumericInputActive) {
+        const val = parseFloat(store.numericInput)
+        if (!isNaN(val) && val > 0) {
+          store.setSelectedCurveRadius(val)
+          store.clearNumericInput()
+          redraw()
+        }
+      }
+    }
+
+    window.addEventListener('rail:commit-numeric-placement', onCommitNumeric)
     window.addEventListener('pointermove', onGlobalPointerMove)
     window.addEventListener('pointerup', onGlobalPointerUp)
 
     return () => {
       stopEdgePan()
+      window.removeEventListener('rail:commit-numeric-placement', onCommitNumeric)
       window.removeEventListener('keydown', handleKeyChange)
       window.removeEventListener('keyup', handleKeyChange)
       window.removeEventListener('pointermove', onGlobalPointerMove)

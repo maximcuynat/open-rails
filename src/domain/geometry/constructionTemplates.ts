@@ -1,5 +1,5 @@
 import type { Network, Point, RailNode } from '@domain/models/types'
-import { addNode, addSegment, addCurveSegment } from '@domain/models/network'
+import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment } from '@domain/models/network'
 import { splitSegment } from '@domain/models/junction'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
@@ -132,7 +132,7 @@ export function computeAutoConnectGeometry(
 /**
  * Apply auto-connect to the network between Node A and Node B.
  */
-export function applyAutoConnect(net: Network, nodeAId: string, nodeBId: string): boolean {
+export function applyAutoConnect(net: Network, nodeAId: string, nodeBId: string, tolerance?: number): boolean {
   const geom = computeAutoConnectGeometry(net, nodeAId, nodeBId)
   if (!geom) return false
 
@@ -151,7 +151,7 @@ export function applyAutoConnect(net: Network, nodeAId: string, nodeBId: string)
     else addSegment(net, midNode.id, nodeBId)
   }
 
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(net, tolerance)
   return true
 }
 
@@ -276,7 +276,7 @@ export function computeCrossoverPreview(
 /**
  * Apply crossover to the network as a smooth C1 reverse curve (2 curved segments).
  */
-export function applyCrossover(net: Network, preview: CrossoverPreview): boolean {
+export function applyCrossover(net: Network, preview: CrossoverPreview, tolerance?: number): boolean {
   if (!preview.valid) return false
 
   // Split segment 1 at track1Pos
@@ -294,7 +294,7 @@ export function applyCrossover(net: Network, preview: CrossoverPreview): boolean
   addCurveSegment(net, node1.id, nodeM.id, preview.via1)
   addCurveSegment(net, nodeM.id, node2.id, preview.via2)
 
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(net, tolerance)
   return true
 }
 
@@ -431,6 +431,7 @@ export function computeParallelTurnoutPreview(
 export function applyParallelTurnout(
   net: Network,
   preview: ParallelTurnoutPreview,
+  tolerance?: number,
 ): { startNode: RailNode; midNode: RailNode; endNode: RailNode } | null {
   if (!preview.valid) return null
 
@@ -451,7 +452,7 @@ export function applyParallelTurnout(
   addCurveSegment(net, startNode.id, midNode.id, preview.via1)
   addCurveSegment(net, midNode.id, endNode.id, preview.via2)
 
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(net, tolerance)
   return { startNode, midNode, endNode }
 }
 
@@ -471,6 +472,13 @@ export interface FreeformParallelTurnoutResult {
   tangent: Point // outgoing parallel unit tangent
 }
 
+/** World-space limits of the freeform parallel turnout (metres). Defaults are the 1:1 values. */
+export interface TurnoutLimits {
+  minTurnoutAdvance?: number
+  minTurnoutOffset?: number
+  minRadius?: number
+}
+
 /**
  * Compute an interactive parallel turnout from startPos along startTangent to targetPoint.
  * Allows complete freedom of positioning the END of the turnout with live spacing and length.
@@ -480,7 +488,9 @@ export function computeFreeformParallelTurnout(
   startPos: Point,
   startTangent: Point,
   targetPoint: Point,
+  limits: TurnoutLimits = {},
 ): FreeformParallelTurnoutResult | null {
+  const { minTurnoutAdvance = 2, minTurnoutOffset = 0.2, minRadius = 15 } = limits
   const tanLen = Math.hypot(startTangent.x, startTangent.y)
   if (tanLen === 0) return null
   const u = { x: startTangent.x / tanLen, y: startTangent.y / tanLen }
@@ -493,10 +503,10 @@ export function computeFreeformParallelTurnout(
   let Y = vx * norm.x + vy * norm.y
 
   // Must advance forward along the track
-  if (X < 2) X = 2
+  if (X < minTurnoutAdvance) X = minTurnoutAdvance
   // Prevent zero division when exactly on centerline
-  if (Math.abs(Y) < 0.2) {
-    Y = Y >= 0 ? 0.2 : -0.2
+  if (Math.abs(Y) < minTurnoutOffset) {
+    Y = Y >= 0 ? minTurnoutOffset : -minTurnoutOffset
   }
 
   const absY = Math.abs(Y)
@@ -525,7 +535,7 @@ export function computeFreeformParallelTurnout(
   }
 
   return {
-    valid: true,
+    valid: radius >= minRadius,
     startPos,
     midPos,
     endPos,
@@ -545,14 +555,15 @@ export function applyFreeformParallelTurnout(
   net: Network,
   startNodeId: string,
   geom: FreeformParallelTurnoutResult,
+  tolerance?: number,
 ): { midNode: RailNode; endNode: RailNode } {
   const midNode = addNode(net, geom.midPos)
   const endNode = addNode(net, geom.endPos)
 
-  addCurveSegment(net, startNodeId, midNode.id, geom.via1)
-  addCurveSegment(net, midNode.id, endNode.id, geom.via2)
+  addArcCurve(net, startNodeId, midNode.id, geom.via1)
+  addArcCurve(net, midNode.id, endNode.id, geom.via2)
 
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(net, tolerance)
   return { midNode, endNode }
 }
 
@@ -661,7 +672,7 @@ export function computePassingSidingPreview(
 /**
  * Apply passing siding to network with smooth curved transitions.
  */
-export function applyPassingSiding(net: Network, preview: SidingPreview): boolean {
+export function applyPassingSiding(net: Network, preview: SidingPreview, tolerance?: number): boolean {
   if (!preview.valid) return false
 
   // Split at entry and exit
@@ -688,7 +699,7 @@ export function applyPassingSiding(net: Network, preview: SidingPreview): boolea
   addCurveSegment(net, nSEnd.id, nExitMid.id, preview.exitVia1)
   addCurveSegment(net, nExitMid.id, nExit.id, preview.exitVia2)
 
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(net, tolerance)
   return true
 }
 
@@ -744,7 +755,7 @@ export function computeBalloonLoopPreview(
 /**
  * Apply balloon loop to network.
  */
-export function applyBalloonLoop(net: Network, preview: BalloonLoopPreview): boolean {
+export function applyBalloonLoop(net: Network, preview: BalloonLoopPreview, tolerance?: number): boolean {
   if (!preview.valid || preview.loopNodes.length < 3) return false
 
   let prevNodeId = addNode(net, preview.turnoutPos).id
@@ -760,14 +771,16 @@ export function applyBalloonLoop(net: Network, preview: BalloonLoopPreview): boo
   // Close back to start node to form the return junction
   addSegment(net, prevNodeId, startNodeId)
 
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(net, tolerance)
   return true
 }
 
 /**
  * Split a segment or disconnect a node cleanly.
+ * `detachGap` is the distance the detached rail end is pulled back along its own segment;
+ * it must stay larger than the reconcile tolerance or the next reconcile pass welds it back.
  */
-export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0): boolean {
+export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0, detachGap = 0.25): boolean {
   // Check if clicked close to a node
   let bestNode: RailNode | null = null
   let bestNodeDist = hitTol
@@ -786,7 +799,21 @@ export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0): bo
       const segIdToDetach = adj[adj.length - 1]
       const seg = net.segments.get(segIdToDetach)
       if (seg) {
-        const detachedNode = addNode(net, { x: bestNode.pos.x + 0.1, y: bestNode.pos.y + 0.1 })
+        // Pull the detached end back along the segment's own direction (towards its control
+        // point for a curve), so the tangent at that end is unchanged and no kink appears
+        const otherNode = net.nodes.get(seg.from === bestNode.id ? seg.to : seg.from)
+        const towards = seg.kind === 'curve' && seg.via ? seg.via : otherNode?.pos
+        let detachedPos = { ...bestNode.pos }
+        if (towards) {
+          const dx = towards.x - bestNode.pos.x
+          const dy = towards.y - bestNode.pos.y
+          const len = Math.hypot(dx, dy)
+          if (len > 0) {
+            const gap = Math.min(detachGap, len / 2)
+            detachedPos = { x: bestNode.pos.x + (dx / len) * gap, y: bestNode.pos.y + (dy / len) * gap }
+          }
+        }
+        const detachedNode = addNode(net, detachedPos)
         if (seg.from === bestNode.id) seg.from = detachedNode.id
         else if (seg.to === bestNode.id) seg.to = detachedNode.id
         // Rebuild adjacency
@@ -797,17 +824,8 @@ export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0): bo
     }
   }
 
-  // Otherwise check if clicked on a segment to split it
-  for (const seg of net.segments.values()) {
-    const from = net.nodes.get(seg.from)
-    const to = net.nodes.get(seg.to)
-    if (!from || !to) continue
-
-    const splitRes = splitSegment(net, seg.id, worldPos)
-    if (splitRes) {
-      return true
-    }
-  }
-
-  return false
+  // Otherwise split the segment under the cursor, if any
+  const hitSegId = hitSegment(net, worldPos, hitTol)
+  if (!hitSegId) return false
+  return splitSegment(net, hitSegId, worldPos) !== null
 }

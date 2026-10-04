@@ -414,6 +414,15 @@ export function getTrackTangentAt(
   return null
 }
 
+/** World-space limits of the tangent lock functions (metres). Defaults are the 1:1 values. */
+export interface LockLimits {
+  minLockAdvance?: number
+  minLockPerp?: number
+  minRadius?: number
+  minReverseLockRadius?: number
+  cursorDeadband?: number
+}
+
 /**
  * Compute the exact mathematical intersection and tangent locking point
  * when connecting a track from startNode (with tangent startTan) to a target rail (with tangent railTan).
@@ -425,7 +434,9 @@ export function computeTurnoutIntersectionLock(
   startTan: Point,
   railPoint: Point,
   railTan: Point,
+  limits: LockLimits = {},
 ): { lockPoint: Point; via: Point; radius: number; angleDeg: number; valid: boolean } | null {
+  const { minLockAdvance = 0.5, minRadius = 15, cursorDeadband = 1 } = limits
   const tLen = Math.hypot(startTan.x, startTan.y)
   const rLen = Math.hypot(railTan.x, railTan.y)
   if (tLen < 1e-4 || rLen < 1e-4) return null
@@ -446,7 +457,7 @@ export function computeTurnoutIntersectionLock(
 
   // Parameter along startTan to intersection point V
   const t = (dx * (-tr.y) - dy * (-tr.x)) / det
-  if (t < 0.5) {
+  if (t < minLockAdvance) {
     // Intersection is behind startPos or too close
     return null
   }
@@ -462,7 +473,7 @@ export function computeTurnoutIntersectionLock(
   // If cursor is to one side of V along the rail line, follow cursor; otherwise follow forward deflection
   const dotCursor = (railPoint.x - V.x) * tr.x + (railPoint.y - V.y) * tr.y
   const dotForward = (V.x - startPos.x) * tr.x + (V.y - startPos.y) * tr.y
-  const trEff = Math.abs(dotCursor) > 1 ? (dotCursor >= 0 ? tr : { x: -tr.x, y: -tr.y }) : (dotForward >= 0 ? tr : { x: -tr.x, y: -tr.y })
+  const trEff = Math.abs(dotCursor) > cursorDeadband ? (dotCursor >= 0 ? tr : { x: -tr.x, y: -tr.y }) : (dotForward >= 0 ? tr : { x: -tr.x, y: -tr.y })
 
   // In any circular arc tangent to both lines, the distance from V to both tangency points is equal
   const lockPoint = {
@@ -487,7 +498,7 @@ export function computeTurnoutIntersectionLock(
     via: V,
     radius,
     angleDeg,
-    valid: radius >= 15 && angleDeg <= 120,
+    valid: radius >= minRadius && angleDeg <= 120,
   }
 }
 
@@ -501,7 +512,9 @@ export function computeReverseFreeNodeLock(
   railPoint: Point,
   railTan: Point,
   preferredRadius = 300,
+  limits: LockLimits = {},
 ): { lockPoint: Point; via: Point; radius: number; angleDeg: number; valid: boolean } | null {
+  const { minLockPerp = 0.2, minReverseLockRadius = 20 } = limits
   const rLen = Math.hypot(railTan.x, railTan.y)
   if (rLen < 1e-4) return null
   const u = { x: railTan.x / rLen, y: railTan.y / rLen }
@@ -515,10 +528,10 @@ export function computeReverseFreeNodeLock(
   const h = dx * n.x + dy * n.y
   const dPerp = Math.abs(h)
 
-  if (dPerp < 0.2) return null
+  if (dPerp < minLockPerp) return null
 
   // Clamp radius so that dPerp <= 1.9 * R
-  const R = Math.max(preferredRadius, dPerp / 1.8, 20)
+  const R = Math.max(preferredRadius, dPerp / 1.8, minReverseLockRadius)
 
   // Projection of startPos onto the rail line
   const pProj = {

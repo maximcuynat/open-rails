@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { createNetwork, addNode, addSegment } from '@domain/models/network'
+import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
+import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { placementThresholds } from '@domain/geometry/scale'
 import {
   computeAutoConnectGeometry,
   applyAutoConnect,
@@ -148,7 +150,21 @@ describe('constructionTemplates', () => {
       expect(res.midNode).toBeDefined()
       expect(res.endNode).toBeDefined()
       expect(res.endNode.pos.y).toBeCloseTo(5.2, 2)
-      expect(net.segments.size).toBe(3) // 1 straight original + 2 curves
+      // 1 straight original + 2 halves of ~16.9° each, inserted as 2 arc pieces per half (max 15° per piece)
+      expect(net.segments.size).toBe(5)
+    })
+
+    it('flags a freeform parallel turnout tighter than the minimum radius as invalid', () => {
+      // 4 m advance for 3 m offset: R = (16 + 9) / 12 ≈ 2.1 m
+      const tight = computeFreeformParallelTurnout({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 4, y: 3 })
+      expect(tight?.radius).toBeCloseTo(25 / 12, 6)
+      expect(tight?.valid).toBe(false)
+
+      // Same geometry accepted when the caller lowers the minimum, refused when it raises it
+      expect(computeFreeformParallelTurnout({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 4, y: 3 }, { minRadius: 2 })?.valid).toBe(true)
+      const wide = computeFreeformParallelTurnout({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 35, y: 5.2 })
+      expect(wide?.valid).toBe(true)
+      expect(computeFreeformParallelTurnout({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 35, y: 5.2 }, { minRadius: 100 })?.valid).toBe(false)
     })
   })
 
@@ -200,6 +216,100 @@ describe('constructionTemplates', () => {
       expect(success).toBe(true)
       expect(net.nodes.size).toBe(3)
       expect(net.segments.size).toBe(2)
+    })
+
+    it('cuts the segment under the cursor, not the first one of the network', () => {
+      const net = createNetwork()
+      const a1 = addNode(net, { x: 0, y: 0 })
+      const a2 = addNode(net, { x: 100, y: 0 })
+      const segA = addSegment(net, a1.id, a2.id)!
+      const b1 = addNode(net, { x: 0, y: 50 })
+      const b2 = addNode(net, { x: 100, y: 50 })
+      const segB = addSegment(net, b1.id, b2.id)!
+
+      expect(performTrackCut(net, { x: 40, y: 50.5 }, 2.0)).toBe(true)
+      expect(net.segments.has(segA.id)).toBe(true) // A untouched
+      expect(net.segments.has(segB.id)).toBe(false) // B replaced by its two halves
+      expect(net.segments.size).toBe(3)
+      const mid = [...net.nodes.values()].find((n) => ![a1.id, a2.id, b1.id, b2.id].includes(n.id))!
+      expect(mid.pos).toEqual({ x: 40, y: 50 })
+    })
+
+    it('does nothing when the click is not on a track', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 100, y: 0 })
+      addSegment(net, n1.id, n2.id)
+
+      expect(performTrackCut(net, { x: 5000, y: 5000 }, 5.0)).toBe(false)
+      expect(performTrackCut(net, { x: 50, y: 5.5 }, 5.0)).toBe(false)
+      expect(net.nodes.size).toBe(2)
+      expect(net.segments.size).toBe(1)
+    })
+
+    it('cuts a curved segment only when the click is on the curve', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 100, y: 100 })
+      addCurveSegment(net, n1.id, n2.id, { x: 100, y: 0 })
+
+      // On the chord, far from the curve itself
+      expect(performTrackCut(net, { x: 50, y: 50 }, 2.0)).toBe(false)
+      // On the curve apex (75, 25)
+      expect(performTrackCut(net, { x: 75, y: 25 }, 2.0)).toBe(true)
+      expect(net.segments.size).toBe(2)
+    })
+
+    it('detaches a node by pulling the rail end back along its own direction', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 100, y: 0 })
+      const n3 = addNode(net, { x: 200, y: 0 })
+      addSegment(net, n1.id, n2.id)
+      const seg2 = addSegment(net, n2.id, n3.id)!
+
+      expect(performTrackCut(net, { x: 100, y: 0 }, 1.0, 0.25)).toBe(true)
+      expect(net.nodes.size).toBe(4)
+      expect(net.segments.size).toBe(2)
+      // The last segment of the node is detached; its new end stays on the track axis: no kink
+      const detached = net.nodes.get(net.segments.get(seg2.id)!.from)!
+      expect(detached.id).not.toBe(n2.id)
+      expect(detached.pos).toEqual({ x: 100.25, y: 0 })
+      expect(net.adjacency.get(n2.id)?.length).toBe(1)
+      expect(net.adjacency.get(detached.id)).toEqual([seg2.id])
+    })
+
+    it('keeps the tangent of a detached curve end', () => {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: -100, y: 0 })
+      const n2 = addNode(net, { x: 0, y: 0 })
+      const n3 = addNode(net, { x: 50, y: 50 })
+      addSegment(net, n1.id, n2.id)
+      const curve = addCurveSegment(net, n2.id, n3.id, { x: 50, y: 0 })!
+
+      expect(performTrackCut(net, { x: 0, y: 0 }, 1.0, 0.25)).toBe(true)
+      const detached = net.nodes.get(net.segments.get(curve.id)!.from)!
+      // Moved towards the control point: the start tangent is still +x
+      expect(detached.pos).toEqual({ x: 0.25, y: 0 })
+      expect(net.segments.get(curve.id)!.via).toEqual({ x: 50, y: 0 })
+    })
+
+    it('the detached end survives the reconcile pass that follows, at 1:1 and at HO scale', () => {
+      for (const gauge of [undefined, 0.0165]) {
+        const th = placementThresholds(gauge)
+        const net = createNetwork()
+        const n1 = addNode(net, { x: 0, y: 0 })
+        const n2 = addNode(net, { x: 100 * th.k, y: 0 })
+        const n3 = addNode(net, { x: 200 * th.k, y: 0 })
+        addSegment(net, n1.id, n2.id)
+        addSegment(net, n2.id, n3.id)
+
+        expect(performTrackCut(net, n2.pos, 1.0 * th.k, th.detachGap)).toBe(true)
+        const res = reconcileNetworkIntersections(net, th.reconcileTolerance)
+        expect(res).toEqual({ splitCount: 0, weldedCount: 0 })
+        expect(net.nodes.size).toBe(4)
+        expect(net.adjacency.get(n2.id)?.length).toBe(1)
+      }
     })
   })
 })

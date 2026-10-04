@@ -1,13 +1,15 @@
 import type { Point, Network, Selection, NodeId, SegmentId } from '@domain/models/types'
 import { snapToGrid } from '@domain/models/network'
 import { bezierPoint } from '@domain/geometry/curve'
+import { collectAffectedVias } from '@domain/geometry/nodeTransform'
 
-export type GizmoAxis = 'x' | 'y'
+export type GizmoAxis = 'x' | 'y' | 'rotate'
 
 export interface GizmoAnchor {
   type: 'node' | 'section'
   worldPos: Point
   nodeIds: Set<NodeId>
+  /** Initial control point of every curve the move can modify (at least one end in nodeIds). */
   curvedSegments: Map<SegmentId, Point>
 }
 
@@ -28,23 +30,21 @@ export function getGizmoAnchor(
       type: 'node',
       worldPos: { ...primaryNode.pos },
       nodeIds: new Set(selection.nodes),
-      curvedSegments: new Map(),
+      curvedSegments: collectAffectedVias(net, selection.nodes),
     }
   }
 
   if (selection.segments.size > 0) {
     const nodeIds = new Set<NodeId>()
-    const curvedSegments = new Map<SegmentId, Point>()
     for (const sid of selection.segments) {
       const seg = net.segments.get(sid)
       if (seg) {
         nodeIds.add(seg.from)
         nodeIds.add(seg.to)
-        if (seg.kind === 'curve' && seg.via) {
-          curvedSegments.set(sid, { ...seg.via })
-        }
       }
     }
+    // Curves of the selection plus the curves attached to its end nodes
+    const curvedSegments = collectAffectedVias(net, nodeIds)
 
     const segArray = [...selection.segments]
     const midSegId = segArray[Math.floor(segArray.length / 2)]
@@ -79,12 +79,15 @@ export const GIZMO_X_COLOR = '#ef4444' // Red
 export const GIZMO_X_HOVER = '#f87171' // Light red
 export const GIZMO_Y_COLOR = '#10b981' // Green
 export const GIZMO_Y_HOVER = '#34d399' // Light green
+export const GIZMO_ROT_RADIUS = 58 // pixels
+export const GIZMO_ROT_COLOR = '#38bdf8' // Sky blue
+export const GIZMO_ROT_HOVER = '#67e8f9' // Bright cyan
 
 /**
- * Hit-test to see if screen-space pointer (px, py) is over one of the two gizmo arrows.
- * Node center is at (sx, sy) in screen-space.
- * X arrow points to the right: from (sx + GIZMO_OFFSET, sy) to (sx + GIZMO_LENGTH, sy).
- * Y arrow points upwards: from (sx, sy - GIZMO_OFFSET) to (sx, sy - GIZMO_LENGTH).
+ * Hit-test to see if screen-space pointer (px, py) is over one of the gizmo handles:
+ * - 'x' arrow (horizontal right)
+ * - 'y' arrow (vertical up)
+ * - 'rotate' arc (top-right quadrant arc at radius GIZMO_ROT_RADIUS)
  */
 export function hitTestGizmo(
   pointerScreen: Point,
@@ -115,6 +118,19 @@ export function hitTestGizmo(
 
   if (hitX) return 'x'
   if (hitY) return 'y'
+
+  // 3. Hit-test Rotation arc in top-right quadrant (between +X and -Y)
+  const dx = px - sx
+  const dy = py - sy
+  if (dx > 0 && dy < 0) {
+    const dist = Math.hypot(dx, dy)
+    if (dist >= GIZMO_ROT_RADIUS - 7 && dist <= GIZMO_ROT_RADIUS + 7) {
+      const angle = Math.atan2(-dy, dx) // angle in [0, PI/2]
+      if (angle >= (15 * Math.PI) / 180 && angle <= (75 * Math.PI) / 180) {
+        return 'rotate'
+      }
+    }
+  }
 
   return null
 }
@@ -154,15 +170,54 @@ export function constrainGizmoDrag(
   }
 }
 
+/**
+ * Calculates rotation delta angle around anchor point, with optional angle snapping.
+ */
+export function rotateGizmoDrag(
+  anchorWorld: Point,
+  startWorld: Point,
+  currentWorld: Point,
+  snap: boolean,
+  snapStepDeg = 15
+): { angleRad: number; angleDeg: number } {
+  const startAngle = Math.atan2(startWorld.y - anchorWorld.y, startWorld.x - anchorWorld.x)
+  const currentAngle = Math.atan2(currentWorld.y - anchorWorld.y, currentWorld.x - anchorWorld.x)
+  let deltaRad = currentAngle - startAngle
+  while (deltaRad > Math.PI) deltaRad -= 2 * Math.PI
+  while (deltaRad < -Math.PI) deltaRad += 2 * Math.PI
+
+  let deltaDeg = (deltaRad * 180) / Math.PI
+  if (snap && snapStepDeg > 0) {
+    deltaDeg = Math.round(deltaDeg / snapStepDeg) * snapStepDeg
+    deltaRad = (deltaDeg * Math.PI) / 180
+  }
+  return { angleRad: deltaRad, angleDeg: deltaDeg }
+}
+
+/**
+ * Rotates a 2D point around a center origin by an angle in radians.
+ */
+export function rotatePoint(p: Point, center: Point, angleRad: number): Point {
+  const cos = Math.cos(angleRad)
+  const sin = Math.sin(angleRad)
+  const dx = p.x - center.x
+  const dy = p.y - center.y
+  return {
+    x: center.x + dx * cos - dy * sin,
+    y: center.y + dx * sin + dy * cos,
+  }
+}
+
 export interface RenderGizmoOptions {
   delta?: Point
+  angleDeg?: number
   unit?: string
   canvasWidth?: number
   canvasHeight?: number
 }
 
 /**
- * Render the 2D orthogonal translation gizmo (two arrows) at node screen position.
+ * Render the 2D orthogonal translation and rotation gizmo at node screen position.
  */
 export function renderTranslationGizmo(
   ctx: CanvasRenderingContext2D,
@@ -176,7 +231,7 @@ export function renderTranslationGizmo(
 
   ctx.save()
 
-  // 1. If actively dragging an axis, draw infinite dashed guideline through the node
+  // 1. If actively dragging an axis, draw infinite guideline through the node
   if (activeAxis) {
     ctx.save()
     ctx.setLineDash([4, 4])
@@ -187,17 +242,55 @@ export function renderTranslationGizmo(
       ctx.moveTo(0, sy)
       ctx.lineTo(options.canvasWidth ?? 4000, sy)
       ctx.stroke()
-    } else {
+    } else if (activeAxis === 'y') {
       ctx.strokeStyle = 'rgba(16, 185, 129, 0.45)'
       ctx.beginPath()
       ctx.moveTo(sx, 0)
       ctx.lineTo(sx, options.canvasHeight ?? 4000)
       ctx.stroke()
+    } else if (activeAxis === 'rotate') {
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)'
+      ctx.beginPath()
+      ctx.arc(sx, sy, GIZMO_ROT_RADIUS, 0, Math.PI * 2)
+      ctx.stroke()
     }
     ctx.restore()
   }
 
-  // 2. Draw X Arrow (Red, horizontal right)
+  // 2. Draw Rotation Arc (top-right quadrant between +X and -Y)
+  const isRotActive = activeAxis === 'rotate'
+  const isRotHovered = hoveredAxis === 'rotate' || isRotActive
+  const colorRot = isRotHovered ? GIZMO_ROT_HOVER : GIZMO_ROT_COLOR
+  const lineWidthRot = isRotHovered ? 3 : 2
+
+  ctx.save()
+  // Subtle dark shadow outline
+  ctx.strokeStyle = 'rgba(15, 23, 42, 0.65)'
+  ctx.lineWidth = lineWidthRot + 2
+  ctx.beginPath()
+  ctx.arc(sx, sy, GIZMO_ROT_RADIUS, -Math.PI * 0.42, -Math.PI * 0.08)
+  ctx.stroke()
+
+  ctx.strokeStyle = colorRot
+  ctx.lineWidth = lineWidthRot
+  ctx.beginPath()
+  ctx.arc(sx, sy, GIZMO_ROT_RADIUS, -Math.PI * 0.42, -Math.PI * 0.08)
+  ctx.stroke()
+
+  // Pivot handle on arc at -45 deg
+  const midAngle = -Math.PI / 4
+  const hx = sx + GIZMO_ROT_RADIUS * Math.cos(midAngle)
+  const hy = sy + GIZMO_ROT_RADIUS * Math.sin(midAngle)
+  ctx.fillStyle = colorRot
+  ctx.beginPath()
+  ctx.arc(hx, hy, isRotHovered ? 4.5 : 3.5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = '#0f172a'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.restore()
+
+  // 3. Draw X Arrow (Red, horizontal right)
   const isXActive = activeAxis === 'x'
   const isXHovered = hoveredAxis === 'x' || isXActive
   const colorX = isXHovered ? GIZMO_X_HOVER : GIZMO_X_COLOR
@@ -241,7 +334,7 @@ export function renderTranslationGizmo(
   ctx.fillText('X', sx + GIZMO_LENGTH + 5, sy)
   ctx.restore()
 
-  // 3. Draw Y Arrow (Green, vertical up)
+  // 4. Draw Y Arrow (Green, vertical up)
   const isYActive = activeAxis === 'y'
   const isYHovered = hoveredAxis === 'y' || isYActive
   const colorY = isYHovered ? GIZMO_Y_HOVER : GIZMO_Y_COLOR
@@ -285,7 +378,7 @@ export function renderTranslationGizmo(
   ctx.fillText('Y', sx, sy - GIZMO_LENGTH - 4)
   ctx.restore()
 
-  // 4. Center origin pivot indicator (distinct white dot with dark ring)
+  // 5. Center origin pivot indicator (distinct white dot with dark ring)
   ctx.save()
   ctx.fillStyle = '#ffffff'
   ctx.strokeStyle = '#0f172a'
@@ -296,40 +389,53 @@ export function renderTranslationGizmo(
   ctx.stroke()
   ctx.restore()
 
-  // 5. Live delta badge if actively dragging
-  if (activeAxis && options.delta) {
-    const unit = options.unit ?? 'm'
-    const deltaVal = activeAxis === 'x' ? options.delta.x : options.delta.y
-    const sign = deltaVal >= 0 ? '+' : ''
-    const text = `Δ${activeAxis.toUpperCase()}: ${sign}${deltaVal.toFixed(2)} ${unit}`
+  // 6. Live delta badge if actively dragging
+  if (activeAxis) {
+    let text = ''
+    let badgeColor = '#ffffff'
+    let badgeBorder = colorX
 
-    ctx.save()
-    ctx.font = '600 11px Archivo, system-ui, sans-serif'
-    const textMetrics = ctx.measureText(text)
-    const badgeW = textMetrics.width + 16
-    const badgeH = 22
-    const badgeX = activeAxis === 'x' ? sx + GIZMO_LENGTH + 20 : sx + 15
-    const badgeY = activeAxis === 'x' ? sy - 11 : sy - GIZMO_LENGTH / 2 - 11
-
-    // Background pill
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)'
-    ctx.strokeStyle = activeAxis === 'x' ? GIZMO_X_COLOR : GIZMO_Y_COLOR
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6)
-    } else {
-      ctx.rect(badgeX, badgeY, badgeW, badgeH)
+    if (activeAxis === 'rotate' && options.angleDeg !== undefined) {
+      const sign = options.angleDeg >= 0 ? '+' : ''
+      text = `Δθ: ${sign}${options.angleDeg.toFixed(1)}°`
+      badgeBorder = GIZMO_ROT_COLOR
+    } else if (options.delta && (activeAxis === 'x' || activeAxis === 'y')) {
+      const unit = options.unit ?? 'm'
+      const deltaVal = activeAxis === 'x' ? options.delta.x : options.delta.y
+      const sign = deltaVal >= 0 ? '+' : ''
+      text = `Δ${activeAxis.toUpperCase()}: ${sign}${deltaVal.toFixed(2)} ${unit}`
+      badgeBorder = activeAxis === 'x' ? GIZMO_X_COLOR : GIZMO_Y_COLOR
     }
-    ctx.fill()
-    ctx.stroke()
 
-    // Text
-    ctx.fillStyle = '#ffffff'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(text, badgeX + badgeW / 2, badgeY + badgeH / 2)
-    ctx.restore()
+    if (text) {
+      ctx.save()
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const textMetrics = ctx.measureText(text)
+      const badgeW = textMetrics.width + 16
+      const badgeH = 22
+      const badgeX = activeAxis === 'x' ? sx + GIZMO_LENGTH + 20 : activeAxis === 'y' ? sx + 15 : hx + 12
+      const badgeY = activeAxis === 'x' ? sy - 11 : activeAxis === 'y' ? sy - GIZMO_LENGTH / 2 - 11 : hy - 11
+
+      // Background pill
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.90)'
+      ctx.strokeStyle = badgeBorder
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6)
+      } else {
+        ctx.rect(badgeX, badgeY, badgeW, badgeH)
+      }
+      ctx.fill()
+      ctx.stroke()
+
+      // Text
+      ctx.fillStyle = badgeColor
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, badgeX + badgeW / 2, badgeY + badgeH / 2)
+      ctx.restore()
+    }
   }
 
   ctx.restore()

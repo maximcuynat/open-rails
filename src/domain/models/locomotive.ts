@@ -1,6 +1,6 @@
 import type { Network, NodeId, Point, SegmentId, Junction } from './types'
 import { generateId } from './network'
-import { bezierPoint } from '../geometry/curve'
+import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength, isTransitionAllowed } from '../services/pathfinding'
 import { setJunctionBranch, findJunctionAtNode } from './junction'
 
@@ -244,11 +244,23 @@ export function createLocomotive(
   t: number,
   length = 20,
   bogieDistance = 14,
-  wagonCount = 0
+  wagonCount = 0,
+  direction: 1 | -1 = 1
 ): Locomotive | null {
-  const front: TrackPosition = { segId, t, forward: true }
-  const rear = walkBackward(net, segId, t, true, bogieDistance)
-  if (!rear) return null
+  const forward = direction === 1
+  let front: TrackPosition = { segId, t, forward }
+  let rear = walkBackward(net, segId, t, forward, bogieDistance)
+  if (!rear) {
+    const deadEndT = forward ? 0 : 1
+    const fwdPos = walkForward(net, segId, deadEndT, forward, bogieDistance)
+    if (fwdPos) {
+      front = fwdPos
+      rear = { segId, t: deadEndT, forward }
+    } else {
+      front = { segId, t: forward ? 1 : 0, forward }
+      rear = { segId, t: forward ? 0 : 1, forward }
+    }
+  }
 
   return {
     id: generateId('loco'),
@@ -308,6 +320,72 @@ function moveWithinSegmentForward(
   }
 
   return (low + high) / 2
+}
+
+/**
+ * Traverse forward along track segments from (startSeg, startT, startForward) by distance.
+ * Returns resulting TrackPosition, or null if dead end or impassable switch.
+ */
+export function walkForward(
+  net: Network,
+  startSeg: SegmentId,
+  startT: number,
+  startForward: boolean,
+  distance: number
+): TrackPosition | null {
+  let segId = startSeg
+  let t = startT
+  let forward = startForward
+  let distRemaining = distance
+
+  while (distRemaining > 0) {
+    const seg = net.segments.get(segId)
+    if (!seg) return null
+
+    const distAvail = forward
+      ? segmentPartialLength(net, segId, t, 1)
+      : segmentPartialLength(net, segId, 0, t)
+
+    if (distRemaining <= distAvail + 1e-9) {
+      t = moveWithinSegmentForward(net, segId, t, forward, distRemaining)
+      t = Math.max(0, Math.min(1, t))
+      return { segId, t, forward }
+    }
+
+    distRemaining -= distAvail
+
+    const exitNodeId = forward ? seg.to : seg.from
+    const prevNodeId = forward ? seg.from : seg.to
+    const adj = net.adjacency.get(exitNodeId) || []
+
+    let nextSegId: SegmentId | null = null
+    for (const sid of adj) {
+      if (sid === segId) continue
+      const s = net.segments.get(sid)
+      if (!s) continue
+      const nextNodeId = s.from === exitNodeId ? s.to : s.from
+
+      if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId)) {
+        nextSegId = sid
+        break
+      }
+    }
+
+    if (!nextSegId) return null
+    const nextSeg = net.segments.get(nextSegId)
+    if (!nextSeg) return null
+
+    if (nextSeg.from === exitNodeId) {
+      forward = true
+      t = 0
+    } else {
+      forward = false
+      t = 1
+    }
+    segId = nextSegId
+  }
+
+  return { segId, t, forward }
 }
 
 export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: number): boolean {
@@ -487,17 +565,17 @@ export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null
   const overhangFront = (totalLength - loco.bogieDistance) * 0.62 // long nez profilé (~3.7m)
   const overhangRear = totalLength - loco.bogieDistance - overhangFront // arrière (~2.3m)
 
-  const w = 1.45 // demi-largeur de caisse standard TGV (2.90m)
+  const w = 1.15 // demi-largeur de caisse profilée TGV (2.30m, silhouette affinée)
 
   // Points du contour aérodynamique TGV (8 sommets)
   // Museau avant
-  const noseTipL = { x: frontPivot.x + ux * overhangFront + nx * 0.45, y: frontPivot.y + uy * overhangFront + ny * 0.45 }
-  const noseTipR = { x: frontPivot.x + ux * overhangFront - nx * 0.45, y: frontPivot.y + uy * overhangFront - ny * 0.45 }
+  const noseTipL = { x: frontPivot.x + ux * overhangFront + nx * 0.32, y: frontPivot.y + uy * overhangFront + ny * 0.32 }
+  const noseTipR = { x: frontPivot.x + ux * overhangFront - nx * 0.32, y: frontPivot.y + uy * overhangFront - ny * 0.32 }
 
   // Épaules aérodynamiques du nez
   const shoulderDist = overhangFront * 0.55
-  const shoulderL = { x: frontPivot.x + ux * shoulderDist + nx * 1.15, y: frontPivot.y + uy * shoulderDist + ny * 1.15 }
-  const shoulderR = { x: frontPivot.x + ux * shoulderDist - nx * 1.15, y: frontPivot.y + uy * shoulderDist - ny * 1.15 }
+  const shoulderL = { x: frontPivot.x + ux * shoulderDist + nx * 0.90, y: frontPivot.y + uy * shoulderDist + ny * 0.90 }
+  const shoulderR = { x: frontPivot.x + ux * shoulderDist - nx * 0.90, y: frontPivot.y + uy * shoulderDist - ny * 0.90 }
 
   // Base du nez au niveau du bogie avant
   const bodyFrontL = { x: frontPivot.x + nx * w, y: frontPivot.y + ny * w }
@@ -508,8 +586,8 @@ export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null
   const bodyRearR = { x: rearPivot.x - nx * w, y: rearPivot.y - ny * w }
 
   // Face arrière d'attelage (droite pour les futurs wagons)
-  const backL = { x: rearPivot.x - ux * overhangRear + nx * (w - 0.05), y: rearPivot.y - uy * overhangRear + ny * (w - 0.05) }
-  const backR = { x: rearPivot.x - ux * overhangRear - nx * (w - 0.05), y: rearPivot.y - uy * overhangRear - ny * (w - 0.05) }
+  const backL = { x: rearPivot.x - ux * overhangRear + nx * (w - 0.04), y: rearPivot.y - uy * overhangRear + ny * (w - 0.04) }
+  const backR = { x: rearPivot.x - ux * overhangRear - nx * (w - 0.04), y: rearPivot.y - uy * overhangRear - ny * (w - 0.04) }
 
   // Contour complet fermé de la motrice profilée
   const polygon = [
@@ -528,17 +606,17 @@ export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null
   // Pare-brise profilé de cabine
   const wsDist1 = overhangFront * 0.72
   const wsDist2 = overhangFront * 0.38
-  const wsL1 = { x: frontPivot.x + ux * wsDist1 + nx * 0.55, y: frontPivot.y + uy * wsDist1 + ny * 0.55 }
-  const wsR1 = { x: frontPivot.x + ux * wsDist1 - nx * 0.55, y: frontPivot.y + uy * wsDist1 - ny * 0.55 }
-  const wsR2 = { x: frontPivot.x + ux * wsDist2 - nx * 0.95, y: frontPivot.y + uy * wsDist2 - ny * 0.95 }
-  const wsL2 = { x: frontPivot.x + ux * wsDist2 + nx * 0.95, y: frontPivot.y + uy * wsDist2 + ny * 0.95 }
+  const wsL1 = { x: frontPivot.x + ux * wsDist1 + nx * 0.42, y: frontPivot.y + uy * wsDist1 + ny * 0.42 }
+  const wsR1 = { x: frontPivot.x + ux * wsDist1 - nx * 0.42, y: frontPivot.y + uy * wsDist1 - ny * 0.42 }
+  const wsR2 = { x: frontPivot.x + ux * wsDist2 - nx * 0.75, y: frontPivot.y + uy * wsDist2 - ny * 0.75 }
+  const wsL2 = { x: frontPivot.x + ux * wsDist2 + nx * 0.75, y: frontPivot.y + uy * wsDist2 + ny * 0.75 }
   const windshield = [wsL1, wsR1, wsR2, wsL2]
 
   // Phares avant (feux de tête)
   const hlDist = overhangFront * 0.88
   const headlights = {
-    left: { x: frontPivot.x + ux * hlDist + nx * 0.40, y: frontPivot.y + uy * hlDist + ny * 0.40 },
-    right: { x: frontPivot.x + ux * hlDist - nx * 0.40, y: frontPivot.y + uy * hlDist - ny * 0.40 },
+    left: { x: frontPivot.x + ux * hlDist + nx * 0.4, y: frontPivot.y + uy * hlDist + ny * 0.4 },
+    right: { x: frontPivot.x + ux * hlDist - nx * 0.4, y: frontPivot.y + uy * hlDist - ny * 0.4 },
   }
 
   // Pantographe sur le toit (vers le tiers arrière)
@@ -556,10 +634,10 @@ export function getTGVDetails(net: Network, loco: Locomotive): TGVDetails | null
   }
 
   // Soufflet d'intercirculation arrière (gangway pour futurs wagons)
-  const gw1 = { x: backL.x - ux * 0.25 + nx * (0.6 - (w - 0.05)), y: backL.y - uy * 0.25 + ny * (0.6 - (w - 0.05)) }
-  const gw2 = { x: backR.x - ux * 0.25 - nx * (0.6 - (w - 0.05)), y: backR.y - uy * 0.25 - ny * (0.6 - (w - 0.05)) }
-  const gw3 = { x: backR.x - nx * (0.6 - (w - 0.05)), y: backR.y - ny * (0.6 - (w - 0.05)) }
-  const gw4 = { x: backL.x + nx * (0.6 - (w - 0.05)), y: backL.y + ny * (0.6 - (w - 0.05)) }
+  const gw1 = { x: backL.x - ux * 0.25 + nx * (0.45 - (w - 0.04)), y: backL.y - uy * 0.25 + ny * (0.45 - (w - 0.04)) }
+  const gw2 = { x: backR.x - ux * 0.25 - nx * (0.45 - (w - 0.04)), y: backR.y - uy * 0.25 - ny * (0.45 - (w - 0.04)) }
+  const gw3 = { x: backR.x - nx * (0.45 - (w - 0.04)), y: backR.y - ny * (0.45 - (w - 0.04)) }
+  const gw4 = { x: backL.x + nx * (0.45 - (w - 0.04)), y: backL.y + ny * (0.45 - (w - 0.04)) }
   const gangway = [gw4, gw1, gw2, gw3]
 
   return {
@@ -585,6 +663,7 @@ export interface BogieFrame {
   normal: Point
   polygon: Point[] // 4 coins du cadre rectangulaire du bogie (qui tourne sur son pivot)
   axles: [BogieAxle, BogieAxle] // Les 2 essieux montés sur le bogie
+  pos?: TrackPosition
 }
 
 /** Compute the geometry for a bogie (châssis orienté + 2 essieux pivotant selon la voie locale) */
@@ -596,11 +675,11 @@ export function computeBogieFrame(net: Network, pos: TrackPosition): BogieFrame 
   const tan: Point = pos.forward ? rawTan : { x: -rawTan.x, y: -rawTan.y }
   const norm: Point = { x: -tan.y, y: tan.x }
 
-  // Dimensions géométriques d'un bogie ferroviaire (en mètres)
-  const halfL = 1.6 // Châssis de 3.2m de longueur
-  const halfW = 1.05 // Châssis de 2.1m de largeur
-  const axleDist = 1.15 // Empattement entre essieux de 2.3m (±1.15m du centre de rotation)
-  const axleHalfW = 0.95 // Largeur de l'axe transversal avec boîtes d'essieu
+  // Dimensions géométriques d'un bogie ferroviaire (en mètres, silhouette affinée)
+  const halfL = 1.35 // Châssis de 2.7m de longueur
+  const halfW = 0.90 // Châssis de 1.8m de largeur
+  const axleDist = 1.15 // Empattement entre essieux de 2.3m (standard TGV Y230)
+  const axleHalfW = 0.95 // Largeur de l'axe transversal avec boîtes d'essieu (1.9m / 2)
   const wheelHalfGauge = 0.7175 // Demi-écartement de voie standard UIC (1.435m / 2)
 
   // 4 coins du cadre de bogie
@@ -635,6 +714,7 @@ export function computeBogieFrame(net: Network, pos: TrackPosition): BogieFrame 
     normal: norm,
     polygon: [fl, fr, rr, rl],
     axles: [axle1, axle2],
+    pos: { ...pos },
   }
 }
 
@@ -769,7 +849,7 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
   const cars: TGVPasengerCar[] = []
   const accordions: TGVAccordion[] = []
 
-  const w = 1.45 // demi-largeur caisse TGV (2.90m)
+  const w = 1.15 // demi-largeur caisse TGV (2.30m, silhouette affinée)
 
   // Création des caisses de voitures à partir de leurs extrémités nettes (sans chevauchement)
   for (let i = 0; i < carEndpoints.length; i++) {
@@ -1109,10 +1189,14 @@ export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'l
   return false
 }
 
-export function snapToNearestTrack(net: Network, worldPos: Point): { segId: SegmentId; t: number } | null {
+export function snapToNearestTrack(
+  net: Network,
+  worldPos: Point,
+  maxDist: number = Infinity
+): { segId: SegmentId; t: number; dist: number } | null {
   let closestSegId: SegmentId | null = null
   let closestT = 0
-  let minDist = Infinity
+  let minDist = maxDist
 
   for (const seg of net.segments.values()) {
     const from = net.nodes.get(seg.from)
@@ -1142,7 +1226,7 @@ export function snapToNearestTrack(net: Network, worldPos: Point): { segId: Segm
   }
 
   if (closestSegId) {
-    return { segId: closestSegId, t: closestT }
+    return { segId: closestSegId, t: closestT, dist: minDist }
   }
   return null
 }
@@ -1284,4 +1368,127 @@ export function hitTestTGVTrain(
 
   return { hit: false, part: 'none' }
 }
+
+export interface TrackCurvature {
+  radius: number // in meters (Infinity if straight)
+  side: 'left' | 'right' | 'straight'
+  outwardNormal: Point // unit vector pointing towards OUTSIDE of curve (centrifugal acceleration direction)
+}
+
+/** Compute curvature radius and outward (centrifugal) normal at a given track position */
+export function getTrackCurvatureAt(net: Network, pos: TrackPosition): TrackCurvature {
+  const seg = net.segments.get(pos.segId)
+  if (!seg || seg.kind === 'straight' || !seg.via) {
+    return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+  }
+  const from = net.nodes.get(seg.from)
+  const to = net.nodes.get(seg.to)
+  if (!from || !to) {
+    return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+  }
+  const radius = curveRadiusAt(pos.t, from.pos, seg.via, to.pos)
+  if (!isFinite(radius) || radius > 50000) {
+    return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+  }
+
+  // Tangent and second derivative along curve parameter t
+  const d1 = bezierDerivative1(pos.t, from.pos, seg.via, to.pos)
+  const d2 = bezierDerivative2(from.pos, seg.via, to.pos)
+  const d2Len = Math.hypot(d2.x, d2.y)
+  if (d2Len < 1e-9) {
+    return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+  }
+
+  // Centrifugal force points away from the center of curvature (opposite to d2)
+  const outwardNormal: Point = { x: -d2.x / d2Len, y: -d2.y / d2Len }
+
+  // Determine whether it bends left or right relative to bogie heading
+  const bogieTan = pos.forward ? d1 : { x: -d1.x, y: -d1.y }
+  const cross = bogieTan.x * d2.y - bogieTan.y * d2.x
+  const side = cross > 0 ? 'right' : 'left'
+
+  return {
+    radius,
+    side,
+    outwardNormal,
+  }
+}
+
+/**
+ * Sample consecutive points along the track forward from a position for a specified distance.
+ * Useful for stopping distance projection, trajectory previews, and lookahead.
+ */
+export function sampleForwardTrack(
+  net: Network,
+  startPos: TrackPosition,
+  travelDirection: 1 | -1,
+  distanceMeters: number,
+  stepMeters = 1.0,
+): Point[] {
+  const points: Point[] = []
+  if (distanceMeters <= 0) return points
+
+  let segId = startPos.segId
+  let t = startPos.t
+  let forward = travelDirection === 1 ? startPos.forward : !startPos.forward
+
+  const initialPt = positionOnSegment(net, segId, t)
+  if (initialPt) points.push(initialPt)
+
+  let distRemaining = distanceMeters
+  const maxSteps = 150
+
+  for (let step = 0; step < maxSteps && distRemaining > 0; step++) {
+    const dStep = Math.min(stepMeters, distRemaining)
+    const seg = net.segments.get(segId)
+    if (!seg) break
+
+    const distAvail = forward
+      ? segmentPartialLength(net, segId, t, 1)
+      : segmentPartialLength(net, segId, 0, t)
+
+    if (dStep <= distAvail + 1e-9) {
+      t = moveWithinSegmentForward(net, segId, t, forward, dStep)
+      t = Math.max(0, Math.min(1, t))
+      distRemaining -= dStep
+      const p = positionOnSegment(net, segId, t)
+      if (p) points.push(p)
+    } else {
+      distRemaining -= distAvail
+      const exitNodeId = forward ? seg.to : seg.from
+      const prevNodeId = forward ? seg.from : seg.to
+      const adj = net.adjacency.get(exitNodeId) || []
+
+      let nextSegId: SegmentId | null = null
+      for (const sid of adj) {
+        if (sid === segId) continue
+        const s = net.segments.get(sid)
+        if (!s) continue
+        const nextNodeId = s.from === exitNodeId ? s.to : s.from
+        if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId)) {
+          nextSegId = sid
+          break
+        }
+      }
+
+      if (!nextSegId) break
+      const nextSeg = net.segments.get(nextSegId)
+      if (!nextSeg) break
+
+      segId = nextSegId
+      if (nextSeg.from === exitNodeId) {
+        forward = true
+        t = 0
+      } else {
+        forward = false
+        t = 1
+      }
+      const p = positionOnSegment(net, segId, t)
+      if (p) points.push(p)
+    }
+  }
+
+  return points
+}
+
 

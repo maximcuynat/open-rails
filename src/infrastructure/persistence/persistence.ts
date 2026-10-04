@@ -2,6 +2,7 @@ import type { Camera } from '@infrastructure/render/camera'
 import { createNetwork, syncIdCounter } from '../../domain/models/network'
 import { findJunctionAtNode } from '../../domain/models/junction'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
+import { placementThresholds } from '../../domain/geometry/scale'
 import type { Junction, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
@@ -275,7 +276,10 @@ export function deserializeNetwork(data: SerializedProject): {
   }
 
   // 3. Reconcile intersections and auto-detect junctions (scans degree-3 forks)
-  reconcileNetworkIntersections(net)
+  reconcileNetworkIntersections(
+    net,
+    placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance,
+  )
 
   // 4. Restore/overlay persisted junctions (preserves activeBranch toggle state and explicitly placed turnouts)
   if (Array.isArray(data.junctions)) {

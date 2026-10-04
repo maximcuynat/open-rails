@@ -1,5 +1,5 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
-import { distToCurve } from '../geometry/curve'
+import { distToCurve, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 
 let idCounter = 0
 
@@ -65,6 +65,48 @@ export function addCurveSegment(
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
   return seg
+}
+
+/**
+ * Insert a chain of curve pieces between two existing nodes, creating one intermediate node
+ * per joint. The first piece starts at `from`, the last one ends at `to`.
+ */
+export function addCurveChain(
+  net: Network,
+  from: NodeId,
+  to: NodeId,
+  pieces: CurvePiece[],
+): { segments: Segment[]; nodes: RailNode[] } | null {
+  if (from === to || pieces.length === 0) return null
+  if (!net.nodes.has(from) || !net.nodes.has(to)) return null
+  const segments: Segment[] = []
+  const nodes: RailNode[] = []
+  let prevId = from
+  for (let i = 0; i < pieces.length; i++) {
+    const isLast = i === pieces.length - 1
+    const nextId = isLast ? to : addNode(net, pieces[i].end).id
+    if (!isLast) nodes.push(net.nodes.get(nextId)!)
+    const seg = addCurveSegment(net, prevId, nextId, pieces[i].via)
+    if (seg) segments.push(seg)
+    prevId = nextId
+  }
+  return { segments, nodes }
+}
+
+/**
+ * Add a user-placed curve between two existing nodes as a true circular arc:
+ * the curve is cut into pieces of bounded deflection (see splitCurveIntoArcPieces).
+ */
+export function addArcCurve(
+  net: Network,
+  from: NodeId,
+  to: NodeId,
+  via: Point,
+): { segments: Segment[]; nodes: RailNode[] } | null {
+  const a = net.nodes.get(from)
+  const b = net.nodes.get(to)
+  if (!a || !b) return null
+  return addCurveChain(net, from, to, splitCurveIntoArcPieces(a.pos, via, b.pos))
 }
 
 export function removeNode(net: Network, id: NodeId): void {
@@ -303,6 +345,7 @@ export function getStepPointsAlongSegment(
   net: Network,
   spacing: number,
   cursorPos: Point,
+  margin = 0.2,
 ): { points: Point[]; nearest: Point | null; nearestT: number } {
   const seg = net.segments.get(segId)
   if (!seg || spacing <= 0) return { points: [], nearest: null, nearestT: 0 }
@@ -317,10 +360,10 @@ export function getStepPointsAlongSegment(
     const dx = b.pos.x - a.pos.x
     const dy = b.pos.y - a.pos.y
     const len = Math.hypot(dx, dy)
-    if (len < 0.2) return { points: [], nearest: null, nearestT: 0 }
+    if (len < margin) return { points: [], nearest: null, nearestT: 0 }
 
     // 1. Regular metric increments along the segment from Node A
-    const count = Math.floor((len - 0.2) / spacing)
+    const count = Math.floor((len - margin) / spacing)
     for (let i = 1; i <= count; i++) {
       const t = (i * spacing) / len
       if (t > 0.01 && t < 0.99) tSet.add(t)
@@ -336,8 +379,8 @@ export function getStepPointsAlongSegment(
     if (Math.abs(dx) > 1e-4) {
       const minX = Math.min(a.pos.x, b.pos.x)
       const maxX = Math.max(a.pos.x, b.pos.x)
-      const kMin = Math.ceil((minX + 0.1) / spacing)
-      const kMax = Math.floor((maxX - 0.1) / spacing)
+      const kMin = Math.ceil((minX + margin / 2) / spacing)
+      const kMax = Math.floor((maxX - margin / 2) / spacing)
       for (let k = kMin; k <= kMax; k++) {
         const gx = k * spacing
         const t = (gx - a.pos.x) / dx
@@ -349,8 +392,8 @@ export function getStepPointsAlongSegment(
     if (Math.abs(dy) > 1e-4) {
       const minY = Math.min(a.pos.y, b.pos.y)
       const maxY = Math.max(a.pos.y, b.pos.y)
-      const mMin = Math.ceil((minY + 0.1) / spacing)
-      const mMax = Math.floor((maxY - 0.1) / spacing)
+      const mMin = Math.ceil((minY + margin / 2) / spacing)
+      const mMax = Math.floor((maxY - margin / 2) / spacing)
       for (let m = mMin; m <= mMax; m++) {
         const gy = m * spacing
         const t = (gy - a.pos.y) / dy
@@ -372,7 +415,7 @@ export function getStepPointsAlongSegment(
       if (Math.abs(Math.round(px) - px) < 1e-3) px = Math.round(px)
       if (Math.abs(Math.round(py) - py) < 1e-3) py = Math.round(py)
       const pt = { x: px, y: py }
-      if (!points.some((existing) => Math.hypot(existing.x - pt.x, existing.y - pt.y) < Math.min(0.2, spacing * 0.1))) {
+      if (!points.some((existing) => Math.hypot(existing.x - pt.x, existing.y - pt.y) < Math.min(margin, spacing * 0.1))) {
         points.push(pt)
       }
     }
@@ -394,8 +437,8 @@ export function getStepPointsAlongSegment(
       prev = { x: px, y: py }
     }
 
-    if (totalLen >= 0.2) {
-      const count = Math.floor((totalLen - 0.2) / spacing)
+    if (totalLen >= margin) {
+      const count = Math.floor((totalLen - margin) / spacing)
       for (let s = 1; s <= count; s++) {
         const targetDist = s * spacing
         let idx = 0
@@ -414,7 +457,7 @@ export function getStepPointsAlongSegment(
         if (Math.abs(Math.round(px) - px) < 1e-3) px = Math.round(px)
         if (Math.abs(Math.round(py) - py) < 1e-3) py = Math.round(py)
         const pt = { x: px, y: py }
-        if (!points.some((existing) => Math.hypot(existing.x - pt.x, existing.y - pt.y) < Math.min(0.2, spacing * 0.1))) {
+        if (!points.some((existing) => Math.hypot(existing.x - pt.x, existing.y - pt.y) < Math.min(margin, spacing * 0.1))) {
           points.push(pt)
         }
       }

@@ -2,7 +2,7 @@ export type { Camera } from '@infrastructure/render/camera'
 import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
-import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
+import { bezierDerivative1, bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
@@ -335,6 +335,144 @@ export function isSegmentInBounds(
   return true
 }
 
+/** Check if a segment is an inactive branch of a junction located specifically at nodeId */
+export function isInactiveBranchAtNode(net: Network, segId: string, nodeId: NodeId): boolean {
+  for (const junc of net.junctions.values()) {
+    if (junc.nodeId !== nodeId) continue
+    if (junc.hand === 'three_way') {
+      if (junc.activeBranch === 'straight') {
+        if (segId === junc.divergingSegmentId || segId === junc.divergingRightSegmentId) return true
+      } else if (junc.activeBranch === 'right') {
+        if (segId === junc.straightSegmentId || segId === junc.divergingSegmentId) return true
+      } else {
+        if (segId === junc.straightSegmentId || segId === junc.divergingRightSegmentId) return true
+      }
+    } else {
+      if (
+        (junc.activeBranch === 'straight' && segId === junc.divergingSegmentId) ||
+        (junc.activeBranch === 'diverging' && segId === junc.straightSegmentId)
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/** Visual length (in meters) of the turnout mechanism/divergence zone */
+export const TURNOUT_ZONE_LENGTH = 25
+
+export interface SegmentSubInterval {
+  t0: number
+  t1: number
+  isTurnout: boolean
+}
+
+/**
+ * Subdivide a quadratic Bezier curve [p0, via, p2] between parameters t0 and t1.
+ * Uses exact de Casteljau / Bezier derivative reparameterization.
+ */
+export function subdivideCurve(
+  p0: Point,
+  via: Point,
+  p2: Point,
+  t0: number,
+  t1: number,
+): { p0: Point; via: Point; p2: Point } {
+  if (t0 <= 0 && t1 >= 1) {
+    return { p0, via, p2 }
+  }
+  const subP0 = bezierPoint(t0, p0, via, p2)
+  const subP2 = bezierPoint(t1, p0, via, p2)
+  const d0 = bezierDerivative1(t0, p0, via, p2)
+  const dt = t1 - t0
+  const subVia = {
+    x: subP0.x + (dt / 2) * d0.x,
+    y: subP0.y + (dt / 2) * d0.y,
+  }
+  return { p0: subP0, via: subVia, p2: subP2 }
+}
+
+/**
+ * Subdivide a straight line [p0, p2] between parameters t0 and t1.
+ */
+export function subdivideStraight(
+  p0: Point,
+  p2: Point,
+  t0: number,
+  t1: number,
+): { a: Point; b: Point } {
+  if (t0 <= 0 && t1 >= 1) {
+    return { a: p0, b: p2 }
+  }
+  const dx = p2.x - p0.x
+  const dy = p2.y - p0.y
+  return {
+    a: { x: p0.x + t0 * dx, y: p0.y + t0 * dy },
+    b: { x: p0.x + t1 * dx, y: p0.y + t1 * dy },
+  }
+}
+
+/**
+ * Compute sub-intervals for rendering a segment.
+ * If the segment connects to an inactive turnout at seg.from or seg.to,
+ * only the TURNOUT_ZONE_LENGTH portion adjacent to the switch apex is marked as isTurnout = true (dimmed),
+ * while the rest of the track maintains normal full opacity.
+ */
+export function getSegmentRenderIntervals(
+  net: Network,
+  seg: Segment,
+  a: Point,
+  b: Point,
+): SegmentSubInterval[] {
+  const fromInactive = isInactiveBranchAtNode(net, seg.id, seg.from)
+  const toInactive = isInactiveBranchAtNode(net, seg.id, seg.to)
+
+  if (!fromInactive && !toInactive) {
+    return [{ t0: 0, t1: 1, isTurnout: false }]
+  }
+
+  const len = seg.kind === 'curve' && seg.via
+    ? curveLength(a, seg.via, b)
+    : Math.hypot(b.x - a.x, b.y - a.y)
+
+  if (len <= 0.1) {
+    return [{ t0: 0, t1: 1, isTurnout: true }]
+  }
+
+  const tTurnout = TURNOUT_ZONE_LENGTH / len
+
+  if (fromInactive && toInactive) {
+    if (2 * tTurnout >= 0.99) {
+      return [{ t0: 0, t1: 1, isTurnout: true }]
+    }
+    return [
+      { t0: 0, t1: tTurnout, isTurnout: true },
+      { t0: tTurnout, t1: 1 - tTurnout, isTurnout: false },
+      { t0: 1 - tTurnout, t1: 1, isTurnout: true },
+    ]
+  }
+
+  if (fromInactive) {
+    if (tTurnout >= 0.99) {
+      return [{ t0: 0, t1: 1, isTurnout: true }]
+    }
+    return [
+      { t0: 0, t1: tTurnout, isTurnout: true },
+      { t0: tTurnout, t1: 1, isTurnout: false },
+    ]
+  }
+
+  // toInactive
+  if (tTurnout >= 0.99) {
+    return [{ t0: 0, t1: 1, isTurnout: true }]
+  }
+  return [
+    { t0: 0, t1: 1 - tTurnout, isTurnout: false },
+    { t0: 1 - tTurnout, t1: 1, isTurnout: true },
+  ]
+}
+
 export interface RenderNetworkOptions {
   tool?: string
   hideConstructionNodes?: boolean
@@ -385,35 +523,49 @@ export function renderNetwork(
       if (!a || !b) continue
 
       const selected = selection.segments.has(seg.id)
-      const isInactive = isInactiveBranch(net, seg.id)
-
-      ctx.save()
-      if (isInactive) ctx.globalAlpha = 0.4
-
-      const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
-      const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
-      const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
-      const by = (b.pos.y - cam.y) * cam.scale + vh / 2
-
       const sec = findSectionBySegment(trackSections, seg.id)
       const secColor = selected ? accent : (sec?.color ?? ink)
+      const intervals = getSegmentRenderIntervals(net, seg, a.pos, b.pos)
 
-      ctx.strokeStyle = secColor
-      ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
-      ctx.lineCap = 'round'
-      if (isInactive) ctx.setLineDash([5, 4])
-      ctx.beginPath()
-      ctx.moveTo(ax, ay)
-      if (seg.kind === 'curve' && seg.via) {
-        const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-        const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-        ctx.quadraticCurveTo(vx, vy, bx, by)
-      } else {
-        ctx.lineTo(bx, by)
+      for (const inter of intervals) {
+        ctx.save()
+        if (inter.isTurnout) {
+          ctx.globalAlpha = 0.4
+          ctx.setLineDash([5, 4])
+        }
+
+        ctx.strokeStyle = secColor
+        ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
+        ctx.lineCap = 'round'
+
+        if (seg.kind === 'curve' && seg.via) {
+          const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
+          const p0x = (sub.p0.x - cam.x) * cam.scale + vw / 2
+          const p0y = (sub.p0.y - cam.y) * cam.scale + vh / 2
+          const vx = (sub.via.x - cam.x) * cam.scale + vw / 2
+          const vy = (sub.via.y - cam.y) * cam.scale + vh / 2
+          const p2x = (sub.p2.x - cam.x) * cam.scale + vw / 2
+          const p2y = (sub.p2.y - cam.y) * cam.scale + vh / 2
+
+          ctx.beginPath()
+          ctx.moveTo(p0x, p0y)
+          ctx.quadraticCurveTo(vx, vy, p2x, p2y)
+          ctx.stroke()
+        } else {
+          const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
+          const ax = (sub.a.x - cam.x) * cam.scale + vw / 2
+          const ay = (sub.a.y - cam.y) * cam.scale + vh / 2
+          const bx = (sub.b.x - cam.x) * cam.scale + vw / 2
+          const by = (sub.b.y - cam.y) * cam.scale + vh / 2
+
+          ctx.beginPath()
+          ctx.moveTo(ax, ay)
+          ctx.lineTo(bx, by)
+          ctx.stroke()
+        }
+
+        ctx.restore()
       }
-      ctx.stroke()
-      if (isInactive) ctx.setLineDash([])
-      ctx.restore()
     }
   } else {
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
@@ -462,17 +614,24 @@ export function renderNetwork(
       if (!a || !b) continue
 
       const selected = selection.segments.has(seg.id)
-      const isInactive = isInactiveBranch(net, seg.id)
+      const intervals = getSegmentRenderIntervals(net, seg, a.pos, b.pos)
 
-      ctx.save()
-      if (isInactive) ctx.globalAlpha = 0.4
+      for (const inter of intervals) {
+        ctx.save()
+        if (inter.isTurnout) {
+          ctx.globalAlpha = 0.4
+        }
 
-      if (seg.kind === 'curve' && seg.via) {
-        renderDetailedCurveRails(ctx, cam, a.pos, seg.via, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
-      } else {
-        renderDetailedRailLines(ctx, cam, a.pos, b.pos, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
+        if (seg.kind === 'curve' && seg.via) {
+          const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
+          renderDetailedCurveRails(ctx, cam, sub.p0, sub.via, sub.p2, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
+        } else {
+          const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
+          renderDetailedRailLines(ctx, cam, sub.a, sub.b, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
+        }
+
+        ctx.restore()
       }
-      ctx.restore()
     }
     // Connect rails and create smooth dynamic miter joints at nodes
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE)
@@ -1530,7 +1689,7 @@ export function getNodeSegmentEnds(
       bLeftScr: w2s(bLeftW, cam, vw, vh),
       bRightScr: w2s(bRightW, cam, vw, vh),
       selected: selection.segments.has(sid) || selection.nodes.has(node.id),
-      isInactive: isInactiveBranch(net, sid),
+      isInactive: isInactiveBranchAtNode(net, sid, node.id),
     })
   }
   return ends
@@ -2736,13 +2895,29 @@ export function renderBufferStop(
 
 // ─────────────────── Locomotive Rendering ───────────────────
 
-import type { Locomotive } from '@domain/models/locomotive'
+import type { Locomotive, TrackPosition } from '@domain/models/locomotive'
 import {
   getFullTGVTrain,
+  getTrackCurvatureAt,
+  sampleForwardTrack,
   type BogieFrame,
   type TGVDetails,
+  type TGVAccordion,
   type TGVFullTrain,
 } from '@domain/models/locomotive'
+import type { TrainSet, CouplerPoint } from '@domain/models/train'
+import { getTrainSetVisuals, trainDriveTelemetry, MAX_COUPLE_DISTANCE } from '@domain/models/train'
+
+import type { TrainDebugOptions } from '@application/state/editorStore'
+
+export interface TrainTelemetry {
+  speed?: number
+  maxSpeed?: number
+  throttle?: 1 | 0 | -1
+  acceleration?: number
+  braking?: number
+  debugOptions?: Partial<TrainDebugOptions>
+}
 
 /**
  * Render a locomotive on the canvas.
@@ -2764,6 +2939,8 @@ export function renderLocomotive(
   isGhost = false,
   isDebugSkeleton = false,
   isSelected = false,
+  telemetry?: TrainTelemetry,
+  isDeleteHovered = false,
 ): void {
   const train = getFullTGVTrain(net, loco)
   if (!train) return
@@ -2817,10 +2994,10 @@ export function renderLocomotive(
 
   // 1. Dessiner tous les bogies sous les caisses (M1, Jacobs partagés, M2)
   const drawBogie = (bogie: BogieFrame, isLeadBogie: boolean) => {
-    // 1.1 Châssis mécanique en H vu de dessus (longerons latéraux + traverse centrale)
-    const halfL = 1.6
-    const halfW = 1.05
-    const beamW = 0.22
+    // 1.1 Châssis mécanique en H vu de dessus (longerons latéraux + traverse centrale, affinés)
+    const halfL = 1.35
+    const halfW = 0.90
+    const beamW = 0.16
 
     // Poutre latérale gauche
     const bl1 = { x: bogie.center.x + bogie.tangent.x * halfL + bogie.normal.x * (halfW - beamW), y: bogie.center.y + bogie.tangent.y * halfL + bogie.normal.y * (halfW - beamW) }
@@ -2836,7 +3013,7 @@ export function renderLocomotive(
     ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
     ctx.fill()
     ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
-    ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+    ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
     ctx.stroke()
 
     // Poutre latérale droite
@@ -2853,11 +3030,11 @@ export function renderLocomotive(
     ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
     ctx.fill()
     ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
-    ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+    ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
     ctx.stroke()
 
     // Traverse centrale (bolster)
-    const bmidW = 0.35
+    const bmidW = 0.28
     const bm1 = { x: bogie.center.x + bogie.tangent.x * bmidW + bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * bmidW + bogie.normal.y * halfW }
     const bm2 = { x: bogie.center.x + bogie.tangent.x * bmidW - bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * bmidW - bogie.normal.y * halfW }
     const bm3 = { x: bogie.center.x - bogie.tangent.x * bmidW - bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * bmidW - bogie.normal.y * halfW }
@@ -2871,26 +3048,26 @@ export function renderLocomotive(
     ctx.fillStyle = isGhost ? 'rgba(15, 23, 42, 0.5)' : '#0f172a'
     ctx.fill()
     ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
-    ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+    ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
     ctx.stroke()
 
     // 1.2 Essieux et roues
-    const wheelHalfL = 0.45
-    const wheelThickness = 0.08
+    const wheelHalfL = 0.38
+    const wheelThickness = 0.07
     for (const axle of bogie.axles) {
       // Barre transversale d'axe
       ctx.beginPath()
       ctx.moveTo(toSx(axle.left), toSy(axle.left))
       ctx.lineTo(toSx(axle.right), toSy(axle.right))
       ctx.strokeStyle = isGhost ? 'rgba(148, 163, 184, 0.5)' : '#94a3b8'
-      ctx.lineWidth = Math.max(1.5, 2.5 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.0, 1.6 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       const drawWheel = (wc: Point) => {
         const w1 = { x: wc.x + bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wc.y + bogie.tangent.y * wheelHalfL + bogie.normal.y * wheelThickness }
         const w2 = { x: wc.x + bogie.tangent.x * wheelHalfL - bogie.normal.x * wheelThickness, y: wc.y + bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
         const w3 = { x: wc.x - bogie.tangent.x * wheelHalfL - bogie.normal.x * wheelThickness, y: wc.y - bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
-        const w4 = { x: wc.x - bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wc.y - bogie.tangent.y * wheelHalfL + bogie.normal.y * wheelThickness }
+        const w4 = { x: wc.x - bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wc.y - bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
         ctx.beginPath()
         ctx.moveTo(toSx(w1), toSy(w1))
         ctx.lineTo(toSx(w2), toSy(w2))
@@ -2900,7 +3077,7 @@ export function renderLocomotive(
         ctx.fillStyle = isGhost ? 'rgba(51, 65, 85, 0.7)' : '#334155'
         ctx.fill()
         ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
-        ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+        ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
         ctx.stroke()
       }
 
@@ -2908,7 +3085,7 @@ export function renderLocomotive(
       drawWheel(axle.rightWheel)
 
       // Boîtes d'essieu
-      const boxSize = 0.15
+      const boxSize = 0.12
       const drawBox = (pt: Point) => {
         const b1 = { x: pt.x + bogie.tangent.x * boxSize + bogie.normal.x * boxSize, y: pt.y + bogie.tangent.y * boxSize + bogie.normal.y * boxSize }
         const b2 = { x: pt.x + bogie.tangent.x * boxSize - bogie.normal.x * boxSize, y: pt.y + bogie.tangent.y * boxSize - bogie.normal.y * boxSize }
@@ -2923,7 +3100,7 @@ export function renderLocomotive(
         ctx.fillStyle = isGhost ? 'rgba(71, 85, 105, 0.7)' : '#64748b'
         ctx.fill()
         ctx.strokeStyle = '#0f172a'
-        ctx.lineWidth = 1
+        ctx.lineWidth = 0.8
         ctx.stroke()
       }
       drawBox(axle.left)
@@ -2931,14 +3108,14 @@ export function renderLocomotive(
     }
 
     // 1.3 Pivot central fixé
-    const pivotOuterR = Math.max(4, Math.min(8, 4.5 * Math.sqrt(cam.scale)))
-    const pivotInnerR = Math.max(2, Math.min(4, 2.5 * Math.sqrt(cam.scale)))
+    const pivotOuterR = Math.max(3, Math.min(6, 3.5 * Math.sqrt(cam.scale)))
+    const pivotInnerR = Math.max(1.5, Math.min(3, 1.8 * Math.sqrt(cam.scale)))
     ctx.beginPath()
     ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotOuterR, 0, Math.PI * 2)
     ctx.fillStyle = '#334155'
     ctx.fill()
     ctx.strokeStyle = '#94a3b8'
-    ctx.lineWidth = 1.5
+    ctx.lineWidth = 1.2
     ctx.stroke()
 
     ctx.beginPath()
@@ -2989,17 +3166,27 @@ export function renderLocomotive(
     ctx.closePath()
 
     if (isDebugSkeleton) {
-      // Mode Squelette : contour filaire discret et très fin
-      ctx.setLineDash([3, 3])
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)'
-      ctx.lineWidth = 0.75
-      ctx.stroke()
-      ctx.setLineDash([])
+      const isXray = telemetry?.debugOptions?.xray !== false
+      if (isXray) {
+        // Mode X-Ray : carrosserie semi-transparente "verre teinté" bleu cyan
+        ctx.fillStyle = 'rgba(14, 165, 233, 0.07)'
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.40)'
+        ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+        ctx.stroke()
+      } else {
+        // Mode Squelette pur : contour filaire discret et très fin
+        ctx.setLineDash([3, 3])
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)'
+        ctx.lineWidth = 0.75
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
     } else {
       ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.92)'
       ctx.fill()
       ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
-      ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       // Bandes latérales bleu roi TGV
@@ -3007,14 +3194,14 @@ export function renderLocomotive(
       ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
       ctx.lineTo(toSx(car.polygon[3]), toSy(car.polygon[3]))
       ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       ctx.beginPath()
       ctx.moveTo(toSx(car.polygon[1]), toSy(car.polygon[1]))
       ctx.lineTo(toSx(car.polygon[2]), toSy(car.polygon[2]))
       ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       // Baies vitrées passagers
@@ -3024,7 +3211,7 @@ export function renderLocomotive(
           ctx.moveTo(toSx(w.p1), toSy(w.p1))
           ctx.lineTo(toSx(w.p2), toSy(w.p2))
           ctx.strokeStyle = '#0f172a'
-          ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+          ctx.lineWidth = Math.max(1.2, 1.8 * Math.sqrt(cam.scale))
           ctx.stroke()
         }
       }
@@ -3043,17 +3230,27 @@ export function renderLocomotive(
     ctx.closePath()
 
     if (isDebugSkeleton) {
-      // Mode Squelette : contour filaire discret et très fin
-      ctx.setLineDash([3, 3])
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)'
-      ctx.lineWidth = 0.75
-      ctx.stroke()
-      ctx.setLineDash([])
+      const isXray = telemetry?.debugOptions?.xray !== false
+      if (isXray) {
+        // Mode X-Ray : carrosserie motrice aérodynamique semi-transparente bleu cyan
+        ctx.fillStyle = 'rgba(14, 165, 233, 0.09)'
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.50)'
+        ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+        ctx.stroke()
+      } else {
+        // Mode Squelette pur : contour filaire discret et très fin
+        ctx.setLineDash([3, 3])
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)'
+        ctx.lineWidth = 0.75
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
     } else {
       ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.90)'
       ctx.fill()
       ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
-      ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       // Bandes profilées latérales bleu roi TGV
@@ -3063,7 +3260,7 @@ export function renderLocomotive(
       ctx.lineTo(toSx(tgv.polygon[3]), toSy(tgv.polygon[3]))
       ctx.lineTo(toSx(tgv.polygon[4]), toSy(tgv.polygon[4]))
       ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       ctx.beginPath()
@@ -3072,7 +3269,7 @@ export function renderLocomotive(
       ctx.lineTo(toSx(tgv.polygon[7]), toSy(tgv.polygon[7]))
       ctx.lineTo(toSx(tgv.polygon[8]), toSy(tgv.polygon[8]))
       ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
-      ctx.lineWidth = Math.max(2, 2.5 * Math.sqrt(cam.scale))
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
       ctx.stroke()
 
       // Pare-brise panoramique de cabine teinté sombre avec reflet
@@ -3143,25 +3340,381 @@ export function renderLocomotive(
     drawLoco(train.rearLoco, false)
   }
 
-  // 5. En mode Debug Squelette : afficher tous les repères, réticules, points logiques d'attache et cotations
+  // 5. En mode Debug Squelette : afficher tous les repères, réticules, points logiques d'attache, cotations et vecteurs dynamiques
   if (isDebugSkeleton) {
-    renderTrainSkeletonDebug(ctx, cam, toSx, toSy, train)
+    renderTrainSkeletonDebug(ctx, cam, toSx, toSy, train, net, loco, telemetry)
+  }
+
+  // 6. Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
+  if (isDeleteHovered && !isGhost) {
+    ctx.save()
+    ctx.shadowColor = 'rgba(239, 68, 68, 0.85)'
+    ctx.shadowBlur = 10
+    ctx.strokeStyle = '#ef4444'
+    ctx.lineWidth = 3
+    ctx.lineJoin = 'round'
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
+    ctx.beginPath()
+    ctx.moveTo(toSx(train.leadLoco.polygon[0]), toSy(train.leadLoco.polygon[0]))
+    for (let pi = 1; pi < train.leadLoco.polygon.length; pi++) {
+      ctx.lineTo(toSx(train.leadLoco.polygon[pi]), toSy(train.leadLoco.polygon[pi]))
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+
+    const avgX = train.leadLoco.polygon.reduce((acc, p) => acc + p.x, 0) / train.leadLoco.polygon.length
+    const avgY = train.leadLoco.polygon.reduce((acc, p) => acc + p.y, 0) / train.leadLoco.polygon.length
+    const badgeSx = toSx({ x: avgX, y: avgY })
+    const badgeSy = toSy({ x: avgX, y: avgY }) - 24
+
+    ctx.shadowBlur = 6
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+    ctx.font = '600 11px Archivo, system-ui, sans-serif'
+    const label = '✕ Supprimer'
+    const lw = ctx.measureText(label).width
+    const padX = 7
+    const padY = 4
+
+    ctx.fillStyle = '#ef4444'
+    ctx.beginPath()
+    ctx.roundRect(badgeSx - lw / 2 - padX, badgeSy - 9 - padY, lw + padX * 2, 18 + padY * 2, 5)
+    ctx.fill()
+
+    ctx.fillStyle = '#ffffff'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, badgeSx, badgeSy)
+
+    ctx.restore()
   }
 
   ctx.restore()
 }
 
-/** Rendu des repères cinématiques, pivots de bogies, attaches de caisses et accordéons (tracés fins sans encombrement) */
+/** Normalise un angle en radians dans l'intervalle [-PI, PI] */
+function normalizeAngle(rad: number): number {
+  let a = rad % (2 * Math.PI)
+  if (a > Math.PI) a -= 2 * Math.PI
+  if (a < -Math.PI) a += 2 * Math.PI
+  return a
+}
+
+/** Badge d'angle et de mesure technique sur le canvas */
+function drawYawBadge(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  text: string,
+  color: string,
+  fs: number,
+  bg = 'rgba(15, 23, 42, 0.90)',
+): void {
+  ctx.save()
+  ctx.font = `600 ${fs}px Archivo, system-ui, sans-serif`
+  const tw = ctx.measureText(text).width
+  const padX = 4
+  const padY = 2
+  const bh = fs + padY * 2
+  ctx.fillStyle = bg
+  ctx.fillRect(sx - tw / 2 - padX, sy - bh / 2, tw + padX * 2, bh)
+  ctx.strokeStyle = color
+  ctx.lineWidth = 0.8
+  ctx.strokeRect(sx - tw / 2 - padX, sy - bh / 2, tw + padX * 2, bh)
+  ctx.fillStyle = color
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, sx, sy)
+  ctx.restore()
+}
+
+/** Rendu des angles de lacet bogie vs caisse (Δθ) et des angles d'articulation inter-caisses (θ_artic) */
+function renderBogieYawAndArticulations(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  train: TGVFullTrain,
+  fontSize: number,
+): void {
+  if (train.bogies.length === 0) return
+
+  // 1. Calcul des orientations angulaires des caisses (headings)
+  const b0 = train.bogies[0].center
+  const b1 = train.bogies[1]?.center ?? b0
+  const m1BodyAngle = Math.atan2(b0.y - b1.y, b0.x - b1.x)
+
+  const carBodyAngles: number[] = []
+  for (let ci = 0; ci < train.cars.length; ci++) {
+    const fIdx = 2 + ci * 2
+    const rIdx = fIdx + 1
+    if (rIdx < train.bogies.length) {
+      const bF = train.bogies[fIdx].center
+      const bR = train.bogies[rIdx].center
+      carBodyAngles.push(Math.atan2(bF.y - bR.y, bF.x - bR.x))
+    } else {
+      carBodyAngles.push(m1BodyAngle)
+    }
+  }
+
+  const nB = train.bogies.length
+  let m2BodyAngle: number | null = null
+  if (train.rearLoco && nB >= 2) {
+    const bTail = train.bogies[nB - 1].center
+    const bInner = train.bogies[nB - 2].center
+    m2BodyAngle = Math.atan2(bTail.y - bInner.y, bTail.x - bInner.x)
+  }
+
+  // 2. Calcul et dessin des angles de lacet bogie/caisse Δθ
+  for (let bi = 0; bi < train.bogies.length; bi++) {
+    const bogie = train.bogies[bi]
+    let bodyAngle = m1BodyAngle
+    if (bi === 0 || bi === 1) {
+      bodyAngle = m1BodyAngle
+    } else if (train.rearLoco && (bi === nB - 2 || bi === nB - 1)) {
+      bodyAngle = m2BodyAngle ?? m1BodyAngle
+    } else {
+      const carIdx = Math.floor((bi - 2) / 2)
+      bodyAngle = carBodyAngles[carIdx] ?? m1BodyAngle
+    }
+
+    const bogieAngle = Math.atan2(bogie.tangent.y, bogie.tangent.x)
+    const deltaTheta = normalizeAngle(bogieAngle - bodyAngle)
+    const deg = (deltaTheta * 180) / Math.PI
+
+    if (Math.abs(deg) >= 0.25) {
+      const sx = toSx(bogie.center)
+      const sy = toSy(bogie.center)
+      const arcR = Math.max(10, 13 * Math.sqrt(cam.scale))
+
+      const absDeg = Math.abs(deg)
+      const color = absDeg <= 8 ? '#22c55e' : absDeg <= 12 ? '#f59e0b' : '#ef4444'
+
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(sx, sy, arcR, bodyAngle, bogieAngle, deltaTheta < 0)
+      ctx.strokeStyle = color
+      ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(sx, sy)
+      ctx.lineTo(sx + Math.cos(bogieAngle) * arcR, sy + Math.sin(bogieAngle) * arcR)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 0.8
+      ctx.stroke()
+
+      const badgeText = `Δθ = ${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`
+      const badgeDist = arcR + 10
+      const midAngle = bodyAngle + deltaTheta * 0.5
+      const bx = sx + Math.cos(midAngle) * badgeDist
+      const by = sy + Math.sin(midAngle) * badgeDist
+
+      drawYawBadge(ctx, bx, by, badgeText, color, fontSize * 0.85)
+      ctx.restore()
+    }
+  }
+
+  // 3. Calcul et affichage des angles d'articulation inter-caisses θ_artic
+  if (train.cars.length > 0) {
+    const thetaArtic0 = Math.abs(normalizeAngle(carBodyAngles[0] - m1BodyAngle))
+    const deg0 = (thetaArtic0 * 180) / Math.PI
+    if (deg0 >= 0.25) {
+      const m1Tail = {
+        x: (train.leadLoco.polygon[4].x + train.leadLoco.polygon[5].x) / 2,
+        y: (train.leadLoco.polygon[4].y + train.leadLoco.polygon[5].y) / 2,
+      }
+      const col0 = deg0 < 10 ? '#38bdf8' : deg0 <= 16 ? '#f59e0b' : '#ef4444'
+      drawYawBadge(ctx, toSx(m1Tail), toSy(m1Tail) + 16, `θ artic = ${deg0.toFixed(1)}°`, col0, fontSize * 0.82)
+    }
+
+    for (let ci = 0; ci < train.cars.length - 1; ci++) {
+      const thetaArtic = Math.abs(normalizeAngle(carBodyAngles[ci + 1] - carBodyAngles[ci]))
+      const deg = (thetaArtic * 180) / Math.PI
+      if (deg >= 0.25) {
+        const carA = train.cars[ci]
+        const rearAtt = {
+          x: (carA.polygon[2].x + carA.polygon[3].x) / 2,
+          y: (carA.polygon[2].y + carA.polygon[3].y) / 2,
+        }
+        const col = deg < 10 ? '#38bdf8' : deg <= 16 ? '#f59e0b' : '#ef4444'
+        drawYawBadge(ctx, toSx(rearAtt), toSy(rearAtt) + 16, `θ artic = ${deg.toFixed(1)}°`, col, fontSize * 0.82)
+      }
+    }
+
+    if (train.rearLoco && m2BodyAngle !== null) {
+      const lastCar = train.cars[train.cars.length - 1]
+      const lastCarAngle = carBodyAngles[carBodyAngles.length - 1]
+      const m2ForwardAngle = normalizeAngle(m2BodyAngle + Math.PI)
+      const thetaArticRear = Math.abs(normalizeAngle(m2ForwardAngle - lastCarAngle))
+      const degRear = (thetaArticRear * 180) / Math.PI
+      if (degRear >= 0.25) {
+        const rearAtt = {
+          x: (lastCar.polygon[2].x + lastCar.polygon[3].x) / 2,
+          y: (lastCar.polygon[2].y + lastCar.polygon[3].y) / 2,
+        }
+        const colR = degRear < 10 ? '#38bdf8' : degRear <= 16 ? '#f59e0b' : '#ef4444'
+        drawYawBadge(ctx, toSx(rearAtt), toSy(rearAtt) + 16, `θ artic = ${degRear.toFixed(1)}°`, colR, fontSize * 0.82)
+      }
+    }
+  } else if (train.rearLoco && m2BodyAngle !== null) {
+    const m2ForwardAngle = normalizeAngle(m2BodyAngle + Math.PI)
+    const thetaArtic = Math.abs(normalizeAngle(m2ForwardAngle - m1BodyAngle))
+    const deg = (thetaArtic * 180) / Math.PI
+    if (deg >= 0.25) {
+      const m1Tail = {
+        x: (train.leadLoco.polygon[4].x + train.leadLoco.polygon[5].x) / 2,
+        y: (train.leadLoco.polygon[4].y + train.leadLoco.polygon[5].y) / 2,
+      }
+      const col = deg < 10 ? '#38bdf8' : deg <= 16 ? '#f59e0b' : '#ef4444'
+      drawYawBadge(ctx, toSx(m1Tail), toSy(m1Tail) + 16, `θ artic = ${deg.toFixed(1)}°`, col, fontSize * 0.82)
+    }
+  }
+}
+
+/** Rendu du gabarit cinématique de libre passage UIC et du balayage dynamique en courbe (flèche f, saillie e) */
+function renderKinematicGauge(
+  ctx: CanvasRenderingContext2D,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  train: TGVFullTrain,
+  net: Network | undefined,
+  fontSize: number,
+): void {
+  const allVehicles: { name: string; polygon: Point[]; bogieA?: BogieFrame; bogieB?: BogieFrame; wheelbase: number; overhang: number }[] = []
+
+  // Motrice M1
+  if (train.bogies.length >= 2) {
+    const wb = Math.hypot(train.bogies[0].center.x - train.bogies[1].center.x, train.bogies[0].center.y - train.bogies[1].center.y)
+    allVehicles.push({
+      name: 'M1',
+      polygon: train.leadLoco.polygon,
+      bogieA: train.bogies[0],
+      bogieB: train.bogies[1],
+      wheelbase: wb || 14.0,
+      overhang: 3.04,
+    })
+  }
+
+  // Voitures intermédiaires
+  for (let ci = 0; ci < train.cars.length; ci++) {
+    const fIdx = 2 + ci * 2
+    const rIdx = fIdx + 1
+    if (rIdx < train.bogies.length) {
+      const wb = Math.hypot(train.bogies[fIdx].center.x - train.bogies[rIdx].center.x, train.bogies[fIdx].center.y - train.bogies[rIdx].center.y)
+      allVehicles.push({
+        name: `V${ci + 1}`,
+        polygon: train.cars[ci].polygon,
+        bogieA: train.bogies[fIdx],
+        bogieB: train.bogies[rIdx],
+        wheelbase: wb || 11.92,
+        overhang: 3.04,
+      })
+    }
+  }
+
+  // Motrice M2
+  const nB = train.bogies.length
+  if (train.rearLoco && nB >= 2) {
+    const wb = Math.hypot(train.bogies[nB - 1].center.x - train.bogies[nB - 2].center.x, train.bogies[nB - 1].center.y - train.bogies[nB - 2].center.y)
+    allVehicles.push({
+      name: 'M2',
+      polygon: train.rearLoco.polygon,
+      bogieA: train.bogies[nB - 2],
+      bogieB: train.bogies[nB - 1],
+      wheelbase: wb || 14.0,
+      overhang: 3.04,
+    })
+  }
+
+  ctx.save()
+  for (const v of allVehicles) {
+    if (v.polygon.length < 3) continue
+
+    let minR = Infinity
+    let isCurve = false
+    if (net) {
+      if (v.bogieA?.pos) {
+        const cA = getTrackCurvatureAt(net, v.bogieA.pos)
+        if (cA.side !== 'straight' && cA.radius > 0 && cA.radius < minR) {
+          minR = cA.radius
+          isCurve = true
+        }
+      }
+      if (v.bogieB?.pos) {
+        const cB = getTrackCurvatureAt(net, v.bogieB.pos)
+        if (cB.side !== 'straight' && cB.radius > 0 && cB.radius < minR) {
+          minR = cB.radius
+          isCurve = true
+        }
+      }
+    }
+
+    const R = isCurve && isFinite(minR) ? minR : 100000
+    const f = isCurve ? (v.wheelbase * v.wheelbase) / (8 * R) : 0
+    const e = isCurve ? (v.overhang * (v.wheelbase + v.overhang)) / (2 * R) : 0
+
+    let cX = 0
+    let cY = 0
+    for (const p of v.polygon) {
+      cX += p.x
+      cY += p.y
+    }
+    cX /= v.polygon.length
+    cY /= v.polygon.length
+
+    const margin = 0.22 + Math.max(f, e)
+
+    ctx.beginPath()
+    for (let pi = 0; pi < v.polygon.length; pi++) {
+      const pt = v.polygon[pi]
+      const dx = pt.x - cX
+      const dy = pt.y - cY
+      const dist = Math.hypot(dx, dy) || 1
+      const expX = pt.x + (dx / dist) * margin
+      const expY = pt.y + (dy / dist) * margin
+      if (pi === 0) ctx.moveTo(toSx({ x: expX, y: expY }), toSy({ x: expX, y: expY }))
+      else ctx.lineTo(toSx({ x: expX, y: expY }), toSy({ x: expX, y: expY }))
+    }
+    ctx.closePath()
+
+    ctx.fillStyle = 'rgba(234, 179, 8, 0.05)'
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.55)'
+    ctx.lineWidth = 0.75
+    ctx.setLineDash([4, 3])
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    if (isCurve && (f > 0.015 || e > 0.015)) {
+      const sCenterX = toSx({ x: cX, y: cY })
+      const sCenterY = toSy({ x: cX, y: cY })
+      const gText = `Gabarit ${v.name} : f=${(f * 100).toFixed(0)}cm · e=${(e * 100).toFixed(0)}cm`
+      drawYawBadge(ctx, sCenterX, sCenterY, gText, '#fbbf24', fontSize * 0.8)
+    }
+  }
+  ctx.restore()
+}
+
+/** Rendu des repères cinématiques, pivots de bogies, attaches de caisses, accordéons et vecteurs dynamiques */
 function renderTrainSkeletonDebug(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
   toSx: (p: Point) => number,
   toSy: (p: Point) => number,
   train: TGVFullTrain,
+  net?: Network,
+  loco?: Locomotive,
+  telemetry?: TrainTelemetry,
 ): void {
   ctx.save()
   const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
   ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
+
+  // 0. Gabarit cinématique et balayage dynamique en courbe (flèche f, saillie e)
+  if (telemetry?.debugOptions?.gauge !== false) {
+    renderKinematicGauge(ctx, toSx, toSy, train, net, fontSize)
+  }
 
   // 1. Lignes de cote d'entraxe entre bogies consécutifs (trait fin pointillé)
   for (let bi = 0; bi < train.bogies.length - 1; bi++) {
@@ -3274,6 +3827,11 @@ function renderTrainSkeletonDebug(
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillText(bName, sx, sy - rOuter - 9)
+  }
+
+  // 2.5 Angles de lacet de bogies (Δθ) et angles d'articulation inter-caisses (θ_artic)
+  if (telemetry?.debugOptions?.yawAngles !== false) {
+    renderBogieYawAndArticulations(ctx, cam, toSx, toSy, train, fontSize)
   }
 
   // 3. Points logiques d'attache et de liaison mécanique centrale
@@ -3428,5 +3986,1152 @@ function renderTrainSkeletonDebug(
     ctx.fillText(accLabel, badgeX, badgeY)
   }
 
+  // 5. Vecteurs dynamiques ferroviaires (vitesse, accélération, forces centrifuges, distance d'arrêt)
+  const trainDirection = loco?.direction ?? 1
+  const leadNosePt = trainDirection === 1
+    ? train.leadLoco.polygon[0]
+    : (train.rearLoco ? train.rearLoco.polygon[0] : train.leadLoco.polygon[0])
+  const leadHeading = train.bogies.length > 0 ? train.bogies[0].tangent : { x: 1, y: 0 }
+  const leadPos = loco ? (trainDirection === 1 ? loco.front : loco.rear) : undefined
+
+  renderTrainDynamicVectors(
+    ctx,
+    cam,
+    toSx,
+    toSy,
+    net,
+    train.bogies,
+    leadNosePt,
+    leadHeading,
+    trainDirection,
+    telemetry,
+    leadPos,
+  )
+
   ctx.restore()
 }
+
+/**
+ * Rendu des vecteurs dynamiques ferroviaires :
+ * - Ruban de distance d'arrêt d'urgence projetée le long de la voie
+ * - Vecteur vitesse V à la proue avec vitesse en km/h et m/s, et statut réactif (Traction / Freinage / Inertie / Arrêt)
+ * - Vecteur accélération/freinage longitudinal a (m/s²)
+ * - Vecteurs d'accélération centrifuge ac = v²/R et courbures de voies par bogie (seuils UIC vert/orange/rouge)
+ * - Vecteurs de vitesse tangentielle locale par bogie
+ */
+export function renderTrainDynamicVectors(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  net: Network | undefined,
+  bogies: BogieFrame[],
+  leadNosePt: Point,
+  leadHeading: Point,
+  travelDirection: 1 | -1,
+  telemetry?: TrainTelemetry,
+  leadPos?: TrackPosition,
+): void {
+  ctx.save()
+  const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
+  ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
+
+  const speedMs = telemetry?.speed ?? 0
+  const speedKmh = speedMs * 3.6
+  const throttle = telemetry?.throttle ?? 0
+
+  // Code couleur réactif selon l'état dynamique
+  const dynamicColor =
+    throttle === 1
+      ? '#22c55e'
+      : throttle === -1
+      ? '#ef4444'
+      : speedMs > 0.05
+      ? '#06b6d4'
+      : '#94a3b8'
+
+  const dynamicLabel =
+    throttle === 1
+      ? 'TRACTION'
+      : throttle === -1
+      ? 'FREINAGE'
+      : speedMs > 0.05
+      ? 'INERTIE'
+      : 'ARRÊT'
+
+  const opts = telemetry?.debugOptions
+  const showVectors = opts?.vectors !== false
+  const showLookahead = opts?.lookahead !== false
+
+  // Helper pour dessiner une flèche vectorielle dans l'espace monde (affinée et profilée)
+  const drawWorldArrow = (
+    p1: Point,
+    p2: Point,
+    color: string,
+    width = 1.5,
+    headMeters = 0.6,
+    dashed = false,
+  ) => {
+    const dx = p2.x - p1.x
+    const dy = p2.y - p1.y
+    const len = Math.hypot(dx, dy)
+    if (len < 1e-4) return
+
+    const ux = dx / len
+    const uy = dy / len
+    const nx = -uy
+    const ny = ux
+
+    const sx1 = toSx(p1)
+    const sy1 = toSy(p1)
+    const sx2 = toSx(p2)
+    const sy2 = toSy(p2)
+
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = Math.max(0.8, width * Math.sqrt(cam.scale) * 0.55)
+    if (dashed) ctx.setLineDash([4, 3])
+
+    ctx.beginPath()
+    ctx.moveTo(sx1, sy1)
+    ctx.lineTo(sx2, sy2)
+    ctx.stroke()
+    if (dashed) ctx.setLineDash([])
+
+    // Tête de flèche fine et profilée
+    const hLen = Math.min(headMeters, len * 0.30)
+    const hWidth = hLen * 0.32
+    const a1: Point = {
+      x: p2.x - ux * hLen + nx * hWidth,
+      y: p2.y - uy * hLen + ny * hWidth,
+    }
+    const a2: Point = {
+      x: p2.x - ux * hLen - nx * hWidth,
+      y: p2.y - uy * hLen - ny * hWidth,
+    }
+
+    ctx.beginPath()
+    ctx.moveTo(sx2, sy2)
+    ctx.lineTo(toSx(a1), toSy(a1))
+    ctx.lineTo(toSx(a2), toSy(a2))
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
+  }
+
+  // Helper pour afficher un badge de mesure
+  const drawVectorBadge = (
+    sx: number,
+    sy: number,
+    text: string,
+    color: string,
+    bg = 'rgba(15, 23, 42, 0.90)',
+    fontSizeOverride?: number,
+  ) => {
+    ctx.save()
+    const fs = fontSizeOverride ?? fontSize
+    ctx.font = `600 ${fs}px Archivo, system-ui, sans-serif`
+    const tw = ctx.measureText(text).width
+    const padX = 4.5
+    const padY = 2.5
+    const bh = fs + padY * 2
+    ctx.fillStyle = bg
+    ctx.fillRect(sx - tw / 2 - padX, sy - bh / 2, tw + padX * 2, bh)
+    ctx.strokeStyle = color
+    ctx.lineWidth = 0.8
+    ctx.strokeRect(sx - tw / 2 - padX, sy - bh / 2, tw + padX * 2, bh)
+    ctx.fillStyle = color
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, sx, sy)
+    ctx.restore()
+  }
+
+  const motionDir: Point = travelDirection === 1
+    ? leadHeading
+    : { x: -leadHeading.x, y: -leadHeading.y }
+
+  const currentAccel = throttle === 1
+    ? (telemetry?.acceleration ?? 5.5)
+    : throttle === -1
+    ? -(telemetry?.braking ?? 10.0)
+    : speedMs > 0.05
+    ? -0.5
+    : 0
+
+  // ─── 1 à 4 : Vecteurs physiques dynamiques (activables/désactivables) ───
+  if (showVectors) {
+    // 1. Ruban de distance d'arrêt de sécurité projetée (Stopping distance tape)
+    if (net && leadPos && speedMs > 0.5) {
+      const brakeDecel = telemetry?.braking ?? 10.0
+      const dStop = (speedMs * speedMs) / (2 * brakeDecel)
+      if (dStop > 0.8) {
+        const stopPts = sampleForwardTrack(net, leadPos, travelDirection, dStop, 1.0)
+        if (stopPts.length >= 2) {
+          ctx.save()
+          // Ruban avertisseur projeté sur les rails
+          ctx.beginPath()
+          ctx.moveTo(toSx(stopPts[0]), toSy(stopPts[0]))
+          for (let i = 1; i < stopPts.length; i++) {
+            ctx.lineTo(toSx(stopPts[i]), toSy(stopPts[i]))
+          }
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.75)'
+          ctx.lineWidth = Math.max(1.5, 1.8 * Math.sqrt(cam.scale))
+          ctx.setLineDash([4, 3])
+          ctx.stroke()
+          ctx.setLineDash([])
+
+          // Filet lumineux central
+          ctx.strokeStyle = '#fef08a'
+          ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
+          ctx.stroke()
+
+          // Ligne transversale d'arrêt au bout du ruban
+          const lastP = stopPts[stopPts.length - 1]
+          const prevP = stopPts[stopPts.length - 2]
+          const tdx = lastP.x - prevP.x
+          const tdy = lastP.y - prevP.y
+          const tlen = Math.hypot(tdx, tdy) || 1
+          const tNormX = -tdy / tlen
+          const tNormY = tdx / tlen
+          const barSpan = 1.0
+          const b1: Point = { x: lastP.x + tNormX * barSpan, y: lastP.y + tNormY * barSpan }
+          const b2: Point = { x: lastP.x - tNormX * barSpan, y: lastP.y - tNormY * barSpan }
+
+          ctx.beginPath()
+          ctx.moveTo(toSx(b1), toSy(b1))
+          ctx.lineTo(toSx(b2), toSy(b2))
+          ctx.strokeStyle = '#ef4444'
+          ctx.lineWidth = Math.max(1.5, 2.0 * Math.sqrt(cam.scale))
+          ctx.stroke()
+
+          // Badge au point d'arrêt
+          const stopBadgeText = `🛑 Arrêt d'urgence : ${dStop.toFixed(1)} m`
+          drawVectorBadge(toSx(lastP), toSy(lastP) - 16, stopBadgeText, '#fca5a5', 'rgba(153, 27, 27, 0.92)', fontSize)
+          ctx.restore()
+        }
+      }
+    }
+
+    // 2. Vecteur Vitesse Principal à la proue (Lead Velocity Vector V)
+    const vArrowLen = Math.max(2.2, 1.6 + speedMs * 0.2)
+    const vTip: Point = {
+      x: leadNosePt.x + motionDir.x * vArrowLen,
+      y: leadNosePt.y + motionDir.y * vArrowLen,
+    }
+
+    drawWorldArrow(leadNosePt, vTip, dynamicColor, 1.3, 0.55)
+
+    const vBadgeText = speedMs > 0.05
+      ? `V = ${speedKmh.toFixed(0)} km/h (${speedMs.toFixed(1)} m/s) · [${dynamicLabel}]`
+      : `V = 0 km/h · [${dynamicLabel}]`
+    const vMidPt: Point = {
+      x: leadNosePt.x + motionDir.x * (vArrowLen * 0.5),
+      y: leadNosePt.y + motionDir.y * (vArrowLen * 0.5),
+    }
+    drawVectorBadge(toSx(vMidPt), toSy(vMidPt) - 16, vBadgeText, dynamicColor, 'rgba(15, 23, 42, 0.92)', fontSize)
+
+    // 3. Vecteur Accélération Longitudinal a
+    if (Math.abs(currentAccel) > 0.05 && bogies.length > 0) {
+      const aDir: Point = currentAccel >= 0 ? motionDir : { x: -motionDir.x, y: -motionDir.y }
+      const aLen = Math.min(3.8, 1.2 + Math.abs(currentAccel) * 0.35)
+      const leadCenter = bogies[0].center
+      const aTip: Point = {
+        x: leadCenter.x + aDir.x * aLen,
+        y: leadCenter.y + aDir.y * aLen,
+      }
+      const aColor = currentAccel > 0 ? '#10b981' : '#f43f5e'
+      drawWorldArrow(leadCenter, aTip, aColor, 1.1, 0.45)
+      const aLabel = `a = ${currentAccel > 0 ? '+' : ''}${currentAccel.toFixed(1)} m/s²`
+      drawVectorBadge(toSx(aTip), toSy(aTip) + 12, aLabel, aColor, 'rgba(15, 23, 42, 0.90)', fontSize)
+    }
+
+    // 4. Vecteurs d'accélération centrifuge ac = v²/R et courbures par bogie
+    for (let bi = 0; bi < bogies.length; bi++) {
+      const bogie = bogies[bi]
+      const sx = toSx(bogie.center)
+      const sy = toSy(bogie.center)
+      const rOuter = Math.max(3.5, 4.5 * Math.sqrt(cam.scale))
+
+      if (net && bogie.pos) {
+        const curvature = getTrackCurvatureAt(net, bogie.pos)
+        const radius = curvature.radius
+
+        if (isFinite(radius) && radius > 0 && radius < 50000) {
+          const ac = speedMs > 0 ? (speedMs * speedMs) / radius : 0
+          const isCurving = curvature.side !== 'straight'
+
+          if (ac > 0.05 && isCurving) {
+            const acLen = Math.min(5.5, Math.max(1.2, ac * 1.0))
+            const acTip: Point = {
+              x: bogie.center.x + curvature.outwardNormal.x * acLen,
+              y: bogie.center.y + curvature.outwardNormal.y * acLen,
+            }
+
+            // Seuils dynamiques UIC :
+            // ac < 0.65 m/s² : confort optimal (vert)
+            // 0.65 <= ac <= 1.20 m/s² : limite confort voyageur standard (ambre)
+            // ac > 1.20 m/s² : contrainte centrifuge excessive (alerte rouge)
+            const acColor = ac < 0.65 ? '#22c55e' : ac <= 1.2 ? '#f59e0b' : '#ef4444'
+            drawWorldArrow(bogie.center, acTip, acColor, 1.1, 0.42)
+
+            const acBadge = `ac = ${ac.toFixed(2)} m/s² (R = ${Math.round(radius)} m)`
+            drawVectorBadge(toSx(acTip), toSy(acTip), acBadge, acColor, 'rgba(15, 23, 42, 0.92)', fontSize)
+          } else {
+            // Arrêt ou courbe douce : affichage du rayon sous le bogie
+            const rBadge = `R = ${Math.round(radius)} m`
+            drawVectorBadge(sx, sy + rOuter + 14, rBadge, '#38bdf8', 'rgba(15, 23, 42, 0.85)', fontSize * 0.9)
+          }
+        }
+      }
+
+      // Vecteur tangentiel vitesse locale du bogie (montre le braquage individuel)
+      if (speedMs > 0.05) {
+        const bTanDir = travelDirection === 1 ? bogie.tangent : { x: -bogie.tangent.x, y: -bogie.tangent.y }
+        const bSpeedLen = Math.min(2.8, 1.0 + speedMs * 0.08)
+        const bTip: Point = {
+          x: bogie.center.x + bTanDir.x * bSpeedLen,
+          y: bogie.center.y + bTanDir.y * bSpeedLen,
+        }
+        drawWorldArrow(bogie.center, bTip, dynamicColor, 0.85, 0.32)
+      }
+    }
+  }
+
+  // ─── 5. Faisceau de trajectoire anticipée (50m) et alerte heurtoir / fin de voie ───
+  if (showLookahead && net && leadPos) {
+    const lookaheadPts = sampleForwardTrack(net, leadPos, travelDirection, 50, 1.2)
+    if (lookaheadPts.length >= 2) {
+      let totalDist = 0
+      for (let i = 1; i < lookaheadPts.length; i++) {
+        totalDist += Math.hypot(lookaheadPts[i].x - lookaheadPts[i - 1].x, lookaheadPts[i].y - lookaheadPts[i - 1].y)
+      }
+
+      ctx.save()
+      // Faisceau lumineux de trajectoire
+      ctx.beginPath()
+      ctx.moveTo(toSx(lookaheadPts[0]), toSy(lookaheadPts[0]))
+      for (let i = 1; i < lookaheadPts.length; i++) {
+        ctx.lineTo(toSx(lookaheadPts[i]), toSy(lookaheadPts[i]))
+      }
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.35)'
+      ctx.lineWidth = Math.max(1.8, 2.5 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      ctx.strokeStyle = 'rgba(165, 243, 252, 0.85)'
+      ctx.lineWidth = Math.max(0.8, 1.1 * Math.sqrt(cam.scale))
+      ctx.setLineDash([4, 4])
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      // Repères métriques le long de la trajectoire (+10m, +20m, +30m, etc.)
+      let accumDist = 0
+      let nextTick = 10
+      for (let i = 1; i < lookaheadPts.length; i++) {
+        const segLen = Math.hypot(lookaheadPts[i].x - lookaheadPts[i - 1].x, lookaheadPts[i].y - lookaheadPts[i - 1].y)
+        if (accumDist + segLen >= nextTick && nextTick <= 50) {
+          const ratio = (nextTick - accumDist) / segLen
+          const tickP: Point = {
+            x: lookaheadPts[i - 1].x + (lookaheadPts[i].x - lookaheadPts[i - 1].x) * ratio,
+            y: lookaheadPts[i - 1].y + (lookaheadPts[i].y - lookaheadPts[i - 1].y) * ratio,
+          }
+          drawVectorBadge(toSx(tickP), toSy(tickP) - 10, `+${nextTick}m`, '#38bdf8', 'rgba(15, 23, 42, 0.85)', fontSize * 0.85)
+          nextTick += 10
+        }
+        accumDist += segLen
+      }
+
+      // Détection de fin de voie / heurtoir si la voie se termine avant 46m
+      if (totalDist < 46.0) {
+        const lastP = lookaheadPts[lookaheadPts.length - 1]
+        const prevP = lookaheadPts[lookaheadPts.length - 2]
+        const dx = lastP.x - prevP.x
+        const dy = lastP.y - prevP.y
+        const len = Math.hypot(dx, dy) || 1
+        const nx = -dy / len
+        const ny = dx / len
+        const barSpan = 1.0
+        const b1: Point = { x: lastP.x + nx * barSpan, y: lastP.y + ny * barSpan }
+        const b2: Point = { x: lastP.x - nx * barSpan, y: lastP.y - ny * barSpan }
+
+        // Heurtoir rouge
+        ctx.beginPath()
+        ctx.moveTo(toSx(b1), toSy(b1))
+        ctx.lineTo(toSx(b2), toSy(b2))
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = Math.max(1.8, 2.5 * Math.sqrt(cam.scale))
+        ctx.stroke()
+
+        const brakeDecel = telemetry?.braking ?? 10.0
+        const dStop = (speedMs * speedMs) / (2 * brakeDecel)
+        const isCollisionRisk = speedMs > 0.5 && dStop >= totalDist
+        const alertText = isCollisionRisk
+          ? `🚨 COLLISION HEURTOIR D'ICI ${totalDist.toFixed(1)} m !`
+          : `⚠️ Fin de voie / Heurtoir : ${totalDist.toFixed(1)} m`
+        const alertBg = isCollisionRisk ? 'rgba(220, 38, 38, 0.95)' : 'rgba(180, 83, 9, 0.92)'
+        const alertColor = isCollisionRisk ? '#ffffff' : '#fef08a'
+        drawVectorBadge(toSx(lastP), toSy(lastP) - 18, alertText, alertColor, alertBg, fontSize)
+      }
+      ctx.restore()
+    }
+  }
+
+  ctx.restore()
+}
+
+// ─────────────────── TrainSet Fleet & Coupler Rendering ───────────────────
+
+function drawTrainSetBogie(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  bogie: BogieFrame,
+  isLeadBogie: boolean,
+  isGhost = false,
+): void {
+  const halfL = 1.35
+  const halfW = 0.90
+  const beamW = 0.16
+
+  const bl1 = { x: bogie.center.x + bogie.tangent.x * halfL + bogie.normal.x * (halfW - beamW), y: bogie.center.y + bogie.tangent.y * halfL + bogie.normal.y * (halfW - beamW) }
+  const bl2 = { x: bogie.center.x + bogie.tangent.x * halfL + bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * halfL + bogie.normal.y * halfW }
+  const bl3 = { x: bogie.center.x - bogie.tangent.x * halfL + bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * halfL + bogie.normal.y * halfW }
+  const bl4 = { x: bogie.center.x - bogie.tangent.x * halfL + bogie.normal.x * (halfW - beamW), y: bogie.center.y - bogie.tangent.y * halfL + bogie.normal.y * (halfW - beamW) }
+  ctx.beginPath()
+  ctx.moveTo(toSx(bl1), toSy(bl1))
+  ctx.lineTo(toSx(bl2), toSy(bl2))
+  ctx.lineTo(toSx(bl3), toSy(bl3))
+  ctx.lineTo(toSx(bl4), toSy(bl4))
+  ctx.closePath()
+  ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
+  ctx.fill()
+  ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+  ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
+  ctx.stroke()
+
+  const br1 = { x: bogie.center.x + bogie.tangent.x * halfL - bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * halfL - bogie.normal.y * halfW }
+  const br2 = { x: bogie.center.x + bogie.tangent.x * halfL - bogie.normal.x * (halfW - beamW), y: bogie.center.y + bogie.tangent.y * halfL - bogie.normal.y * (halfW - beamW) }
+  const br3 = { x: bogie.center.x - bogie.tangent.x * halfL - bogie.normal.x * (halfW - beamW), y: bogie.center.y - bogie.tangent.y * halfL - bogie.normal.y * (halfW - beamW) }
+  const br4 = { x: bogie.center.x - bogie.tangent.x * halfL - bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * halfL - bogie.normal.y * halfW }
+  ctx.beginPath()
+  ctx.moveTo(toSx(br1), toSy(br1))
+  ctx.lineTo(toSx(br2), toSy(br2))
+  ctx.lineTo(toSx(br3), toSy(br3))
+  ctx.lineTo(toSx(br4), toSy(br4))
+  ctx.closePath()
+  ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.4)' : '#1e293b'
+  ctx.fill()
+  ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+  ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
+  ctx.stroke()
+
+  const bmidW = 0.28
+  const bm1 = { x: bogie.center.x + bogie.tangent.x * bmidW + bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * bmidW + bogie.normal.y * halfW }
+  const bm2 = { x: bogie.center.x + bogie.tangent.x * bmidW - bogie.normal.x * halfW, y: bogie.center.y + bogie.tangent.y * bmidW - bogie.normal.y * halfW }
+  const bm3 = { x: bogie.center.x - bogie.tangent.x * bmidW - bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * bmidW - bogie.normal.y * halfW }
+  const bm4 = { x: bogie.center.x - bogie.tangent.x * bmidW + bogie.normal.x * halfW, y: bogie.center.y - bogie.tangent.y * bmidW + bogie.normal.y * halfW }
+  ctx.beginPath()
+  ctx.moveTo(toSx(bm1), toSy(bm1))
+  ctx.lineTo(toSx(bm2), toSy(bm2))
+  ctx.lineTo(toSx(bm3), toSy(bm3))
+  ctx.lineTo(toSx(bm4), toSy(bm4))
+  ctx.closePath()
+  ctx.fillStyle = isGhost ? 'rgba(15, 23, 42, 0.5)' : '#0f172a'
+  ctx.fill()
+  ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+  ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
+  ctx.stroke()
+
+  const wheelHalfL = 0.38
+  const wheelThickness = 0.07
+  for (const axle of bogie.axles) {
+    ctx.beginPath()
+    ctx.moveTo(toSx(axle.left), toSy(axle.left))
+    ctx.lineTo(toSx(axle.right), toSy(axle.right))
+    ctx.strokeStyle = isGhost ? 'rgba(148, 163, 184, 0.5)' : '#94a3b8'
+    ctx.lineWidth = Math.max(1.0, 1.6 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    const drawWheel = (wc: Point) => {
+      const w1 = { x: wc.x + bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wc.y + bogie.tangent.y * wheelHalfL + bogie.normal.y * wheelThickness }
+      const w2 = { x: wc.x + bogie.tangent.x * wheelHalfL - bogie.normal.x * wheelThickness, y: wc.y + bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
+      const w3 = { x: wc.x - bogie.tangent.x * wheelHalfL - bogie.normal.x * wheelThickness, y: wc.y - bogie.tangent.y * wheelHalfL - bogie.normal.y * wheelThickness }
+      const w4 = { x: wc.x - bogie.tangent.x * wheelHalfL + bogie.normal.x * wheelThickness, y: wc.y - bogie.tangent.y * wheelHalfL + bogie.normal.y * wheelThickness }
+      ctx.beginPath()
+      ctx.moveTo(toSx(w1), toSy(w1))
+      ctx.lineTo(toSx(w2), toSy(w2))
+      ctx.lineTo(toSx(w3), toSy(w3))
+      ctx.lineTo(toSx(w4), toSy(w4))
+      ctx.closePath()
+      ctx.fillStyle = isGhost ? 'rgba(51, 65, 85, 0.7)' : '#334155'
+      ctx.fill()
+      ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
+      ctx.lineWidth = Math.max(0.8, 1.0 * Math.sqrt(cam.scale))
+      ctx.stroke()
+    }
+
+    drawWheel(axle.leftWheel)
+    drawWheel(axle.rightWheel)
+
+    const boxSize = 0.12
+    const drawBox = (pt: Point) => {
+      const b1 = { x: pt.x + bogie.tangent.x * boxSize + bogie.normal.x * boxSize, y: pt.y + bogie.tangent.y * boxSize + bogie.normal.y * boxSize }
+      const b2 = { x: pt.x + bogie.tangent.x * boxSize - bogie.normal.x * boxSize, y: pt.y + bogie.tangent.y * boxSize - bogie.normal.y * boxSize }
+      const b3 = { x: pt.x - bogie.tangent.x * boxSize - bogie.normal.x * boxSize, y: pt.y - bogie.tangent.y * boxSize - bogie.normal.y * boxSize }
+      const b4 = { x: pt.x - bogie.tangent.x * boxSize + bogie.normal.x * boxSize, y: pt.y - bogie.tangent.y * boxSize + bogie.normal.y * boxSize }
+      ctx.beginPath()
+      ctx.moveTo(toSx(b1), toSy(b1))
+      ctx.lineTo(toSx(b2), toSy(b2))
+      ctx.lineTo(toSx(b3), toSy(b3))
+      ctx.lineTo(toSx(b4), toSy(b4))
+      ctx.closePath()
+      ctx.fillStyle = isGhost ? 'rgba(71, 85, 105, 0.7)' : '#64748b'
+      ctx.fill()
+      ctx.strokeStyle = '#0f172a'
+      ctx.lineWidth = 0.8
+      ctx.stroke()
+    }
+    drawBox(axle.left)
+    drawBox(axle.right)
+  }
+
+  const pivotOuterR = Math.max(3, Math.min(6, 3.5 * Math.sqrt(cam.scale)))
+  const pivotInnerR = Math.max(1.5, Math.min(3, 1.8 * Math.sqrt(cam.scale)))
+  ctx.beginPath()
+  ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotOuterR, 0, Math.PI * 2)
+  ctx.fillStyle = '#334155'
+  ctx.fill()
+  ctx.strokeStyle = '#94a3b8'
+  ctx.lineWidth = 1.2
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.arc(toSx(bogie.center), toSy(bogie.center), pivotInnerR, 0, Math.PI * 2)
+  ctx.fillStyle = isLeadBogie ? '#ef4444' : '#fb923c'
+  ctx.fill()
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 1
+  ctx.stroke()
+}
+
+function drawTrainSetAccordion(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  acc: TGVAccordion,
+  isGhost = false,
+): void {
+  ctx.beginPath()
+  ctx.moveTo(toSx(acc.frontFrame[0]), toSy(acc.frontFrame[0]))
+  ctx.lineTo(toSx(acc.frontFrame[1]), toSy(acc.frontFrame[1]))
+  ctx.lineTo(toSx(acc.rearFrame[1]), toSy(acc.rearFrame[1]))
+  ctx.lineTo(toSx(acc.rearFrame[0]), toSy(acc.rearFrame[0]))
+  ctx.closePath()
+  ctx.fillStyle = isGhost ? 'rgba(30, 41, 59, 0.5)' : '#1e293b'
+  ctx.fill()
+  ctx.strokeStyle = '#0f172a'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  for (const fold of acc.folds) {
+    ctx.beginPath()
+    ctx.moveTo(toSx(fold.left), toSy(fold.left))
+    ctx.lineTo(toSx(fold.right), toSy(fold.right))
+    ctx.strokeStyle = isGhost ? 'rgba(100, 116, 139, 0.5)' : '#475569'
+    ctx.lineWidth = Math.max(1, 1.5 * Math.sqrt(cam.scale))
+    ctx.stroke()
+  }
+}
+
+function drawTrainSetCar(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  car: { polygon: Point[]; windowsLeft?: { p1: Point; p2: Point }[]; windowsRight?: { p1: Point; p2: Point }[] },
+  isGhost = false,
+  isDebugSkeleton = false,
+  telemetry?: TrainTelemetry,
+): void {
+  ctx.beginPath()
+  ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
+  for (let pi = 1; pi < car.polygon.length; pi++) {
+    ctx.lineTo(toSx(car.polygon[pi]), toSy(car.polygon[pi]))
+  }
+  ctx.closePath()
+
+  if (isDebugSkeleton) {
+    const isXray = telemetry?.debugOptions?.xray !== false
+    if (isXray) {
+      ctx.fillStyle = 'rgba(14, 165, 233, 0.07)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.40)'
+      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+    } else {
+      ctx.setLineDash([3, 3])
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)'
+      ctx.lineWidth = 0.75
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+  } else {
+    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.92)'
+    ctx.fill()
+    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
+    ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    if (car.polygon.length >= 4) {
+      ctx.beginPath()
+      ctx.moveTo(toSx(car.polygon[0]), toSy(car.polygon[0]))
+      ctx.lineTo(toSx(car.polygon[3]), toSy(car.polygon[3]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(toSx(car.polygon[1]), toSy(car.polygon[1]))
+      ctx.lineTo(toSx(car.polygon[2]), toSy(car.polygon[2]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
+      ctx.stroke()
+    }
+
+    const drawWindows = (wins?: { p1: Point; p2: Point }[]) => {
+      if (!wins) return
+      for (const w of wins) {
+        ctx.beginPath()
+        ctx.moveTo(toSx(w.p1), toSy(w.p1))
+        ctx.lineTo(toSx(w.p2), toSy(w.p2))
+        ctx.strokeStyle = '#0f172a'
+        ctx.lineWidth = Math.max(1.2, 1.8 * Math.sqrt(cam.scale))
+        ctx.stroke()
+      }
+    }
+    drawWindows(car.windowsLeft)
+    drawWindows(car.windowsRight)
+  }
+}
+
+function drawTrainSetLoco(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  tgv: TGVDetails,
+  isLead: boolean,
+  trainDirection: number,
+  isGhost = false,
+  isDebugSkeleton = false,
+  telemetry?: TrainTelemetry,
+): void {
+  ctx.beginPath()
+  ctx.moveTo(toSx(tgv.polygon[0]), toSy(tgv.polygon[0]))
+  for (let i = 1; i < tgv.polygon.length; i++) {
+    ctx.lineTo(toSx(tgv.polygon[i]), toSy(tgv.polygon[i]))
+  }
+  ctx.closePath()
+
+  if (isDebugSkeleton) {
+    const isXray = telemetry?.debugOptions?.xray !== false
+    if (isXray) {
+      ctx.fillStyle = 'rgba(14, 165, 233, 0.09)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.50)'
+      ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+      ctx.stroke()
+    } else {
+      ctx.setLineDash([3, 3])
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)'
+      ctx.lineWidth = 0.75
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+  } else {
+    ctx.fillStyle = isGhost ? 'rgba(241, 245, 249, 0.4)' : 'rgba(248, 250, 252, 0.90)'
+    ctx.fill()
+    ctx.strokeStyle = isGhost ? 'rgba(51, 65, 85, 0.5)' : '#334155'
+    ctx.lineWidth = Math.max(1.0, 1.3 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    if (tgv.polygon.length >= 9) {
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.polygon[1]), toSy(tgv.polygon[1]))
+      ctx.lineTo(toSx(tgv.polygon[2]), toSy(tgv.polygon[2]))
+      ctx.lineTo(toSx(tgv.polygon[3]), toSy(tgv.polygon[3]))
+      ctx.lineTo(toSx(tgv.polygon[4]), toSy(tgv.polygon[4]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(toSx(tgv.polygon[5]), toSy(tgv.polygon[5]))
+      ctx.lineTo(toSx(tgv.polygon[6]), toSy(tgv.polygon[6]))
+      ctx.lineTo(toSx(tgv.polygon[7]), toSy(tgv.polygon[7]))
+      ctx.lineTo(toSx(tgv.polygon[8]), toSy(tgv.polygon[8]))
+      ctx.strokeStyle = isGhost ? 'rgba(37, 99, 235, 0.4)' : '#2563eb'
+      ctx.lineWidth = Math.max(1.3, 1.6 * Math.sqrt(cam.scale))
+      ctx.stroke()
+    }
+
+    ctx.beginPath()
+    ctx.moveTo(toSx(tgv.windshield[0]), toSy(tgv.windshield[0]))
+    for (let i = 1; i < tgv.windshield.length; i++) {
+      ctx.lineTo(toSx(tgv.windshield[i]), toSy(tgv.windshield[i]))
+    }
+    ctx.closePath()
+    ctx.fillStyle = '#0f172a'
+    ctx.fill()
+    ctx.strokeStyle = '#334155'
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    const hlR = Math.max(2, 2.8 * Math.sqrt(cam.scale))
+    const isLitWhite = (isLead && trainDirection === 1) || (!isLead && trainDirection === -1)
+    const hlColor = isLitWhite ? '#fef08a' : '#ef4444'
+    const hlBorder = isLitWhite ? '#eab308' : '#991b1b'
+
+    ctx.beginPath()
+    ctx.arc(toSx(tgv.headlights.left), toSy(tgv.headlights.left), hlR, 0, Math.PI * 2)
+    ctx.fillStyle = hlColor
+    ctx.fill()
+    ctx.strokeStyle = hlBorder
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.arc(toSx(tgv.headlights.right), toSy(tgv.headlights.right), hlR, 0, Math.PI * 2)
+    ctx.fillStyle = hlColor
+    ctx.fill()
+    ctx.strokeStyle = hlBorder
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    const panto = tgv.pantograph
+    ctx.beginPath()
+    ctx.moveTo(toSx(panto.armStart), toSy(panto.armStart))
+    ctx.lineTo(toSx(panto.center), toSy(panto.center))
+    ctx.lineTo(toSx(panto.armEnd), toSy(panto.armEnd))
+    ctx.strokeStyle = isGhost ? 'rgba(71, 85, 105, 0.6)' : '#475569'
+    ctx.lineWidth = Math.max(1.5, 2 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.moveTo(toSx(panto.bowLeft), toSy(panto.bowLeft))
+    ctx.lineTo(toSx(panto.bowRight), toSy(panto.bowRight))
+    ctx.strokeStyle = isGhost ? 'rgba(203, 213, 225, 0.8)' : '#e2e8f0'
+    ctx.lineWidth = Math.max(2, 3 * Math.sqrt(cam.scale))
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.arc(toSx(panto.bowLeft), toSy(panto.bowLeft), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+    ctx.arc(toSx(panto.bowRight), toSy(panto.bowRight), Math.max(1.5, 2 * Math.sqrt(cam.scale)), 0, Math.PI * 2)
+    ctx.fillStyle = '#d97706'
+    ctx.fill()
+  }
+}
+
+/**
+ * Render a complete TrainSet from the fleet on the canvas.
+ */
+export function renderTrainSet(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  train: TrainSet,
+  isSelected = false,
+  isGhost = false,
+  isDebugSkeleton = false,
+  telemetry?: TrainTelemetry,
+  selectedVehicleId?: string | null,
+  deleteVehicleId?: string | null,
+): void {
+  const visuals = getTrainSetVisuals(net, train)
+  if (!visuals) return
+
+  ctx.save()
+  const toSx = (p: Point) => (p.x - cam.x) * cam.scale + vw / 2
+  const toSy = (p: Point) => (p.y - cam.y) * cam.scale + vh / 2
+
+  if (isGhost) {
+    ctx.globalAlpha = 0.45
+  }
+
+  // Selection outline for entire train
+  if (isSelected && !isGhost && !isDebugSkeleton) {
+    ctx.save()
+    ctx.strokeStyle = '#38bdf8'
+    ctx.lineWidth = 1.5
+    ctx.lineJoin = 'round'
+    for (const v of visuals.vehicles) {
+      if (v.polygon.length > 0) {
+        ctx.beginPath()
+        ctx.moveTo(toSx(v.polygon[0]), toSy(v.polygon[0]))
+        for (let pi = 1; pi < v.polygon.length; pi++) {
+          ctx.lineTo(toSx(v.polygon[pi]), toSy(v.polygon[pi]))
+        }
+        ctx.closePath()
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+  }
+
+  // Targeted vehicle highlight (when a specific car or loco in the train is selected)
+  if (selectedVehicleId && !isGhost) {
+    const selV = visuals.vehicles.find(v => v.id === selectedVehicleId)
+    if (selV && selV.polygon.length > 0) {
+      ctx.save()
+      ctx.strokeStyle = '#f59e0b'
+      ctx.lineWidth = 2.5
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      ctx.moveTo(toSx(selV.polygon[0]), toSy(selV.polygon[0]))
+      for (let pi = 1; pi < selV.polygon.length; pi++) {
+        ctx.lineTo(toSx(selV.polygon[pi]), toSy(selV.polygon[pi]))
+      }
+      ctx.closePath()
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
+  // 1. Bogies
+  for (let i = 0; i < visuals.bogies.length; i++) {
+    drawTrainSetBogie(ctx, cam, toSx, toSy, visuals.bogies[i], i === 0, isGhost)
+  }
+
+  // 2. Accordions
+  for (const acc of visuals.accordions) {
+    drawTrainSetAccordion(ctx, cam, toSx, toSy, acc, isGhost)
+  }
+
+  // 3. Vehicles
+  for (let i = 0; i < visuals.vehicles.length; i++) {
+    const v = visuals.vehicles[i]
+    if (v.kind === 'loco' && v.tgvDetails) {
+      const isLead = i === 0
+      drawTrainSetLoco(ctx, cam, toSx, toSy, v.tgvDetails, isLead, train.direction, isGhost, isDebugSkeleton, telemetry)
+    } else {
+      drawTrainSetCar(ctx, cam, toSx, toSy, v, isGhost, isDebugSkeleton, telemetry)
+    }
+  }
+
+  // 3.5 Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
+  if (deleteVehicleId && !isGhost) {
+    const delV = visuals.vehicles.find(v => v.id === deleteVehicleId)
+    if (delV && delV.polygon.length > 0) {
+      ctx.save()
+      ctx.shadowColor = 'rgba(239, 68, 68, 0.85)'
+      ctx.shadowBlur = 10
+      ctx.strokeStyle = '#ef4444'
+      ctx.lineWidth = 3
+      ctx.lineJoin = 'round'
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
+      ctx.beginPath()
+      ctx.moveTo(toSx(delV.polygon[0]), toSy(delV.polygon[0]))
+      for (let pi = 1; pi < delV.polygon.length; pi++) {
+        ctx.lineTo(toSx(delV.polygon[pi]), toSy(delV.polygon[pi]))
+      }
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+
+      // Floating delete badge above vehicle center
+      const avgX = delV.polygon.reduce((acc, p) => acc + p.x, 0) / delV.polygon.length
+      const avgY = delV.polygon.reduce((acc, p) => acc + p.y, 0) / delV.polygon.length
+      const badgeSx = toSx({ x: avgX, y: avgY })
+      const badgeSy = toSy({ x: avgX, y: avgY }) - 24
+
+      ctx.shadowBlur = 6
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const label = '✕ Supprimer'
+      const lw = ctx.measureText(label).width
+      const padX = 7
+      const padY = 4
+
+      ctx.fillStyle = '#ef4444'
+      ctx.beginPath()
+      ctx.roundRect(badgeSx - lw / 2 - padX, badgeSy - 9 - padY, lw + padX * 2, 18 + padY * 2, 5)
+      ctx.fill()
+
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, badgeSx, badgeSy)
+
+      ctx.restore()
+    }
+  }
+
+  // 4. Debug skeleton
+  if (isDebugSkeleton) {
+    ctx.save()
+    const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
+    ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
+
+    for (let bi = 0; bi < visuals.bogies.length - 1; bi++) {
+      const bA = visuals.bogies[bi].center
+      const bB = visuals.bogies[bi + 1].center
+      const dist = Math.hypot(bA.x - bB.x, bA.y - bB.y)
+
+      ctx.beginPath()
+      ctx.setLineDash([2, 3])
+      ctx.moveTo(toSx(bA), toSy(bA))
+      ctx.lineTo(toSx(bB), toSy(bB))
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)'
+      ctx.lineWidth = 0.8
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      const midX = (toSx(bA) + toSx(bB)) / 2
+      const midY = (toSy(bA) + toSy(bB)) / 2
+      const label = `${dist.toFixed(2)} m`
+      const pad = 2.5
+      const tw = ctx.measureText(label).width
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.8)'
+      ctx.fillRect(midX - tw / 2 - pad, midY - 6 - pad, tw + pad * 2, 12 + pad)
+      ctx.fillStyle = '#38bdf8'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, midX, midY)
+    }
+
+    for (let bi = 0; bi < visuals.bogies.length; bi++) {
+      const bogie = visuals.bogies[bi]
+      const sx = toSx(bogie.center)
+      const sy = toSy(bogie.center)
+      const rOuter = Math.max(3.5, 4.5 * Math.sqrt(cam.scale))
+      ctx.beginPath()
+      ctx.arc(sx, sy, rOuter, 0, Math.PI * 2)
+      ctx.fillStyle = '#0284c7'
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+    ctx.restore()
+
+    // 5. Vecteurs dynamiques ferroviaires
+    const leadNosePt = visuals.vehicles.length > 0 && visuals.vehicles[0].polygon.length > 0
+      ? visuals.vehicles[0].polygon[0]
+      : (visuals.bogies.length > 0 ? visuals.bogies[0].center : { x: 0, y: 0 })
+    const leadHeading = visuals.bogies.length > 0 ? visuals.bogies[0].tangent : { x: 1, y: 0 }
+    const leadPos = train.vehicles.length > 0
+      ? (train.direction === 1 ? train.vehicles[0].front : train.vehicles[0].rear)
+      : undefined
+
+    renderTrainDynamicVectors(
+      ctx,
+      cam,
+      toSx,
+      toSy,
+      net,
+      visuals.bogies,
+      leadNosePt,
+      leadHeading,
+      train.direction,
+      telemetry ?? {
+        speed: train.currentSpeed,
+        maxSpeed: train.maxSpeed,
+        ...trainDriveTelemetry(train),
+      },
+      leadPos,
+    )
+  }
+
+  ctx.restore()
+}
+
+/**
+ * Render coupler endpoints and internal joints across the layout in coupling mode.
+ */
+export function renderCouplerPoints(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  couplerPoints: CouplerPoint[],
+  hoveredPoint: CouplerPoint | null,
+): void {
+  if (couplerPoints.length === 0) return
+
+  ctx.save()
+  const toSx = (p: Point) => (p.x - cam.x) * cam.scale + vw / 2
+  const toSy = (p: Point) => (p.y - cam.y) * cam.scale + vh / 2
+
+  // 1. Draw dashed proximity links between nearby free couplers
+  const freePoints = couplerPoints.filter(cp => !cp.coupled)
+  for (let i = 0; i < freePoints.length; i++) {
+    for (let j = i + 1; j < freePoints.length; j++) {
+      const pA = freePoints[i]
+      const pB = freePoints[j]
+      if (pA.trainId === pB.trainId) continue
+      const dist = Math.hypot(pA.pos.x - pB.pos.x, pA.pos.y - pB.pos.y)
+      if (dist <= MAX_COUPLE_DISTANCE) {
+        ctx.beginPath()
+        ctx.setLineDash([4, 4])
+        ctx.moveTo(toSx(pA.pos), toSy(pA.pos))
+        ctx.lineTo(toSx(pB.pos), toSy(pB.pos))
+        ctx.strokeStyle = '#38bdf8'
+        ctx.lineWidth = 2
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+    }
+  }
+
+  // 2. Draw each coupler point badge
+  for (const cp of couplerPoints) {
+    const sx = toSx(cp.pos)
+    const sy = toSy(cp.pos)
+    const isHovered = hoveredPoint !== null &&
+      hoveredPoint.trainId === cp.trainId &&
+      hoveredPoint.vehicleIndex === cp.vehicleIndex &&
+      hoveredPoint.end === cp.end
+
+    if (cp.coupled) {
+      // Internal articulation joint: click to decouple
+      const r = isHovered ? 8 : 6
+      ctx.beginPath()
+      ctx.arc(sx, sy, r, 0, Math.PI * 2)
+      ctx.fillStyle = isHovered ? '#ea580c' : '#f97316'
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
+      // Small dash inside
+      ctx.beginPath()
+      ctx.moveTo(sx - r * 0.45, sy)
+      ctx.lineTo(sx + r * 0.45, sy)
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    } else {
+      // Free coupler end: click to couple
+      const r = isHovered ? 9 : 7
+      if (isHovered) {
+        ctx.beginPath()
+        ctx.arc(sx, sy, r + 4, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.3)'
+        ctx.fill()
+      }
+
+      ctx.beginPath()
+      ctx.arc(sx, sy, r, 0, Math.PI * 2)
+      ctx.fillStyle = isHovered ? '#0284c7' : '#0ea5e9'
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
+      ctx.stroke()
+
+      // Inner white pin
+      ctx.beginPath()
+      ctx.arc(sx, sy, r * 0.35, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffffff'
+      ctx.fill()
+    }
+
+    if (isHovered) {
+      const label = cp.coupled ? '✂ Découpler' : '🔗 Coupler'
+      ctx.font = '600 11px system-ui, sans-serif'
+      const metrics = ctx.measureText(label)
+      const tw = metrics.width + 12
+      const th = 18
+      const tx = sx - tw / 2
+      const ty = sy - 24
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)'
+      ctx.beginPath()
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(tx, ty, tw, th, 4)
+      } else {
+        ctx.rect(tx, ty, tw, th)
+      }
+      ctx.fill()
+      ctx.strokeStyle = cp.coupled ? '#f97316' : '#38bdf8'
+      ctx.lineWidth = 1
+      ctx.stroke()
+
+      ctx.fillStyle = '#f8fafc'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, sx, ty + th / 2)
+    }
+  }
+
+  ctx.restore()
+}
+
+/**
+ * Render a magnetic coupler snap indicator when placing a vehicle near an existing train's coupler.
+ */
+export function renderCouplerSnapIndicator(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  pos: Point
+): void {
+  const sx = (pos.x - cam.x) * cam.scale + vw / 2
+  const sy = (pos.y - cam.y) * cam.scale + vh / 2
+
+  ctx.save()
+
+  // Outer glowing pulse ring
+  ctx.beginPath()
+  ctx.arc(sx, sy, 14, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(16, 185, 129, 0.22)'
+  ctx.fill()
+  ctx.strokeStyle = '#10b981'
+  ctx.lineWidth = 2.2
+  ctx.setLineDash([4, 3])
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // Inner solid core
+  ctx.beginPath()
+  ctx.arc(sx, sy, 5.5, 0, Math.PI * 2)
+  ctx.fillStyle = '#10b981'
+  ctx.fill()
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // Floating label badge
+  const label = '🔗 Atteler au convoi'
+  ctx.font = 'bold 11px system-ui, sans-serif'
+  const metrics = ctx.measureText(label)
+  const tw = metrics.width + 12
+  const th = 20
+  const tx = sx - tw / 2
+  const ty = sy - 28
+
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.92)'
+  ctx.beginPath()
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(tx, ty, tw, th, 4)
+  } else {
+    ctx.rect(tx, ty, tw, th)
+  }
+  ctx.fill()
+  ctx.strokeStyle = '#10b981'
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  ctx.fillStyle = '#34d399'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, sx, ty + th / 2)
+
+  ctx.restore()
+}
+

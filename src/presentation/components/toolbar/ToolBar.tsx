@@ -11,8 +11,19 @@ interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
+    id: 'select',
+    label: 'Sélection & Déplacement (V) · Clic gauche pour déplacer la vue',
+    shortcut: 'V',
+    group: 0,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 3l14 7-6 2-2 6z" />
+      </svg>
+    ),
+  },
+  {
     id: 'pan',
-    label: 'Déplacer la vue',
+    label: 'Déplacer la vue uniquement (H)',
     shortcut: 'H',
     group: 0,
     icon: (
@@ -24,19 +35,8 @@ const TOOLS: ToolDef[] = [
     ),
   },
   {
-    id: 'select',
-    label: 'Sélection',
-    shortcut: 'V',
-    group: 0,
-    icon: (
-      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M5 3l14 7-6 2-2 6z" />
-      </svg>
-    ),
-  },
-  {
     id: 'place',
-    label: 'Voie droite',
+    label: 'Tracé de voie (Smart Track)',
     shortcut: 'N',
     group: 1,
     icon: (
@@ -141,6 +141,15 @@ export function ToolBar({ store }: { store: EditorStore }) {
     return () => window.removeEventListener('pointerdown', onPointerDown)
   }, [showGridMenu])
 
+  const isTrainMode = store.tool === 'locomotive' || store.tool === 'coupling'
+
+  const handleDragStart = (e: React.DragEvent, itemType: 'tgv_loco' | 'tgv_wagon') => {
+    e.dataTransfer.setData('application/open-rails-train', itemType)
+    e.dataTransfer.setData('text/plain', itemType)
+    e.dataTransfer.effectAllowed = 'copy'
+    store.startTrainDrag(itemType, { x: e.clientX, y: e.clientY })
+  }
+
   // --- ÎLE 1 : RAILS & OUTILS ---
   const toolItems: ReactNode[] = []
   let lastGroup = -1
@@ -177,185 +186,482 @@ export function ToolBar({ store }: { store: EditorStore }) {
 
   return (
     <div className="toolbar-container">
-      {/* Île 1 : Rails, Sélection, Navigation, Historique */}
-      <div className="toolbar-island">
-        {toolItems}
-
-        <div className="tb-sep" />
-
-        {/* Undo */}
-        <div
-          className="tb-btn-wrap"
-          onMouseEnter={() => setHoverId('undo')}
-          onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}
-        >
-          <button
-            className="tb-btn"
-            disabled={!store.canUndo}
-            onClick={() => store.undo()}
-            aria-label="Annuler"
-            style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 7v6h6" />
-              <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
-            </svg>
-          </button>
-          {hoverId === 'undo' && (
-            <div className="tb-tooltip">
-              Annuler
-              <kbd>Ctrl+Z</kbd>
+      <div className="toolbar-switch-wrapper">
+        {isTrainMode ? (
+          /* ─── Mode Train Sidebar ─── */
+          <div className="toolbar-island toolbar-train toolbar-panel-enter" key="train-toolbar">
+            {/* Bouton Retour aux Voies */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('back-rails')}
+              onMouseLeave={() => setHoverId((h) => (h === 'back-rails' ? null : h))}
+            >
+              <button
+                className="tb-back-btn"
+                onClick={() => store.exitTrainMode()}
+                aria-label="Retour au tracé des voies"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5M12 19l-7-7 7-7" />
+                </svg>
+              </button>
+              {hoverId === 'back-rails' && (
+                <div className="tb-tooltip">
+                  Retour au tracé des voies
+                  <kbd>Échap</kbd>
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Redo */}
-        <div
-          className="tb-btn-wrap"
-          onMouseEnter={() => setHoverId('redo')}
-          onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}
-        >
-          <button
-            className="tb-btn"
-            disabled={!store.canRedo}
-            onClick={() => store.redo()}
-            aria-label="Rétablir"
-            style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 7v6h-6" />
-              <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
-            </svg>
-          </button>
-          {hoverId === 'redo' && (
-            <div className="tb-tooltip">
-              Rétablir
-              <kbd>Ctrl+Y</kbd>
+            <div className="tb-sep" />
+
+            {/* Outil 1 : Sélection Train / Véhicule */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('train-select')}
+              onMouseLeave={() => setHoverId((h) => (h === 'train-select' ? null : h))}
+            >
+              <button
+                onClick={() => {
+                  store.trainToolSubMode = 'select'
+                  store.tool = 'locomotive'
+                  store.notify()
+                }}
+                className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'select' ? ' active' : ''}`}
+                aria-label="Sélectionner train ou wagon"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 3l7 18 3-7 7-3z" />
+                </svg>
+              </button>
+              {hoverId === 'train-select' && (
+                <div className="tb-tooltip">
+                  Sélectionner un convoi ou un wagon
+                  <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                    Cliquer sur un véhicule pour le cibler ou le supprimer
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Badge Voie double si actif */}
-        {store.parallelMode && (
-          <div
-            style={{
-              margin: '4px 0 0',
-              padding: '4px 2px',
-              background: 'rgba(37,99,235,0.18)',
-              border: '1px solid var(--accent, #2563eb)',
-              borderRadius: '6px',
-              fontSize: '9px',
-              fontWeight: 700,
-              color: 'var(--accent, #60a5fa)',
-              textAlign: 'center',
-              lineHeight: 1.2,
-              cursor: 'pointer',
-              width: '34px',
-            }}
-            title="Cliquer pour quitter le mode double voie (ou Echap)"
-            onClick={() => store.exitParallelMode()}
-          >
-            <div>2v</div>
-            <div style={{ fontSize: '8px', opacity: 0.8 }}>{store.parallelOffset}m</div>
+            {/* Outil 2 : Poser Locomotive TGV (Draggable & Clickable) */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('train-loco')}
+              onMouseLeave={() => setHoverId((h) => (h === 'train-loco' ? null : h))}
+            >
+              <div
+                draggable
+                onDragStart={(e) => handleDragStart(e, 'tgv_loco')}
+                onPointerDown={(e) => {
+                  if (e.button === 0) store.startTrainDrag('tgv_loco', { x: e.clientX, y: e.clientY })
+                }}
+                onClick={() => {
+                  store.trainToolSubMode = 'place'
+                  store.setTrainPlacementKind('tgv_loco')
+                }}
+                className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'place' && store.trainPlacementKind === 'tgv_loco' ? ' active' : ''}`}
+                aria-label="Locomotive"
+                style={{ cursor: 'grab' }}
+              >
+                <svg viewBox="0 0 24 24" width="22" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 14h14c1.5 0 3-1 4-3l-2-3H5c-1.5 0-3 1-3 3v3z" fill="currentColor" fillOpacity="0.25" />
+                  <path d="M12 8l2 3H8V8h4z" fill="currentColor" fillOpacity="0.4" />
+                  <circle cx="6" cy="17" r="1.8" fill="currentColor" />
+                  <circle cx="14" cy="17" r="1.8" fill="currentColor" />
+                </svg>
+              </div>
+              {hoverId === 'train-loco' && (
+                <div className="tb-tooltip">
+                  Motrice TGV
+                  <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                    Glisser sur la voie ou cliquer pour poser
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Outil 3 : Poser Wagon Voyageurs (Draggable & Clickable) */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('train-wagon')}
+              onMouseLeave={() => setHoverId((h) => (h === 'train-wagon' ? null : h))}
+            >
+              <div
+                draggable
+                onDragStart={(e) => handleDragStart(e, 'tgv_wagon')}
+                onPointerDown={(e) => {
+                  if (e.button === 0) store.startTrainDrag('tgv_wagon', { x: e.clientX, y: e.clientY })
+                }}
+                onClick={() => {
+                  store.trainToolSubMode = 'place'
+                  store.setTrainPlacementKind('tgv_wagon')
+                }}
+                className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'place' && store.trainPlacementKind === 'tgv_wagon' ? ' active' : ''}`}
+                aria-label="Wagon"
+                style={{ cursor: 'grab' }}
+              >
+                <svg viewBox="0 0 24 24" width="22" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="7" width="20" height="8" rx="1.5" fill="currentColor" fillOpacity="0.25" />
+                  <rect x="5" y="9" width="3" height="3" rx="0.5" fill="currentColor" fillOpacity="0.5" />
+                  <rect x="10" y="9" width="3" height="3" rx="0.5" fill="currentColor" fillOpacity="0.5" />
+                  <rect x="15" y="9" width="3" height="3" rx="0.5" fill="currentColor" fillOpacity="0.5" />
+                  <circle cx="6" cy="18" r="1.8" fill="currentColor" />
+                  <circle cx="17" cy="18" r="1.8" fill="currentColor" />
+                </svg>
+              </div>
+              {hoverId === 'train-wagon' && (
+                <div className="tb-tooltip">
+                  Wagon voyageurs
+                  <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                    Glisser sur la voie ou cliquer pour poser
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Outil Inverser sens / orientation (R) */}
+            {!store.isPlayMode && (
+              <div
+                className="tb-btn-wrap"
+                onMouseEnter={() => setHoverId('flip')}
+                onMouseLeave={() => setHoverId((h) => (h === 'flip' ? null : h))}
+              >
+                <button
+                  className="tb-train-btn"
+                  onClick={() => {
+                    if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
+                      store.flipTrainPlacementDirection()
+                    } else {
+                      store.flipLocomotiveDirection()
+                    }
+                  }}
+                  aria-label="Inverser le sens"
+                  style={{ color: '#c084fc' }}
+                >
+                  <span style={{ fontSize: '16px' }}>⇄</span>
+                </button>
+                {hoverId === 'flip' && (
+                  <div className="tb-tooltip">
+                    {store.tool === 'locomotive' && store.trainToolSubMode === 'place'
+                      ? 'Inverser l’orientation de pose'
+                      : 'Inverser le sens de conduite'}
+                    <kbd>R</kbd>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="tb-sep" />
+
+            {/* Outil 4 : Couplage / Découplage */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('coupling')}
+              onMouseLeave={() => setHoverId((h) => (h === 'coupling' ? null : h))}
+            >
+              <button
+                className={`tb-train-btn${store.tool === 'coupling' ? ' active' : ''}`}
+                onClick={() => store.toggleCouplingMode()}
+                aria-label="Coupler"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                </svg>
+              </button>
+              {hoverId === 'coupling' && (
+                <div className="tb-tooltip">
+                  Mode Couplage
+                  <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                    Cliquer deux extrémités pour atteler / joint pour découpler
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Outil 5 : Supprimer Véhicule / Train (Mode Suppression interactif) */}
+            {!store.isPlayMode && (
+              <div
+                className="tb-btn-wrap"
+                onMouseEnter={() => setHoverId('delete-train')}
+                onMouseLeave={() => setHoverId((h) => (h === 'delete-train' ? null : h))}
+              >
+                <button
+                  className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'delete' ? ' active-danger' : ''}`}
+                  onClick={() => {
+                    store.setTrainToolSubMode(store.trainToolSubMode === 'delete' ? 'select' : 'delete')
+                  }}
+                  aria-label="Outil suppression de train"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
+                </button>
+                {hoverId === 'delete-train' && (
+                  <div className="tb-tooltip">
+                    Outil Suppression
+                    <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
+                      {store.trainToolSubMode === 'delete'
+                        ? 'Mode suppression actif : survol rouge et clic pour supprimer'
+                        : 'Activer la suppression au survol (contour rouge) et clic'}
+                    </span>
+                    <kbd>Suppr</kbd>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Contrôles du train */}
+            {(store.trains.length > 0 || store.locomotive) && (
+              <>
+                <div className="tb-sep" />
+
+                {/* Piloter / Stop */}
+                <div
+                  className="tb-btn-wrap"
+                  onMouseEnter={() => setHoverId('play')}
+                  onMouseLeave={() => setHoverId((h) => (h === 'play' ? null : h))}
+                >
+                  <button
+                    className={`tb-train-btn${store.isPlayMode ? ' active' : ''}`}
+                    style={{
+                      color: store.isPlayMode ? '#ef4444' : '#10b981',
+                      background: store.isPlayMode ? 'rgba(239,68,68,0.2)' : 'transparent',
+                      borderColor: store.isPlayMode ? '#ef4444' : 'transparent',
+                    }}
+                    onClick={() => store.togglePlayMode()}
+                    aria-label={store.isPlayMode ? 'Arrêter la conduite' : 'Piloter le train'}
+                  >
+                    <span style={{ fontSize: '15px' }}>{store.isPlayMode ? '⏹' : '▶'}</span>
+                  </button>
+                  {hoverId === 'play' && (
+                    <div className="tb-tooltip">
+                      {store.isPlayMode ? 'Arrêter la conduite' : 'Prendre les commandes'}
+                      <kbd>Espace</kbd>
+                    </div>
+                  )}
+                </div>
+
+                {/* Debug squelette */}
+                <div
+                  className="tb-btn-wrap"
+                  onMouseEnter={() => setHoverId('debug')}
+                  onMouseLeave={() => setHoverId((h) => (h === 'debug' ? null : h))}
+                >
+                  <button
+                    className={`tb-train-btn${store.showTrainDebug ? ' active' : ''}`}
+                    onClick={() => store.toggleTrainDebug()}
+                    aria-label="Debug squelette"
+                  >
+                    <span style={{ fontSize: '15px' }}>⚙</span>
+                  </button>
+                  {hoverId === 'debug' && (
+                    <div className="tb-tooltip">
+                      Squelette cinématique
+                      <kbd>D</kbd>
+                    </div>
+                  )}
+                </div>
+
+                {/* Fleet counter badge */}
+                {store.trains.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: '2px',
+                      padding: '2px',
+                      borderRadius: '5px',
+                      background: 'rgba(56, 189, 248, 0.15)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      fontSize: '8px',
+                      fontWeight: 700,
+                      color: '#38bdf8',
+                      textAlign: 'center',
+                      width: '34px',
+                      boxSizing: 'border-box',
+                      lineHeight: 1.1,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => {
+                      const idx = store.trains.findIndex(t => t.id === store.selectedTrainId)
+                      const nextIdx = (idx + 1) % store.trains.length
+                      store.selectTrainById(store.trains[nextIdx].id)
+                    }}
+                    title="Cliquer pour sélectionner le convoi suivant"
+                  >
+                    <div>{store.trains.length} r.</div>
+                    <div style={{ fontSize: '7px', opacity: 0.8 }}>
+                      T{store.trains.findIndex(t => t.id === store.selectedTrainId) + 1}/{store.trains.length}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="tb-sep" />
+
+            {/* Undo */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('undo')}
+              onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}
+            >
+              <button
+                className="tb-btn"
+                disabled={!store.canUndo}
+                onClick={() => store.undo()}
+                aria-label="Annuler"
+                style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 7v6h6" />
+                  <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
+                </svg>
+              </button>
+              {hoverId === 'undo' && (
+                <div className="tb-tooltip">
+                  Annuler
+                  <kbd>Ctrl+Z</kbd>
+                </div>
+              )}
+            </div>
+
+            {/* Redo */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('redo')}
+              onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}
+            >
+              <button
+                className="tb-btn"
+                disabled={!store.canRedo}
+                onClick={() => store.redo()}
+                aria-label="Rétablir"
+                style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 7v6h-6" />
+                  <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
+                </svg>
+              </button>
+              {hoverId === 'redo' && (
+                <div className="tb-tooltip">
+                  Rétablir
+                  <kbd>Ctrl+Y</kbd>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        ) : (
+          /* ─── Mode Rails Toolbar ─── */
+          <div className="toolbar-island toolbar-rails-panel toolbar-panel-enter" key="rails-toolbar">
+            {toolItems}
 
-        {store.selection.nodes.size === 2 && !store.parallelMode && (
-          <div
-            style={{
-              margin: '4px 0 0',
-              padding: '4px 2px',
-              background: 'rgba(16, 185, 129, 0.15)',
-              border: '1px solid #10b981',
-              borderRadius: '6px',
-              fontSize: '9px',
-              fontWeight: 700,
-              color: '#34d399',
-              textAlign: 'center',
-              lineHeight: 1.2,
-              cursor: 'pointer',
-              width: '34px',
-            }}
-            title="Créer une voie double parallèle à partir des 2 nœuds sélectionnés (D)"
-            onClick={() => store.createParallelTrackFromSelection()}
-          >
-            <div>+2v</div>
-            <div style={{ fontSize: '8px', opacity: 0.8 }}>(D)</div>
-          </div>
-        )}
+            <div className="tb-sep" />
 
-        {/* Locomotive status badge */}
-        {store.locomotive && (
-          <div
-            style={{
-              margin: '4px 0 0',
-              padding: '4px 2px',
-              background: store.isPlayMode ? 'rgba(16, 185, 129, 0.2)' : 'rgba(59, 130, 246, 0.15)',
-              border: `1px solid ${store.isPlayMode ? '#10b981' : '#3b82f6'}`,
-              borderRadius: '6px',
-              fontSize: '9px',
-              fontWeight: 700,
-              color: store.isPlayMode ? '#34d399' : '#60a5fa',
-              textAlign: 'center',
-              lineHeight: 1.2,
-              cursor: 'pointer',
-              width: '34px',
-            }}
-            title={store.isPlayMode ? 'Mode Play actif · Espace pour arrêter' : 'Cliquer pour démarrer le mode Play (Espace)'}
-            onClick={() => store.togglePlayMode()}
-          >
-            <div>{store.isPlayMode ? '⏹' : '▶'}</div>
-            <div style={{ fontSize: '7px', opacity: 0.8 }}>{store.isPlayMode ? 'Stop' : 'Play'}</div>
-          </div>
-        )}
+            {/* Undo */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('undo')}
+              onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}
+            >
+              <button
+                className="tb-btn"
+                disabled={!store.canUndo}
+                onClick={() => store.undo()}
+                aria-label="Annuler"
+                style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 7v6h6" />
+                  <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
+                </svg>
+              </button>
+              {hoverId === 'undo' && (
+                <div className="tb-tooltip">
+                  Annuler
+                  <kbd>Ctrl+Z</kbd>
+                </div>
+              )}
+            </div>
 
-        {/* Flip direction button */}
-        {store.locomotive && (
-          <div
-            style={{
-              margin: '2px 0 0',
-              padding: '4px 2px',
-              background: 'rgba(168, 85, 247, 0.15)',
-              border: '1px solid #a855f7',
-              borderRadius: '6px',
-              fontSize: '9px',
-              fontWeight: 700,
-              color: '#c084fc',
-              textAlign: 'center',
-              lineHeight: 1.2,
-              cursor: 'pointer',
-              width: '34px',
-            }}
-            title="Inverser le sens de la locomotive (Touche R ou Tab)"
-            onClick={() => store.flipLocomotiveDirection()}
-          >
-            <div>⇄</div>
-            <div style={{ fontSize: '7px', opacity: 0.8 }}>Sens</div>
-          </div>
-        )}
+            {/* Redo */}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('redo')}
+              onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}
+            >
+              <button
+                className="tb-btn"
+                disabled={!store.canRedo}
+                onClick={() => store.redo()}
+                aria-label="Rétablir"
+                style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 7v6h-6" />
+                  <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
+                </svg>
+              </button>
+              {hoverId === 'redo' && (
+                <div className="tb-tooltip">
+                  Rétablir
+                  <kbd>Ctrl+Y</kbd>
+                </div>
+              )}
+            </div>
 
-        {/* Remove locomotive button */}
-        {store.locomotive && !store.isPlayMode && (
-          <div
-            style={{
-              margin: '2px 0 0',
-              padding: '4px 2px',
-              background: 'rgba(239, 68, 68, 0.12)',
-              border: '1px solid #ef4444',
-              borderRadius: '6px',
-              fontSize: '9px',
-              fontWeight: 700,
-              color: '#f87171',
-              textAlign: 'center',
-              lineHeight: 1.2,
-              cursor: 'pointer',
-              width: '34px',
-            }}
-            title="Retirer la locomotive"
-            onClick={() => store.removeLocomotive()}
-          >
-            <div>✕</div>
-            <div style={{ fontSize: '7px', opacity: 0.8 }}>Loco</div>
+            {/* Badge Voie double si actif */}
+            {store.parallelMode && (
+              <div
+                style={{
+                  margin: '4px 0 0',
+                  padding: '4px 2px',
+                  background: 'rgba(37,99,235,0.18)',
+                  border: '1px solid var(--accent, #2563eb)',
+                  borderRadius: '6px',
+                  fontSize: '9px',
+                  fontWeight: 700,
+                  color: 'var(--accent, #60a5fa)',
+                  textAlign: 'center',
+                  lineHeight: 1.2,
+                  cursor: 'pointer',
+                  width: '34px',
+                }}
+                title="Cliquer pour quitter le mode double voie (ou Echap)"
+                onClick={() => store.exitParallelMode()}
+              >
+                <div>2v</div>
+                <div style={{ fontSize: '8px', opacity: 0.8 }}>{store.parallelOffset}m</div>
+              </div>
+            )}
+
+            {store.selection.nodes.size === 2 && !store.parallelMode && (
+              <div
+                style={{
+                  margin: '4px 0 0',
+                  padding: '4px 2px',
+                  background: 'rgba(16, 185, 129, 0.15)',
+                  border: '1px solid #10b981',
+                  borderRadius: '6px',
+                  fontSize: '9px',
+                  fontWeight: 700,
+                  color: '#34d399',
+                  textAlign: 'center',
+                  lineHeight: 1.2,
+                  cursor: 'pointer',
+                  width: '34px',
+                }}
+                title="Créer une voie double parallèle à partir des 2 nœuds sélectionnés (D)"
+                onClick={() => store.createParallelTrackFromSelection()}
+              >
+                <div>+2v</div>
+                <div style={{ fontSize: '8px', opacity: 0.8 }}>(D)</div>
+              </div>
+            )}
           </div>
         )}
       </div>

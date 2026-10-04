@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from './editorStore'
-import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
+import { addNode, addSegment, addCurveSegment, resetIdCounter } from '@domain/models/network'
+import { applyNodeTransform, collectAffectedVias } from '@domain/geometry/nodeTransform'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 
 describe('EditorStore persistence', () => {
@@ -376,5 +377,213 @@ describe('EditorStore persistence', () => {
       store.selectTrain(false)
       expect(store.isTrainSelected).toBe(false)
     })
+
+    it('flipTrainPlacementDirection toggles direction and updates single-vehicle preview orientation', () => {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 200, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+
+      store.tool = 'locomotive'
+      store.trainToolSubMode = 'place'
+      expect(store.trainPlacementDirection).toBe(1)
+
+      // Hover on track at x=100
+      store.updateLocomotivePreview({ x: 100, y: 0 })
+      expect(store.trainPlacementPreview).not.toBeNull()
+      expect(store.trainPlacementPreview!.vehicles).toHaveLength(1)
+      const vehForward = store.trainPlacementPreview!.vehicles[0]
+      expect(vehForward.front.forward).toBe(true)
+
+      // Flip direction (R key)
+      store.flipTrainPlacementDirection()
+      expect(store.trainPlacementDirection).toBe(-1)
+      expect(store.trainPlacementPreview).not.toBeNull()
+      const vehReversed = store.trainPlacementPreview!.vehicles[0]
+      expect(vehReversed.front.forward).toBe(false)
+
+      // Placing train retains the flipped orientation
+      const placed = store.placeTrainItem({ x: 100, y: 0 })
+      expect(placed).toBe(true)
+      expect(store.trains).toHaveLength(1)
+      expect(store.trains[0].vehicles[0].front.forward).toBe(false)
+    })
+  })
+
+  describe('TrainSet driving controls', () => {
+    function makeDrivingStore(): EditorStore {
+      const store = new EditorStore()
+      const n1 = addNode(store.network, { x: 0, y: 0 })
+      const n2 = addNode(store.network, { x: 2000, y: 0 })
+      addSegment(store.network, n1.id, n2.id)
+      expect(store.placeTrainLoco({ x: 1000, y: 0 })).toBe(true)
+      store.togglePlayMode()
+      return store
+    }
+
+    it('selects the train on entering play mode with its controls at rest', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      expect(train.reverser).toBe('neutral')
+      expect(train.notch).toBe(0)
+    })
+
+    it('steps the handle one notch at a time and drives the train', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.shiftSelectedTrainReverser(1)
+      expect(train.reverser).toBe('forward')
+
+      store.stepSelectedTrainNotch(1)
+      store.stepSelectedTrainNotch(1)
+      expect(train.notch).toBe(2)
+
+      const tBefore = train.vehicles[0].front.t
+      store.tickAllTrains(1)
+      expect(train.currentSpeed).toBeCloseTo((2 / 5) * train.acceleration, 5)
+      expect(train.vehicles[0].front.t).toBeGreaterThan(tBefore)
+
+      store.stepSelectedTrainNotch(-1)
+      expect(train.notch).toBe(1)
+    })
+
+    it('refuses to throw the reverser while the train is moving', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.setSelectedTrainReverser('forward')
+      train.currentSpeed = 10
+      store.setSelectedTrainReverser('reverse')
+      store.flipLocomotiveDirection()
+      expect(train.reverser).toBe('forward')
+      expect(train.currentSpeed).toBe(10)
+    })
+
+    it('emergency brake stops the train and can only be released once stopped', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.setSelectedTrainReverser('forward')
+      store.setSelectedTrainNotch(5)
+      train.currentSpeed = 30
+
+      store.toggleSelectedTrainEmergencyBrake()
+      expect(train.emergencyBrake).toBe(true)
+
+      // Neither the handle nor a second press releases it while moving
+      store.setSelectedTrainNotch(5)
+      store.toggleSelectedTrainEmergencyBrake()
+      expect(train.emergencyBrake).toBe(true)
+
+      store.tickAllTrains(0.1)
+      expect(train.currentSpeed).toBeLessThan(30)
+      for (let i = 0; i < 30; i++) store.tickAllTrains(0.1)
+      expect(train.currentSpeed).toBe(0)
+
+      store.toggleSelectedTrainEmergencyBrake()
+      expect(train.emergencyBrake).toBe(false)
+    })
+
+    it('stops dead and cuts traction at the end of the track', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.setSelectedTrainReverser('forward')
+      store.setSelectedTrainNotch(5)
+      train.currentSpeed = train.maxSpeed
+      for (let i = 0; i < 200 && train.currentSpeed > 0; i++) store.tickAllTrains(0.1)
+      expect(train.currentSpeed).toBe(0)
+      expect(train.notch).toBe(0)
+    })
+
+    it('puts every control back at rest when leaving play mode', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.setSelectedTrainReverser('reverse')
+      store.setSelectedTrainNotch(3)
+      store.togglePlayMode()
+      expect(train.reverser).toBe('neutral')
+      expect(train.notch).toBe(0)
+      expect(train.currentSpeed).toBe(0)
+    })
+  })
+})
+
+describe('EditorStore scale-aware reconcile and drag restore', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+  })
+
+  const addParallelTracks = (store: EditorStore, spacing: number) => {
+    const a1 = addNode(store.network, { x: 0, y: 0 })
+    const a2 = addNode(store.network, { x: 1, y: 0 })
+    addSegment(store.network, a1.id, a2.id)
+    const b1 = addNode(store.network, { x: 0.3, y: spacing })
+    const b2 = addNode(store.network, { x: 0.7, y: spacing })
+    addSegment(store.network, b1.id, b2.id)
+  }
+
+  it('derives the placement thresholds from the gauge of the scale preset', () => {
+    const store = new EditorStore()
+    expect(store.getPlacementThresholds().reconcileTolerance).toBeCloseTo(0.1)
+    store.setScalePreset('HO', false)
+    const th = store.getPlacementThresholds()
+    expect(th.k).toBeCloseTo(0.0165 / 1.435)
+    expect(th.reconcileTolerance).toBeLessThan(0.002)
+    expect(th.minRadius).toBeCloseTo(0.1725, 3)
+  })
+
+  it('reconcileNetwork leaves HO parallel tracks 5 cm apart untouched', () => {
+    const store = new EditorStore()
+    store.setScalePreset('HO', false)
+    addParallelTracks(store, 0.05)
+    expect(store.reconcileNetwork()).toEqual({ splitCount: 0, weldedCount: 0 })
+    expect(store.network.segments.size).toBe(2)
+    // The manual heal pass (R key) is scaled as well
+    expect(store.reconcileTopology()).toEqual({ splitCount: 0, weldedCount: 0 })
+    expect(store.network.segments.size).toBe(2)
+  })
+
+  it('undo / redo and reload at HO scale do not re-split parallel tracks', () => {
+    const store = new EditorStore()
+    store.setScalePreset('HO', false)
+    addParallelTracks(store, 0.05)
+    store.markDirty()
+    const extra = addNode(store.network, { x: 2, y: 1 })
+    const extra2 = addNode(store.network, { x: 2.2, y: 1 })
+    addSegment(store.network, extra.id, extra2.id)
+    store.markDirty()
+    expect(store.network.segments.size).toBe(3)
+
+    store.undo()
+    expect(store.network.segments.size).toBe(2)
+    expect(store.network.nodes.size).toBe(4)
+    store.redo()
+    expect(store.network.segments.size).toBe(3)
+
+    const reloaded = new EditorStore()
+    expect(reloaded.network.segments.size).toBe(3)
+    expect(reloaded.network.nodes.size).toBe(6)
+  })
+
+  it('cancelInteraction restores the control points reshaped by a node drag', () => {
+    const store = new EditorStore()
+    const a = addNode(store.network, { x: 0, y: 0 })
+    const b = addNode(store.network, { x: 50, y: 50 })
+    const curve = addCurveSegment(store.network, a.id, b.id, { x: 50, y: 0 })!
+
+    // Same bookkeeping as the select-tool drag in Canvas: only node b is dragged, the curve is not selected
+    store.selection = { nodes: new Set([b.id]), segments: new Set() }
+    store.isDraggingNode = true
+    store.draggedNodeInitialPositions.set(b.id, { ...b.pos })
+    store.draggedViaInitialPositions = collectAffectedVias(store.network, [b.id])
+    applyNodeTransform(store.network, store.draggedNodeInitialPositions, store.draggedViaInitialPositions, {
+      kind: 'translate',
+      delta: { x: 20, y: 20 },
+    })
+    expect(store.network.segments.get(curve.id)!.via).not.toEqual({ x: 50, y: 0 })
+
+    store.cancelInteraction()
+    expect(store.network.nodes.get(b.id)!.pos).toEqual({ x: 50, y: 50 })
+    expect(store.network.segments.get(curve.id)!.via).toEqual({ x: 50, y: 0 })
+    expect(store.draggedViaInitialPositions.size).toBe(0)
   })
 })
