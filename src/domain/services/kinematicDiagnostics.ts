@@ -1,11 +1,13 @@
 import type { Network, NodeId, SegmentId, Point, Segment } from '../models/types'
-import { segmentTangentAt } from '../geometry/tangent'
+import { segmentTangentAt, MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
+import { placementThresholds } from '../geometry/scale'
 
 export type KinematicIssueKind =
-  | 'sharp_turn'          // Angle cassé / aigu (> 35°) entre 2 rails sans continuité
+  | 'sharp_turn'          // Angle cassé (> MAX_TRANSITION_DEFLECTION_DEG) entre 2 rails sans continuité
   | 'invalid_turnout'     // 3 rails sans structure cohérente (pas de tronc + 2 branches)
   | 'opposing_facing'     // 2 aiguillages face-à-face à contre-sens immédiat
   | 'dead_end_conflict'   // Voie menant à une butée sans transition fluide
+  | 'track_gap'           // 2 extrémités de voie face à face, proches mais non raccordées
 
 export interface KinematicIssue {
   id: string
@@ -13,6 +15,8 @@ export interface KinematicIssue {
   kind: KinematicIssueKind
   severity: 'warning' | 'error'
   angleDeg?: number
+  /** For 'track_gap': distance in meters between the two rail ends */
+  gapMeters?: number
   message: string
   involvedSegmentIds: SegmentId[]
 }
@@ -76,10 +80,62 @@ export function computeTransitionAngleDeg(dir1: Point, dir2: Point): number {
 }
 
 /**
- * Scan the network and detect all kinematic and directional issues.
+ * Open rail ends that face each other closer than the heal tolerance without being joined:
+ * the automatic weld (reconcile tolerance) leaves them apart, so a train stops at the gap.
+ * One issue is reported on each of the two ends.
  */
-export function analyzeKinematics(net: Network): KinematicIssue[] {
+function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
   const issues: KinematicIssue[] = []
+  const { healTolerance } = placementThresholds(gauge)
+  const minCos = Math.cos((MAX_TRANSITION_DEFLECTION_DEG * Math.PI) / 180)
+
+  // Open ends with the direction in which their rail would carry on
+  const ends: { nodeId: NodeId; pos: Point; segId: SegmentId; ahead: Point }[] = []
+  for (const node of net.nodes.values()) {
+    const segIds = net.adjacency.get(node.id) ?? []
+    if (segIds.length !== 1) continue
+    const seg = net.segments.get(segIds[0])
+    const into = seg && getOutgoingTangent(net, seg, node.id)
+    if (!seg || !into) continue
+    ends.push({ nodeId: node.id, pos: node.pos, segId: seg.id, ahead: { x: -into.x, y: -into.y } })
+  }
+
+  for (let i = 0; i < ends.length; i++) {
+    for (let j = i + 1; j < ends.length; j++) {
+      const a = ends[i]
+      const b = ends[j]
+      if (a.segId === b.segId) continue
+      const dx = b.pos.x - a.pos.x
+      const dy = b.pos.y - a.pos.y
+      const gap = Math.hypot(dx, dy)
+      if (gap <= 1e-9 || gap > healTolerance) continue
+      // Facing: each end points at the other one, within the deflection a train could take
+      const facingA = (a.ahead.x * dx + a.ahead.y * dy) / gap
+      const facingB = -(b.ahead.x * dx + b.ahead.y * dy) / gap
+      if (facingA < minCos || facingB < minCos) continue
+      for (const [from, to] of [[a, b], [b, a]]) {
+        issues.push({
+          id: `gap-${from.nodeId}-${to.nodeId}`,
+          nodeId: from.nodeId,
+          kind: 'track_gap',
+          severity: 'warning',
+          gapMeters: gap,
+          message: `Voie interrompue : cette extrémité fait face à une autre sans y être raccordée, le train s'arrête ici (touche R pour raccorder)`,
+          involvedSegmentIds: [from.segId, to.segId],
+        })
+      }
+    }
+  }
+  return issues
+}
+
+/**
+ * Scan the network and detect all kinematic and directional issues.
+ * `gauge` scales the distance under which two facing rail ends are reported as a gap.
+ */
+export function analyzeKinematics(net: Network, gauge?: number): KinematicIssue[] {
+  const issues: KinematicIssue[] = detectTrackGaps(net, gauge)
+  const maxDeflection = MAX_TRANSITION_DEFLECTION_DEG + 1e-6
 
   for (const node of net.nodes.values()) {
     const segIds = net.adjacency.get(node.id) ?? []
@@ -111,14 +167,24 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
             message: `Bifurcation avec angle de déviation excessif (${Math.round(angleBetweenDeg)}°)`,
             involvedSegmentIds: [s1.id, s2.id],
           })
+        } else {
+          // A fork without a stem (turnout under construction): well-formed, but until the stem
+          // is laid no train can pass from one branch to the other — both rails end here.
+          issues.push({
+            id: `fork-no-stem-${node.id}`,
+            nodeId: node.id,
+            kind: 'invalid_turnout',
+            severity: 'warning',
+            message: `Bifurcation sans tronc commun : les deux voies partent du même côté, aucun train ne peut passer de l'une à l'autre`,
+            involvedSegmentIds: [s1.id, s2.id],
+          })
         }
-        // Valid railway fork / turnout apex (e.g. 5° to 30°): NO issue, perfectly normal!
         continue
       }
 
       const deflection = computeTransitionAngleDeg(d1, d2)
-      // If deflection > 30°, this is an impossible railway curve without turnout/diamond crossing
-      if (deflection > 30) {
+      // Beyond the transition limit a train cannot pass: it is a corner, not a track joint
+      if (deflection > maxDeflection) {
         issues.push({
           id: `sharp-${node.id}`,
           nodeId: node.id,
@@ -165,8 +231,8 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
       const def12 = computeTransitionAngleDeg(d1, d2)
 
       // In a valid railway turnout:
-      // Exactly ONE pair forms a smooth through route (deflection <= 20°)
-      // Exactly ONE pair forms a diverging branch (deflection <= 30°)
+      // Exactly ONE pair forms a smooth through route
+      // Exactly ONE pair forms a diverging branch (both within the transition limit)
       // The remaining pair is the two diverging branches facing each other (deflection between them should be small too)
       const deflections = [
         { pair: [0, 1] as [number, number], def: def01 },
@@ -177,8 +243,8 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
       const bestThrough = deflections[0]
       const secondRoute = deflections[1]
 
-      // If even the best through route has a deflection > 25°, no straight/main route exists!
-      if (bestThrough.def > 25) {
+      // If even the best through route exceeds the transition limit, no straight/main route exists!
+      if (bestThrough.def > maxDeflection) {
         issues.push({
           id: `turnout-inval-${node.id}`,
           nodeId: node.id,
@@ -188,8 +254,8 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
           message: `Jonction à 3 voies incohérente : aucun axe traversant naturel (déviation minimale ${Math.round(bestThrough.def)}°)`,
           involvedSegmentIds: segIds,
         })
-      } else if (secondRoute.def > 35) {
-        // The diverging route is too sharp for normal railway practice
+      } else if (secondRoute.def > maxDeflection) {
+        // The diverging route is a corner no train can take (e.g. a perpendicular T)
         issues.push({
           id: `turnout-sharp-${node.id}`,
           nodeId: node.id,
@@ -258,7 +324,7 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
             const bestThrough = defs[0]
             const maxDeviation = defs[defs.length - 1]
 
-            if (bestThrough > 25) {
+            if (bestThrough > maxDeflection) {
               issues.push({
                 id: `turnout-inval-${node.id}`,
                 nodeId: node.id,
@@ -268,7 +334,7 @@ export function analyzeKinematics(net: Network): KinematicIssue[] {
                 message: `Aiguillage triple incohérent : aucun axe traversant naturel (déviation minimale ${Math.round(bestThrough)}°)`,
                 involvedSegmentIds: segIds,
               })
-            } else if (maxDeviation > 35) {
+            } else if (maxDeviation > maxDeflection) {
               issues.push({
                 id: `turnout-sharp-${node.id}`,
                 nodeId: node.id,

@@ -65,8 +65,32 @@ export function segmentArcLength(net: Network, segId: SegmentId): number {
   return segmentLength(net, seg)
 }
 
-/** Helper to compute arc length between two parametric positions on a segment. */
-function segmentPartialLength(net: Network, segId: SegmentId, tStart: number, tEnd: number): number {
+/** A stretch of one segment, in the order it was walked (from t0 to t1) */
+export interface TrackSpan {
+  segId: SegmentId
+  t0: number
+  t1: number
+}
+
+/** Record of a walk along the track: the stretches covered and the nodes passed, in walk order */
+export interface WalkTrace {
+  spans: TrackSpan[]
+  nodes: NodeId[]
+}
+
+export interface WalkOptions {
+  /** Receives the track covered by the walk (also when the walk fails part-way) */
+  trace?: WalkTrace
+  /**
+   * Segments a train already stands on. Walking back from the stem of a turnout into its branches,
+   * the branch among them is taken whatever the switch says: vehicles that are still on a branch
+   * stay on it even if the points have been thrown since they went through.
+   */
+  stayOn?: ReadonlySet<SegmentId>
+}
+
+/** Arc length between two parametric positions on a segment. */
+export function segmentPartialLength(net: Network, segId: SegmentId, tStart: number, tEnd: number): number {
   const seg = net.segments.get(segId)
   if (!seg) return 0
   const fromNode = net.nodes.get(seg.from)
@@ -144,13 +168,19 @@ function moveWithinSegmentBackward(
   return (low + high) / 2
 }
 
+/**
+ * Traverse backward along track segments from (startSeg, startT, startForward) by distance.
+ * Returns the resulting TrackPosition, or null at a dead end or an impassable transition.
+ */
 export function walkBackward(
   net: Network,
   startSeg: SegmentId,
   startT: number,
   startForward: boolean,
-  distance: number
+  distance: number,
+  options: WalkOptions = {}
 ): TrackPosition | null {
+  const { trace, stayOn } = options
   let currentSegId = startSeg
   let t = startT
   let forward = startForward
@@ -166,15 +196,19 @@ export function walkBackward(
       : segmentPartialLength(net, currentSegId, t, 1)
 
     if (distRemaining <= distAvail + 1e-9) {
+      const fromT = t
       t = moveWithinSegmentBackward(net, currentSegId, t, forward, distRemaining)
       // Borner t entre 0 et 1
       t = Math.max(0, Math.min(1, t))
+      trace?.spans.push({ segId: currentSegId, t0: fromT, t1: t })
       return { segId: currentSegId, t, forward }
     }
 
     distRemaining -= distAvail
     const exitNodeId = forward ? seg.from : seg.to
     const adj = net.adjacency.get(exitNodeId) || []
+    trace?.spans.push({ segId: currentSegId, t0: t, t1: forward ? 0 : 1 })
+    trace?.nodes.push(exitNodeId)
 
     let prevSegId: SegmentId | null = null
 
@@ -202,6 +236,14 @@ export function walkBackward(
       }
     }
 
+    // Arriving at the points from the stem: stay on the branch the train already occupies
+    if (!prevSegId && stayOn && juncAtExit && juncAtExit.stemNodeId === (forward ? seg.to : seg.from)) {
+      const held = [juncAtExit.straightSegmentId, juncAtExit.divergingSegmentId, juncAtExit.divergingRightSegmentId].filter(
+        (sid): sid is SegmentId => !!sid && sid !== currentSegId && stayOn.has(sid) && adj.includes(sid),
+      )
+      if (held.length === 1) prevSegId = held[0]
+    }
+
     if (!prevSegId) {
       for (const sid of adj) {
         if (sid === currentSegId) continue
@@ -211,7 +253,7 @@ export function walkBackward(
         const nextNodeId = s.from === exitNodeId ? s.to : s.from
         const currentNextNodeId = forward ? seg.to : seg.from
 
-        if (isTransitionAllowed(net, nextNodeId, exitNodeId, currentNextNodeId)) {
+        if (isTransitionAllowed(net, nextNodeId, exitNodeId, currentNextNodeId, {}, { inSegId: sid, outSegId: currentSegId })) {
           prevSegId = sid
           break
         }
@@ -331,8 +373,10 @@ export function walkForward(
   startSeg: SegmentId,
   startT: number,
   startForward: boolean,
-  distance: number
+  distance: number,
+  options: WalkOptions = {}
 ): TrackPosition | null {
+  const { trace } = options
   let segId = startSeg
   let t = startT
   let forward = startForward
@@ -347,8 +391,10 @@ export function walkForward(
       : segmentPartialLength(net, segId, 0, t)
 
     if (distRemaining <= distAvail + 1e-9) {
+      const fromT = t
       t = moveWithinSegmentForward(net, segId, t, forward, distRemaining)
       t = Math.max(0, Math.min(1, t))
+      trace?.spans.push({ segId, t0: fromT, t1: t })
       return { segId, t, forward }
     }
 
@@ -357,6 +403,8 @@ export function walkForward(
     const exitNodeId = forward ? seg.to : seg.from
     const prevNodeId = forward ? seg.from : seg.to
     const adj = net.adjacency.get(exitNodeId) || []
+    trace?.spans.push({ segId, t0: t, t1: forward ? 1 : 0 })
+    trace?.nodes.push(exitNodeId)
 
     let nextSegId: SegmentId | null = null
     for (const sid of adj) {
@@ -365,7 +413,7 @@ export function walkForward(
       if (!s) continue
       const nextNodeId = s.from === exitNodeId ? s.to : s.from
 
-      if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId)) {
+      if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId, {}, { inSegId: segId, outSegId: sid })) {
         nextSegId = sid
         break
       }
@@ -388,7 +436,17 @@ export function walkForward(
   return { segId, t, forward }
 }
 
-export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: number): boolean {
+/**
+ * Move a locomotive by deltaMeters * direction along the track.
+ * All-or-nothing: returns false and leaves the locomotive untouched when the move is not possible.
+ * `stayOn` (see WalkOptions) keeps the rear bogie on the turnout branch it already stands on.
+ */
+export function advanceLocomotive(
+  net: Network,
+  loco: Locomotive,
+  deltaMeters: number,
+  stayOn?: ReadonlySet<SegmentId>,
+): boolean {
   let { segId, t, forward } = loco.front
   let distRemaining = deltaMeters * loco.direction
 
@@ -421,7 +479,7 @@ export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: n
         if (!s) continue
         const nextNodeId = s.from === exitNodeId ? s.to : s.from
 
-        if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId)) {
+        if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId, {}, { inSegId: segId, outSegId: sid })) {
           nextSegId = sid
           break
         }
@@ -470,7 +528,7 @@ export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: n
         if (!s) continue
         const nextNodeId = s.from === exitNodeId ? s.to : s.from
 
-        if (isTransitionAllowed(net, nextNodeId, exitNodeId, prevNodeId)) {
+        if (isTransitionAllowed(net, nextNodeId, exitNodeId, prevNodeId, {}, { inSegId: sid, outSegId: segId })) {
           prevSegId = sid
           break
         }
@@ -491,10 +549,9 @@ export function advanceLocomotive(net: Network, loco: Locomotive, deltaMeters: n
     }
   }
 
-  loco.front = { segId, t, forward }
-
-  const rear = walkBackward(net, segId, t, forward, loco.bogieDistance)
+  const rear = walkBackward(net, segId, t, forward, loco.bogieDistance, { stayOn })
   if (!rear) return false
+  loco.front = { segId, t, forward }
   loco.rear = rear
 
   return true
@@ -1045,27 +1102,98 @@ export function getFullTGVTrain(net: Network, loco: Locomotive): TGVFullTrain | 
   }
 }
 
-export function findUpcomingJunction(net: Network, loco: Locomotive): { junction: Junction; approachNodeId: NodeId } | null {
-  const { segId, forward } = loco.front
-  const dir = loco.direction
-  // we look in direction of travel
-  let traverseForward = dir === 1 ? forward : !forward
+/** A branch of a turnout, as stored in `Junction.activeBranch` */
+export type JunctionBranch = Junction['activeBranch']
 
-  // walk up to 10 segments to find a junction
-  let currentSegId = segId
+/** The next turnout on the route of a train, i.e. the one the steering keys throw */
+export interface JunctionAhead {
+  junction: Junction
+  /** Track distance (meters) from the start position to the points */
+  distance: number
+  /** Unit travel direction on reaching the points */
+  heading: Point
+  /** True when arriving by the stem (the points pick the route), false when arriving by a branch */
+  facing: boolean
+  /** False when arriving by a branch the points are not set to: the route ends at the points */
+  open: boolean
+  /** The branches from left to right as seen when reaching the points */
+  branches: JunctionBranch[]
+  /** The branch of `branches` the points are set to */
+  activeBranch: JunctionBranch
+}
+
+/** The branch a junction routes to, in the naming of its kind (`left` / `right` only on a 3-way) */
+function routedBranch(junction: Junction): JunctionBranch {
+  if (junction.activeBranch === 'straight') return 'straight'
+  if (junction.hand !== 'three_way') return 'diverging'
+  return junction.activeBranch === 'right' ? 'right' : 'left'
+}
+
+function branchSegmentId(junction: Junction, branch: JunctionBranch): SegmentId {
+  if (branch === 'straight') return junction.straightSegmentId
+  if (branch === 'right') return junction.divergingRightSegmentId ?? junction.divergingSegmentId
+  return junction.divergingSegmentId
+}
+
+/** Branches of a junction ordered from the leftmost to the rightmost for a train travelling along `heading` */
+function junctionBranchesLeftToRight(net: Network, junction: Junction, heading: Point): JunctionBranch[] {
+  const apex = net.nodes.get(junction.nodeId)
+  const cross = (branch: JunctionBranch): number => {
+    const s = net.segments.get(branchSegmentId(junction, branch))
+    const other = s ? net.nodes.get(s.from === junction.nodeId ? s.to : s.from) : undefined
+    let dir = { x: 1, y: 0 }
+    if (apex && other) {
+      const dx = other.pos.x - apex.pos.x
+      const dy = other.pos.y - apex.pos.y
+      const len = Math.hypot(dx, dy)
+      if (len > 0) dir = { x: dx / len, y: dy / len }
+    }
+    return heading.x * dir.y - heading.y * dir.x
+  }
+  const names: JunctionBranch[] = junction.hand === 'three_way' ? ['straight', 'left', 'right'] : ['straight', 'diverging']
+  // Lowest cross product is the leftmost branch
+  return names.map((b) => ({ b, c: cross(b) })).sort((a, b) => a.c - b.c).map((item) => item.b)
+}
+
+/**
+ * Find the first turnout on the route ahead of a track position (within 10 segments), whether it is
+ * met by its points (facing) or by one of its branches (trailing).
+ */
+export function findJunctionAhead(net: Network, startPos: TrackPosition, travelDirection: 1 | -1): JunctionAhead | null {
+  let currentSegId = startPos.segId
+  let traverseForward = travelDirection === 1 ? startPos.forward : !startPos.forward
+  let distance = traverseForward
+    ? segmentPartialLength(net, currentSegId, startPos.t, 1)
+    : segmentPartialLength(net, currentSegId, 0, startPos.t)
+
   for (let i = 0; i < 10; i++) {
     const seg = net.segments.get(currentSegId)
     if (!seg) break
 
     const exitNodeId = traverseForward ? seg.to : seg.from
-    const junc = findJunctionAtNode(net, exitNodeId)
-    if (junc) {
-      return { junction: junc, approachNodeId: exitNodeId }
+    const junction = findJunctionAtNode(net, exitNodeId)
+    if (junction) {
+      const tangent = tangentOnSegment(net, seg.id, traverseForward ? 1 : 0) ?? { x: 1, y: 0 }
+      const heading = traverseForward ? tangent : { x: -tangent.x, y: -tangent.y }
+      const activeBranch = routedBranch(junction)
+      const facing =
+        seg.id !== junction.straightSegmentId &&
+        seg.id !== junction.divergingSegmentId &&
+        seg.id !== junction.divergingRightSegmentId
+      return {
+        junction,
+        distance,
+        heading,
+        facing,
+        open: facing || seg.id === branchSegmentId(junction, activeBranch),
+        branches: junctionBranchesLeftToRight(net, junction, heading),
+        activeBranch,
+      }
     }
 
     const prevNodeId = traverseForward ? seg.from : seg.to
     const adj = net.adjacency.get(exitNodeId) || []
-    
+
     let nextSegId: SegmentId | null = null
     for (const sid of adj) {
       if (sid === currentSegId) continue
@@ -1073,7 +1201,7 @@ export function findUpcomingJunction(net: Network, loco: Locomotive): { junction
       if (!s) continue
       const nextNodeId = s.from === exitNodeId ? s.to : s.from
 
-      if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId)) {
+      if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId, {}, { inSegId: currentSegId, outSegId: sid })) {
         nextSegId = sid
         break
       }
@@ -1083,110 +1211,41 @@ export function findUpcomingJunction(net: Network, loco: Locomotive): { junction
     const nextSeg = net.segments.get(nextSegId)
     if (!nextSeg) break
 
-    if (nextSeg.from === exitNodeId) {
-      traverseForward = true
-    } else {
-      traverseForward = false
-    }
+    traverseForward = nextSeg.from === exitNodeId
     currentSegId = nextSegId
+    distance += segmentPartialLength(net, nextSegId, 0, 1)
   }
 
   return null
 }
 
+export function findUpcomingJunction(net: Network, loco: Locomotive): { junction: Junction; approachNodeId: NodeId } | null {
+  const ahead = findJunctionAhead(net, loco.front, loco.direction)
+  return ahead ? { junction: ahead.junction, approachNodeId: ahead.junction.nodeId } : null
+}
+
+/**
+ * Throw the upcoming junction one branch to the left or to the right, as seen by a train
+ * reaching its points. Returns false when there is no junction ahead.
+ */
 export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'left' | 'right'): boolean {
-  const upcoming = findUpcomingJunction(net, loco)
-  if (!upcoming) return false
+  const ahead = findJunctionAhead(net, loco.front, loco.direction)
+  if (!ahead) return false
 
-  const { junction, approachNodeId } = upcoming
-  const heading = getLocomotiveHeading(net, loco)
-  if (!heading) return false
-
-  // check if we are approaching the apex
-  if (junction.nodeId === approachNodeId) {
-    const getDir = (segId: SegmentId) => {
-      const s = net.segments.get(segId)
-      if (!s) return { x: 1, y: 0 }
-      const other = s.from === junction.nodeId ? s.to : s.from
-      const pOther = net.nodes.get(other)
-      const pApex = net.nodes.get(junction.nodeId)
-      if (!pOther || !pApex) return { x: 1, y: 0 }
-      const dx = pOther.pos.x - pApex.pos.x
-      const dy = pOther.pos.y - pApex.pos.y
-      const len = Math.hypot(dx, dy)
-      if (len === 0) return { x: 1, y: 0 }
-      return { x: dx / len, y: dy / len }
-    }
-
-    if (junction.hand === 'three_way') {
-      const dirStraight = getDir(junction.straightSegmentId)
-      const dirLeft = getDir(junction.divergingSegmentId)
-      const dirRight = junction.divergingRightSegmentId ? getDir(junction.divergingRightSegmentId) : dirLeft
-
-      const crossStraight = heading.x * dirStraight.y - heading.y * dirStraight.x
-      const crossLeft = heading.x * dirLeft.y - heading.y * dirLeft.x
-      const crossRight = heading.x * dirRight.y - heading.y * dirRight.x
-
-      // Ordered from most left (lowest cross) to most right (highest cross)
-      const branches: Array<{ b: 'straight' | 'left' | 'right'; c: number }> = [
-        { b: 'straight', c: crossStraight },
-        { b: 'left', c: crossLeft },
-        { b: 'right', c: crossRight },
-      ]
-      branches.sort((a, b) => a.c - b.c)
-
-      // Find current branch index
-      let currentIdx = branches.findIndex((item) => item.b === junction.activeBranch)
-      if (currentIdx === -1) {
-        if (junction.activeBranch === 'diverging') {
-          currentIdx = branches.findIndex((item) => item.b === 'left')
-        }
-        if (currentIdx === -1) currentIdx = 0
-      }
-
-      // Step by 1 in desired direction
-      let nextIdx = currentIdx
-      if (steerDirection === 'left') {
-        nextIdx = Math.max(0, currentIdx - 1)
-      } else {
-        nextIdx = Math.min(branches.length - 1, currentIdx + 1)
-      }
-
-      setJunctionBranch(junction, branches[nextIdx].b)
-      return true
-    } else {
-      // Standard 2-way turnout (straight & diverging)
-      const straightSeg = net.segments.get(junction.straightSegmentId)
-      const divSeg = net.segments.get(junction.divergingSegmentId)
-      if (!straightSeg || !divSeg) return false
-
-      const dirStraight = getDir(junction.straightSegmentId)
-      const dirDiv = getDir(junction.divergingSegmentId)
-      const crossStraight = heading.x * dirStraight.y - heading.y * dirStraight.x
-      const crossDiv = heading.x * dirDiv.y - heading.y * dirDiv.x
-
-      const branches: Array<{ b: 'straight' | 'diverging'; c: number }> = [
-        { b: 'straight', c: crossStraight },
-        { b: 'diverging', c: crossDiv },
-      ]
-      branches.sort((a, b) => a.c - b.c) // 0: left, 1: right
-
-      let currentIdx = branches.findIndex((item) => item.b === junction.activeBranch)
-      if (currentIdx === -1) currentIdx = 0
-
-      let nextIdx = currentIdx
-      if (steerDirection === 'left') {
-        nextIdx = Math.max(0, currentIdx - 1)
-      } else {
-        nextIdx = Math.min(branches.length - 1, currentIdx + 1)
-      }
-
-      setJunctionBranch(junction, branches[nextIdx].b)
-      return true
-    }
+  const { junction, branches } = ahead
+  if (
+    junction.hand !== 'three_way' &&
+    (!net.segments.has(junction.straightSegmentId) || !net.segments.has(junction.divergingSegmentId))
+  ) {
+    return false
   }
 
-  return false
+  const currentIdx = branches.indexOf(ahead.activeBranch)
+  const nextIdx = steerDirection === 'left'
+    ? Math.max(0, currentIdx - 1)
+    : Math.min(branches.length - 1, currentIdx + 1)
+  setJunctionBranch(junction, branches[nextIdx])
+  return true
 }
 
 export function snapToNearestTrack(
@@ -1490,7 +1549,7 @@ export function sampleForwardTrack(
         const s = net.segments.get(sid)
         if (!s) continue
         const nextNodeId = s.from === exitNodeId ? s.to : s.from
-        if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId)) {
+        if (isTransitionAllowed(net, prevNodeId, exitNodeId, nextNodeId, {}, { inSegId: segId, outSegId: sid })) {
           nextSegId = sid
           break
         }

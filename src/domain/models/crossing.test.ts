@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createNetwork, addNode, addSegment } from './network'
-import { detectCrossings, computeCrossingFrogs, intersectSegments } from './crossing'
+import { createNetwork, addNode, addSegment, addCurveSegment } from './network'
+import { reconcileNetworkIntersections } from '../geometry/reconcile'
+import { detectCrossings, computeCrossingFrogs, intersectSegments, MIN_CROSSING_ANGLE_DEG } from './crossing'
 
 describe('crossing detection', () => {
   it('detects intersection of two orthogonal crossing straight segments', () => {
@@ -67,5 +68,74 @@ describe('crossing detection', () => {
     expect(crossings.length).toBe(1)
     expect(crossings[0].nodeId).toBe(apex.id)
     expect(crossings[0].angleDeg).toBeCloseTo(90)
+  })
+
+  it('reports a shallow crossing produced by reconcile', () => {
+    for (const angleDeg of [30, 8, 3]) {
+      const net = createNetwork()
+      const r = (angleDeg * Math.PI) / 180
+      const w = addNode(net, { x: -100, y: 0 })
+      const e = addNode(net, { x: 100, y: 0 })
+      const a = addNode(net, { x: -100 * Math.cos(r), y: -100 * Math.sin(r) })
+      const b = addNode(net, { x: 100 * Math.cos(r), y: 100 * Math.sin(r) })
+      addSegment(net, w.id, e.id)
+      addSegment(net, a.id, b.id)
+      reconcileNetworkIntersections(net)
+
+      const crossings = detectCrossings(net)
+      expect(crossings).toHaveLength(1)
+      expect(crossings[0].nodeId).toBeDefined()
+      expect(net.adjacency.get(crossings[0].nodeId!)).toHaveLength(4)
+      expect(crossings[0].angleDeg).toBeCloseTo(angleDeg, 6)
+      expect(crossings[0].center.x).toBeCloseTo(0, 6)
+      expect(crossings[0].center.y).toBeCloseTo(0, 6)
+    }
+  })
+
+  it('reports both crossings of a curve over a straight, each with the directions of the two tracks', () => {
+    const net = createNetwork()
+    const w = addNode(net, { x: -100, y: 0 })
+    const e = addNode(net, { x: 100, y: 0 })
+    addSegment(net, w.id, e.id)
+    const a = addNode(net, { x: -60, y: -40 })
+    const b = addNode(net, { x: 60, y: -40 })
+    addCurveSegment(net, a.id, b.id, { x: 0, y: 80 })
+    reconcileNetworkIntersections(net)
+
+    const crossings = detectCrossings(net)
+    expect(crossings).toHaveLength(2)
+    for (const c of crossings) {
+      expect(net.adjacency.get(c.nodeId!)).toHaveLength(4)
+      expect(c.center.y).toBeCloseTo(0, 6)
+      // One of the two tracks is the straight along x
+      expect(Math.max(Math.abs(c.track1Dir.x), Math.abs(c.track2Dir.x))).toBeCloseTo(1, 6)
+      expect(c.angleDeg).toBeGreaterThan(30)
+    }
+    expect(crossings[0].center.x).toBeCloseTo(-crossings[1].center.x, 6)
+  })
+
+  it('agrees with reconcile on which shallow X is a crossing, right at the minimum angle', () => {
+    const angles = [0.2, 0.9, 0.999, MIN_CROSSING_ANGLE_DEG, 1.001, 1.1, 2]
+    for (let a = 0.99; a <= 1.01; a += 0.0005) angles.push(a)
+    for (const angleDeg of angles) {
+      for (const flip of [false, true]) {
+        const net = createNetwork()
+        const r = (angleDeg * Math.PI) / 180
+        const w = addNode(net, { x: -300, y: 0 })
+        const e = addNode(net, { x: 300, y: 0 })
+        addSegment(net, w.id, e.id)
+        const a = addNode(net, { x: -300 * Math.cos(r), y: -300 * Math.sin(r) })
+        const b = addNode(net, { x: 300 * Math.cos(r), y: 300 * Math.sin(r) })
+        if (flip) addSegment(net, b.id, a.id)
+        else addSegment(net, a.id, b.id)
+
+        // Before reconcile (bare intersection) and after it (node or not): same verdict
+        const bare = detectCrossings(net).length
+        reconcileNetworkIntersections(net)
+        const nodes = [...net.adjacency.values()].filter((adj) => adj.length === 4).length
+        expect(detectCrossings(net).length, `X at ${angleDeg}°`).toBe(nodes)
+        expect(bare, `bare X at ${angleDeg}°`).toBeLessThanOrEqual(nodes)
+      }
+    }
   })
 })

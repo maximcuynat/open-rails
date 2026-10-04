@@ -120,6 +120,32 @@ export function curveSamples(p0: Point, via: Point, p2: Point, pxPerUnit: number
   return Math.max(8, Math.min(512, Math.ceil(pxLen / 4)))
 }
 
+/** Parameter of the point of a quadratic Bezier closest to `p`: coarse sampling, then refinement. */
+export function closestCurveParam(p: Point, p0: Point, via: Point, p2: Point, samples = 32): number {
+  const distSqAt = (t: number) => {
+    const q = bezierPoint(t, p0, via, p2)
+    return (q.x - p.x) ** 2 + (q.y - p.y) ** 2
+  }
+  let best = 0
+  let bestDistSq = Infinity
+  for (let i = 0; i <= samples; i++) {
+    const d = distSqAt(i / samples)
+    if (d < bestDistSq) {
+      bestDistSq = d
+      best = i / samples
+    }
+  }
+  let lo = Math.max(0, best - 1 / samples)
+  let hi = Math.min(1, best + 1 / samples)
+  for (let iter = 0; iter < 48; iter++) {
+    const m1 = lo + (hi - lo) / 3
+    const m2 = hi - (hi - lo) / 3
+    if (distSqAt(m1) < distSqAt(m2)) hi = m2
+    else lo = m1
+  }
+  return (lo + hi) / 2
+}
+
 /** Distance from a point to a quadratic Bezier curve (discretized). */
 export function distToCurve(p: Point, p0: Point, via: Point, p2: Point, samples = 32): number {
   let best = Infinity
@@ -282,12 +308,26 @@ export function splitCurveIntoArcPieces(
   const tx = (via.x - start.x) / a
   const ty = (via.y - start.y) / a
   const sign = tx * (end.y - via.y) - ty * (end.x - via.x) >= 0 ? 1 : -1
-  const radius = a / Math.tan(theta / 2)
+  return circleArcPieces(start, tx, ty, sign, a / Math.tan(theta / 2), theta, n, end)
+}
+
+/** `n` equal pieces of the arc of `theta` radians leaving `start` along the unit tangent (tx, ty), turning towards `sign`. */
+function circleArcPieces(
+  start: Point,
+  tx: number,
+  ty: number,
+  sign: 1 | -1,
+  radius: number,
+  theta: number,
+  n: number,
+  end: Point,
+): CurvePiece[] {
   const cx = start.x - ty * sign * radius
   const cy = start.y + tx * sign * radius
   const step = (sign * theta) / n
   const legLen = radius * Math.tan(theta / (2 * n))
 
+  const pieces: CurvePiece[] = []
   let prev = { ...start }
   for (let i = 0; i < n; i++) {
     const cos0 = Math.cos(step * i)
@@ -311,6 +351,39 @@ export function splitCurveIntoArcPieces(
     prev = { ...pieceEnd }
   }
   return pieces
+}
+
+/**
+ * Circular arc leaving `start` along `tangent` and reaching `end`, as pieces of at most
+ * `maxPieceDeg` of deflection each.
+ *
+ * The tangent-intersection control point of an arc runs off to infinity as the turn nears a
+ * half-circle and does not exist beyond it, whereas the circle covers any deflection short of a
+ * full turn. Returns null when the end lies on the tangent line (no circle).
+ */
+export function tangentArcPieces(
+  start: Point,
+  tangent: Point,
+  end: Point,
+  maxPieceDeg = MAX_ARC_PIECE_DEG,
+): { pieces: CurvePiece[]; radius: number; angleDeg: number } | null {
+  const tLen = Math.hypot(tangent.x, tangent.y)
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const chord = Math.hypot(dx, dy)
+  if (tLen < 1e-12 || chord < 1e-12) return null
+  const tx = tangent.x / tLen
+  const ty = tangent.y / tLen
+  const cross = tx * dy - ty * dx
+  // Tangent-chord angle: half the deflection of the arc
+  const alpha = Math.atan2(Math.abs(cross), tx * dx + ty * dy)
+  const sinAlpha = Math.sin(alpha)
+  if (sinAlpha < 1e-9) return null
+
+  const radius = chord / (2 * sinAlpha)
+  const angleDeg = (alpha * 360) / Math.PI
+  const n = Math.max(1, Math.ceil(angleDeg / maxPieceDeg - 1e-9))
+  return { pieces: circleArcPieces(start, tx, ty, cross >= 0 ? 1 : -1, radius, 2 * alpha, n, end), radius, angleDeg }
 }
 
 /** Total length of a chain of curve pieces. */

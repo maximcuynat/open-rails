@@ -1,5 +1,5 @@
 import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
-import { segmentTangentAt } from '../geometry/tangent'
+import { segmentTangentAt, isTraversableDeflection } from '../geometry/tangent'
 import type { SectionMetadata } from '../models/sections'
 
 export interface PathResult {
@@ -78,16 +78,33 @@ export function getSegmentBetween(net: Network, u: NodeId, v: NodeId): Segment |
   return undefined
 }
 
-/** Check if transition prev -> curr -> next is allowed under junction switch, crossing and traffic settings. */
+/** The rails a transition runs on, for callers that know them (two rails may join the same two nodes). */
+export interface TransitionRails {
+  inSegId?: SegmentId
+  outSegId?: SegmentId
+}
+
+/**
+ * Check if transition prev -> curr -> next is allowed under junction switch, crossing and traffic settings.
+ * `rails` names the segment arrived on and the segment left on; without it they are looked up by
+ * node pair, which is ambiguous when two rails join the same two nodes (a curve crossing a track twice).
+ */
 export function isTransitionAllowed(
   net: Network,
   prevNodeId: NodeId | null,
   currNodeId: NodeId,
   nextNodeId: NodeId,
   options: PathfindingOptions = {},
+  rails: TransitionRails = {},
 ): boolean {
   const respectSwitches = options.respectSwitches ?? true
   const enforceCrossings = options.enforceCrossings ?? true
+  const inSeg = rails.inSegId
+    ? net.segments.get(rails.inSegId)
+    : prevNodeId !== null
+      ? getSegmentBetween(net, prevNodeId, currNodeId)
+      : undefined
+  const outSeg = rails.outSegId ? net.segments.get(rails.outSegId) : getSegmentBetween(net, currNodeId, nextNodeId)
 
   // 1. Junction Switch Rules
   if (respectSwitches) {
@@ -135,20 +152,15 @@ export function isTransitionAllowed(
     }
   }
 
-  // 1b. Kinematic Reversal Constraint
-  // Trains cannot execute sharp hairpin U-turns through a node without reversing gear (rebroussement).
+  // 1b. Kinematic continuity constraint
+  // A train cannot take a corner: the two rails must meet within MAX_TRANSITION_DEFLECTION_DEG
+  // (see geometry/tangent.ts). A sharper angle, up to a hairpin fold-back, is an end of track.
   if (prevNodeId !== null) {
-    const inSeg = getSegmentBetween(net, prevNodeId, currNodeId)
-    const outSeg = getSegmentBetween(net, currNodeId, nextNodeId)
     if (inSeg && outSeg) {
+      // rayIn points towards prevNodeId, rayOut points towards nextNodeId.
       const rayIn = getOutgoingRay(net, inSeg, currNodeId)
       const rayOut = getOutgoingRay(net, outSeg, currNodeId)
-      // rayIn points towards prevNodeId, rayOut points towards nextNodeId.
-      // If rayIn · rayOut > 0.7, the two tracks leave on the same side (deflection > 135°): hairpin reversal impossible!
-      const dot = rayIn.x * rayOut.x + rayIn.y * rayOut.y
-      if (dot > 0.7) {
-        return false
-      }
+      if (!isTraversableDeflection(rayIn, rayOut)) return false
     }
   }
 
@@ -162,8 +174,6 @@ export function isTransitionAllowed(
 
     // A diamond crossing is typically a node with degree 4 that is NOT a movable switch
     if (adj.length === 4 && !isJunction) {
-      const inSeg = getSegmentBetween(net, prevNodeId, currNodeId)
-      const outSeg = getSegmentBetween(net, currNodeId, nextNodeId)
       if (inSeg && outSeg) {
         const rayIn = getOutgoingRay(net, inSeg, currNodeId)
         const rayOut = getOutgoingRay(net, outSeg, currNodeId)
@@ -176,13 +186,20 @@ export function isTransitionAllowed(
           // Sharp diversion at a fixed diamond crossing is physically impossible!
           return false
         }
+        // On a shallow crossing both lines leave within the deflection limit: only the straightest
+        // continuation is the train's own line.
+        for (const sid of adj) {
+          const other = net.segments.get(sid)
+          if (!other || other.id === inSeg.id || other.id === outSeg.id) continue
+          const ray = getOutgoingRay(net, other, currNodeId)
+          if (rayIn.x * ray.x + rayIn.y * ray.y < dot - 1e-9) return false
+        }
       }
     }
   }
 
   // 3. Traffic direction constraints (Sens unique / circulation)
   if (options.sectionMeta) {
-    const outSeg = getSegmentBetween(net, currNodeId, nextNodeId)
     if (outSeg) {
       const meta = options.sectionMeta[outSeg.id]
       if (meta && meta.direction && meta.direction !== 'two_way') {
@@ -259,7 +276,10 @@ export function findPath(
       const nextNodeId = seg.from === current.node ? seg.to : seg.from
       if (nextNodeId === current.prev) continue // Don't instantly reverse along same track
 
-      if (!isTransitionAllowed(net, current.prev, current.node, nextNodeId, options)) {
+      // Known limitation: the search state is (node, previous node), so the rail arrived on is
+      // looked up by node pair. Where two rails join the same two nodes (a curve crossing a track
+      // twice) it may be the wrong one; same in reachableFrom below. The train walks pass both rails.
+      if (!isTransitionAllowed(net, current.prev, current.node, nextNodeId, options, { outSegId: sid })) {
         continue
       }
 
@@ -333,7 +353,7 @@ export function reachableFrom(
       const nextNodeId = seg.from === node ? seg.to : seg.from
       if (nextNodeId === prev) continue
 
-      if (!isTransitionAllowed(net, prev, node, nextNodeId, options)) {
+      if (!isTransitionAllowed(net, prev, node, nextNodeId, options, { outSegId: sid })) {
         continue
       }
 

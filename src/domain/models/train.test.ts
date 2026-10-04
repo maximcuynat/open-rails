@@ -22,16 +22,25 @@ import {
   triggerEmergencyBrake,
   releaseEmergencyBrake,
   commandedAcceleration,
+  stoppingDistance,
   MAX_NOTCH,
   makeTrainSet,
   serializeTrains,
   deserializeTrains,
   pruneTrainsToNetwork,
   steerTrainSetJunction,
+  trainRouteStart,
+  isJunctionOccupied,
+  handleCouplingClick,
+  reverseTrainSet,
+  COUPLING_GAP,
+  type TrainSet,
 } from './train'
-import { walkForward, snapToNearestTrack } from './locomotive'
+import { walkForward, snapToNearestTrack, positionOnSegment, findJunctionAhead } from './locomotive'
 import { removeSegment } from './network'
-import { addJunction } from './junction'
+import { addJunction, placeTurnout, autoDetectJunctions } from './junction'
+import { reconcileNetworkIntersections } from '../geometry/reconcile'
+import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 
 function makeStraightNetwork(lengthMeters: number): { net: Network; segId: string } {
   resetIdCounter()
@@ -191,6 +200,19 @@ describe('driving controls', () => {
     expect(ts.currentSpeed).toBeCloseTo(10 - ts.coastingDecel, 5)
   })
 
+  it('stoppingDistance matches the distance actually covered at full service brake', () => {
+    const { net, ts } = makeTrain()
+    setReverser(ts, 'forward')
+    ts.currentSpeed = 20
+    expect(stoppingDistance(ts)).toBeCloseTo(20, 5) // 20² / (2 × 10)
+
+    setNotch(ts, -MAX_NOTCH)
+    const t0 = ts.vehicles[0].front.t
+    for (let i = 0; i < 4000; i++) tickTrainSet(net, ts, 0.001)
+    expect(ts.currentSpeed).toBe(0)
+    expect((ts.vehicles[0].front.t - t0) * 2000).toBeCloseTo(20, 1)
+  })
+
   it('clamps the handle to ±MAX_NOTCH', () => {
     const { ts } = makeTrain()
     setNotch(ts, 99)
@@ -233,6 +255,26 @@ describe('driving controls', () => {
 
     ts.vehicles.forEach((v, i) => expect(v.front.t).toBeLessThan(before[i]))
     expect(ts.vehicles[0].front.t - ts.vehicles[1].front.t).toBeCloseTo(gap, 6)
+  })
+
+  it('reversing backs the train up without turning the loco body around', () => {
+    const { net, ts } = makeTrain()
+    const body = () => getTrainSetVisuals(net, ts)!.vehicles[0].tgvDetails!.polygon
+
+    setReverser(ts, 'forward')
+    const facingForward = body()
+    setReverser(ts, 'reverse')
+    expect(body()).toEqual(facingForward)
+
+    // Once it moves, the whole body shifts back by the same amount, still facing the same way
+    setNotch(ts, MAX_NOTCH)
+    tickTrainSet(net, ts, 1)
+    const dx = body()[0].x - facingForward[0].x
+    expect(dx).toBeLessThan(0)
+    body().forEach((p, i) => {
+      expect(p.x - facingForward[i].x).toBeCloseTo(dx, 6)
+      expect(p.y).toBeCloseTo(facingForward[i].y, 6)
+    })
   })
 
   it('locks the reverser while moving or in traction', () => {
@@ -663,6 +705,22 @@ describe('steerTrainSetJunction', () => {
     expect(junction.activeBranch).toBe('straight')
   })
 
+  it('starts the route at the lead bogie running forward and at the last bogie in reverse', () => {
+    const { net, sStem, junction } = yNetwork()
+    const loco = createVehicle(net, sStem.id, 0.5, 'loco', -1)!
+    const wagon = findCouplerSnap(net, [makeTrainSet('t0', [loco])], vehicleRearEndPos(net, loco)!, 'wagon')!.snappedVehicle
+    const train = makeTrainSet('t', [loco, wagon])
+
+    expect(trainRouteStart(train)).toEqual(loco.front)
+    expect(findJunctionAhead(net, trainRouteStart(train)!, 1)).toBeNull()
+
+    setReverser(train, 'reverse')
+    const start = trainRouteStart(train)!
+    expect(start).toEqual({ ...wagon.rear, forward: !wagon.rear.forward })
+    expect(findJunctionAhead(net, start, 1)!.junction).toBe(junction)
+    expect(trainRouteStart(makeTrainSet('empty', []))).toBeNull()
+  })
+
   it('in reverse, steers the turnout behind the last vehicle, relative to the travel direction', () => {
     const { net, sStem, junction } = yNetwork()
     // Nose away from the apex (-x): the junction is behind the train
@@ -684,5 +742,444 @@ describe('steerTrainSetJunction', () => {
   it('does nothing for an empty train', () => {
     const { net } = yNetwork()
     expect(steerTrainSetJunction(net, makeTrainSet('t', []), 'left')).toBe(false)
+  })
+})
+
+// ─── Whole-train moves, collisions and occupied junctions ─────────────────────
+
+/** A loco followed by `wagons` wagons, laid out behind it along the track */
+function consist(net: Network, segId: string, t: number, wagons: number, direction: 1 | -1 = 1, id = 'T'): TrainSet {
+  const lead = createVehicle(net, segId, t, 'loco', direction)!
+  const train = makeTrainSet(id, [lead])
+  for (let i = 0; i < wagons; i++) {
+    train.vehicles.push({ id: `${id}w${i}`, kind: 'wagon', front: { ...lead.rear }, rear: { ...lead.rear } })
+  }
+  expect(advanceTrainSet(net, train, 0)).toBe(true)
+  return train
+}
+
+const bogiePoints = (net: Network, train: TrainSet) =>
+  train.vehicles.flatMap((v) => [positionOnSegment(net, v.front.segId, v.front.t)!, positionOnSegment(net, v.rear.segId, v.rear.t)!])
+
+const frontEnd = (net: Network, train: TrainSet) => vehicleFrontEndPos(net, train.vehicles[0])!
+const rearEnd = (net: Network, train: TrainSet) => vehicleRearEndPos(net, train.vehicles[train.vehicles.length - 1])!
+
+describe('advanceTrainSet is all-or-nothing', () => {
+  it('reversing into a buffer stop leaves the whole train where it was', () => {
+    const { net, segId } = makeStraightNetwork(600)
+    const train = consist(net, segId, 0.5, 4) // nose towards +x, wagons towards the buffer at x=0
+    const spacing = (pts: { x: number }[]) => pts.slice(1).map((p, i) => pts[i].x - p.x)
+    const laidOut = spacing(bogiePoints(net, train))
+    train.direction = -1
+
+    let refused = 0
+    for (let i = 0; i < 700; i++) {
+      const before = JSON.stringify(train.vehicles)
+      if (!advanceTrainSet(net, train, 0.5)) {
+        refused++
+        expect(JSON.stringify(train.vehicles)).toBe(before)
+      }
+    }
+
+    expect(refused).toBeGreaterThan(0)
+    const after = bogiePoints(net, train)
+    spacing(after).forEach((gap, i) => expect(gap).toBeCloseTo(laidOut[i], 6))
+    // The last bogie stands within one step of the buffer, never beyond it
+    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(0)
+    expect(after[after.length - 1].x).toBeLessThan(0.5)
+  })
+
+  it('does not move the lead when a follower has no track to stand on', () => {
+    const { net, segId } = makeStraightNetwork(600)
+    const lead = createVehicle(net, segId, 0.05, 'loco')! // 30 m from the buffer: no room for a wagon behind
+    const train = makeTrainSet('t', [lead, { id: 'w', kind: 'wagon', front: { ...lead.rear }, rear: { ...lead.rear } }])
+    const before = JSON.stringify(train.vehicles)
+    // 30 m of track behind the nose cannot hold 14 + 6.88 + 11.92 m of bogie spacing
+    expect(advanceTrainSet(net, train, 0.5)).toBe(false)
+    expect(JSON.stringify(train.vehicles)).toBe(before)
+  })
+})
+
+describe('collision between trains', () => {
+  it('stops a train a coupling gap short of the train ahead, whatever the step', () => {
+    for (const step of [0.5, 13.9]) {
+      const { net, segId } = makeStraightNetwork(1000)
+      const a = consist(net, segId, 0.3, 2, 1, 'A')
+      const b = consist(net, segId, 0.6, 2, 1, 'B')
+      const bBefore = JSON.stringify(b.vehicles)
+
+      let refused = 0
+      for (let i = 0; i < 1000; i++) if (!advanceTrainSet(net, a, step, [a, b])) refused++
+
+      expect(refused).toBeGreaterThan(0)
+      expect(rearEnd(net, b).x - frontEnd(net, a).x).toBeCloseTo(COUPLING_GAP, 6)
+      expect(JSON.stringify(b.vehicles)).toBe(bBefore)
+    }
+  })
+
+  it('stops a reversing train whose tail meets another train', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const b = consist(net, segId, 0.2, 2, 1, 'B') // nose at x=200
+    const a = consist(net, segId, 0.6, 2, 1, 'A') // tail around x=550, backing towards B
+    a.direction = -1
+
+    for (let i = 0; i < 1000; i++) advanceTrainSet(net, a, 0.5, [a, b])
+
+    expect(rearEnd(net, a).x - frontEnd(net, b).x).toBeCloseTo(COUPLING_GAP, 6)
+  })
+
+  it('sees a train standing on another segment of the same line, both ways round', () => {
+    resetIdCounter()
+    const net = createNetwork()
+    const n = [0, 300, 600, 900].map((x) => addNode(net, { x, y: 0 }))
+    const s1 = addSegment(net, n[0].id, n[1].id)!
+    addSegment(net, n[2].id, n[1].id) // middle rail stored the other way round
+    const s3 = addSegment(net, n[2].id, n[3].id)!
+
+    const a = consist(net, s1.id, 0.9, 2, 1, 'A')
+    const b = consist(net, s3.id, 0.5, 2, -1, 'B') // facing A
+    for (let i = 0; i < 1000; i++) advanceTrainSet(net, a, 0.5, [a, b])
+    expect(frontEnd(net, b).x - frontEnd(net, a).x).toBeCloseTo(COUPLING_GAP, 6)
+
+    // B in turn cannot advance into A
+    const aBefore = JSON.stringify(a.vehicles)
+    expect(advanceTrainSet(net, b, 0.5, [a, b])).toBe(false)
+    expect(frontEnd(net, b).x - frontEnd(net, a).x).toBeCloseTo(COUPLING_GAP, 6)
+    expect(JSON.stringify(a.vehicles)).toBe(aBefore)
+  })
+
+  it('lets a train in contact drive away, and couple with the train it touches', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = consist(net, segId, 0.3, 1, 1, 'A')
+    const b = consist(net, segId, 0.6, 1, 1, 'B')
+    for (let i = 0; i < 1000; i++) advanceTrainSet(net, a, 0.5, [a, b])
+    expect(advanceTrainSet(net, a, 0.5, [a, b])).toBe(false)
+
+    // Coupling at the point of contact merges the two trains without shifting a vehicle
+    const contact = frontEnd(net, a)
+    const before = [...bogiePoints(net, b), ...bogiePoints(net, a)]
+    const coupled = handleCouplingClick(net, [a, b], contact)
+    expect(coupled).toHaveLength(1)
+    expect(coupled[0].vehicles).toHaveLength(4)
+    bogiePoints(net, coupled[0]).forEach((p, i) => expect(p.x).toBeCloseTo(before[i].x, 6))
+
+    // Uncoupled, A backs away freely
+    a.direction = -1
+    const x0 = frontEnd(net, a).x
+    expect(advanceTrainSet(net, a, 0.5, [a, b])).toBe(true)
+    expect(frontEnd(net, a).x).toBeCloseTo(x0 - 0.5, 6)
+  })
+
+  it('tickTrainSet reports the contact like an end of track', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = consist(net, segId, 0.3, 0, 1, 'A')
+    const b = consist(net, segId, 0.36, 0, 1, 'B') // its tail is some 40 m ahead of A's nose
+    setReverser(a, 'forward')
+    setNotch(a, MAX_NOTCH)
+
+    let stopped = false
+    for (let i = 0; i < 600 && !stopped; i++) stopped = !tickTrainSet(net, a, 1 / 60, [a, b])
+
+    expect(stopped).toBe(true)
+    expect(rearEnd(net, b).x - frontEnd(net, a).x).toBeCloseTo(COUPLING_GAP, 6)
+  })
+})
+
+describe('junction under a train', () => {
+  /** Stem from x=-400 to the apex at x=0, #6 left turnout, both branches extended by 400 m */
+  function turnoutLayout() {
+    resetIdCounter()
+    const net = createNetwork()
+    const stem0 = addNode(net, { x: -400, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const stem = addSegment(net, stem0.id, apex.id)!
+    const t = placeTurnout(net, { startPos: apex.pos, direction: { x: 1, y: 0 }, frogNumber: 6, hand: 'left', stemNodeId: apex.id })
+    const sEnd = addNode(net, { x: t.straightNode.pos.x + 400, y: 0 })
+    const straightExt = addSegment(net, t.straightNode.id, sEnd.id)!
+    autoDetectJunctions(net)
+    const junction = [...net.junctions.values()][0]
+    return { net, junction, stem, straightExt, straightSegId: junction.straightSegmentId }
+  }
+
+  it('is occupied exactly while a vehicle stands over its points', () => {
+    const { net, junction, straightExt } = turnoutLayout()
+    const train = consist(net, straightExt.id, 0.3, 2, -1) // on the straight branch, heading for the stem
+    expect(isJunctionOccupied(net, junction, [train])).toBe(false)
+
+    const occupiedAt: number[] = []
+    for (let i = 0; i < 1100; i++) {
+      expect(advanceTrainSet(net, train, 0.5)).toBe(true)
+      if (isJunctionOccupied(net, junction, [train])) occupiedAt.push(frontEnd(net, train).x)
+    }
+
+    // From the nose reaching the apex (x=0) to the tail clearing it, one train length later
+    const length = frontEnd(net, train).x - rearEnd(net, train).x
+    expect(Math.max(...occupiedAt)).toBeLessThanOrEqual(0)
+    expect(Math.max(...occupiedAt)).toBeGreaterThan(-0.5)
+    expect(Math.min(...occupiedAt)).toBeCloseTo(length, 0)
+    expect(isJunctionOccupied(net, junction, [train])).toBe(false)
+  })
+
+  it('refuses to steer a turnout that another train stands on', () => {
+    const { net, junction, stem, straightSegId } = turnoutLayout()
+    const driven = consist(net, stem.id, 0.5, 0, 1, 'A') // on the stem, facing the points
+    const parked = consist(net, straightSegId, 0.02, 0, 1, 'B') // nose 5 m past the apex, body across it
+    expect(isJunctionOccupied(net, junction, [driven, parked])).toBe(true)
+
+    // The diverging branch leaves towards +y: the right-hand side when running towards +x
+    expect(steerTrainSetJunction(net, driven, 'right', [driven, parked])).toBe(false)
+    expect(junction.activeBranch).toBe('straight')
+    // With the points clear the same command goes through
+    expect(steerTrainSetJunction(net, driven, 'right', [driven])).toBe(true)
+    expect(junction.activeBranch).toBe('diverging')
+  })
+
+  it('keeps the vehicles on their branch if the points move under a trailing train anyway', () => {
+    const { net, junction, straightExt } = turnoutLayout()
+    const train = consist(net, straightExt.id, 0.3, 4, -1)
+
+    let prev = bogiePoints(net, train)
+    let biggestMove = 0
+    for (let i = 0; i < 1200; i++) {
+      // Thrown behind the store's back once the lead is 30 m past the points
+      if (prev[0].x < -30) junction.activeBranch = 'diverging'
+      expect(advanceTrainSet(net, train, 0.5)).toBe(true)
+      const cur = bogiePoints(net, train)
+      cur.forEach((p, k) => (biggestMove = Math.max(biggestMove, Math.hypot(p.x - prev[k].x, p.y - prev[k].y))))
+      prev = cur
+    }
+
+    expect(junction.activeBranch).toBe('diverging')
+    expect(biggestMove).toBeLessThanOrEqual(0.5 + 1e-6)
+    expect(prev.every((p) => Math.abs(p.y) < 1e-6)).toBe(true)
+  })
+})
+
+describe('sharp corners and crossings', () => {
+  /** Two 100 m rails joined at the origin, the second one turned by `angleDeg` */
+  function corner(angleDeg: number) {
+    resetIdCounter()
+    const net = createNetwork()
+    const a = addNode(net, { x: -100, y: 0 })
+    const c = addNode(net, { x: 0, y: 0 })
+    const r = (angleDeg * Math.PI) / 180
+    const e = addNode(net, { x: 100 * Math.cos(r), y: 100 * Math.sin(r) })
+    const first = addSegment(net, a.id, c.id)!
+    const second = addSegment(net, c.id, e.id)!
+    return { net, first, second }
+  }
+
+  it('runs through a joint within the deflection limit', () => {
+    for (const angle of [0, 5, MAX_TRANSITION_DEFLECTION_DEG]) {
+      const { net, first, second } = corner(angle)
+      const train = consist(net, first.id, 0.5, 0)
+      for (let i = 0; i < 150; i++) expect(advanceTrainSet(net, train, 0.5)).toBe(true)
+      expect(train.vehicles[0].front.segId).toBe(second.id)
+    }
+  })
+
+  it('treats a sharper corner as an end of track, from either side', () => {
+    for (const angle of [MAX_TRANSITION_DEFLECTION_DEG + 1, 20, 45, 90, 135]) {
+      const { net, first, second } = corner(angle)
+      const train = consist(net, first.id, 0.5, 0)
+      for (let i = 0; i < 150; i++) advanceTrainSet(net, train, 0.5)
+      expect(train.vehicles[0].front.segId).toBe(first.id)
+      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeCloseTo(0, 6)
+
+      const back = consist(net, second.id, 0.5, 0, -1)
+      for (let i = 0; i < 150; i++) advanceTrainSet(net, back, 0.5)
+      expect(back.vehicles[0].front.segId).toBe(second.id)
+      expect(back.vehicles[0].front.t).toBeCloseTo(0, 6)
+    }
+  })
+
+  it('cannot turn from the stub of a perpendicular T onto the main line, nor the other way', () => {
+    resetIdCounter()
+    const net = createNetwork()
+    const w = addNode(net, { x: -200, y: 0 })
+    const e = addNode(net, { x: 200, y: 0 })
+    addSegment(net, w.id, e.id)
+    const foot = addNode(net, { x: 0, y: 0 })
+    const top = addNode(net, { x: 0, y: 200 })
+    const stub = addSegment(net, foot.id, top.id)!
+    reconcileNetworkIntersections(net)
+    expect(net.junctions.size).toBe(0)
+
+    const fromStub = consist(net, stub.id, 0.5, 0, -1) // heading down to the main line
+    for (let i = 0; i < 400; i++) advanceTrainSet(net, fromStub, 0.5)
+    expect(fromStub.vehicles[0].front.segId).toBe(stub.id)
+    expect(bogiePoints(net, fromStub)[0].y).toBeCloseTo(0, 6)
+
+    const west = [...net.segments.values()].find((s) => s.id !== stub.id && (s.from === w.id || s.to === w.id))!
+    const through = consist(net, west.id, 0.5, 0, west.from === w.id ? 1 : -1)
+    for (let i = 0; i < 400; i++) expect(advanceTrainSet(net, through, 0.5)).toBe(true)
+    const nose = bogiePoints(net, through)[0]
+    expect(nose.x).toBeCloseTo(100, 6)
+    expect(nose.y).toBeCloseTo(0, 6)
+  })
+
+  it('runs straight through a crossing made by reconcile, down to a shallow angle', () => {
+    for (const angleDeg of [90, 30, 8, 3]) {
+      resetIdCounter()
+      const net = createNetwork()
+      const r = (angleDeg * Math.PI) / 180
+      const w = addNode(net, { x: -200, y: 0 })
+      const e = addNode(net, { x: 200, y: 0 })
+      addSegment(net, w.id, e.id)
+      const a = addNode(net, { x: -200 * Math.cos(r), y: -200 * Math.sin(r) })
+      const b = addNode(net, { x: 200 * Math.cos(r), y: 200 * Math.sin(r) })
+      addSegment(net, a.id, b.id)
+      reconcileNetworkIntersections(net)
+      expect(net.junctions.size).toBe(0)
+
+      // Along y=0 from the west, and along the oblique line from its far end, in both directions
+      for (const startId of [w.id, e.id, a.id, b.id]) {
+        const start = net.nodes.get(startId)!.pos
+        const seg = net.segments.get(net.adjacency.get(startId)![0])!
+        const train = consist(net, seg.id, 0.5, 2, seg.from === startId ? 1 : -1)
+        for (let i = 0; i < 500; i++) expect(advanceTrainSet(net, train, 0.5)).toBe(true)
+        // Every bogie is still on the line through the start point and the origin
+        for (const p of bogiePoints(net, train)) {
+          expect(Math.abs(p.x * start.y - p.y * start.x) / Math.hypot(start.x, start.y)).toBeLessThan(1e-6)
+        }
+        const nose = bogiePoints(net, train)[0]
+        expect(nose.x * start.x + nose.y * start.y).toBeLessThan(0) // past the crossing
+      }
+    }
+  })
+})
+
+// ─── Vehicles turned around within a rake ─────────────────────────────────────
+
+describe('turned-around vehicles', () => {
+  const sortedX = (net: Network, trains: TrainSet[]) =>
+    trains.flatMap((t) => bogiePoints(net, t)).map((p) => p.x).sort((a, b) => a - b)
+
+  /** Loco + wagon heading +x, with a second loco coupled turned around at the tail */
+  function pushPull(net: Network, segId: string): TrainSet {
+    const train = consist(net, segId, 0.5, 1)
+    const snap = findCouplerSnap(net, [train], rearEnd(net, train), 'loco', 5, true)!
+    expect(snap.end).toBe('rear')
+    train.vehicles.push(snap.snappedVehicle)
+    return train
+  }
+
+  it('reverseTrainSet shows the same train from its other end without moving it', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const train = consist(net, segId, 0.5, 2)
+    const reversed = reverseTrainSet(train)
+
+    expect(reversed.vehicles.map((v) => v.id)).toEqual(train.vehicles.map((v) => v.id).reverse())
+    expect(reversed.vehicles.every((v) => v.flipped === true)).toBe(true)
+    expect(frontEnd(net, reversed).x).toBeCloseTo(rearEnd(net, train).x, 6)
+    expect(rearEnd(net, reversed).x).toBeCloseTo(frontEnd(net, train).x, 6)
+    // Still a valid train: realigning it from its new lead moves nothing
+    const before = sortedX(net, [reversed])
+    expect(advanceTrainSet(net, reversed, 0)).toBe(true)
+    sortedX(net, [reversed]).forEach((x, i) => expect(x).toBeCloseTo(before[i], 6))
+
+    expect(reverseTrainSet(reversed).vehicles).toEqual(train.vehicles)
+  })
+
+  it('a loco coupled turned around at the tail is drawn nose outwards', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const train = pushPull(net, segId)
+    const tail = train.vehicles[2]
+    expect(tail.flipped).toBe(true)
+
+    const visuals = getTrainSetVisuals(net, train)!
+    expect(visuals.accordions).toHaveLength(2)
+    const leadNose = visuals.vehicles[0].polygon[0]
+    const tailNose = visuals.vehicles[2].polygon[0]
+    // The train heads +x: lead nose ahead of its front bogie, tail nose behind its rear bogie
+    expect(leadNose.x).toBeGreaterThan(positionOnSegment(net, train.vehicles[0].front.segId, train.vehicles[0].front.t)!.x)
+    expect(tailNose.x).toBeLessThan(positionOnSegment(net, tail.rear.segId, tail.rear.t)!.x)
+  })
+
+  it('findCouplerSnap leaves the vehicle unflipped by default', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const train = consist(net, segId, 0.5, 1)
+    const snap = findCouplerSnap(net, [train], rearEnd(net, train), 'loco', 5)!
+    expect('flipped' in snap.snappedVehicle).toBe(false)
+  })
+
+  it('coupling mode joins two trains standing rear to rear', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = consist(net, segId, 0.6, 1, 1, 'A')
+    // B heads -x, to the left of A: slide it until the two tails are a coupling gap apart
+    const probe = consist(net, segId, 0.3, 1, -1, 'P')
+    const t = 0.3 + (rearEnd(net, a).x - COUPLING_GAP - rearEnd(net, probe).x) / 1000
+    const b = consist(net, segId, t, 1, -1, 'B')
+    const before = sortedX(net, [a, b])
+
+    const result = handleCouplingClick(net, [a, b], rearEnd(net, a))
+
+    expect(result).toHaveLength(1)
+    const merged = result[0]
+    expect(merged.vehicles.map((v) => v.id)).toEqual([a.vehicles[0].id, 'Aw0', 'Bw0', b.vehicles[0].id])
+    expect(merged.vehicles.map((v) => v.flipped === true)).toEqual([false, false, true, true])
+    sortedX(net, [merged]).forEach((x, i) => expect(x).toBeCloseTo(before[i], 3))
+  })
+
+  it('coupling mode joins two trains standing nose to nose, the clicked one keeping its orientation', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = consist(net, segId, 0.4, 1, 1, 'A')
+    const probe = consist(net, segId, 0.7, 1, -1, 'P')
+    const t = 0.7 + (frontEnd(net, a).x + COUPLING_GAP - frontEnd(net, probe).x) / 1000
+    const b = consist(net, segId, t, 1, -1, 'B')
+    const before = sortedX(net, [a, b])
+
+    const result = handleCouplingClick(net, [a, b], frontEnd(net, b))
+
+    expect(result).toHaveLength(1)
+    const merged = result[0]
+    expect(merged.vehicles.map((v) => v.id)).toEqual(['Aw0', a.vehicles[0].id, b.vehicles[0].id, 'Bw0'])
+    expect(merged.vehicles.map((v) => v.flipped === true)).toEqual([true, true, false, false])
+    sortedX(net, [merged]).forEach((x, i) => expect(x).toBeCloseTo(before[i], 3))
+  })
+
+  it('same-type ends too far apart are left alone', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = consist(net, segId, 0.8, 1, 1, 'A')
+    const b = consist(net, segId, 0.2, 1, -1, 'B')
+    const trains = [a, b]
+    expect(handleCouplingClick(net, trains, rearEnd(net, a))).toBe(trains)
+  })
+
+  it('an uncoupled tail loco becomes an ordinary train, nose first, where it stood', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const train = pushPull(net, segId)
+    const tailEnd = rearEnd(net, train)
+
+    const [front, rear] = decoupleAt(train, 1)!
+
+    expect(front.vehicles).toHaveLength(2)
+    expect(rear.vehicles).toHaveLength(1)
+    expect(rear.vehicles[0].flipped).toBeUndefined()
+    expect(frontEnd(net, rear).x).toBeCloseTo(tailEnd.x, 6)
+    expect(getTrainSetVisuals(net, rear)!.vehicles[0].polygon[0].x).toBeLessThan(tailEnd.x + 1e-6)
+  })
+
+  it('removing the lead loco leaves the tail loco leading its rake nose first', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const pushPullTrain = pushPull(net, segId)
+    const tailId = pushPullTrain.vehicles[2].id
+    const tailEnd = rearEnd(net, pushPullTrain)
+
+    const train = removeVehicleFromTrainSet(net, pushPullTrain, pushPullTrain.vehicles[0].id)!
+
+    expect(train.vehicles.map((v) => v.id)).toEqual([tailId, 'Tw0'])
+    expect(train.vehicles[0].flipped).toBeUndefined()
+    expect(frontEnd(net, train).x).toBeCloseTo(tailEnd.x, 6)
+  })
+
+  it('the orientation survives a save and load', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const train = pushPull(net, segId)
+    const saved = JSON.parse(JSON.stringify(serializeTrains([train])))
+    expect('flipped' in saved[0].vehicles[0]).toBe(false)
+
+    const [loaded] = deserializeTrains(net, saved)
+    expect(loaded.vehicles.map((v) => v.flipped === true)).toEqual([false, false, true])
   })
 })

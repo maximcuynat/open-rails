@@ -7,16 +7,19 @@
  * and recalculates all followers via walkBackward.
  */
 
-import type { Network, Point, SegmentId } from './types'
+import type { Junction, Network, Point, SegmentId } from './types'
 import type {
   Locomotive,
   TrackPosition,
+  WalkTrace,
   BogieFrame,
   TGVDetails,
   TGVAccordion,
 } from './locomotive'
 import {
   steerJunction,
+  findUpcomingJunction,
+  segmentPartialLength,
   walkBackward,
   walkForward,
   positionOnSegment,
@@ -67,6 +70,11 @@ export interface Vehicle {
   front: TrackPosition
   /** Rear bogie track position */
   rear: TrackPosition
+  /**
+   * Body turned around within the rake: its nose is on the `rear` bogie side.
+   * `front` / `rear` always follow the order of the train, whatever the body faces.
+   */
+  flipped?: boolean
 }
 
 /** An ordered set of coupled vehicles forming a train */
@@ -210,6 +218,11 @@ export function releaseEmergencyBrake(train: TrainSet): boolean {
   return true
 }
 
+/** Distance (m) needed to stop from the current speed at full service brake */
+export function stoppingDistance(train: TrainSet): number {
+  return (train.currentSpeed * train.currentSpeed) / (2 * train.braking)
+}
+
 /** Commanded state in the shape the debug overlay expects: sign of the command and its magnitudes */
 export function trainDriveTelemetry(train: TrainSet): { throttle: 1 | 0 | -1; acceleration: number; braking: number } {
   const accel = commandedAcceleration(train)
@@ -242,12 +255,139 @@ export function commandedAcceleration(train: TrainSet): number {
 // ─── Simulation ───────────────────────────────────────────────────────────────
 
 /**
+ * Track covered by a train, from the front end of its lead vehicle to the rear end of its last one
+ * (bogies, couplings and both overhangs): the stretches of segments and the nodes it stands over.
+ */
+export function trainOccupancy(net: Network, train: TrainSet): WalkTrace {
+  const trace: WalkTrace = { spans: [], nodes: [] }
+  if (train.vehicles.length === 0) return trace
+  const options = { trace, stayOn: bogieSegments(train) }
+
+  const lead = train.vehicles[0]
+  walkForward(net, lead.front.segId, lead.front.t, lead.front.forward, VEHICLE_OVERHANG[lead.kind], options)
+
+  let prev: Vehicle | null = null
+  for (const veh of train.vehicles) {
+    if (prev) {
+      const gap = VEHICLE_OVERHANG[prev.kind] + COUPLING_GAP + VEHICLE_OVERHANG[veh.kind]
+      walkBackward(net, prev.rear.segId, prev.rear.t, prev.rear.forward, gap, options)
+    }
+    walkBackward(net, veh.front.segId, veh.front.t, veh.front.forward, VEHICLE_BOGIE_DISTANCE[veh.kind], options)
+    // The stored bogie positions always count, even where the track can no longer be walked
+    trace.spans.push({ segId: veh.front.segId, t0: veh.front.t, t1: veh.front.t })
+    trace.spans.push({ segId: veh.rear.segId, t0: veh.rear.t, t1: veh.rear.t })
+    prev = veh
+  }
+
+  const last = train.vehicles[train.vehicles.length - 1]
+  walkBackward(net, last.rear.segId, last.rear.t, last.rear.forward, VEHICLE_OVERHANG[last.kind], options)
+  return trace
+}
+
+/** Segments the bogies of a train stand on */
+function bogieSegments(train: TrainSet): Set<SegmentId> {
+  return new Set(train.vehicles.flatMap((veh) => [veh.front.segId, veh.rear.segId]))
+}
+
+/**
+ * True when a vehicle of any of the trains stands over the points of the junction (its apex node).
+ * Such a junction must not be thrown: the followers of a train are laid out through the active
+ * branch, so the vehicles still on the other branch would jump across.
+ */
+export function isJunctionOccupied(net: Network, junction: Junction, trains: TrainSet[]): boolean {
+  return trains.some((train) => trainOccupancy(net, train).nodes.includes(junction.nodeId))
+}
+
+/** True when a vehicle of any of the trains stands, even partly, on one of the given segments */
+export function isTrackOccupied(net: Network, segIds: Iterable<SegmentId>, trains: TrainSet[]): boolean {
+  const wanted = new Set(segIds)
+  return wanted.size > 0 && trains.some((train) => trainOccupancy(net, train).spans.some((span) => wanted.has(span.segId)))
+}
+
+/**
+ * Occupancy of each train, kept by the caller for the duration of one simulation tick so that it
+ * is computed once per train instead of once per pair. An entry is dropped when its train moves.
+ */
+export type TrainOccupancyCache = Map<TrainSetId, WalkTrace>
+
+/**
+ * Distance (meters) the train can still run in its travel direction before the end of its leading
+ * vehicle meets the track occupied by one of `obstacles`, looking `reach` meters ahead along the
+ * route it would take. Returns null when nothing stands within reach; 0 or less means contact/overlap.
+ */
+function freeDistanceAhead(
+  net: Network,
+  train: TrainSet,
+  reach: number,
+  obstacles: TrainSet[],
+  occupancy?: TrainOccupancyCache,
+): number | null {
+  // The end of the train that leads the move: nose of the lead vehicle, or tail of the last one in reverse
+  const reversing = train.direction === -1
+  const veh = reversing ? train.vehicles[train.vehicles.length - 1] : train.vehicles[0]
+  const overhang = VEHICLE_OVERHANG[veh.kind]
+  const ahead: WalkTrace = { spans: [], nodes: [] }
+  if (reversing) walkBackward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, overhang + reach, { trace: ahead })
+  else walkForward(net, veh.front.segId, veh.front.t, veh.front.forward, overhang + reach, { trace: ahead })
+
+  const occupied = obstacles.flatMap((other) => {
+    let trace = occupancy?.get(other.id)
+    if (!trace) {
+      trace = trainOccupancy(net, other)
+      occupancy?.set(other.id, trace)
+    }
+    return trace.spans
+  })
+  let travelled = 0
+  for (const span of ahead.spans) {
+    let nearest: number | null = null
+    for (const occ of occupied) {
+      if (occ.segId !== span.segId) continue
+      const occLo = Math.min(occ.t0, occ.t1)
+      const occHi = Math.max(occ.t0, occ.t1)
+      if (occHi < Math.min(span.t0, span.t1) || occLo > Math.max(span.t0, span.t1)) continue
+      // First occupied point met when running from span.t0 towards span.t1
+      const hit = span.t1 >= span.t0 ? Math.max(occLo, span.t0) : Math.min(occHi, span.t0)
+      const d = segmentPartialLength(net, span.segId, span.t0, hit)
+      if (nearest === null || d < nearest) nearest = d
+    }
+    if (nearest !== null) return travelled + nearest - overhang
+    travelled += segmentPartialLength(net, span.segId, span.t0, span.t1)
+  }
+  return null
+}
+
+/**
  * Advance a TrainSet by deltaMeters * direction.
  * The lead vehicle moves first; all followers are recalculated via walkBackward.
- * Returns false if blocked (dead-end).
+ * All-or-nothing: when any vehicle cannot follow (dead end, switch set against the train), nothing
+ * moves and false is returned. Followers still on a turnout branch stay on it whatever the switch
+ * says, so points thrown under the train cannot make them jump to the other branch.
+ *
+ * `others` are the trains to collide with (the train itself is ignored): the move is shortened so
+ * that the train stops a coupling gap short of the nearest one ahead, and false is returned as for
+ * an end of track. Moving away from a train that is in contact is not restricted.
+ * `occupancy` is an optional per-tick cache shared by the calls for all trains.
  */
-export function advanceTrainSet(net: Network, train: TrainSet, deltaMeters: number): boolean {
+export function advanceTrainSet(
+  net: Network,
+  train: TrainSet,
+  deltaMeters: number,
+  others: TrainSet[] = [],
+  occupancy?: TrainOccupancyCache,
+): boolean {
   if (train.vehicles.length === 0) return false
+
+  let blocked = false
+  const obstacles = others.filter((other) => other !== train && other.id !== train.id && other.vehicles.length > 0)
+  if (obstacles.length > 0 && deltaMeters > 0) {
+    const free = freeDistanceAhead(net, train, deltaMeters + COUPLING_GAP, obstacles, occupancy)
+    if (free !== null && free - COUPLING_GAP < deltaMeters) {
+      deltaMeters = free - COUPLING_GAP
+      blocked = true
+      if (deltaMeters < 1e-6) return false
+    }
+  }
 
   const lead = train.vehicles[0]
 
@@ -261,15 +401,14 @@ export function advanceTrainSet(net: Network, train: TrainSet, deltaMeters: numb
     direction: train.direction,
   }
 
-  const moved = advanceLocomotive(net, tempLoco, deltaMeters)
+  const stayOn = bogieSegments(train)
+  const moved = advanceLocomotive(net, tempLoco, deltaMeters, stayOn)
   if (!moved) return false
 
-  // Update lead from tempLoco result
-  lead.front = tempLoco.front
-  lead.rear = tempLoco.rear
-
-  // Recompute follower positions using walkBackward from the lead rear, then each vehicle rear
-  let referencePos: TrackPosition = lead.rear
+  // Recompute follower positions using walkBackward from the lead rear, then each vehicle rear.
+  // Nothing is written to the train until every vehicle has found its place.
+  const placed: { front: TrackPosition; rear: TrackPosition }[] = [{ front: tempLoco.front, rear: tempLoco.rear }]
+  let referencePos: TrackPosition = tempLoco.rear
   let prevKind = lead.kind
 
   for (let i = 1; i < train.vehicles.length; i++) {
@@ -284,27 +423,40 @@ export function advanceTrainSet(net: Network, train: TrainSet, deltaMeters: numb
       referencePos.segId,
       referencePos.t,
       referencePos.forward,
-      prevOverhang + COUPLING_GAP + vehOverhang
+      prevOverhang + COUPLING_GAP + vehOverhang,
+      { stayOn }
     )
     if (!newFront) return false
 
-    const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, bogieDistance)
+    const newRear = walkBackward(net, newFront.segId, newFront.t, newFront.forward, bogieDistance, { stayOn })
     if (!newRear) return false
 
-    veh.front = newFront
-    veh.rear = newRear
+    placed.push({ front: newFront, rear: newRear })
     referencePos = newRear
     prevKind = veh.kind
   }
 
-  return true
+  train.vehicles.forEach((veh, i) => {
+    veh.front = placed[i].front
+    veh.rear = placed[i].rear
+  })
+  occupancy?.delete(train.id)
+
+  return !blocked
 }
 
 /**
  * Run one physics tick (dt seconds) on a TrainSet.
  * Updates currentSpeed from the driving controls, then calls advanceTrainSet.
+ * Returns false when the train is stopped by an end of track or by one of `others`.
  */
-export function tickTrainSet(net: Network, train: TrainSet, dt: number): boolean {
+export function tickTrainSet(
+  net: Network,
+  train: TrainSet,
+  dt: number,
+  others: TrainSet[] = [],
+  occupancy?: TrainOccupancyCache,
+): boolean {
   const accel = commandedAcceleration(train)
 
   let speed = train.currentSpeed
@@ -321,7 +473,7 @@ export function tickTrainSet(net: Network, train: TrainSet, dt: number): boolean
   if (isTrainStopped(train)) return true // stopped, no movement needed
 
   const dist = speed * dt
-  return advanceTrainSet(net, train, dist)
+  return advanceTrainSet(net, train, dist, others, occupancy)
 }
 
 // ─── Coupling ─────────────────────────────────────────────────────────────────
@@ -426,6 +578,34 @@ export function findNearestCoupler(
   return best
 }
 
+/**
+ * The same train seen from its other end: vehicle order reversed, bogies swapped and every body
+ * marked as turned around. Nothing moves on the track; only what counts as "forward" changes.
+ */
+export function reverseTrainSet(train: TrainSet): TrainSet {
+  const vehicles = [...train.vehicles].reverse().map((veh) => {
+    const { flipped, ...rest } = veh
+    const reversed: Vehicle = {
+      ...rest,
+      front: { ...veh.rear, forward: !veh.rear.forward },
+      rear: { ...veh.front, forward: !veh.front.forward },
+    }
+    if (!flipped) reversed.flipped = true
+    return reversed
+  })
+  return { ...train, vehicles }
+}
+
+/**
+ * A stopped train whose locomotives are all turned around is reversed, so that "forward" drives it
+ * nose first (a tail locomotive uncoupled from its rake becomes an ordinary train).
+ */
+function orientTrainByLocos(train: TrainSet): TrainSet {
+  const locos = train.vehicles.filter((veh) => veh.kind === 'loco')
+  if (locos.length === 0 || !isTrainStopped(train) || locos.some((veh) => !veh.flipped)) return train
+  return reverseTrainSet(train)
+}
+
 export interface CouplerSnapTarget {
   train: TrainSet
   end: 'front' | 'rear'
@@ -436,16 +616,19 @@ export interface CouplerSnapTarget {
 /**
  * Check if worldPos is within maxDist of any free coupler endpoint in any train,
  * and if so compute the snapped Vehicle placed flush against that coupler (gap = COUPLING_GAP).
+ * With `flipped` the vehicle is coupled turned around, its nose away from the head of the train.
  */
 export function findCouplerSnap(
   net: Network,
   trains: TrainSet[],
   worldPos: Point,
   kind: VehicleKind,
-  maxDist: number = 5.0
+  maxDist: number = 5.0,
+  flipped: boolean = false
 ): CouplerSnapTarget | null {
   let bestTarget: CouplerSnapTarget | null = null
   let bestDist = maxDist
+  const orientation = flipped ? { flipped: true } : {}
 
   for (const train of trains) {
     if (train.vehicles.length === 0) continue
@@ -467,7 +650,7 @@ export function findCouplerSnap(
               train,
               end: 'rear',
               couplerPos: rearPos,
-              snappedVehicle: { id: generateId('veh_preview'), kind, front: newFront, rear: newRear },
+              snappedVehicle: { id: generateId('veh_preview'), kind, front: newFront, rear: newRear, ...orientation },
             }
           }
         }
@@ -491,7 +674,7 @@ export function findCouplerSnap(
               train,
               end: 'front',
               couplerPos: frontPos,
-              snappedVehicle: { id: generateId('veh_preview'), kind, front: newFront, rear: newRear },
+              snappedVehicle: { id: generateId('veh_preview'), kind, front: newFront, rear: newRear, ...orientation },
             }
           }
         }
@@ -565,7 +748,7 @@ export function decoupleAt(
     vehicles: train.vehicles.slice(vehicleIndex + 1),
   }
   resetTrainControls(rear) // rear half stops, controls at rest
-  return [front, rear]
+  return [front, orientTrainByLocos(rear)]
 }
 
 /**
@@ -615,24 +798,18 @@ export function handleCouplingClick(
 
   if (!partner) return trains
 
-  // Determine which is "front" and which is "rear" for coupling
+  // Two ends of the same type (rear to rear, nose to nose): the partner is taken from its other
+  // end, so its vehicles join turned around and the clicked train keeps its orientation
+  const partnerId = partner.trainId
+  const pool = nearest.end === partner.end
+    ? trains.map((t) => (t.id === partnerId ? reverseTrainSet(t) : t))
+    : trains
+
   // Rule: couple nearest.rear → partner.front, or partner.rear → nearest.front
-  let aId: TrainSetId
-  let bId: TrainSetId
-
-  if (nearest.end === 'rear' && partner.end === 'front') {
-    aId = nearest.trainId
-    bId = partner.trainId
-  } else if (nearest.end === 'front' && partner.end === 'rear') {
-    aId = partner.trainId
-    bId = nearest.trainId
-  } else {
-    // Same end type: couple nearest with partner
-    aId = nearest.trainId
-    bId = partner.trainId
-  }
-
-  return coupleTrains(net, trains, aId, bId)
+  const merged = nearest.end === 'rear'
+    ? coupleTrains(net, pool, nearest.trainId, partnerId)
+    : coupleTrains(net, pool, partnerId, nearest.trainId)
+  return merged === pool ? trains : merged
 }
 
 // ─── Rendering & Hit-testing helpers ──────────────────────────────────────────
@@ -685,7 +862,9 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
         bogieDistance: VEHICLE_BOGIE_DISTANCE.loco,
         front: veh.front,
         rear: veh.rear,
-        direction: train.direction,
+        // The body is drawn from its bogies and its own orientation, never from the travel
+        // direction: reversing pushes the train back (refoulement), it does not turn it around.
+        direction: veh.flipped ? (-1 as const) : (1 as const),
       }
       const tgv = getTGVDetails(net, tempLoco)
       if (tgv) {
@@ -704,10 +883,10 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
         const backR = tgv.polygon[5]
         const frontL = tgv.polygon[2]
         const frontR = tgv.polygon[7]
-        vehicleFrames.push({
-          front: [frontL, frontR],
-          rear: [backL, backR],
-        })
+        // Turned around, the flat back faces the head of the train and left/right swap sides
+        vehicleFrames.push(veh.flipped
+          ? { front: [backR, backL], rear: [frontR, frontL] }
+          : { front: [frontL, frontR], rear: [backL, backR] })
       }
     } else {
       // Wagon
@@ -852,17 +1031,35 @@ export function removeVehicleFromTrainSet(
     vehicles: nextVehicles,
   }
   advanceTrainSet(net, newTrain, 0)
-  return newTrain
+  return orientTrainByLocos(newTrain)
 }
 
 // ─── Junction steering ────────────────────────────────────────────────────────
 
 /**
+ * Track position of the end of the train that leads the move (lead bogie running forward, last
+ * bogie in reverse), oriented along the travel direction: the route ahead is walked from it with
+ * a travel direction of 1.
+ */
+export function trainRouteStart(train: TrainSet): TrackPosition | null {
+  if (train.vehicles.length === 0) return null
+  if (train.direction === 1) return train.vehicles[0].front
+  const rear = train.vehicles[train.vehicles.length - 1].rear
+  return { ...rear, forward: !rear.forward }
+}
+
+/**
  * Throw the next facing turnout ahead of the train to the left or right of its travel direction.
  * Running forward the junction is looked up ahead of the lead vehicle; in reverse, behind the last one.
- * Returns false when there is no facing turnout ahead.
+ * Returns false when there is no facing turnout ahead, or when a vehicle of one of `trains`
+ * (the train itself by default) stands over its points.
  */
-export function steerTrainSetJunction(net: Network, train: TrainSet, steerDirection: 'left' | 'right'): boolean {
+export function steerTrainSetJunction(
+  net: Network,
+  train: TrainSet,
+  steerDirection: 'left' | 'right',
+  trains: TrainSet[] = [train],
+): boolean {
   if (train.vehicles.length === 0) return false
   const reversing = train.direction === -1
   const veh = reversing ? train.vehicles[train.vehicles.length - 1] : train.vehicles[0]
@@ -871,10 +1068,12 @@ export function steerTrainSetJunction(net: Network, train: TrainSet, steerDirect
     id: veh.id,
     length: VEHICLE_BOGIE_DISTANCE[veh.kind] + 2 * VEHICLE_OVERHANG[veh.kind],
     bogieDistance: VEHICLE_BOGIE_DISTANCE[veh.kind],
-    front: reversing ? { ...veh.rear, forward: !veh.rear.forward } : veh.front,
+    front: trainRouteStart(train) ?? veh.front,
     rear: reversing ? veh.front : veh.rear,
     direction: 1,
   }
+  const upcoming = findUpcomingJunction(net, probe)
+  if (!upcoming || isJunctionOccupied(net, upcoming.junction, trains)) return false
   return steerJunction(net, probe, steerDirection)
 }
 
@@ -891,8 +1090,15 @@ export function serializeTrains(trains: TrainSet[]): SerializedTrain[] {
   return trains.map((train) => ({
     id: train.id,
     direction: train.direction,
-    vehicles: train.vehicles.map((v) => ({ id: v.id, kind: v.kind, front: { ...v.front }, rear: { ...v.rear } })),
+    vehicles: train.vehicles.map(copyVehicle),
   }))
+}
+
+/** Plain copy of a vehicle with only its saved fields; `flipped` is written only when set */
+function copyVehicle(v: Vehicle): Vehicle {
+  const copy: Vehicle = { id: v.id, kind: v.kind, front: { ...v.front }, rear: { ...v.rear } }
+  if (v.flipped === true) copy.flipped = true
+  return copy
 }
 
 function isTrackPositionOnNetwork(net: Network, pos: unknown): pos is TrackPosition {
@@ -965,7 +1171,7 @@ export function deserializeTrains(net: Network, data: unknown): TrainSet[] {
   for (const raw of data) {
     if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !Array.isArray(raw.vehicles)) continue
     const vehicles: Vehicle[] = raw.vehicles.map((v: unknown) =>
-      isVehicleOnNetwork(net, v) ? { id: v.id, kind: v.kind, front: { ...v.front }, rear: { ...v.rear } } : v,
+      isVehicleOnNetwork(net, v) ? copyVehicle(v) : v,
     )
     const train = makeTrainSet(raw.id, vehicles)
     if (raw.direction === -1) train.direction = -1

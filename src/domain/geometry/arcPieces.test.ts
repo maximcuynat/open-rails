@@ -6,6 +6,7 @@ import {
   curvePiecesLength,
   minCurveRadius,
   splitCurveIntoArcPieces,
+  tangentArcPieces,
   MAX_ARC_PIECE_DEG,
 } from './curve'
 import { computeCurvePiece, computeFreeformCurve } from '../profiles/profiles'
@@ -211,5 +212,58 @@ describe('addCurveChain / addArcCurve', () => {
     expect(res.endNode.pos).toEqual({ x: 180, y: 40 })
     expect(computeTrackSections(net).length).toBe(1)
     expect(analyzeKinematics(net)).toEqual([])
+  })
+})
+
+describe('tangentArcPieces', () => {
+  /** Point of the R500 circle reached after turning `deg` from the origin heading east. */
+  const onCircle = (deg: number) => {
+    const th = (deg * Math.PI) / 180
+    return { x: R * Math.sin(th), y: R * (1 - Math.cos(th)) }
+  }
+
+  it('gives the same pieces as the control-point split where a control point exists', () => {
+    const { end, via } = arc(90)
+    const ref = splitCurveIntoArcPieces({ x: 0, y: 0 }, via, end)
+    const res = tangentArcPieces({ x: 0, y: 0 }, { x: 1, y: 0 }, end)!
+    expect(res.radius).toBeCloseTo(R, 9)
+    expect(res.angleDeg).toBeCloseTo(90, 9)
+    expect(res.pieces.length).toBe(ref.length)
+    res.pieces.forEach((p, i) => {
+      expect(p.via.x).toBeCloseTo(ref[i].via.x, 6)
+      expect(p.via.y).toBeCloseTo(ref[i].via.y, 6)
+      expect(p.end.x).toBeCloseTo(ref[i].end.x, 6)
+      expect(p.end.y).toBeCloseTo(ref[i].end.y, 6)
+    })
+  })
+
+  it('stays on the circle through and past a half-turn, on either side', () => {
+    for (const deg of [171, 180, 200, 270, 330]) {
+      for (const side of [1, -1]) {
+        const end = onCircle(deg)
+        const res = tangentArcPieces({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: end.x, y: side * end.y })!
+        expect(res.radius).toBeCloseTo(R, 6)
+        expect(res.angleDeg).toBeCloseTo(deg, 6)
+        expect(res.pieces.length).toBe(Math.ceil(deg / MAX_ARC_PIECE_DEG))
+        expect(curvePiecesLength(res.pieces)).toBeCloseTo((R * deg * Math.PI) / 180, 0)
+        for (const p of res.pieces) {
+          for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+            const q = bezierPoint(t, p.start, p.via, p.end)
+            expect(Math.hypot(q.x, q.y - side * R) / R).toBeCloseTo(1, 4)
+          }
+        }
+        // Consecutive pieces are tangent: the joint lies on the line between their control points
+        for (let i = 1; i < res.pieces.length; i++) {
+          const a = res.pieces[i - 1]
+          const b = res.pieces[i]
+          expect(curveDeflection(a.via, b.start, b.via)).toBeCloseTo(0, 6)
+        }
+      }
+    }
+  })
+
+  it('has no arc for an end on the tangent line', () => {
+    expect(tangentArcPieces({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 80, y: 0 })).toBeNull()
+    expect(tangentArcPieces({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -80, y: 0 })).toBeNull()
   })
 })

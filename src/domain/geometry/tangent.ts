@@ -28,6 +28,32 @@ export function bezierEndTangent(via: Point, end: Point): Point {
   return { x: dx / len, y: dy / len }
 }
 
+/**
+ * Largest change of direction, in degrees, a train can take when it passes from one rail to the
+ * next at a node. Track laid with the tools is G1-continuous (0° at every node) and the catalog
+ * turnouts leave tangent to their stem, so this only has to absorb hand-edited geometry: it is set
+ * to the divergence of the sharpest catalog turnout (#4, 15°), which keeps a branch drawn as a
+ * straight chord usable. Anything sharper is a corner, not a track transition:
+ * - `isTransitionAllowed` refuses it, so trains and routes treat it as an end of track;
+ * - `autoDetectJunctions` does not register a turnout whose routes exceed it;
+ * - `analyzeKinematics` reports it.
+ */
+export const MAX_TRANSITION_DEFLECTION_DEG = 15
+
+/**
+ * Deflection in degrees between two rails meeting at a node, given the unit direction in which
+ * each one leaves the node: 0° = straight through, 90° = right-angle corner, 180° = fold-back.
+ */
+export function transitionDeflectionDeg(leaveA: Point, leaveB: Point): number {
+  const dot = Math.max(-1, Math.min(1, leaveA.x * leaveB.x + leaveA.y * leaveB.y))
+  return (Math.acos(-dot) * 180) / Math.PI
+}
+
+/** True when a train can pass between two rails leaving a node in directions `leaveA` and `leaveB`. */
+export function isTraversableDeflection(leaveA: Point, leaveB: Point): boolean {
+  return transitionDeflectionDeg(leaveA, leaveB) <= MAX_TRANSITION_DEFLECTION_DEG + 1e-6
+}
+
 /** Get the outgoing tangent direction at a node, coming FROM a specific segment.
  *  Returns the direction the track is heading as it leaves that node.
  *  If nodeId is the "from" end of seg, tangent is start->to direction.
@@ -81,8 +107,8 @@ export function outgoingTangent(
 
 /**
  * Find the optimal tangent direction at a node aligned with the user's cursor drag.
- * Evaluates all connected segments at the node and picks the tangent vector (+ or -)
- * having the highest alignment (dot product) with the vector (cursor - node.pos).
+ * Evaluates all connected segments at the node and picks, among the directions that continue
+ * one of them past the node, the one best aligned with the vector (cursor - node.pos).
  * If the node has no connected segments, returns null.
  */
 export function getTangentForPlacement(
@@ -108,25 +134,20 @@ export function getTangentForPlacement(
     if (!seg) continue
     const tan = segmentTangentAt(net, seg, nodeId)
     if (!tan) continue
+    // New track leaves a node as the continuation of a rail attached to it, never folded back
+    // over that rail: at a dead end only one direction exists, whatever side the cursor is on;
+    // at a through node the other rail supplies the opposite direction.
+    const onward = seg.from === nodeId ? { x: -tan.x, y: -tan.y } : tan
 
     if (!userDir) {
-      if (!bestTangent) bestTangent = tan
+      if (!bestTangent) bestTangent = onward
       continue
     }
 
-    const dotPlus = userDir.x * tan.x + userDir.y * tan.y
-    const dotMinus = -dotPlus
-
-    if (dotPlus >= dotMinus) {
-      if (dotPlus > bestDot) {
-        bestDot = dotPlus
-        bestTangent = tan
-      }
-    } else {
-      if (dotMinus > bestDot) {
-        bestDot = dotMinus
-        bestTangent = { x: -tan.x, y: -tan.y }
-      }
+    const dot = userDir.x * onward.x + userDir.y * onward.y
+    if (dot > bestDot) {
+      bestDot = dot
+      bestTangent = onward
     }
   }
 

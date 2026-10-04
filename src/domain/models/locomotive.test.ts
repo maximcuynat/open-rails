@@ -14,6 +14,7 @@ import {
   getLocomotivePolygon,
   snapToNearestTrack,
   steerJunction,
+  findJunctionAhead,
   getLocomotiveFrontPos,
   getLocomotiveRearPos,
   getLocomotiveBogies,
@@ -95,7 +96,7 @@ describe('locomotive', () => {
     const nStem = addNode(net, { x: 0, y: 0 })
     const nApex = addNode(net, { x: 100, y: 0 })
     const nStraight = addNode(net, { x: 200, y: 0 })
-    const nDiv = addNode(net, { x: 200, y: 100 })
+    const nDiv = addNode(net, { x: 200, y: 20 }) // 11° branch: within the transition limit
 
     const sStem = addSegment(net, nStem.id, nApex.id)!
     const sStraight = addSegment(net, nApex.id, nStraight.id)!
@@ -235,6 +236,101 @@ describe('locomotive', () => {
     expect(junc.activeBranch).toBe('straight')
   })
 
+  describe('findJunctionAhead', () => {
+    function yNetwork(activeBranch: 'straight' | 'diverging' = 'straight') {
+      const net = createNetwork()
+      const nStem = addNode(net, { x: 0, y: 0 })
+      const nApex = addNode(net, { x: 100, y: 0 })
+      const nStraight = addNode(net, { x: 200, y: 0 })
+      const nDiv = addNode(net, { x: 200, y: 20 })
+      const sStem = addSegment(net, nStem.id, nApex.id)!
+      const sStraight = addSegment(net, nApex.id, nStraight.id)!
+      const sDiv = addSegment(net, nApex.id, nDiv.id)!
+      const junction = addJunction(net, {
+        nodeId: nApex.id,
+        stemNodeId: nStem.id,
+        straightNodeId: nStraight.id,
+        divergingNodeId: nDiv.id,
+        straightSegmentId: sStraight.id,
+        divergingSegmentId: sDiv.id,
+        hand: 'right',
+        frogNumber: 6,
+        activeBranch,
+      })
+      return { net, sStem, sStraight, sDiv, junction }
+    }
+
+    it('reports a facing turnout with its distance and its branches from left to right', () => {
+      const { net, sStem, junction } = yNetwork('diverging')
+      const ahead = findJunctionAhead(net, { segId: sStem.id, t: 0.25, forward: true }, 1)!
+
+      expect(ahead.junction).toBe(junction)
+      expect(ahead.distance).toBeCloseTo(75)
+      expect(ahead.facing).toBe(true)
+      expect(ahead.open).toBe(true)
+      expect(ahead.heading.x).toBeCloseTo(1)
+      // +y is to the right of a train heading +x
+      expect(ahead.branches).toEqual(['straight', 'diverging'])
+      expect(ahead.activeBranch).toBe('diverging')
+    })
+
+    it('reports a turnout met by a branch, closed unless the points are set to that branch', () => {
+      const { net, sStraight, sDiv, junction } = yNetwork('straight')
+
+      // Towards the apex along the straight branch (walking the segment backwards)
+      const byStraight = findJunctionAhead(net, { segId: sStraight.id, t: 0.5, forward: true }, -1)!
+      expect(byStraight.junction).toBe(junction)
+      expect(byStraight.distance).toBeCloseTo(50)
+      expect(byStraight.facing).toBe(false)
+      expect(byStraight.open).toBe(true)
+
+      const byDiverging = findJunctionAhead(net, { segId: sDiv.id, t: 0.5, forward: false }, 1)!
+      expect(byDiverging.facing).toBe(false)
+      expect(byDiverging.open).toBe(false)
+    })
+
+    it('returns null when the track ahead has no turnout', () => {
+      const { net, sStem } = yNetwork()
+      expect(findJunctionAhead(net, { segId: sStem.id, t: 0.5, forward: true }, -1)).toBeNull()
+    })
+
+    it('orders the branches by the direction of arrival at the points, not by the heading of the train', () => {
+      const net = createNetwork()
+      const n0 = addNode(net, { x: 0, y: 0 })
+      const n1 = addNode(net, { x: 100, y: 0 })
+      const nApex = addNode(net, { x: 200, y: 100 })
+      const nStraight = addNode(net, { x: 200, y: 200 })
+      const nDiv = addNode(net, { x: 185, y: 200 })
+      const sStart = addSegment(net, n0.id, n1.id)!
+      // Quarter turn from heading +x to heading +y: the turnout is reached heading +y
+      addCurveSegment(net, n1.id, nApex.id, { x: 200, y: 0 })
+      const sStraight = addSegment(net, nApex.id, nStraight.id)!
+      const sDiv = addSegment(net, nApex.id, nDiv.id)!
+      const junction = addJunction(net, {
+        nodeId: nApex.id,
+        stemNodeId: n1.id,
+        straightNodeId: nStraight.id,
+        divergingNodeId: nDiv.id,
+        straightSegmentId: sStraight.id,
+        divergingSegmentId: sDiv.id,
+        hand: 'right',
+        frogNumber: 6,
+        activeBranch: 'straight',
+      })
+
+      // Heading +y, the -x side is on the right
+      const ahead = findJunctionAhead(net, { segId: sStart.id, t: 0.5, forward: true }, 1)!
+      expect(ahead.heading.y).toBeCloseTo(1)
+      expect(ahead.branches).toEqual(['straight', 'diverging'])
+
+      const loco = createLocomotive(net, sStart.id, 0.5, 20, 10)!
+      steerJunction(net, loco, 'right')
+      expect(junction.activeBranch).toBe('diverging')
+      steerJunction(net, loco, 'left')
+      expect(junction.activeBranch).toBe('straight')
+    })
+  })
+
   it('preserves exact bogie distance along a curved track', () => {
     const net = createNetwork()
     const n1 = addNode(net, { x: 0, y: 0 })
@@ -279,8 +375,8 @@ describe('locomotive', () => {
 
     const sStem = addSegment(net, nStem.id, nApex.id)!
     const sStraight = addSegment(net, nApex.id, nStraight.id)!
-    const sLeft = addCurveSegment(net, nApex.id, nLeft.id, { x: 150, y: -25 })!
-    const sRight = addCurveSegment(net, nApex.id, nRight.id, { x: 150, y: 25 })!
+    const sLeft = addCurveSegment(net, nApex.id, nLeft.id, { x: 150, y: 0 })! // branches leave tangent to the stem
+    const sRight = addCurveSegment(net, nApex.id, nRight.id, { x: 150, y: 0 })!
 
     addJunction(net, {
       nodeId: nApex.id,

@@ -42,9 +42,42 @@ export function addNode(net: Network, pos: Point): RailNode {
   return node
 }
 
+/** Via points closer than this (meters) describe the same curve between two given nodes */
+const SAME_RAIL_EPSILON = 1e-9
+
+/**
+ * The rail that already joins two nodes with the same geometry, in either orientation:
+ * a straight when `via` is omitted, otherwise a curve whose control point is within `viaTolerance`.
+ * A straight and a curve, or two different curves, between the same nodes are different rails.
+ */
+export function findSameRail(
+  net: Network,
+  a: NodeId,
+  b: NodeId,
+  via?: Point,
+  viaTolerance = SAME_RAIL_EPSILON,
+): Segment | undefined {
+  for (const sid of net.adjacency.get(a) ?? []) {
+    const s = net.segments.get(sid)
+    if (!s || !((s.from === a && s.to === b) || (s.from === b && s.to === a))) continue
+    if (!via) {
+      if (s.kind === 'straight' || !s.via) return s
+    } else if (s.kind === 'curve' && s.via && Math.hypot(s.via.x - via.x, s.via.y - via.y) <= viaTolerance) {
+      return s
+    }
+  }
+  return undefined
+}
+
+/**
+ * Join two nodes with a straight rail. There is never more than one straight between two nodes:
+ * when one exists already (in either orientation) it is returned instead of a second one.
+ */
 export function addSegment(net: Network, from: NodeId, to: NodeId): Segment | null {
   if (from === to) return null
   if (!net.nodes.has(from) || !net.nodes.has(to)) return null
+  const existing = findSameRail(net, from, to)
+  if (existing) return existing
   const seg: Segment = { id: generateId('s'), from, to, kind: 'straight' }
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
@@ -60,11 +93,44 @@ export function addCurveSegment(
 ): Segment | null {
   if (from === to) return null
   if (!net.nodes.has(from) || !net.nodes.has(to)) return null
+  // Same rule as addSegment: the identical curve is not laid a second time
+  const existing = findSameRail(net, from, to, via)
+  if (existing) return existing
   const seg: Segment = { id: generateId('s'), from, to, kind: 'curve', via: { ...via } }
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
   return seg
+}
+
+/**
+ * Drop the rails laid on top of another one between the same two nodes: a second straight, or a
+ * curve whose control point is within `tolerance` of an earlier curve (and within 1 % of the chord,
+ * so that a loose tolerance does not merge two genuinely different curves). The older rail is kept,
+ * since trains may stand on it. Returns the number of rails removed.
+ */
+export function removeDuplicateSegments(net: Network, tolerance: number): number {
+  let removed = 0
+  for (const seg of Array.from(net.segments.values())) {
+    if (!net.segments.has(seg.id)) continue
+    const a = net.nodes.get(seg.from)
+    const b = net.nodes.get(seg.to)
+    if (!a || !b) continue
+    const isCurve = seg.kind === 'curve' && !!seg.via
+    const viaTolerance = Math.min(2 * tolerance, 0.01 * Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y))
+    // `seg` is the older one: the map iterates in insertion order
+    for (const sid of [...(net.adjacency.get(seg.from) ?? [])]) {
+      const other = net.segments.get(sid)
+      if (!other || other.id === seg.id) continue
+      if (!((other.from === seg.from && other.to === seg.to) || (other.from === seg.to && other.to === seg.from))) continue
+      const otherIsCurve = other.kind === 'curve' && !!other.via
+      if (isCurve !== otherIsCurve) continue
+      if (isCurve && Math.hypot(other.via!.x - seg.via!.x, other.via!.y - seg.via!.y) > viaTolerance) continue
+      removeSegment(net, other.id, false)
+      removed++
+    }
+  }
+  return removed
 }
 
 /**
@@ -194,10 +260,12 @@ export function dissolveNode(
   net.nodes.delete(id)
   net.adjacency.delete(id)
 
-  // Connect node1 and node2 directly with a straight segment
-  const newSeg = addSegment(net, otherId1, otherId2)
+  // Connect node1 and node2 directly with a straight segment. When a straight already joins them
+  // it takes over as it is: its own heritage is not overwritten.
+  const existing = findSameRail(net, otherId1, otherId2)
+  const newSeg = existing ?? addSegment(net, otherId1, otherId2)
   if (newSeg) {
-    newSeg.parentSegmentId = parentId
+    if (!existing) newSeg.parentSegmentId = parentId
 
     // Update any junctions that were referencing s1 or s2
     for (const junc of net.junctions.values()) {

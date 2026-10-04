@@ -361,3 +361,54 @@ describe('getStepPointsAlongSegment', () => {
   })
 })
 
+describe('one rail per stretch between two nodes', () => {
+  it('does not lay a second identical straight between the same nodes, in either direction', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    const first = addSegment(net, a.id, b.id)!
+
+    expect(addSegment(net, a.id, b.id)).toBe(first)
+    expect(addSegment(net, b.id, a.id)).toBe(first)
+    expect(net.segments.size).toBe(1)
+    expect(net.adjacency.get(a.id)).toEqual([first.id])
+    expect(net.adjacency.get(b.id)).toEqual([first.id])
+  })
+
+  it('does not lay a second identical curve, but keeps a straight, a curve and a different curve apart', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    const straight = addSegment(net, a.id, b.id)!
+    const curve = addCurveSegment(net, a.id, b.id, { x: 50, y: 30 })!
+    const other = addCurveSegment(net, a.id, b.id, { x: 50, y: -30 })!
+
+    expect(new Set([straight.id, curve.id, other.id]).size).toBe(3)
+    expect(addCurveSegment(net, a.id, b.id, { x: 50, y: 30 })).toBe(curve)
+    expect(addCurveSegment(net, b.id, a.id, { x: 50, y: 30 })).toBe(curve)
+    expect(net.segments.size).toBe(3)
+  })
+})
+
+describe('dissolveNode onto an existing rail', () => {
+  it('lets the straight that already joins the two neighbours take over, untouched', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const mid = addNode(net, { x: 50, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    const direct = addSegment(net, a.id, b.id)!
+    direct.parentSegmentId = 'ancestor_of_direct'
+    const s1 = addSegment(net, a.id, mid.id)!
+    s1.parentSegmentId = 'ancestor_of_halves'
+    addSegment(net, mid.id, b.id)
+
+    const res = dissolveNode(net, mid.id)
+
+    expect(res).toBe(direct)
+    expect(direct.parentSegmentId).toBe('ancestor_of_direct')
+    expect(net.nodes.has(mid.id)).toBe(false)
+    expect(net.segments.size).toBe(1)
+    expect(net.adjacency.get(a.id)).toEqual([direct.id])
+    expect(net.adjacency.get(b.id)).toEqual([direct.id])
+  })
+})

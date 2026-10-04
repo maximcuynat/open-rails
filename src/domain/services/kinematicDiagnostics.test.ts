@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { createNetwork, addNode, addSegment } from '../models/network'
 import { analyzeKinematics, computeTransitionAngleDeg } from './kinematicDiagnostics'
+import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
+import { placementThresholds } from '../geometry/scale'
+import { autoDetectJunctions } from '../models/junction'
+import { isTransitionAllowed } from './pathfinding'
 
 describe('kinematicDiagnostics', () => {
   it('calculates deflection angle correctly', () => {
@@ -113,8 +117,13 @@ describe('kinematicDiagnostics', () => {
     addSegment(net, apex.id, diverging.id)
 
     const issues = analyzeKinematics(net)
-    // Must NOT flag a 180° hairpin cassure!
-    expect(issues).toHaveLength(0)
+    // Must NOT flag a 180° hairpin cassure! It is reported as what it is: a fork still missing its stem,
+    // which no train can pass through.
+    expect(issues.some((i) => i.kind === 'sharp_turn' || i.severity === 'error')).toBe(false)
+    expect(issues).toHaveLength(1)
+    expect(issues[0].kind).toBe('invalid_turnout')
+    expect(issues[0].severity).toBe('warning')
+    expect(issues[0].nodeId).toBe(apex.id)
   })
 
   it('validates a complete 3-way turnout (degree 4) without false excess-rails or invalid_turnout error', () => {
@@ -165,5 +174,124 @@ describe('kinematicDiagnostics', () => {
 
     const issues = analyzeKinematics(net)
     expect(issues.some(i => i.id.startsWith('excess-rails'))).toBe(true)
+  })
+
+  describe('transition deflection limit', () => {
+    /** Two rails joined at the origin, the second one turned by `angleDeg` */
+    function corner(angleDeg: number) {
+      const net = createNetwork()
+      const a = addNode(net, { x: -100, y: 0 })
+      const c = addNode(net, { x: 0, y: 0 })
+      const r = (angleDeg * Math.PI) / 180
+      const e = addNode(net, { x: 100 * Math.cos(r), y: 100 * Math.sin(r) })
+      addSegment(net, a.id, c.id)
+      addSegment(net, c.id, e.id)
+      return { net, cornerId: c.id }
+    }
+
+    it('reports every corner sharper than the limit, and none within it', () => {
+      for (const angle of [0, 5, MAX_TRANSITION_DEFLECTION_DEG]) {
+        expect(analyzeKinematics(corner(angle).net)).toHaveLength(0)
+      }
+      for (const angle of [MAX_TRANSITION_DEFLECTION_DEG + 1, 20, 30, 45, 90]) {
+        const { net, cornerId } = corner(angle)
+        const issues = analyzeKinematics(net)
+        expect(issues).toHaveLength(1)
+        expect(issues[0].kind).toBe('sharp_turn')
+        expect(issues[0].nodeId).toBe(cornerId)
+        expect(issues[0].angleDeg).toBe(angle)
+      }
+    })
+
+    it('reports the branch of a perpendicular T', () => {
+      const net = createNetwork()
+      const w = addNode(net, { x: -200, y: 0 })
+      const c = addNode(net, { x: 0, y: 0 })
+      const e = addNode(net, { x: 200, y: 0 })
+      const n = addNode(net, { x: 0, y: 200 })
+      addSegment(net, w.id, c.id)
+      addSegment(net, c.id, e.id)
+      addSegment(net, c.id, n.id)
+
+      const issues = analyzeKinematics(net)
+      expect(issues).toHaveLength(1)
+      expect(issues[0].kind).toBe('sharp_turn')
+      expect(issues[0].nodeId).toBe(c.id)
+      expect(issues[0].angleDeg).toBe(90)
+    })
+  })
+
+  describe('gap between two facing rail ends', () => {
+    /** Two collinear rails along y=0 whose facing ends are `gap` apart, lengths in units of `k` */
+    function facingEnds(gap: number, k = 1) {
+      const net = createNetwork()
+      const a = addNode(net, { x: -100 * k, y: 0 })
+      const b = addNode(net, { x: 0, y: 0 })
+      const c = addNode(net, { x: gap, y: 0 })
+      const d = addNode(net, { x: gap + 100 * k, y: 0 })
+      const s1 = addSegment(net, a.id, b.id)!
+      const s2 = addSegment(net, c.id, d.id)!
+      return { net, b, c, s1, s2 }
+    }
+
+    it('reports a gap on both ends when they face each other within the heal tolerance', () => {
+      const { net, b, c, s1, s2 } = facingEnds(0.5)
+      const gaps = analyzeKinematics(net).filter((i) => i.kind === 'track_gap')
+      expect(gaps.map((i) => i.nodeId).sort()).toEqual([b.id, c.id].sort())
+      for (const issue of gaps) {
+        expect(issue.gapMeters).toBeCloseTo(0.5)
+        expect([...issue.involvedSegmentIds].sort()).toEqual([s1.id, s2.id].sort())
+      }
+    })
+
+    it('says nothing when the ends are further apart than the heal tolerance', () => {
+      const { healTolerance } = placementThresholds()
+      expect(analyzeKinematics(facingEnds(healTolerance + 0.5).net)).toHaveLength(0)
+      expect(analyzeKinematics(facingEnds(healTolerance - 0.5).net).filter((i) => i.kind === 'track_gap')).toHaveLength(2)
+    })
+
+    it('scales the distance with the gauge of the layout', () => {
+      const hoGauge = 0.0165
+      const { k, healTolerance } = placementThresholds(hoGauge)
+      // 0.5 m is a real gap at 1:1 but far beyond the heal distance of an HO layout
+      expect(analyzeKinematics(facingEnds(0.5, k).net, hoGauge)).toHaveLength(0)
+      expect(analyzeKinematics(facingEnds(healTolerance / 2, k).net, hoGauge).filter((i) => i.kind === 'track_gap')).toHaveLength(2)
+    })
+
+    it('ignores ends that are close but do not face each other', () => {
+      // Two parallel dead ends side by side, 0.5 m apart
+      const side = createNetwork()
+      const a = addNode(side, { x: -100, y: 0 })
+      const b = addNode(side, { x: 0, y: 0 })
+      const c = addNode(side, { x: -100, y: 0.5 })
+      const d = addNode(side, { x: 0, y: 0.5 })
+      addSegment(side, a.id, b.id)
+      addSegment(side, c.id, d.id)
+      expect(analyzeKinematics(side)).toHaveLength(0)
+
+      // The two ends of one short rail
+      const single = createNetwork()
+      const e = addNode(single, { x: 0, y: 0 })
+      const f = addNode(single, { x: 1, y: 0 })
+      addSegment(single, e.id, f.id)
+      expect(analyzeKinematics(single)).toHaveLength(0)
+    })
+  })
+
+  it('reports every two-rail node a train cannot pass, fold-backs included', () => {
+    for (let angle = 0; angle <= 180; angle += 1) {
+      const net = createNetwork()
+      const a = addNode(net, { x: -100, y: 0 })
+      const c = addNode(net, { x: 0, y: 0 })
+      const r = (angle * Math.PI) / 180
+      const e = addNode(net, { x: 100 * Math.cos(r), y: 100 * Math.sin(r) })
+      addSegment(net, a.id, c.id)
+      addSegment(net, c.id, e.id)
+      autoDetectJunctions(net)
+
+      const passable = isTransitionAllowed(net, a.id, c.id, e.id) && isTransitionAllowed(net, e.id, c.id, a.id)
+      const reported = analyzeKinematics(net).some((i) => i.nodeId === c.id)
+      expect(reported, `corner of ${angle}°`).toBe(!passable)
+    }
   })
 })

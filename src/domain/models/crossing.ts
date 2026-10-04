@@ -1,6 +1,28 @@
 import type { Network, Point, Segment } from './types'
 import { discretizeCurve } from '../geometry/curve'
+import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
+
+/**
+ * Shallowest angle (degrees) at which two tracks crossing each other are reported as a diamond.
+ * Reconcile makes a crossing node wherever two tracks intersect, whatever the angle, and trains
+ * run straight through it; below this the frog geometry degenerates (the rails are almost parallel).
+ */
+export const MIN_CROSSING_ANGLE_DEG = 1
+
+const MIN_CROSSING_SIN = Math.sin((MIN_CROSSING_ANGLE_DEG * Math.PI) / 180)
+
+/**
+ * The one test for "these two track directions cross" (any lengths): reconcile makes a node when it
+ * holds, and a geometric intersection without a node is reported as a crossing only when it holds
+ * with `margin` to spare, so that rounding at the limit cannot make the two disagree.
+ */
+export function isCrossingAngle(d1: Point, d2: Point, margin = 0): boolean {
+  const l1 = Math.hypot(d1.x, d1.y)
+  const l2 = Math.hypot(d2.x, d2.y)
+  if (l1 < 1e-12 || l2 < 1e-12) return false
+  return Math.abs(d1.x * d2.y - d1.y * d2.x) / (l1 * l2) >= MIN_CROSSING_SIN * (1 + margin)
+}
 
 export interface DiamondCrossing {
   id: string
@@ -125,16 +147,13 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
       const segs = adj.map((id) => net.segments.get(id)).filter((s): s is Segment => !!s)
       if (segs.length !== 4) continue
 
-      // Compute normalized direction away from node for each segment
+      // Normalized direction in which each segment leaves the node (its tangent there, so that
+      // a curve through the crossing pairs with its own continuation and not with its chord)
       const dirs: Point[] = []
       for (const s of segs) {
-        const otherId = s.from === node.id ? s.to : s.from
-        const other = net.nodes.get(otherId)
-        if (!other) continue
-        const dx = other.pos.x - node.pos.x
-        const dy = other.pos.y - node.pos.y
-        const l = Math.hypot(dx, dy)
-        dirs.push(l > 0 ? { x: dx / l, y: dy / l } : { x: 1, y: 0 })
+        const tan = segmentTangentAt(net, s, node.id)
+        if (!tan) continue
+        dirs.push(s.from === node.id ? tan : { x: -tan.x, y: -tan.y })
       }
       if (dirs.length !== 4) continue
 
@@ -161,7 +180,8 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
           const angleRad = Math.acos(Math.min(1, Math.max(0, dot12)))
           const angleDeg = (angleRad * 180) / Math.PI
 
-          if (angleDeg >= 8 && angleDeg <= 90) {
+          // The node exists: reconcile has already judged the angle
+          if (angleDeg > 0 && angleDeg <= 90) {
             const frogs = computeCrossingFrogs(node.pos, u1, u2)
             if (frogs) {
               const r = Math.max(
@@ -257,7 +277,8 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
         const angleRad = Math.acos(Math.min(1, Math.max(0, dot)))
         const angleDeg = (angleRad * 180) / Math.PI
 
-        if (angleDeg >= 8 && angleDeg <= 90) {
+        // No node here: only what reconcile would certainly turn into one
+        if (isCrossingAngle(u1, u2, 1e-6) && angleDeg <= 90) {
           const frogs = computeCrossingFrogs(foundCrossing.point, u1, u2)
           if (frogs) {
             const r = Math.max(

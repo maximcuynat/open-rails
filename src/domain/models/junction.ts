@@ -1,7 +1,7 @@
 import { generateId, addNode, addSegment, addCurveSegment, removeSegment } from './network'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
-import { segmentTangentAt } from '../geometry/tangent'
+import { segmentTangentAt, isTraversableDeflection } from '../geometry/tangent'
 import type { Junction, JunctionId, Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
 
 export interface TurnoutSpec {
@@ -231,14 +231,6 @@ export function autoDetectJunctions(net: Network): Junction[] {
         continue
       }
 
-      // In a real turnout, the through route has minDot close to -1 (at least < -0.8, i.e. deflection <= 36°)
-      if (minDot > -0.7) {
-        // No through route exists! This is not a valid turnout, do not register it
-        const existing = findJunctionAtNode(net, node.id)
-        if (existing) removeJunction(net, existing.id)
-        continue
-      }
-
       // Between throughA and throughB: the diverging route branches forward from stem.
       // u_div . u_straight > 0, u_div . u_stem < 0.
       const dotA_div = u[throughA].x * u[divIdx].x + u[throughA].y * u[divIdx].y
@@ -246,6 +238,14 @@ export function autoDetectJunctions(net: Network): Junction[] {
 
       const stemIdx = dotA_div < dotB_div ? throughA : throughB
       const straightIdx = dotA_div < dotB_div ? throughB : throughA
+
+      // A turnout needs two traversable routes out of the stem (see MAX_TRANSITION_DEFLECTION_DEG):
+      // a sharper through route or branch (a perpendicular T, a 120° star) is not a turnout.
+      if (!isTraversableDeflection(u[stemIdx], u[straightIdx]) || !isTraversableDeflection(u[stemIdx], u[divIdx])) {
+        const existing = findJunctionAtNode(net, node.id)
+        if (existing) removeJunction(net, existing.id)
+        continue
+      }
 
       const stemSeg = segs[stemIdx]
       const straightSeg = segs[straightIdx]
@@ -365,19 +365,10 @@ export function autoDetectJunctions(net: Network): Junction[] {
       let stemIdx = -1
       for (let i = 0; i < 4; i++) {
         const otherIndices = [0, 1, 2, 3].filter((k) => k !== i)
-        const allOpposite = otherIndices.every((k) => {
-          const dot = u[i].x * u[k].x + u[i].y * u[k].y
-          return dot < -0.65
-        })
-        if (allOpposite) {
-          const [b0, b1, b2] = otherIndices
-          const d01 = u[b0].x * u[b1].x + u[b0].y * u[b1].y
-          const d02 = u[b0].x * u[b2].x + u[b0].y * u[b2].y
-          const d12 = u[b1].x * u[b2].x + u[b1].y * u[b2].y
-          if (d01 > 0.5 && d02 > 0.5 && d12 > 0.5) {
-            stemIdx = i
-            break
-          }
+        // Every branch must be a traversable route out of the stem
+        if (otherIndices.every((k) => isTraversableDeflection(u[i], u[k]))) {
+          stemIdx = i
+          break
         }
       }
 
@@ -653,8 +644,18 @@ export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId
 }
 
 /**
+ * Track that toggleTurnoutHand relocates: it moves the end node of the diverging branch (and the
+ * control point of that branch), so every rail attached to that node changes shape — the branch
+ * itself and whatever continues it or hangs off its end. Nothing further away moves.
+ */
+export function turnoutHandFlipSegments(net: Network, junction: Junction): SegmentId[] {
+  if (junction.hand === 'three_way') return []
+  return [...new Set([junction.divergingSegmentId, ...(net.adjacency.get(junction.divergingNodeId) ?? [])])]
+}
+
+/**
  * Toggle the hand (left <-> right) of a turnout, mirroring the diverging branch
- * across the straight axis.
+ * across the straight axis. See turnoutHandFlipSegments for the track this moves.
  */
 export function toggleTurnoutHand(net: Network, junctionId: JunctionId): boolean {
   const junc = net.junctions.get(junctionId)

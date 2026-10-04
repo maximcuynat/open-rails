@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment } from './network'
+import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import {
   TURNOUT_SPECS,
   addJunction,
@@ -13,6 +14,7 @@ import {
   splitSegment,
   weldNodes,
   toggleTurnoutHand,
+  turnoutHandFlipSegments,
 } from './junction'
 
 describe('TURNOUT_SPECS', () => {
@@ -325,3 +327,94 @@ describe('autoDetectJunctions', () => {
   })
 })
 
+describe('autoDetectJunctions and the transition deflection limit', () => {
+  /** Main line west–east through the origin, plus a rail leaving the origin at `angleDeg` */
+  function mainLineWithBranch(angleDeg: number) {
+    const net = createNetwork()
+    const west = addNode(net, { x: -200, y: 0 })
+    const mid = addNode(net, { x: 0, y: 0 })
+    const east = addNode(net, { x: 200, y: 0 })
+    const r = (angleDeg * Math.PI) / 180
+    const end = addNode(net, { x: 200 * Math.cos(r), y: 200 * Math.sin(r) })
+    addSegment(net, west.id, mid.id)
+    addSegment(net, mid.id, east.id)
+    addSegment(net, mid.id, end.id)
+    return net
+  }
+
+  it('does not register a turnout on a perpendicular T', () => {
+    const net = mainLineWithBranch(90)
+    expect(autoDetectJunctions(net)).toHaveLength(0)
+    expect(net.junctions.size).toBe(0)
+  })
+
+  it('registers a branch up to the limit and none beyond it', () => {
+    expect(autoDetectJunctions(mainLineWithBranch(10))).toHaveLength(1)
+    expect(autoDetectJunctions(mainLineWithBranch(MAX_TRANSITION_DEFLECTION_DEG))).toHaveLength(1)
+    expect(autoDetectJunctions(mainLineWithBranch(MAX_TRANSITION_DEFLECTION_DEG + 1))).toHaveLength(0)
+    expect(autoDetectJunctions(mainLineWithBranch(45))).toHaveLength(0)
+  })
+
+  it('drops a junction whose branch is bent into a corner', () => {
+    const net = mainLineWithBranch(10)
+    autoDetectJunctions(net)
+    expect(net.junctions.size).toBe(1)
+    const branchEnd = [...net.nodes.values()][3]
+    branchEnd.pos = { x: 0, y: 200 }
+    autoDetectJunctions(net)
+    expect(net.junctions.size).toBe(0)
+  })
+
+  it('still detects the catalog turnouts, whose diverging branch leaves tangent to the stem', () => {
+    for (const frogNumber of [4, 6] as const) {
+      for (const hand of ['left', 'right'] as const) {
+        const net = createNetwork()
+        const stem = addNode(net, { x: -300, y: 0 })
+        const apex = addNode(net, { x: 0, y: 0 })
+        addSegment(net, stem.id, apex.id)
+        const t = placeTurnout(net, { startPos: apex.pos, direction: { x: 1, y: 0 }, frogNumber, hand, stemNodeId: apex.id })
+        net.junctions.clear()
+
+        const detected = autoDetectJunctions(net)
+        expect(detected).toHaveLength(1)
+        expect(detected[0].nodeId).toBe(apex.id)
+        expect(detected[0].stemNodeId).toBe(stem.id)
+        expect(detected[0].divergingNodeId).toBe(t.divergingNode.id)
+        expect(detected[0].straightNodeId).toBe(t.straightNode.id)
+      }
+    }
+  })
+})
+
+describe('turnoutHandFlipSegments', () => {
+  it('names exactly the rails whose geometry toggleTurnoutHand changes', () => {
+    for (const frogNumber of [4, 6] as const) {
+      const net = createNetwork()
+      const stem = addNode(net, { x: -300, y: 0 })
+      const apex = addNode(net, { x: 0, y: 0 })
+      addSegment(net, stem.id, apex.id)
+      const t = placeTurnout(net, { startPos: apex.pos, direction: { x: 1, y: 0 }, frogNumber, hand: 'left', stemNodeId: apex.id })
+      // Extensions of both branches, a spur off the end of the diverging one, and a rail further on
+      const sEnd = addNode(net, { x: t.straightNode.pos.x + 200, y: 0 })
+      addSegment(net, t.straightNode.id, sEnd.id)
+      const dEnd = addNode(net, { x: t.divergingNode.pos.x + 200, y: t.divergingNode.pos.y + 60 })
+      addCurveSegment(net, t.divergingNode.id, dEnd.id, { x: t.divergingNode.pos.x + 100, y: t.divergingNode.pos.y + 20 })
+      const spur = addNode(net, { x: t.divergingNode.pos.x + 150, y: t.divergingNode.pos.y + 90 })
+      addSegment(net, t.divergingNode.id, spur.id)
+      const beyond = addNode(net, { x: dEnd.pos.x + 200, y: dEnd.pos.y + 80 })
+      addSegment(net, dEnd.id, beyond.id)
+
+      const shape = () =>
+        new Map([...net.segments.values()].map((s) => [s.id, JSON.stringify([net.nodes.get(s.from)!.pos, s.via ?? null, net.nodes.get(s.to)!.pos])]))
+      const before = shape()
+      const named = turnoutHandFlipSegments(net, t.junction)
+
+      expect(toggleTurnoutHand(net, t.junction.id)).toBe(true)
+
+      const after = shape()
+      const changed = [...before.keys()].filter((id) => before.get(id) !== after.get(id))
+      expect([...named].sort()).toEqual(changed.sort())
+      expect(changed).toHaveLength(3)
+    }
+  })
+})
