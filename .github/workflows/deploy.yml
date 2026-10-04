@@ -1,12 +1,8 @@
 name: Deploy to GitHub Pages
 
 on:
-  push:
-    branches: ['main']
-    paths-ignore:
-      - '**.md'
-      - '.gitignore'
-      - '.vscode/**'
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:

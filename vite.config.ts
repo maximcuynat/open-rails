@@ -5,7 +5,7 @@ import pkg from './package.json'
 import path from 'path'
 
 export default defineConfig({
-  base: './',
+  base: '/open-rails/',
   plugins: [react()],
   resolve: {
     alias: {
