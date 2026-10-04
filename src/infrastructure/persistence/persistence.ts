@@ -358,7 +358,7 @@ export function deserializeNetwork(data: SerializedProject): {
 // In-memory fallback for environments without localStorage (e.g. some test runners)
 let memoryStorage: Record<string, string> = {}
 
-function getStorage(): {
+export function getStorage(): {
   getItem: (key: string) => string | null
   setItem: (key: string, value: string) => void
   removeItem: (key: string) => void
