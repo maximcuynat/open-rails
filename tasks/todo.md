@@ -204,10 +204,65 @@ Validé le 2026-10-04 (options 1 + 2 + portée variable). Pas de commit tant que
 Plan validé le 2026-10-04 (détail : `~/.claude/plans/replicated-sauteeing-wave.md`). Pas de commit tant que l'utilisateur ne le demande pas.
 
 - [x] 1. Table de matériel et règles de jonction : `src/domain/models/rollingStock.ts` + tests (Duplex 200,19 m / 13 bogies, TGV M 202 m / 14 bogies)
-- [ ] 2. Placement le long de la voie (`train.ts`) : `jointSpacing` / `endOverhang` à la place de la formule fixe, bogie partagé entre remorques
-- [ ] 3. Attelage et construction : dételage seulement entre deux motrices, modèle choisi dans la barre d'outils
-- [ ] 4. Visuels en contour : bogies dédoublonnés, caisses de pivot à pivot, soufflet sur le bogie partagé
-- [ ] 5. Persistance : champ `model`, recalage des anciennes sauvegardes au chargement
-- [ ] 6. Tests existants mis à jour, `npm test`, `npm run typecheck`, `npm run build`, contrôle dans le navigateur
+- [x] 2. Placement le long de la voie (`train.ts`) : `jointSpacing` / `endOverhang` à la place de la formule fixe, bogie partagé entre remorques
+- [x] 3. Attelage et construction : dételage seulement entre deux motrices, modèle choisi dans la barre d'outils
+- [x] 4. Visuels en contour : bogies dédoublonnés, caisses de pivot à pivot, soufflet sur le bogie partagé
+- [x] 5. Persistance : champ `model`, recalage des anciennes sauvegardes au chargement
+- [x] 6. Tests existants mis à jour, `npm test`, `npm run typecheck`, `npm run build`
+- [ ] 7. Contrôle dans le navigateur
 
-En attente : les étapes 2 à 5 touchent `train.ts`, `locomotive.ts`, `editorStore.ts` et `renderer.ts`, en cours de modification par le chantier « voir où mène le prochain aiguillage ». À reprendre une fois ce chantier commité.
+## Revue
+
+- `npm test` : 614 tests verts (35 fichiers) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
+- Contrôle indépendant : Duplex M+8R+M = 200,190 m sur 13 bogies ; TGV M à 9 voitures = 202,000 m sur 14 bogies ; en courbe R150, bogie partagé identique à chaque pas et décalage latéral maxi 4 cm aux jonctions articulées.
+- Non vérifié dans le navigateur (sélecteur de modèle, rendu en contour).
+- Restes connus : bout libre d'une remorque sans porte-à-faux (le bogie dépasse de 1,35 m, léger chevauchement à l'arrêt contre un autre train) ; fantôme d'une remorque posée contre une motrice dessiné sans son extension ; cotes TGV M en grande partie estimées.
+
+---
+
+# Niveaux de voie (ponts, sauts-de-mouton, tunnels)
+
+Plan proposé le 2026-10-04, à valider. Prérequis de l'import OSM (hors périmètre ici). Pas de commit tant que l'utilisateur ne le demande pas.
+
+## Principe
+
+Un entier optionnel `level` sur `Segment` (absent = 0, plage −5…+5, équivalent du `layer` d'OSM). Pas d'altitude, pas de pente, pas de niveau sur les nœuds : le niveau d'un nœud se déduit de ses segments (un nœud de rampe touche deux niveaux). Le niveau ne joue que là où deux voies se croisent ou se touchent **sans nœud commun**.
+
+Règle unique, partagée par tous les points ci-dessous : deux voies n'interagissent (croisement, soudure, découpe, doublon) que si elles ont un niveau en commun.
+
+## Plan
+
+- [ ] 1. Modèle (`types.ts`, `network.ts`) : champ `level?`, `segmentLevel(seg)`, `nodeLevels(net, nodeId)`, `setSegmentsLevel(net, ids, level)` (0 = champ supprimé, pour ne pas changer les fichiers existants)
+- [ ] 2. Héritage du niveau partout où un segment est recréé, via un seul helper qui copie `parentSegmentId` + `level` : `splitSegmentAtNode` (`reconcile.ts`, droite et courbe), les deux découpes de `junction.ts` (l. 547 et 587), `dissolveNode` (`network.ts` : fusion refusée si les deux moitiés n'ont pas le même niveau), ciseaux et voie parallèle (`constructionTemplates.ts`)
+- [ ] 3. Réconciliation (`reconcile.ts`, `network.ts`) :
+  - candidats `cross` ignorés si les niveaux diffèrent
+  - candidats `split` / `weld` nœud-sur-segment et nœud-sur-nœud ignorés sans niveau commun (un nœud isolé reste compatible avec tout)
+  - `removeDuplicateSegments` ne supprime pas un doublon d'un autre niveau
+- [ ] 4. Croisements (`crossing.ts`) : la détection géométrique sans nœud de `detectCrossings` ignore les paires de niveaux différents (corrige d'un coup le panneau latéral, le rendu des cœurs et l'export SVG)
+- [ ] 5. Décroiser un croisement existant (`crossing.ts` ou `network.ts`) : `separateLevelsAtNode(net, nodeId)` — quand un nœud de degré 4 porte deux voies traversantes de niveaux différents, la voie du dessus reçoit un nœud jumeau au même endroit. C'est ce qui permet de transformer un diamant déjà posé en pont ; la règle du point 3 empêche la réconciliation de ressouder les deux nœuds
+- [ ] 6. Persistance (`persistence.ts`) : `level` optionnel dans `SerializedSegment`, écrit seulement s'il est non nul, validé (entier borné) à la lecture, lu **avant** la réconciliation du chargement. Pas de changement de `version` ; l'undo suit tout seul (instantanés)
+- [ ] 7. Store (`editorStore.ts`) : `shiftSelectionLevel(delta)` → `setSegmentsLevel`, `separateLevelsAtNode` sur les nœuds touchés, `reconcileNetwork()` (redescendre un pont à 0 doit recréer le croisement), `pushHistorySnapshot()`, `notify()`
+- [ ] 8. Interface : champ « Niveau » avec `−` / `+` dans `SegmentPanel` (`SidePanel.tsx`) ; actions « Monter » / « Descendre » dans la barre contextuelle des voies (`contextBarModel.ts`), qui marchent sur une sélection multiple (un pont = plusieurs coupons)
+- [ ] 9. Rendu (`renderer.ts`, `exportSvg.ts`) : segments dessinés par niveau croissant ; niveau > 0 : tablier (bande plus large que le ballast + garde-corps) dessiné sous la voie, qui masque ce qui passe dessous ; niveau < 0 : voie atténuée et en pointillés (tunnel) ; mode simplifié (faible zoom) : ordre + liseré seulement
+- [ ] 10. Pointage (`hitSegment`, `hitNode`, `snapToNearestTrack`) : à distance égale, le niveau le plus haut l'emporte (on clique ce qu'on voit)
+- [ ] 11. Tests pour chaque point, `npm test`, `npm run typecheck`, `npm run build`, contrôle dans le navigateur sur un huit avec pont
+
+## Tests clés
+
+- Deux droites qui se croisent à des niveaux différents : aucun nœud créé, aucun croisement détecté, deux sections indépendantes ; au même niveau : comportement actuel inchangé
+- Un segment de niveau 1 coupé (ciseaux, aiguillage, réconciliation) donne deux moitiés de niveau 1
+- Diamant existant, une voie montée à 1 : deux nœuds superposés, plus de croisement ; redescendue à 0 : le diamant revient
+- Sauvegarde → chargement : niveaux conservés, pas de nœud recréé sous le pont ; un fichier sans `level` se charge à l'identique
+- Rendu (mock `ctx`) : la voie de niveau 1 est tracée après celle de niveau 0
+
+## À vérifier pendant l'implémentation
+
+- Collisions entre trains (`train.ts` l. 400) : si elles sont calculées le long de la voie, rien à faire ; si elles sont géométriques, filtrer par niveau
+- `computeTrackSections` : fondé sur les nœuds, donc a priori rien à changer une fois qu'aucun nœud n'est créé sous le pont
+
+## Hors périmètre
+
+- Import OSM, fond de carte, projection
+- Trains dessinés par niveau : les trains sont tracés après tout le réseau, donc un train qui passe **sous** un pont apparaîtra par-dessus le tablier. Corriger ça demande d'entrelacer réseau et trains niveau par niveau dans `Canvas.tsx` : chantier à part
+- Contrôle de cohérence des rampes (une voie de niveau 1 raccordée directement à du niveau 0 est acceptée telle quelle)
+- Raccourci clavier pour monter / descendre
