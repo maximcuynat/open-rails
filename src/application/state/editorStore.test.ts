@@ -587,3 +587,23 @@ describe('EditorStore scale-aware reconcile and drag restore', () => {
     expect(store.draggedViaInitialPositions.size).toBe(0)
   })
 })
+
+describe('EditorStore tool switching', () => {
+  it('drops the working-node selection of a construction tool when the tool is left', () => {
+    const store = new EditorStore()
+    const a = addNode(store.network, { x: 0, y: 0 })
+    const b = addNode(store.network, { x: 50, y: 0 })
+    addSegment(store.network, a.id, b.id)
+
+    store.setTool('place')
+    store.lastNodeId = b.id
+    store.selection = { nodes: new Set([b.id]), segments: new Set() }
+    store.setTool('select')
+    expect(store.selection.nodes.size).toBe(0)
+
+    // A selection made with the select tool is kept when switching away
+    store.selection = { nodes: new Set([a.id]), segments: new Set() }
+    store.setTool('place')
+    expect(store.selection.nodes.has(a.id)).toBe(true)
+  })
+})

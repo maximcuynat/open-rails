@@ -596,6 +596,12 @@ export class EditorStore {
       }
     }
 
+    // The construction tools mark their working node through the selection: it must not
+    // survive as a real selection (and show the gizmo) once the tool is left
+    if (this.tool !== t && (this.tool === 'place' || this.tool === 'curve' || this.tool === 'turnout')) {
+      this.selection = { nodes: new Set(), segments: new Set() }
+    }
+
     this.tool = t
     // Reset intermediate tool states
     this.measureStart = null
