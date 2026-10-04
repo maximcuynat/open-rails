@@ -11,6 +11,8 @@ import {
   parseDistance,
 } from '@domain/models/units'
 import { showToast } from '../common/Toast'
+import { KeybindingsSection } from './KeybindingsSection'
+import type { Keybindings } from '@application/keybindings/keybindings'
 
 interface SettingsModalProps {
   store: EditorStore
@@ -35,6 +37,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   const [boardHeightVal, setBoardHeightVal] = useState<string>(
     toUnitValue(store.boardHeight, store.unit).toString()
   )
+  const [draftKeys, setDraftKeys] = useState<Keybindings>(store.keybindings)
 
   // Sync state when modal opens or store changes
   useEffect(() => {
@@ -47,8 +50,9 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setBoardEnabled(store.boardEnabled)
       setBoardWidthVal(toUnitValue(store.boardWidth, store.unit).toString())
       setBoardHeightVal(toUnitValue(store.boardHeight, store.unit).toString())
+      setDraftKeys(store.keybindings)
     }
-  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight])
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
 
   // When changing scale preset in the modal
   const handleScaleChange = (presetId: ScalePresetId) => {
@@ -118,6 +122,8 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
     if (parsedBW > 0 && parsedBH > 0) {
       store.setBoardDimensions(parsedBW, parsedBH)
     }
+
+    if (draftKeys !== store.keybindings) store.setKeybindings(draftKeys)
 
     showToast(`Paramètres enregistrés : Échelle ${SCALE_PRESETS[selectedScale]?.name ?? selectedScale}`, 'success')
     onClose()
@@ -346,6 +352,9 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
             </span>
           </label>
         </div>
+
+        {/* Section 6 : Raccourcis clavier */}
+        <KeybindingsSection store={store} bindings={draftKeys} onChange={setDraftKeys} />
 
         {/* Info recap banner */}
         <div className="settings-summary-banner">
