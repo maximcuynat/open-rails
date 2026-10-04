@@ -3,7 +3,7 @@ import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastru
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId } from '@domain/models/network'
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
-import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
+import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import {
@@ -14,7 +14,9 @@ import {
   serializeNetwork,
   type SerializedProject,
 } from '@infrastructure/persistence/persistence'
-import type { JunctionId, Network, Point, Selection, Segment } from '@domain/models/types'
+import { loadKeyPreferences, saveKeyPreferences } from '@infrastructure/persistence/preferences'
+import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
+import type { Junction, JunctionId, Network, Point, Selection, Segment } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
 import { type Unit, type ScalePresetId, SCALE_PRESETS } from '@domain/models/units'
@@ -24,6 +26,7 @@ import {
   advanceLocomotive,
   snapToNearestTrack,
   steerJunction,
+  findUpcomingJunction,
   getLocomotiveFrontPos,
   reverseTGVTrain,
   hitTestTGVTrain,
@@ -51,6 +54,9 @@ import {
   hitTestTrainVehicle,
   removeVehicleFromTrainSet,
   steerTrainSetJunction,
+  isJunctionOccupied,
+  isTrackOccupied,
+  type TrainOccupancyCache,
   pruneTrainsToNetwork,
   serializeTrains,
   type CouplerPoint,
@@ -75,6 +81,9 @@ export const DEFAULT_PROJECT_NAME = 'Réseau sans titre'
 
 /** Feedback shown when a vehicle cannot be placed where the user clicked or dropped it. */
 export const TRAIN_PLACEMENT_REFUSED = 'Pose impossible ici : approchez le curseur d’un rail'
+
+/** Feedback shown when a junction is not thrown because a train stands over its points. */
+export const JUNCTION_OCCUPIED_REFUSED = 'Aiguillage occupé par un train : manœuvre impossible'
 
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
@@ -135,9 +144,13 @@ export class EditorStore {
   hoverSegSteps: { segId: string; points: Point[]; nearest: Point | null } | null = null
   showMinimap = false
   isSidePanelOpen = false
+  /** Inspector state before driving started, restored when driving stops */
+  private sidePanelOpenBeforeDriving = false
 
   // Mode double voie : Shift+Click pour poser 2 rails en parallele simultanement
   parallelMode = false
+  /** Double track asked for from the contextual bar: the next clicks behave like Maj+clic */
+  parallelArmed = false
   parallelOffset: number = 3.3 // metres entre les 2 axes de voie (voie double standard)
   parallelLastNodeId: string | null = null // noeud courant sur la voie secondaire
 
@@ -342,6 +355,7 @@ export class EditorStore {
     this.curveState = { phase: 0, startId: null }
     this.turnoutStartId = null
     this.parallelMode = false
+    this.parallelArmed = false
     this.parallelLastNodeId = null
     this.measureStart = null
     this.measureEnd = null
@@ -499,7 +513,57 @@ export class EditorStore {
     this.notify()
   }
 
+  // --- Keyboard shortcuts (user preference, stored apart from the project) ---
+  keybindings: Keybindings = defaultKeybindings()
+  /** Key position → character on the user's keyboard layout, for displaying position-bound keys */
+  keyLabels: Record<string, string> = {}
+
+  private loadKeyPreferences(): void {
+    const prefs = loadKeyPreferences()
+    if (!prefs) return
+    this.keybindings = mergeWithDefaults(prefs.bindings)
+    this.keyLabels = prefs.labels
+  }
+
+  private saveKeyPreferences(): void {
+    saveKeyPreferences({ bindings: this.keybindings, labels: this.keyLabels })
+  }
+
+  setKeybindings = (bindings: Keybindings): void => {
+    this.keybindings = bindings
+    this.saveKeyPreferences()
+    this.notify()
+  }
+
+  resetKeybindings = (): void => {
+    this.setKeybindings(defaultKeybindings())
+  }
+
+  /** Record the characters the user's layout produces (from the browser's layout map or key presses) */
+  setKeyLabels = (labels: Record<string, string>): void => {
+    let changed = false
+    for (const [code, label] of Object.entries(labels)) {
+      if (this.keyLabels[code] !== label) {
+        this.keyLabels = { ...this.keyLabels, [code]: label }
+        changed = true
+      }
+    }
+    if (!changed) return
+    this.saveKeyPreferences()
+    this.notify()
+  }
+
+  /** Label of the key bound to an action, as printed on the user's keyboard ('' when unassigned) */
+  shortcutLabel = (actionId: ActionId): string => shortcutLabel(this.keybindings, actionId, this.keyLabels)
+
+  /** " (X)" suffix for a tooltip, or '' when the action has no key */
+  shortcutHint = (actionId: ActionId): string => {
+    const label = this.shortcutLabel(actionId)
+    return label ? ` (${label})` : ''
+  }
+
   constructor() {
+    this.loadKeyPreferences()
     this.loadPersistedState()
     this.pushHistorySnapshot()
   }
@@ -732,8 +796,24 @@ export class EditorStore {
 
   exitParallelMode = (): void => {
     this.parallelMode = false
+    this.parallelArmed = false
     this.parallelLastNodeId = null
     this.notify()
+  }
+
+  /** True when the track tools lay a double track: a pair is in progress, or it was asked for. */
+  get isParallelActive(): boolean {
+    return this.parallelMode || this.parallelArmed
+  }
+
+  /** Switch double-track laying on (for the next rails) or off (the pair in progress ends). */
+  toggleParallelMode = (): void => {
+    if (this.isParallelActive) {
+      this.exitParallelMode()
+    } else {
+      this.parallelArmed = true
+      this.notify()
+    }
   }
 
   setParallelOffset = (offset: number): void => {
@@ -955,11 +1035,12 @@ export class EditorStore {
   }
 
   toggleSidePanel = (): void => {
-    this.isSidePanelOpen = !this.isSidePanelOpen
-    this.notify()
+    this.setSidePanelOpen(!this.isSidePanelOpen)
   }
 
   setSidePanelOpen = (v: boolean): void => {
+    // The inspector stays closed while driving (clean view); it comes back on exit
+    if (this.isPlayMode) return
     this.isSidePanelOpen = v
     this.notify()
   }
@@ -1492,64 +1573,75 @@ export class EditorStore {
     this.notify()
   }
 
-  toggleActiveJunction = (junctionId?: JunctionId): void => {
+  /** True when a vehicle stands over the points of the junction: it cannot be thrown */
+  isJunctionOccupied = (junc: Junction): boolean => isJunctionOccupied(this.network, junc, this.trains)
+
+  /**
+   * Throw the given junction, or the junction(s) of the current selection.
+   * A junction with a train standing over its points is left as it is; returns false when a throw
+   * was refused for that reason (see JUNCTION_OCCUPIED_REFUSED).
+   */
+  toggleActiveJunction = (junctionId?: JunctionId): boolean => {
+    let targets: Junction[] = []
     if (junctionId) {
       const junc = this.network.junctions.get(junctionId)
-      if (junc) {
-        toggleJunction(junc)
-        this.markDirty()
-        this.notify()
-      }
-      return
-    }
-    if (this.selection.junctions && this.selection.junctions.size > 0) {
+      if (junc) targets = [junc]
+    } else if (this.selection.junctions && this.selection.junctions.size > 0) {
       for (const jid of this.selection.junctions) {
         const junc = this.network.junctions.get(jid)
-        if (junc) toggleJunction(junc)
+        if (junc) targets.push(junc)
       }
+    } else {
+      let junc: Junction | undefined
+      for (const nid of this.selection.nodes) {
+        junc = findJunctionAtNode(this.network, nid)
+        if (junc) break
+      }
+      if (!junc) {
+        for (const sid of this.selection.segments) {
+          junc = findJunctionBySegment(this.network, sid)
+          if (junc) break
+        }
+      }
+      if (junc) targets = [junc]
+    }
+
+    const free = targets.filter((junc) => !this.isJunctionOccupied(junc))
+    for (const junc of free) toggleJunction(junc)
+    if (free.length > 0) {
       this.markDirty()
       this.notify()
-      return
     }
-    for (const nid of this.selection.nodes) {
-      const junc = findJunctionAtNode(this.network, nid)
-      if (junc) {
-        toggleJunction(junc)
-        this.markDirty()
-        this.notify()
-        return
-      }
-    }
-    for (const sid of this.selection.segments) {
-      const junc = findJunctionBySegment(this.network, sid)
-      if (junc) {
-        toggleJunction(junc)
-        this.markDirty()
-        this.notify()
-        return
-      }
-    }
+    return free.length === targets.length
   }
 
-  toggleTurnoutHandAtSelection = (): void => {
-    for (const nid of this.selection.nodes) {
-      const junc = findJunctionAtNode(this.network, nid)
-      if (junc) {
-        toggleTurnoutHand(this.network, junc.id)
-        this.markDirty()
-        this.notify()
-        return
+  /**
+   * Mirror the diverging branch of the given turnout, or of the turnout of the current selection.
+   * It is refused (returns false) while a train stands over the points or anywhere on the track
+   * the flip relocates (the diverging branch and the rails attached to its end), which would be
+   * pulled from under its vehicles.
+   */
+  toggleTurnoutHandAtSelection = (junctionId?: JunctionId): boolean => {
+    let junc: Junction | undefined = junctionId ? this.network.junctions.get(junctionId) : undefined
+    if (!junctionId) {
+      for (const nid of this.selection.nodes) {
+        junc = findJunctionAtNode(this.network, nid)
+        if (junc) break
+      }
+      if (!junc) {
+        for (const sid of this.selection.segments) {
+          junc = findJunctionBySegment(this.network, sid)
+          if (junc) break
+        }
       }
     }
-    for (const sid of this.selection.segments) {
-      const junc = findJunctionBySegment(this.network, sid)
-      if (junc) {
-        toggleTurnoutHand(this.network, junc.id)
-        this.markDirty()
-        this.notify()
-        return
-      }
-    }
+    if (!junc) return true
+    if (this.isJunctionOccupied(junc)) return false
+    if (isTrackOccupied(this.network, turnoutHandFlipSegments(this.network, junc), this.trains)) return false
+    toggleTurnoutHand(this.network, junc.id)
+    this.markDirty()
+    this.notify()
+    return true
   }
 
   // --- Locomotive / Simulation methods ---
@@ -1599,17 +1691,20 @@ export class EditorStore {
    * The ghost preview and the actual placement both go through here, so they always agree.
    */
   private computeTrainPlacement(worldPos: Point, kind: VehicleKind): { snap: CouplerSnapTarget | null; vehicle: Vehicle } | null {
+    // Coupled to a train, the chosen heading turns the vehicle around within the rake
+    const flipped = this.trainPlacementDirection === -1
+
     // 1. Train in progress: its free ends reach further, so the next click along the track extends it
     const chain = this.trainChain
     if (chain) {
       const chainSnapDist = Math.max(TRAIN_CHAIN_SNAP_DISTANCE, 60 / this.camera.scale)
-      const snap = findCouplerSnap(this.network, [chain], worldPos, kind, chainSnapDist)
+      const snap = findCouplerSnap(this.network, [chain], worldPos, kind, chainSnapDist, flipped)
       if (snap) return { snap, vehicle: snap.snappedVehicle }
     }
 
     // 2. Magnetic coupler snap with any train
     const maxCouplerSnapDist = Math.max(6.0, 30 / this.camera.scale)
-    const snap = findCouplerSnap(this.network, this.trains, worldPos, kind, maxCouplerSnapDist)
+    const snap = findCouplerSnap(this.network, this.trains, worldPos, kind, maxCouplerSnapDist, flipped)
     if (snap) return { snap, vehicle: snap.snappedVehicle }
 
     // 3. Free placement on the track under the cursor, with the chosen heading: a new train
@@ -1805,6 +1900,10 @@ export class EditorStore {
       this.trainPlacementPreview = null
       this.couplerSnapTarget = null
       this.hoveredTrainDeleteVehicle = null
+      // Clean driving view: the inspector closes, and reopens when driving stops
+      this.sidePanelOpenBeforeDriving = this.isSidePanelOpen
+      this.isSidePanelOpen = false
+      this.closeContextMenu()
       if (this.trains.length > 0 && !this.selectedTrain) {
         this.selectTrainById(this.trains[0].id)
       }
@@ -1813,6 +1912,7 @@ export class EditorStore {
       }
       this.startSimulationLoop()
     } else {
+      this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       this.locomotiveCurrentSpeed = 0
       this.locomotiveThrottle = 0
@@ -1933,10 +2033,12 @@ export class EditorStore {
   steerUpcomingTurnout = (steerDirection: 'left' | 'right'): void => {
     const train = this.selectedTrain
     if (train) {
-      if (steerTrainSetJunction(this.network, train, steerDirection)) this.notify()
+      if (steerTrainSetJunction(this.network, train, steerDirection, this.trains)) this.notify()
       return
     }
     if (!this.locomotive) return
+    const upcoming = findUpcomingJunction(this.network, this.locomotive)
+    if (upcoming && this.isJunctionOccupied(upcoming.junction)) return
     steerJunction(this.network, this.locomotive, steerDirection)
     this.notify()
   }
@@ -2360,11 +2462,12 @@ export class EditorStore {
   /** Tick all TrainSets that are in play mode */
   tickAllTrains = (dt: number): void => {
     if (!this.isPlayMode || dt <= 0) return
+    const occupancy: TrainOccupancyCache = new Map()
     for (const train of this.trains) {
       if (train.currentSpeed > 0 || train.notch > 0) {
-        const moved = tickTrainSet(this.network, train, dt)
+        const moved = tickTrainSet(this.network, train, dt, this.trains, occupancy)
         if (!moved) {
-          // End of track: stop dead and cut traction
+          // End of track or contact with another train: stop dead and cut traction
           train.currentSpeed = 0
           train.notch = Math.min(train.notch, 0)
         }

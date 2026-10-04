@@ -360,3 +360,29 @@ describe('pending placement guard', () => {
     expect(store.hasPendingPlacement).toBe(true)
   })
 })
+
+describe('double track asked for from the contextual bar', () => {
+  it('toggles on and off, and is forgotten with the placement', () => {
+    const store = new EditorStore()
+    store.setTool('place')
+    expect(store.isParallelActive).toBe(false)
+
+    store.toggleParallelMode()
+    expect(store.isParallelActive).toBe(true)
+    store.toggleParallelMode()
+    expect(store.isParallelActive).toBe(false)
+
+    // Leaving the placement (Escape) or the tool drops the request
+    store.toggleParallelMode()
+    store.lastNodeId = addNode(store.network, { x: 0, y: 0 }).id
+    store.cancelInteraction()
+    expect(store.isParallelActive).toBe(false)
+
+    // A pair in progress is ended by the same toggle
+    store.parallelMode = true
+    store.parallelLastNodeId = 'n_1'
+    store.toggleParallelMode()
+    expect(store.parallelMode).toBe(false)
+    expect(store.parallelLastNodeId).toBeNull()
+  })
+})

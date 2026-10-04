@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from './editorStore'
 import { addNode, addSegment, removeSegment, resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { COUPLING_GAP, setNotch, setReverser, vehicleFrontEndPos, vehicleRearEndPos, createVehicle, makeTrainSet, advanceTrainSet } from '@domain/models/train'
+import { placeTurnout } from '@domain/models/junction'
+import { positionOnSegment } from '@domain/models/locomotive'
 
 /** Store with one straight track from x=0 to x=`length` and the train tool armed in place mode */
 function storeWithStraightTrack(length = 1000): { store: EditorStore; segId: string } {
@@ -143,7 +146,47 @@ describe('EditorStore trains', () => {
     })
   })
 
+  describe('turned-around placement', () => {
+    it('flipping the heading couples the next vehicle turned around, ghost and placement alike', () => {
+      const { store } = storeWithStraightTrack()
+      store.setTool('locomotive')
+      expect(store.placeTrainItem({ x: 500, y: 0 })).toBe(true)
+      const tail = vehicleRearEndPos(store.network, store.trains[0].vehicles[0])!
+
+      store.updateLocomotivePreview(tail)
+      expect(store.trainPlacementPreview!.vehicles[0].flipped).toBeUndefined()
+
+      store.flipTrainPlacementDirection()
+      expect(store.couplerSnapTarget).not.toBeNull()
+      expect(store.trainPlacementPreview!.vehicles[0].flipped).toBe(true)
+
+      expect(store.placeTrainItem(tail)).toBe(true)
+      expect(store.trains).toHaveLength(1)
+      expect(store.trains[0].vehicles.map(v => v.flipped === true)).toEqual([false, true])
+    })
+  })
+
   describe('no editing while driving', () => {
+    it('the inspector closes for the drive, cannot be reopened, and comes back as it was on exit', () => {
+      const { store } = storeWithStraightTrack()
+      store.placeTrainItem({ x: 100, y: 0 })
+      store.setSidePanelOpen(true)
+
+      store.togglePlayMode()
+      expect(store.isSidePanelOpen).toBe(false)
+      store.toggleSidePanel()
+      expect(store.isSidePanelOpen).toBe(false)
+
+      store.togglePlayMode()
+      expect(store.isSidePanelOpen).toBe(true)
+
+      // Closed before the drive: still closed after it
+      store.setSidePanelOpen(false)
+      store.togglePlayMode()
+      store.togglePlayMode()
+      expect(store.isSidePanelOpen).toBe(false)
+    })
+
     it('refuses to place, delete or couple vehicles and to undo in play mode', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
@@ -402,6 +445,139 @@ describe('EditorStore trains', () => {
       expect(store.trains[0].vehicles[0].kind).toBe('loco')
       expect(store.trains[0].vehicles.every(v => v.front.segId !== rearSeg.id && v.rear.segId !== rearSeg.id)).toBe(true)
       expect(store.trains[0].vehicles.length).toBeLessThan(3)
+    })
+  })
+
+
+  describe('collisions and occupied junctions', () => {
+    it('a driven train stops in contact with a stationary one instead of running through it', () => {
+      const { store } = storeWithStraightTrack()
+      store.placeTrainItem({ x: 300, y: 0 })
+      store.placeTrainItem({ x: 600, y: 0 })
+      expect(store.trains).toHaveLength(2)
+      const [driven, parked] = store.trains
+      const parkedBefore = JSON.stringify(parked.vehicles)
+      store.selectTrainById(driven.id)
+      store.togglePlayMode()
+      setReverser(driven, 'forward')
+      setNotch(driven, 5)
+
+      for (let i = 0; i < 60 * 20; i++) store.tickAllTrains(1 / 60)
+
+      const nose = vehicleFrontEndPos(store.network, driven.vehicles[0])!
+      const tail = vehicleRearEndPos(store.network, parked.vehicles[parked.vehicles.length - 1])!
+      expect(tail.x - nose.x).toBeCloseTo(COUPLING_GAP, 6)
+      expect(JSON.stringify(parked.vehicles)).toBe(parkedBefore)
+      // Traction is cut as at an end of track
+      expect(driven.currentSpeed).toBe(0)
+      expect(driven.notch).toBe(0)
+      store.togglePlayMode()
+    })
+
+    it('refuses to throw a junction while a train stands over its points', () => {
+      const store = new EditorStore()
+      const stem = addNode(store.network, { x: 0, y: 0 })
+      const apex = addNode(store.network, { x: 300, y: 0 })
+      const straight = addNode(store.network, { x: 600, y: 0 })
+      const diverging = addNode(store.network, { x: 600, y: 60 })
+      addSegment(store.network, stem.id, apex.id)
+      addSegment(store.network, apex.id, straight.id)
+      addSegment(store.network, apex.id, diverging.id)
+      store.markDirty()
+      const junction = [...store.network.junctions.values()][0]
+      expect(junction.activeBranch).toBe('straight')
+
+      // Free junction: thrown, by id or through the selection
+      expect(store.toggleActiveJunction(junction.id)).toBe(true)
+      expect(junction.activeBranch).toBe('diverging')
+      store.setSelection({ nodes: new Set([apex.id]), segments: new Set() })
+      expect(store.toggleActiveJunction()).toBe(true)
+      expect(junction.activeBranch).toBe('straight')
+
+      // A loco astride the apex (nose at x=305, rear bogie at x=291)
+      store.setTrainPlacementKind('tgv_loco')
+      expect(store.placeTrainItem({ x: 305, y: 0 })).toBe(true)
+      expect(store.isJunctionOccupied(junction)).toBe(true)
+
+      expect(store.toggleActiveJunction(junction.id)).toBe(false)
+      expect(store.toggleActiveJunction()).toBe(false)
+      store.steerUpcomingTurnout('right')
+      expect(junction.activeBranch).toBe('straight')
+
+      // Mirroring the diverging branch is refused as well, by id or through the selection
+      const geometry = () => JSON.stringify([[...store.network.nodes.values()], [...store.network.segments.values()], junction.hand])
+      const before = geometry()
+      expect(store.toggleTurnoutHandAtSelection(junction.id)).toBe(false)
+      expect(store.toggleTurnoutHandAtSelection()).toBe(false)
+      expect(geometry()).toBe(before)
+
+      // Once the train is gone both operations go through again
+      store.trains = []
+      expect(store.toggleTurnoutHandAtSelection(junction.id)).toBe(true)
+      expect(geometry()).not.toBe(before)
+      expect(store.toggleActiveJunction(junction.id)).toBe(true)
+    })
+  })
+
+  describe('turnout hand flip under a train', () => {
+    /** Stem, #4 or #6 turnout at the origin, both branches extended by 300 m */
+    function storeWithTurnout(frogNumber: 4 | 6) {
+      const store = new EditorStore()
+      const net = store.network
+      const stem = addNode(net, { x: -300, y: 0 })
+      const apex = addNode(net, { x: 0, y: 0 })
+      addSegment(net, stem.id, apex.id)
+      const t = placeTurnout(net, { startPos: apex.pos, direction: { x: 1, y: 0 }, frogNumber, hand: 'left', stemNodeId: apex.id })
+      const sEnd = addNode(net, { x: t.straightNode.pos.x + 300, y: 0 })
+      const straightExt = addSegment(net, t.straightNode.id, sEnd.id)!
+      const div = net.segments.get(t.junction.divergingSegmentId)!
+      const dir = { x: t.divergingNode.pos.x - div.via!.x, y: t.divergingNode.pos.y - div.via!.y }
+      const len = Math.hypot(dir.x, dir.y)
+      const dEnd = addNode(net, { x: t.divergingNode.pos.x + (dir.x / len) * 300, y: t.divergingNode.pos.y + (dir.y / len) * 300 })
+      const divergingExt = addSegment(net, t.divergingNode.id, dEnd.id)!
+      store.markDirty()
+      const junction = [...net.junctions.values()].find((j) => j.nodeId === apex.id)!
+      return { store, junction, straightExt, divergingExt, divergingSegId: junction.divergingSegmentId }
+    }
+    const bogies = (store: EditorStore) =>
+      store.trains.flatMap((t) => t.vehicles.flatMap((v) => [v.front, v.rear].map((p) => positionOnSegment(store.network, p.segId, p.t)!)))
+    const park = (store: EditorStore, segId: string, t: number) => {
+      const lead = createVehicle(store.network, segId, t, 'loco', 1)!
+      const train = makeTrainSet('parked', [lead, { id: 'w', kind: 'wagon', front: { ...lead.rear }, rear: { ...lead.rear } }])
+      expect(advanceTrainSet(store.network, train, 0)).toBe(true)
+      store.trains = [train]
+    }
+
+    it('is refused wherever the train stands on track the flip would move, and never displaces a bogie', () => {
+      for (const frogNumber of [4, 6] as const) {
+        // On the diverging branch past the points, astride its end, and on its extension
+        for (const where of ['branch', 'astride', 'extension'] as const) {
+          const { store, junction, divergingExt, divergingSegId } = storeWithTurnout(frogNumber)
+          if (where === 'branch') park(store, divergingSegId, 0.95)
+          else park(store, divergingExt.id, where === 'astride' ? 0.05 : 0.6)
+          expect(store.isJunctionOccupied(junction)).toBe(false)
+          const before = bogies(store)
+
+          expect(store.toggleTurnoutHandAtSelection(junction.id)).toBe(false)
+
+          expect(junction.hand).toBe('left')
+          bogies(store).forEach((p, i) => expect(Math.hypot(p.x - before[i].x, p.y - before[i].y)).toBe(0))
+        }
+      }
+    })
+
+    it('is allowed when the train stands on track the flip leaves alone', () => {
+      const { store, junction, straightExt } = storeWithTurnout(6)
+      park(store, straightExt.id, 0.5)
+      const before = bogies(store)
+      const divergingEnd = store.network.nodes.get(junction.divergingNodeId)!
+      const sideBefore = divergingEnd.pos.y
+
+      expect(store.toggleTurnoutHandAtSelection(junction.id)).toBe(true)
+
+      // The diverging branch is mirrored across the straight axis (y=0)
+      expect(divergingEnd.pos.y).toBeCloseTo(-sideBefore, 9)
+      bogies(store).forEach((p, i) => expect(Math.hypot(p.x - before[i].x, p.y - before[i].y)).toBe(0))
     })
   })
 })
