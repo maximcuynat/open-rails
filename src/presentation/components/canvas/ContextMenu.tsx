@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
-import type { EditorStore } from '@application/state/editorStore'
+import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { showToast } from '../common/Toast'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { toggleTurnoutHand } from '@domain/models/junction'
 
@@ -48,15 +49,33 @@ export function ContextMenu({ store }: ContextMenuProps) {
       const cut = performTrackCut(store.network, target.worldPos, 18 / store.camera.scale, store.getPlacementThresholds().detachGap)
       if (cut) {
         store.reconcileNetwork()
-        store.pushHistorySnapshot()
         store.markDirty()
       }
     }
     store.closeContextMenu()
   }
 
+  const handleParallel = () => {
+    // The right-clicked rail, or the whole selection when it is part of it
+    if (target.id) {
+      const segs = store.selection.segments.has(target.id) ? store.selection.segments : [target.id]
+      store.createParallelTrackFromSelection(undefined, segs)
+    }
+    store.closeContextMenu()
+  }
+
   const handleDelete = () => {
-    if (target.type === 'node' && target.id) {
+    const junction = target.type === 'junction' && target.id ? store.network.junctions.get(target.id) : null
+    if (junction) {
+      // Removing a turnout = removing its diverging branch at the points; the main line stays
+      const branches = [junction.divergingSegmentId, junction.divergingRightSegmentId].filter(
+        (sid): sid is string => !!sid && store.network.segments.has(sid),
+      )
+      store.selection = { nodes: new Set(), segments: new Set(branches) }
+      store.deleteSelection()
+    } else if (target.type === 'junction') {
+      // The turnout is already gone: nothing to delete, and certainly not the previous selection
+    } else if (target.type === 'node' && target.id) {
       store.selection = { nodes: new Set([target.id]), segments: new Set() }
       store.deleteSelection()
     } else if (target.type === 'segment' && target.id) {
@@ -81,15 +100,13 @@ export function ContextMenu({ store }: ContextMenuProps) {
     if (target.id) {
       toggleTurnoutHand(store.network, target.id)
       store.markDirty()
-      store.pushHistorySnapshot()
-      store.notify()
     }
     store.closeContextMenu()
   }
 
   const handlePlaceTrain = () => {
     if (target.worldPos) {
-      store.handleDropTrainItem('tgv_loco', target.worldPos)
+      if (!store.handleDropTrainItem('tgv_loco', target.worldPos)) showToast(TRAIN_PLACEMENT_REFUSED, 'warning')
     }
     store.closeContextMenu()
   }
@@ -134,14 +151,11 @@ export function ContextMenu({ store }: ContextMenuProps) {
           </button>
           <button
             className="ctx-item"
-            onClick={() => {
-              store.createParallelTrackFromSelection()
-              store.closeContextMenu()
-            }}
+            onClick={handleParallel}
           >
             <span className="ctx-icon">🛤</span>
             <span className="ctx-label">Créer voie parallèle</span>
-            <kbd className="ctx-kbd">+2v</kbd>
+            <kbd className="ctx-kbd">D</kbd>
           </button>
           <button className="ctx-item" onClick={handlePlaceTrain}>
             <span className="ctx-icon">🚄</span>
@@ -238,7 +252,7 @@ export function ContextMenu({ store }: ContextMenuProps) {
             }}
           >
             <span className="ctx-icon">🧲</span>
-            <span className="ctx-label">{store.snap ? 'Désactiver le snap' : 'Activer le snap'}</span>
+            <span className="ctx-label">{store.snap ? 'Désactiver l’aimantation' : 'Activer l’aimantation'}</span>
             <kbd className="ctx-kbd">G</kbd>
           </button>
           <div className="ctx-sep" />

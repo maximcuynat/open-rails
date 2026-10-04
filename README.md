@@ -22,8 +22,8 @@
   - Modèle cinématique rigoureux : bogies en retrait ($3{,}04\,\text{m}$), axes orientés tournants avec la voie, soufflets d'accordéons élastiques ancrés sur les parois latérales.
 - **Mode Conduite dynamique** :
   - Vitesse en temps réel jusqu'à $500\,\text{km/h}$.
-  - Contrôle clavier (<kbd>↑</kbd> Accélérer, <kbd>↓</kbd> Freiner, <kbd>←</kbd>/<kbd>→</kbd> Aiguillage).
-  - Réversibilité ferroviaire réelle : changement de sens par transfert de cabine (<kbd>R</kbd>).
+  - Contrôle clavier (<kbd>F5</kbd> pour prendre les commandes, <kbd>↑</kbd>/<kbd>↓</kbd> crans de traction et de freinage, <kbd>←</kbd>/<kbd>→</kbd> Aiguillage).
+  - Réversibilité ferroviaire réelle : inverseur avant / neutre / arrière (<kbd>Maj</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd>).
   - Mode Debug Squelette (<kbd>D</kbd>) affichant les pivots, bielles d'attelage et accordéons.
 - **Export & Sauvegarde** :
   - Export vectoriel SVG multi-calques prêt pour l'impression ou la découpe laser.
@@ -35,17 +35,40 @@
 
 | Touche | Action |
 | :--- | :--- |
-| <kbd>V</kbd> | Outil Sélection & Déplacement (Gizmo) |
-| <kbd>N</kbd> | Outil Pose de voie droite |
-| <kbd>C</kbd> | Outil Courbe |
-| <kbd>Y</kbd> | Outil Aiguillage |
-| <kbd>H</kbd> | Outil Navigation (Pan) |
-| <kbd>Espace</kbd> | Prendre les commandes / Quitter le mode conduite |
-| <kbd>↑</kbd> / <kbd>↓</kbd> | Accélérer / Freiner le train |
-| <kbd>R</kbd> | Changer de motrice / inverser le sens de marche |
-| <kbd>D</kbd> | Activer/Désactiver le mode Squelette (Debug) |
-| <kbd>←</kbd> / <kbd>→</kbd> | Aiguiller le train en approche d'une bifurcation |
-| <kbd>Suppr</kbd> | Supprimer les éléments sélectionnés |
+| **Outils** | |
+| <kbd>V</kbd> | Sélection et déplacement |
+| <kbd>N</kbd> | Voie droite |
+| <kbd>C</kbd> | Voie courbe |
+| <kbd>P</kbd> | Aiguillage |
+| <kbd>K</kbd> | Ciseaux (scinder une voie) |
+| <kbd>M</kbd> | Règle (mesurer) |
+| <kbd>H</kbd> | Déplacer la vue |
+| <kbd>L</kbd> | Trains (pose et sélection) |
+| **Pose des voies** | |
+| <kbd>0</kbd>–<kbd>9</kbd> puis <kbd>Entrée</kbd> | Saisir la longueur exacte de la voie droite en cours |
+| <kbd>Tab</kbd> | Continuer en courbe depuis le nœud de la voie droite en cours |
+| <kbd>Échap</kbd> | Annuler la pose en cours, puis revenir à l'outil Sélection |
+| **Édition** | |
+| <kbd>T</kbd> | Basculer l'aiguillage sélectionné |
+| <kbd>D</kbd> | Créer une voie parallèle à la sélection |
+| <kbd>R</kbd> | Réconcilier les jonctions et aiguillages |
+| <kbd>Suppr</kbd> ou <kbd>Retour arrière</kbd> | Supprimer la sélection |
+| <kbd>Ctrl</kbd> + <kbd>A</kbd> | Tout sélectionner |
+| <kbd>Ctrl</kbd> + <kbd>Z</kbd> | Annuler |
+| <kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>Z</kbd> ou <kbd>Ctrl</kbd> + <kbd>Y</kbd> | Rétablir |
+| **Affichage** | |
+| <kbd>Espace</kbd> + glisser | Déplacer la vue |
+| <kbd>F</kbd> | Ajuster tout le réseau à la vue |
+| <kbd>Ctrl</kbd> + <kbd>0</kbd> | Zoom par défaut |
+| <kbd>G</kbd> | Activer / désactiver l'aimantation |
+| <kbd>I</kbd> | Afficher / masquer l'inspecteur |
+| <kbd>Ctrl</kbd> + <kbd>,</kbd> ou <kbd>,</kbd> | Paramètres du réseau (échelles, unités) |
+| **Conduite** | |
+| <kbd>F5</kbd> | Entrer en mode conduite / le quitter |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Manipulateur : un cran de traction / de freinage |
+| <kbd>Maj</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd> | Inverseur (avant · neutre · arrière) |
+| <kbd>Retour arrière</kbd> | Arrêt d'urgence |
+| <kbd>←</kbd> / <kbd>→</kbd> | Orienter le prochain aiguillage |
 
 ---
 

@@ -23,8 +23,15 @@ import {
   releaseEmergencyBrake,
   commandedAcceleration,
   MAX_NOTCH,
+  makeTrainSet,
+  serializeTrains,
+  deserializeTrains,
+  pruneTrainsToNetwork,
+  steerTrainSetJunction,
 } from './train'
-import { walkForward } from './locomotive'
+import { walkForward, snapToNearestTrack } from './locomotive'
+import { removeSegment } from './network'
+import { addJunction } from './junction'
 
 function makeStraightNetwork(lengthMeters: number): { net: Network; segId: string } {
   resetIdCounter()
@@ -523,3 +530,159 @@ describe('walkForward', () => {
 })
 
 
+
+describe('snapToNearestTrack precision', () => {
+  it('projects exactly on a long straight rail instead of jumping between samples', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const snap = snapToNearestTrack(net, { x: 110, y: 4 }, 12)
+    expect(snap).not.toBeNull()
+    expect(snap!.segId).toBe(segId)
+    expect(snap!.t).toBeCloseTo(0.11, 9)
+    expect(snap!.dist).toBeCloseTo(4, 9)
+  })
+})
+
+describe('train persistence helpers', () => {
+  it('round-trips positions and brings every train back stopped with controls at rest', () => {
+    const { net, segId } = makeStraightNetwork(500)
+    const loco = createVehicle(net, segId, 0.5, 'loco')!
+    const train = makeTrainSet('train_90', [loco])
+    setReverser(train, 'reverse')
+    setNotch(train, 3)
+    train.currentSpeed = 12
+
+    const saved = JSON.parse(JSON.stringify(serializeTrains([train])))
+    expect(saved[0]).not.toHaveProperty('currentSpeed')
+    expect(saved[0]).not.toHaveProperty('notch')
+
+    const [restored] = deserializeTrains(net, saved)
+    expect(restored.id).toBe('train_90')
+    expect(restored.vehicles[0]).toEqual(loco)
+    expect(restored.direction).toBe(-1)
+    expect(restored.currentSpeed).toBe(0)
+    expect(restored.notch).toBe(0)
+    expect(restored.reverser).toBe('neutral')
+    expect(restored.emergencyBrake).toBe(false)
+  })
+
+  it('ignores missing or malformed train data', () => {
+    const { net, segId } = makeStraightNetwork(500)
+    expect(deserializeTrains(net, undefined)).toEqual([])
+    expect(deserializeTrains(net, 'nope')).toEqual([])
+    const good = { id: 'veh_1', kind: 'wagon', front: { segId, t: 0.5, forward: true }, rear: { segId, t: 0.4, forward: true } }
+    const trains = deserializeTrains(net, [
+      null,
+      { id: 'train_a' },
+      { id: 'train_b', vehicles: [{ ...good, front: { segId: 's_missing', t: 0.5, forward: true } }] },
+      { id: 'train_c', vehicles: [{ ...good, kind: 'plane' }] },
+      { id: 'train_d', vehicles: [{ ...good, rear: { segId, t: 7, forward: true } }] },
+      { id: 'train_e', vehicles: [good] },
+    ])
+    expect(trains.map(t => t.id)).toEqual(['train_e'])
+  })
+})
+
+describe('pruneTrainsToNetwork', () => {
+  function threeSegmentTrain() {
+    resetIdCounter()
+    const net = createNetwork()
+    const nodes = [0, 100, 200, 300].map(x => addNode(net, { x, y: 0 }))
+    const segs = [0, 1, 2].map(i => addSegment(net, nodes[i].id, nodes[i + 1].id)!)
+    const on = (i: number, id: string) => ({ ...createVehicle(net, segs[i].id, 0.5, 'wagon')!, id })
+    const train = makeTrainSet('train_x', [on(2, 'v_front'), on(1, 'v_mid'), on(0, 'v_rear')])
+    return { net, segs, train }
+  }
+
+  it('returns the same array when every vehicle still stands on a rail', () => {
+    const { net, train } = threeSegmentTrain()
+    const trains = [train]
+    expect(pruneTrainsToNetwork(net, trains)).toBe(trains)
+  })
+
+  it('clips the vehicles whose rail is gone and stops the train', () => {
+    const { net, segs, train } = threeSegmentTrain()
+    train.currentSpeed = 20
+    train.notch = 4
+    removeSegment(net, segs[0].id)
+
+    const [clipped, ...rest] = pruneTrainsToNetwork(net, [train])
+    expect(rest).toHaveLength(0)
+    expect(clipped.id).toBe('train_x')
+    expect(clipped.vehicles.map(v => v.id)).toEqual(['v_front', 'v_mid'])
+    expect(clipped.currentSpeed).toBe(0)
+    expect(clipped.notch).toBe(0)
+  })
+
+  it('splits a train cut in the middle and drops a train left with no vehicle', () => {
+    const { net, segs, train } = threeSegmentTrain()
+    removeSegment(net, segs[1].id)
+    const split = pruneTrainsToNetwork(net, [train])
+    expect(split.map(t => t.vehicles.map(v => v.id))).toEqual([['v_front'], ['v_rear']])
+    expect(split[0].id).toBe('train_x')
+    expect(split[1].id).not.toBe('train_x')
+
+    removeSegment(net, segs[0].id)
+    removeSegment(net, segs[2].id)
+    expect(pruneTrainsToNetwork(net, [train])).toEqual([])
+  })
+})
+
+describe('steerTrainSetJunction', () => {
+  function yNetwork() {
+    resetIdCounter()
+    const net = createNetwork()
+    const nStem = addNode(net, { x: 0, y: 0 })
+    const nApex = addNode(net, { x: 300, y: 0 })
+    const nStraight = addNode(net, { x: 600, y: 0 })
+    const nDiv = addNode(net, { x: 600, y: 100 })
+    const sStem = addSegment(net, nStem.id, nApex.id)!
+    const sStraight = addSegment(net, nApex.id, nStraight.id)!
+    const sDiv = addSegment(net, nApex.id, nDiv.id)!
+    const junction = addJunction(net, {
+      nodeId: nApex.id,
+      stemNodeId: nStem.id,
+      straightNodeId: nStraight.id,
+      divergingNodeId: nDiv.id,
+      straightSegmentId: sStraight.id,
+      divergingSegmentId: sDiv.id,
+      hand: 'right',
+      frogNumber: 4,
+      activeBranch: 'straight',
+    })
+    return { net, sStem, junction }
+  }
+
+  it('steers the facing turnout ahead of the lead vehicle when running forward', () => {
+    const { net, sStem, junction } = yNetwork()
+    // Nose towards the apex (+x)
+    const train = makeTrainSet('t', [createVehicle(net, sStem.id, 0.5, 'loco', 1)!])
+
+    expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
+    expect(junction.activeBranch).toBe('diverging')
+    expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
+    expect(junction.activeBranch).toBe('straight')
+  })
+
+  it('in reverse, steers the turnout behind the last vehicle, relative to the travel direction', () => {
+    const { net, sStem, junction } = yNetwork()
+    // Nose away from the apex (-x): the junction is behind the train
+    const loco = createVehicle(net, sStem.id, 0.5, 'loco', -1)!
+    const wagon = findCouplerSnap(net, [makeTrainSet('t0', [loco])], vehicleRearEndPos(net, loco)!, 'wagon')!.snappedVehicle
+    const train = makeTrainSet('t', [loco, wagon])
+
+    // Running forward (towards -x) there is no facing turnout ahead
+    expect(steerTrainSetJunction(net, train, 'right')).toBe(false)
+    expect(junction.activeBranch).toBe('straight')
+
+    setReverser(train, 'reverse')
+    expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
+    expect(junction.activeBranch).toBe('diverging')
+    expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
+    expect(junction.activeBranch).toBe('straight')
+  })
+
+  it('does nothing for an empty train', () => {
+    const { net } = yNetwork()
+    expect(steerTrainSetJunction(net, makeTrainSet('t', []), 'left')).toBe(false)
+  })
+})

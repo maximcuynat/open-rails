@@ -58,3 +58,42 @@ Mis de côté le 2026-10-04. Rien n'est lancé tant que l'utilisateur ne le dema
 - [ ] 3. Fusionner `main` dans la branche (2 commits de retard : CI et `base` GitHub Pages)
 - [ ] 4. Fusionner dans `developement`, puis supprimer la branche en local et sur le dépôt distant
 - [ ] 5. Traiter ensuite `feature/curve-angle-rotation-gizmo` (conflits attendus sur `gizmo.ts` et `ToolBar.tsx`)
+
+---
+
+# Harmonisation de l'interface (suite au topo du 2026-10-04)
+
+Deux agents en parallèle, périmètres de fichiers disjoints, puis relecture et commit.
+
+## Agent A — mode train « comme la pose de rail »
+
+- [x] A1. Un seul chemin de pose : clic, glisser-déposer et menu contextuel donnent le même `TrainSet`, sans ancienne `Locomotive` cachée
+- [x] A2. « Train en cours » : chaque clic ajoute un véhicule au bout ; Échap arrête la chaîne, puis revient à Sélection
+- [x] A3. Pas d'édition (pose, suppression, attelage) pendant la conduite
+- [x] A4. Aiguiller en conduite (←/→) fonctionne pour un `TrainSet`
+- [x] A5. Trains sauvegardés (stockage local + JSON), annulables, nettoyés par « Nouveau réseau » et quand leur voie disparaît
+- [x] A6. Textes d'aide du mode train à jour, refus de pose signalé
+
+## Agent B — fiabilité de l'éditeur de voie et cohérence générale
+
+- [x] B1. Export JSON complet (échelle, unité, écartement, entraxe, plateau)
+- [x] B2. Suppr / Retour arrière pendant une pose ne supprime plus le nœud de départ
+- [x] B3. Une action = une étape d'annulation ; annuler remet l'outil en cours à zéro
+- [x] B4. Menu contextuel : « Supprimer l'aiguillage » et « Créer voie parallèle » agissent sur la cible ; « Dupliquer voie double » branché ou retiré
+- [x] B5. Pose de rail enchaînée ; Échap annule la pose en cours, puis revient à Sélection, sans vider la sélection par surprise
+- [x] B6. Raccourcis : pas de déclenchement avec Ctrl/Cmd, Espace/F5 cohérents, fenêtre d'aide et README exacts
+- [x] B7. Barre d'état affichée ; textes d'aide faux corrigés
+- [x] B8. Vocabulaire : un nom par notion, plus d'anglais résiduel, nom du produit unique
+
+## Hors périmètre de ce lot
+
+- Thème clair des éléments flottants et unification des styles de boutons
+- Suppression complète du code de l'ancienne `Locomotive` (rendu compris)
+- Mode catalogue Kato (inatteignable aujourd'hui)
+
+## Revue
+
+- `tsc --noEmit`, `vitest` (451 tests, 31 fichiers) et `vite build` verts, relancés après relecture.
+- Rien n'a été vérifié dans le navigateur : les gestionnaires de `Canvas.tsx`, le clavier et les composants React n'ont pas de tests ; seule la logique du store, du domaine et de la persistance est couverte.
+- Ajouté à la relecture : en conduite, les raccourcis d'édition sont coupés (seuls F5, F, I et Ctrl+0 passent).
+- Restes connus : couper un rail sous un train retire les véhicules posés dessus (annulable) ; une pose libre au milieu d'un train peut le chevaucher ; basculer un aiguillage sous un train déplace ses wagons ; les boutons de la barre d'outils restent cliquables en conduite ; les réseaux déjà enregistrés gardent le nom « Untitled Network » ; code mort à retirer (`TrainBuilderPalette`, repli glisser au pointeur dans `Canvas.tsx`, Tab et `[` `]` en courbe).

@@ -44,18 +44,14 @@ export function FloatingActionBar({ store, viewport }: FloatingActionBarProps) {
     const cut = performTrackCut(store.network, anchor.worldPos, 18 / store.camera.scale, store.getPlacementThresholds().detachGap)
     if (cut) {
       store.reconcileNetwork()
-      store.pushHistorySnapshot()
       store.markDirty()
-      store.notify()
     }
   }
 
   const handleFlipTurnout = () => {
     if (junctionId) {
       toggleTurnoutHand(store.network, junctionId)
-      store.pushHistorySnapshot()
       store.markDirty()
-      store.notify()
     }
   }
 
@@ -110,14 +106,14 @@ export function FloatingActionBar({ store, viewport }: FloatingActionBarProps) {
         </button>
       )}
 
-      {(store.selection.nodes.size === 2 || store.selection.segments.size > 0) && (
+      {store.canCreateParallelTrack && (
         <button
           className="fab-btn fab-btn-cyan"
           onClick={() => store.createParallelTrackFromSelection()}
-          title="Créer une double voie parallèle (+2v)"
+          title="Créer une voie parallèle à la sélection (D)"
         >
           <span>🛤</span>
-          <span>Double voie (+2v)</span>
+          <span>Voie double (D)</span>
         </button>
       )}
 
@@ -128,6 +124,7 @@ export function FloatingActionBar({ store, viewport }: FloatingActionBarProps) {
             const nid = [...store.selection.nodes][0]
             store.setTool('place')
             store.lastNodeId = nid
+            store.notify()
           }}
           title="Prolonger la voie à partir de ce nœud (N)"
         >
@@ -141,7 +138,7 @@ export function FloatingActionBar({ store, viewport }: FloatingActionBarProps) {
       <button
         className="fab-btn fab-btn-danger"
         onClick={() => store.deleteSelection()}
-        title="Supprimer la sélection (Suppr / Backspace)"
+        title="Supprimer la sélection (Suppr / Retour arrière)"
       >
         <span>🗑</span>
       </button>

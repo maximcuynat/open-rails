@@ -9,12 +9,14 @@
 
 import type { Network, Point, SegmentId } from './types'
 import type {
+  Locomotive,
   TrackPosition,
   BogieFrame,
   TGVDetails,
   TGVAccordion,
 } from './locomotive'
 import {
+  steerJunction,
   walkBackward,
   walkForward,
   positionOnSegment,
@@ -50,6 +52,12 @@ export const COUPLING_GAP = 0.80
 
 /** Maximum distance (meters) between two vehicle ends to allow coupling */
 export const MAX_COUPLE_DISTANCE = 3.5
+
+/**
+ * Reach (meters) of the free ends of the train being built: a click this close to one of them
+ * appends the vehicle to that train instead of starting a new one (about a vehicle and a half).
+ */
+export const TRAIN_CHAIN_SNAP_DISTANCE = 30
 
 /** A single vehicle (loco or wagon) placed on the track */
 export interface Vehicle {
@@ -845,4 +853,123 @@ export function removeVehicleFromTrainSet(
   }
   advanceTrainSet(net, newTrain, 0)
   return newTrain
+}
+
+// ─── Junction steering ────────────────────────────────────────────────────────
+
+/**
+ * Throw the next facing turnout ahead of the train to the left or right of its travel direction.
+ * Running forward the junction is looked up ahead of the lead vehicle; in reverse, behind the last one.
+ * Returns false when there is no facing turnout ahead.
+ */
+export function steerTrainSetJunction(net: Network, train: TrainSet, steerDirection: 'left' | 'right'): boolean {
+  if (train.vehicles.length === 0) return false
+  const reversing = train.direction === -1
+  const veh = reversing ? train.vehicles[train.vehicles.length - 1] : train.vehicles[0]
+  // Probe locomotive whose nose is the end of the train that enters the junction first
+  const probe: Locomotive = {
+    id: veh.id,
+    length: VEHICLE_BOGIE_DISTANCE[veh.kind] + 2 * VEHICLE_OVERHANG[veh.kind],
+    bogieDistance: VEHICLE_BOGIE_DISTANCE[veh.kind],
+    front: reversing ? { ...veh.rear, forward: !veh.rear.forward } : veh.front,
+    rear: reversing ? veh.front : veh.rear,
+    direction: 1,
+  }
+  return steerJunction(net, probe, steerDirection)
+}
+
+// ─── Persistence & network consistency ────────────────────────────────────────
+
+/** Saved form of a train: where each vehicle stands. Driving state (speed, handle, reverser) is not kept. */
+export interface SerializedTrain {
+  id: TrainSetId
+  direction: 1 | -1
+  vehicles: Vehicle[]
+}
+
+export function serializeTrains(trains: TrainSet[]): SerializedTrain[] {
+  return trains.map((train) => ({
+    id: train.id,
+    direction: train.direction,
+    vehicles: train.vehicles.map((v) => ({ id: v.id, kind: v.kind, front: { ...v.front }, rear: { ...v.rear } })),
+  }))
+}
+
+function isTrackPositionOnNetwork(net: Network, pos: unknown): pos is TrackPosition {
+  if (!pos || typeof pos !== 'object') return false
+  const p = pos as Partial<TrackPosition>
+  return (
+    typeof p.segId === 'string' &&
+    net.segments.has(p.segId) &&
+    typeof p.t === 'number' &&
+    p.t >= 0 &&
+    p.t <= 1 &&
+    typeof p.forward === 'boolean'
+  )
+}
+
+function isVehicleOnNetwork(net: Network, veh: unknown): veh is Vehicle {
+  if (!veh || typeof veh !== 'object') return false
+  const v = veh as Partial<Vehicle>
+  return (
+    typeof v.id === 'string' &&
+    (v.kind === 'loco' || v.kind === 'wagon') &&
+    isTrackPositionOnNetwork(net, v.front) &&
+    isTrackPositionOnNetwork(net, v.rear)
+  )
+}
+
+/**
+ * Drop the vehicles standing on segments that no longer exist. A train cut in the middle is split
+ * into the rakes that remain, each one stopped; a train left without vehicles disappears.
+ * Returns the same array when every train is intact.
+ */
+export function pruneTrainsToNetwork(net: Network, trains: TrainSet[]): TrainSet[] {
+  if (trains.every((train) => train.vehicles.length > 0 && train.vehicles.every((v) => isVehicleOnNetwork(net, v)))) {
+    return trains
+  }
+  const result: TrainSet[] = []
+  for (const train of trains) {
+    const rakes: Vehicle[][] = []
+    let rake: Vehicle[] = []
+    for (const veh of train.vehicles) {
+      if (isVehicleOnNetwork(net, veh)) {
+        rake.push(veh)
+      } else if (rake.length > 0) {
+        rakes.push(rake)
+        rake = []
+      }
+    }
+    if (rake.length > 0) rakes.push(rake)
+
+    if (rakes.length === 1 && rakes[0].length === train.vehicles.length) {
+      result.push(train)
+      continue
+    }
+    rakes.forEach((vehicles, i) => {
+      const piece: TrainSet = { ...train, id: i === 0 ? train.id : generateId('train'), vehicles }
+      resetTrainControls(piece)
+      result.push(piece)
+    })
+  }
+  return result
+}
+
+/**
+ * Rebuild trains from saved data on a network: every train comes back stopped with its controls at rest,
+ * and anything malformed or standing on a missing segment is dropped.
+ */
+export function deserializeTrains(net: Network, data: unknown): TrainSet[] {
+  if (!Array.isArray(data)) return []
+  const trains: TrainSet[] = []
+  for (const raw of data) {
+    if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !Array.isArray(raw.vehicles)) continue
+    const vehicles: Vehicle[] = raw.vehicles.map((v: unknown) =>
+      isVehicleOnNetwork(net, v) ? { id: v.id, kind: v.kind, front: { ...v.front }, rear: { ...v.rear } } : v,
+    )
+    const train = makeTrainSet(raw.id, vehicles)
+    if (raw.direction === -1) train.direction = -1
+    trains.push(train)
+  }
+  return pruneTrainsToNetwork(net, trains)
 }

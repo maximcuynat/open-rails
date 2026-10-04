@@ -42,7 +42,7 @@ import {
   applyFreeformParallelTurnout,
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
-import { formatDistance, formatRadius, formatAngle } from '@domain/models/units'
+import { formatDistance, formatRadius, formatAngle, parseDistance } from '@domain/models/units'
 import { trainDriveTelemetry } from '@domain/models/train'
 import {
   renderStraightDimension,
@@ -56,7 +56,8 @@ import {
   renderTranslationGizmo,
   getGizmoAnchor,
 } from './gizmo'
-import type { EditorStore } from '@application/state/editorStore'
+import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { showToast } from '../common/Toast'
 
 
 /** Find the nearest node within screen pixel tolerance, capped to at most 0.80m real-world distance. */
@@ -427,7 +428,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // Ghost preview when placing a vehicle (locomotive or wagon)
-    if (store.tool === 'locomotive' && store.trainToolSubMode === 'place' && !store.isPlayMode) {
+    if ((store.draggingTrainItem || (store.tool === 'locomotive' && store.trainToolSubMode === 'place')) && !store.isPlayMode) {
       if (store.trainPlacementPreview) {
         renderTrainSet(
           ctx,
@@ -512,11 +513,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       // Label distance and coordinates
       const seg = store.network.segments.get(store.hoverSegSteps.segId)
       const nodeA = seg ? store.network.nodes.get(seg.from) : null
-      let distFromStart = '0.0'
+      let distFromStart = 0
       if (nodeA) {
         const dx = nearest.x - nodeA.pos.x
         const dy = nearest.y - nodeA.pos.y
-        distFromStart = Math.hypot(dx, dy).toFixed(1)
+        distFromStart = Math.hypot(dx, dy)
       }
       const isIntCoord = Math.abs(Math.round(nearest.x) - nearest.x) < 1e-3 && Math.abs(Math.round(nearest.y) - nearest.y) < 1e-3
       const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
@@ -525,7 +526,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.globalAlpha = 0.95
       ctx.textBaseline = 'bottom'
       ctx.textAlign = 'center'
-      ctx.fillText(`${coordLabel}+${distFromStart} m`, w2sX(nearest.x), w2sY(nearest.y) - 12)
+      ctx.fillText(`${coordLabel}+${formatDistance(distFromStart, store.unit)}`, w2sX(nearest.x), w2sY(nearest.y) - 12)
       ctx.restore()
     }
 
@@ -542,7 +543,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const dy = cursor.y - startNode.pos.y
         const minLen = store.getMinTrackLength()
 
-        const typedLen = store.isNumericInputActive ? parseFloat(store.numericInput) : NaN
+        const typedLen = store.isNumericInputActive ? parseDistance(store.numericInput, store.unit) : NaN
         const hasTypedLen = !isNaN(typedLen) && typedLen > 0
 
         if (tangent) {
@@ -882,7 +883,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.arc(eX, eY, 4, 0, Math.PI * 2)
       ctx.fill()
 
-      const labelText = `${dist.toFixed(2)} m · ${angleDeg.toFixed(1)}° (ΔX: ${Math.abs(dx).toFixed(1)}m, ΔY: ${Math.abs(dy).toFixed(1)}m)`
+      const labelText = `${formatDistance(dist, store.unit)} · ${angleDeg.toFixed(1)}° (ΔX : ${formatDistance(Math.abs(dx), store.unit)}, ΔY : ${formatDistance(Math.abs(dy), store.unit)})`
       ctx.font = '600 11px Archivo, system-ui, sans-serif'
       const lw = ctx.measureText(labelText).width
       const mx = (sX + eX) / 2
@@ -1199,6 +1200,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (e.button === 0 && store.tool === 'locomotive') {
         const world = getWorldPos(e.clientX, e.clientY)
 
+        // While driving, a click never edits the trains: it only picks the train to drive
+        if (store.isPlayMode) {
+          const hitVehicle = store.findVehicleAt(world)
+          if (hitVehicle) store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
+          redraw()
+          return
+        }
+
         // Delete mode: click deletes the hovered vehicle
         if (store.trainToolSubMode === 'delete') {
           const deleted = store.deleteVehicleAt(world)
@@ -1225,7 +1234,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
 
         // Place mode:
-        // 1. If snapped to a magnetic coupler, place/couple immediately!
+        // 1. If snapped to the train in progress or to a magnetic coupler, place/couple immediately!
         if (store.couplerSnapTarget) {
           store.placeTrainItem(world)
           redraw()
@@ -1242,7 +1251,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
 
         // 3. Place new vehicle on track
-        store.placeTrainItem(world)
+        if (!store.placeTrainItem(world)) showToast(TRAIN_PLACEMENT_REFUSED, 'warning')
         redraw()
         return
       }
@@ -1276,7 +1285,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.curveState = { phase: 1, startId }
           store.lastNodeId = startId
           store.selection = { nodes: new Set([startId]), segments: new Set() }
-          store.markDirty()
+          // No undo step for the start point alone: it is recorded with the curve
+          if (!clickedNode) store.notePendingEdit((store.network.adjacency.get(startId)?.length ?? 0) > 0)
           redraw()
         } else if (cs.phase === 1 && cs.startId) {
           const cursor = store.snap ? store.snappedCursor : world
@@ -1291,6 +1301,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             // Auto-snap destination: connect to existing node if close (closes loops!)
             // Or if close to an existing segment, split that segment and connect to midNode!
             let endId: string
+            // Only a curve ending in open space is chained; joining existing track ends the pose
+            let endsInOpenSpace = false
             if (trackTarget?.nodeId && trackTarget.nodeId !== cs.startId) {
               endId = trackTarget.nodeId
             } else {
@@ -1305,6 +1317,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                 } else {
                   const endNode = addNode(store.network, endPos)
                   endId = endNode.id
+                  endsInOpenSpace = true
                 }
               }
             }
@@ -1333,10 +1346,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
             store.reconcileNetwork()
             store.markDirty()
-            // Finish curve: release cursor so it does not auto-continue
-            store.curveState = { phase: 0, startId: null }
-            store.lastNodeId = null
-            store.selection = { nodes: new Set(), segments: new Set() }
+            store.clearNumericInput()
+            if (endsInOpenSpace && store.network.nodes.has(endId)) {
+              // Chain: the end of this curve is the start of the next one
+              store.curveState = { phase: 1, startId: endId }
+              store.lastNodeId = endId
+              store.selection = { nodes: new Set([endId]), segments: new Set() }
+            } else {
+              store.curveState = { phase: 0, startId: null }
+              store.lastNodeId = null
+              store.parallelMode = false
+              store.parallelLastNodeId = null
+              store.selection = { nodes: new Set(), segments: new Set() }
+            }
           }
           redraw()
         }
@@ -1412,8 +1434,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.lastNodeId = startNodeId
               store.parallelMode = false // attend le prochain point pour créer la paire parallèle
               store.selection = { nodes: new Set([startNodeId]), segments: new Set() }
-              store.reconcileNetwork()
-              store.markDirty()
+              if (!clickedNode) store.notePendingEdit((store.network.adjacency.get(startNodeId)?.length ?? 0) > 0)
             }
           } else {
             // Mode double-voie actif : etendre les 2 voies simultanement
@@ -1486,7 +1507,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const dx = snappedWorld.x - startNode.pos.x
             const dy = snappedWorld.y - startNode.pos.y
 
-            const typedLen = store.isNumericInputActive ? parseFloat(store.numericInput) : NaN
+            const typedLen = store.isNumericInputActive ? parseDistance(store.numericInput, store.unit) : NaN
             const hasTypedLen = !isNaN(typedLen) && typedLen > 0
             const minLen = store.getMinTrackLength()
 
@@ -1526,6 +1547,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
             const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
             let endId: string
+            // Only a rail ending in open space is chained; joining existing track ends the pose
+            let endsInOpenSpace = false
             if (closeNode && closeNode.id !== store.lastNodeId) {
               endId = closeNode.id
             } else {
@@ -1540,15 +1563,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               } else {
                 const endNode = addNode(store.network, endPos)
                 endId = endNode.id
+                endsInOpenSpace = true
               }
             }
             addSegment(store.network, store.lastNodeId, endId)
             store.reconcileNetwork()
             store.clearNumericInput()
             store.markDirty()
-            // Finish straight segment: release cursor so it does not auto-continue
-            store.lastNodeId = null
-            store.selection = { nodes: new Set(), segments: new Set() }
+            if (endsInOpenSpace && store.network.nodes.has(endId)) {
+              // Chain: the end of this rail is the start of the next one
+              store.lastNodeId = endId
+              store.selection = { nodes: new Set([endId]), segments: new Set() }
+            } else {
+              store.lastNodeId = null
+              store.selection = { nodes: new Set(), segments: new Set() }
+            }
           }
         } else {
           // First node placement: if clicked on an existing segment, split it to start from it!
@@ -1569,7 +1598,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           }
           store.lastNodeId = startNodeId
           store.selection = { nodes: new Set([startNodeId]), segments: new Set() }
-          store.markDirty()
+          // No undo step for the start point alone: it is recorded with the rail
+          store.notePendingEdit(hitSegId !== null && (store.network.adjacency.get(startNodeId)?.length ?? 0) > 0)
         }
         redraw()
         return
@@ -1586,8 +1616,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const limits = store.getPlacementThresholds()
             const geom = computeFreeformParallelTurnout(startNode.pos, tangent, cursor, limits)
             if (geom && geom.valid) {
-              const res = applyFreeformParallelTurnout(store.network, startNode.id, geom, limits.reconcileTolerance)
-              store.lastNodeId = res.endNode.id
+              applyFreeformParallelTurnout(store.network, startNode.id, geom, limits.reconcileTolerance)
               store.turnoutStartId = null
               store.markDirty()
             }
@@ -1606,7 +1635,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const split = splitSegment(store.network, hitSegId, targetPos)
               if (split) {
                 store.turnoutStartId = split.midNode.id
-                store.markDirty()
+                // The cut is recorded with the turnout, so the whole pose is one undo step
+                store.notePendingEdit(true)
               }
             }
           }
@@ -2138,7 +2168,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (segId) {
             store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
           } else {
-            if (store.lastNodeId || store.curveState.phase !== 0 || store.turnoutStartId) {
+            if (store.hasPendingPlacement || store.measureStart) {
               store.cancelInteraction()
             } else {
               store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })
@@ -2175,7 +2205,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         canvas.style.cursor = isSpaceDown ? 'grab' : ''
         if (moved) {
           store.reconcileNetwork()
-          store.pushHistorySnapshot()
           store.markDirty()
         }
         redraw()
@@ -2184,6 +2213,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
       // Finalize node dragging
       if (store.isDraggingNode) {
+        // A plain click on a node moves nothing: no reconcile and no undo step for it
+        let moved = false
+        for (const [nid, initPos] of store.draggedNodeInitialPositions) {
+          const node = store.network.nodes.get(nid)
+          if (node && (node.pos.x !== initPos.x || node.pos.y !== initPos.y)) {
+            moved = true
+            break
+          }
+        }
         store.isDraggingNode = false
         store.dragStartWorld = null
         store.draggedNodeInitialPositions.clear()
@@ -2191,9 +2229,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (canvas.hasPointerCapture(e.pointerId)) {
           canvas.releasePointerCapture(e.pointerId)
         }
-        store.reconcileNetwork()
-        store.pushHistorySnapshot()
-        store.markDirty()
+        if (moved) {
+          store.reconcileNetwork()
+          store.markDirty()
+        }
         redraw()
         return
       }
@@ -2373,8 +2412,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     const onCommitNumeric = () => {
       if (store.tool === 'place' && store.lastNodeId && store.isNumericInputActive) {
-        const val = parseFloat(store.numericInput)
-        if (!isNaN(val) && val > 0) {
+        // The length is typed in the display unit
+        const val = parseDistance(store.numericInput, store.unit)
+        if (val > 0) {
           const startNode = store.network.nodes.get(store.lastNodeId)
           if (startNode) {
             const cursor = store.snap ? store.snappedCursor : store.cursorWorld
@@ -2391,6 +2431,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             const endPos = computeStraightPiece(startNode.pos, dir, val)
             const closeNode = findNearestNode(store.network, endPos, 16, store.camera)
             let endId: string
+            let endsInOpenSpace = false
             if (closeNode && closeNode.id !== store.lastNodeId) {
               endId = closeNode.id
             } else {
@@ -2402,14 +2443,20 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               } else {
                 const endNode = addNode(store.network, endPos)
                 endId = endNode.id
+                endsInOpenSpace = true
               }
             }
             addSegment(store.network, store.lastNodeId, endId)
             store.reconcileNetwork()
-            store.pushHistorySnapshot()
             store.markDirty()
-            store.lastNodeId = null
-            store.selection = { nodes: new Set(), segments: new Set() }
+            if (endsInOpenSpace && store.network.nodes.has(endId)) {
+              // Chain, like a click: the end of this rail is the start of the next one
+              store.lastNodeId = endId
+              store.selection = { nodes: new Set([endId]), segments: new Set() }
+            } else {
+              store.lastNodeId = null
+              store.selection = { nodes: new Set(), segments: new Set() }
+            }
             store.clearNumericInput()
             redraw()
           }
@@ -2464,7 +2511,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             e.dataTransfer.getData('text/plain')) as 'tgv_loco' | 'tgv_wagon'
           const world = getWorldPos(e.clientX, e.clientY)
           if (itemType === 'tgv_loco' || itemType === 'tgv_wagon') {
-            store.handleDropTrainItem(itemType, world)
+            if (!store.handleDropTrainItem(itemType, world)) showToast(TRAIN_PLACEMENT_REFUSED, 'warning')
             redraw()
           }
         }}

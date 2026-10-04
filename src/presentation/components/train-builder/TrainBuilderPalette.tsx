@@ -224,7 +224,7 @@ export function TrainBuilderPalette({ store }: { store: EditorStore }) {
               alignItems: 'center',
               gap: '4px',
             }}
-            title="Prendre les commandes (Espace)"
+            title="Prendre les commandes (F5)"
           >
             <span>{store.isPlayMode ? '⏹' : '🎮'}</span>
             <span>{store.isPlayMode ? 'Stop' : 'Piloter'}</span>

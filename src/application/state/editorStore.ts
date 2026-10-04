@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, pruneOrphanNodes, dissolveNode, generateId } from '@domain/models/network'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId } from '@domain/models/network'
+import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
@@ -29,9 +30,9 @@ import {
   positionOnSegment,
   type TrainHitResult,
 } from '@domain/models/locomotive'
-import type { TrainSet, CouplerSnapTarget, Reverser } from '@domain/models/train'
+import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import {
-  createTrainSet,
+  TRAIN_CHAIN_SNAP_DISTANCE,
   makeTrainSet,
   setReverser,
   shiftReverser,
@@ -49,6 +50,9 @@ import {
   hitTestTrainSet,
   hitTestTrainVehicle,
   removeVehicleFromTrainSet,
+  steerTrainSetJunction,
+  pruneTrainsToNetwork,
+  serializeTrains,
   type CouplerPoint,
   type VehicleKind,
 } from '@domain/models/train'
@@ -65,6 +69,12 @@ export type Tool =
   | 'coupling'
 
 export type TrackMode = 'catalog' | 'freeform'
+
+/** Name given to a project the user has not renamed yet. */
+export const DEFAULT_PROJECT_NAME = 'Réseau sans titre'
+
+/** Feedback shown when a vehicle cannot be placed where the user clicked or dropped it. */
+export const TRAIN_PLACEMENT_REFUSED = 'Pose impossible ici : approchez le curseur d’un rail'
 
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
@@ -196,6 +206,11 @@ export class EditorStore {
   hoveredTrainDeleteVehicle: { train: TrainSet; vehicleId: string; kind: VehicleKind } | null = null
   /** Train placement heading orientation: 1 = forward along track segment, -1 = reversed */
   trainPlacementDirection: 1 | -1 = 1
+  /**
+   * Train being built in place mode (the counterpart of `lastNodeId` for rails): its free ends
+   * attract the next vehicle from further away, so clicking along the track extends it car by car.
+   */
+  trainChainId: string | null = null
   /** Last recorded cursor world position for live direction flip updates */
   lastMouseWorld: Point | null = null
   /** Ghost preview train for single-vehicle placement (loco or wagon) */
@@ -289,9 +304,70 @@ export class EditorStore {
   private historyIndex = -1
   private isUndoingRedoing = false
   private maxHistory = 50
+  /**
+   * Network edit made by the first click of a construction tool and not yet in history:
+   * 'orphan' = a lone start node, 'structural' = an existing rail was split.
+   * The step is recorded when the placement commits, so one placement = one undo step.
+   */
+  private pendingEdit: 'none' | 'orphan' | 'structural' = 'none'
 
   get canUndo(): boolean {
-    return this.historyIndex > 0
+    return this.historyIndex > 0 || (this.pendingEdit !== 'none' && this.historyIndex >= 0)
+  }
+
+  /** True while a construction tool waits for its next click (start node already picked). */
+  get hasPendingPlacement(): boolean {
+    return (
+      this.lastNodeId !== null ||
+      this.curveState.phase === 1 ||
+      this.turnoutStartId !== null ||
+      this.parallelLastNodeId !== null
+    )
+  }
+
+  /**
+   * Record that the first click of a construction tool touched the network without committing
+   * anything yet. No history step is pushed: it comes with the commit, or with the cancel when
+   * a rail was split (`structural`).
+   */
+  notePendingEdit = (structural: boolean): void => {
+    if (structural) this.pendingEdit = 'structural'
+    else if (this.pendingEdit === 'none') this.pendingEdit = 'orphan'
+    this.notify()
+  }
+
+  /** Forget every half-finished tool action (placement, turnout, double track, measure, typing). */
+  private resetPendingToolState(): void {
+    this.lastNodeId = null
+    this.curveState = { phase: 0, startId: null }
+    this.turnoutStartId = null
+    this.parallelMode = false
+    this.parallelLastNodeId = null
+    this.measureStart = null
+    this.measureEnd = null
+    this.isMeasuring = false
+    this.numericInput = ''
+    this.isNumericInputActive = false
+    this.pendingEdit = 'none'
+  }
+
+  /**
+   * Drop the start nodes a construction tool left without any rail, then record the step
+   * if the abandoned placement had split a rail, so history always matches the network.
+   */
+  private discardPendingPlacement(): void {
+    const candidates = [this.lastNodeId, this.curveState.startId, this.turnoutStartId, this.parallelLastNodeId]
+    const structural = this.pendingEdit === 'structural'
+    this.resetPendingToolState()
+    for (const nid of candidates) {
+      if (!nid) continue
+      const adj = this.network.adjacency.get(nid) ?? []
+      if (adj.length === 0) {
+        this.network.nodes.delete(nid)
+        this.network.adjacency.delete(nid)
+      }
+    }
+    if (structural) this.markDirty()
   }
 
   get canRedo(): boolean {
@@ -300,6 +376,7 @@ export class EditorStore {
 
   pushHistorySnapshot = (): void => {
     if (this.isUndoingRedoing) return
+    this.syncTrainsWithNetwork()
     const snapshot = serializeNetwork(
       this.network,
       this.projectName,
@@ -316,6 +393,7 @@ export class EditorStore {
       this.boardEnabled,
       this.boardWidth,
       this.boardHeight,
+      this.trains,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
@@ -326,17 +404,20 @@ export class EditorStore {
       this.history.shift()
     }
     this.historyIndex = this.history.length - 1
+    this.pendingEdit = 'none'
   }
 
   undo = (): void => {
-    if (!this.canUndo) return
-    this.historyIndex--
+    if (!this.canUndo || this.isPlayMode) return
+    // A placement that has not committed yet is undone by going back to the current step
+    if (this.pendingEdit === 'none') this.historyIndex--
     const snapshot = this.history[this.historyIndex]
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
         const res = deserializeNetwork(snapshot)
         this.network = res.network
+        this.restoreTrains(res.trains)
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
         else this.sectionMeta = {}
         if (res.unit) this.unit = res.unit
@@ -348,8 +429,7 @@ export class EditorStore {
         }
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
-        this.lastNodeId = null
-        this.curveState = { phase: 0, startId: null }
+        this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
         this.notify()
@@ -360,7 +440,7 @@ export class EditorStore {
   }
 
   redo = (): void => {
-    if (!this.canRedo) return
+    if (!this.canRedo || this.isPlayMode) return
     this.historyIndex++
     const snapshot = this.history[this.historyIndex]
     if (snapshot) {
@@ -368,6 +448,7 @@ export class EditorStore {
       try {
         const res = deserializeNetwork(snapshot)
         this.network = res.network
+        this.restoreTrains(res.trains)
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
         else this.sectionMeta = {}
         if (res.unit) this.unit = res.unit
@@ -379,8 +460,7 @@ export class EditorStore {
         }
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
-        this.lastNodeId = null
-        this.curveState = { phase: 0, startId: null }
+        this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
         this.notify()
@@ -392,7 +472,7 @@ export class EditorStore {
 
   // --- UI-facing state ---
   theme: ThemeMode = 'auto'
-  projectName = 'Untitled Network'
+  projectName = DEFAULT_PROJECT_NAME
   dirty = false
 
   setSectionMeta = (sectionId: string, meta: Partial<SectionMetadata>): void => {
@@ -431,6 +511,7 @@ export class EditorStore {
     const saved = loadNetworkFromStorage()
     if (!saved) return false
     this.network = saved.network
+    this.trains = saved.trains
     if (saved.projectName) {
       this.projectName = saved.projectName
     }
@@ -482,9 +563,12 @@ export class EditorStore {
   loadFromData = (data: any): void => {
     const res = deserializeNetwork(data)
     this.network = res.network
+    this.locomotive = null
+    this.restoreTrains(res.trains)
     if (res.projectName) this.projectName = res.projectName
     if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
-    if (res.sectionMeta) this.sectionMeta = res.sectionMeta
+    // Section names belong to the imported file: never keep those of the previous network
+    this.sectionMeta = res.sectionMeta ?? {}
     if (res.gridMode) this.gridMode = res.gridMode
     if (res.gridSpacing) this.gridSpacing = res.gridSpacing
     if (res.unit) this.unit = res.unit
@@ -507,10 +591,34 @@ export class EditorStore {
       this.boardHeight = res.boardHeight
     }
     this.selection = { nodes: new Set(), segments: new Set() }
-    this.lastNodeId = null
-    this.curveState = { phase: 0, startId: null }
+    this.resetPendingToolState()
     this.markDirty()
     this.notify()
+  }
+
+  /**
+   * Full project as JSON data: the single source for everything that leaves the store
+   * (file export), carrying the same fields as the autosave.
+   */
+  exportProject = (): SerializedProject => {
+    return serializeNetwork(
+      this.network,
+      this.projectName,
+      this.camera,
+      this.sectionMeta,
+      this.gridMode,
+      this.gridSpacing,
+      computeTrackSections(this.network, this.sectionMeta),
+      this.unit,
+      this.scalePreset,
+      this.gauge,
+      this.trackSpacing,
+      this.showDimensions,
+      this.boardEnabled,
+      this.boardWidth,
+      this.boardHeight,
+      this.trains,
+    )
   }
 
   /**
@@ -534,6 +642,7 @@ export class EditorStore {
       this.boardEnabled,
       this.boardWidth,
       this.boardHeight,
+      this.trains,
     )
   }
 
@@ -542,12 +651,13 @@ export class EditorStore {
    */
   newProject = (): void => {
     this.network = createNetwork()
+    this.locomotive = null
+    this.restoreTrains([])
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.tool = 'pan'
-    this.lastNodeId = null
-    this.curveState = { phase: 0, startId: null }
-    this.projectName = 'Untitled Network'
+    this.resetPendingToolState()
+    this.projectName = DEFAULT_PROJECT_NAME
     this.camera.x = 0
     this.camera.y = 0
     this.camera.scale = 3
@@ -576,25 +686,14 @@ export class EditorStore {
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
     autoDetectJunctions(this.network)
+    this.syncTrainsWithNetwork()
     this.version++
     this.listeners.forEach((l) => l())
   }
 
   setTool = (t: Tool): void => {
     // If transitioning away from an active creation without finishing, clean up abandoned degree 0 nodes
-    const activeCandidates = [
-      this.lastNodeId,
-      this.curveState.startId,
-      this.turnoutStartId,
-      this.parallelLastNodeId,
-    ].filter(Boolean) as string[]
-    for (const nid of activeCandidates) {
-      const adj = this.network.adjacency.get(nid) ?? []
-      if (adj.length === 0) {
-        this.network.nodes.delete(nid)
-        this.network.adjacency.delete(nid)
-      }
-    }
+    this.discardPendingPlacement()
 
     // The construction tools mark their working node through the selection: it must not
     // survive as a real selection (and show the gizmo) once the tool is left
@@ -603,16 +702,6 @@ export class EditorStore {
     }
 
     this.tool = t
-    // Reset intermediate tool states
-    this.measureStart = null
-    this.measureEnd = null
-    this.isMeasuring = false
-
-    this.lastNodeId = null
-    this.curveState = { phase: 0, startId: null }
-    this.parallelMode = false
-    this.parallelLastNodeId = null
-    this.turnoutStartId = null
     this.gizmoHoverAxis = null
     this.gizmoDragAxis = null
     this.gizmoDragDelta = { x: 0, y: 0 }
@@ -622,6 +711,7 @@ export class EditorStore {
     this.trainPlacementPreview = null
     this.couplerSnapTarget = null
     this.hoveredTrainDeleteVehicle = null
+    this.trainChainId = null
     this.notify()
   }
 
@@ -653,11 +743,122 @@ export class EditorStore {
     }
   }
 
+  /** True when the selection can be doubled: one or more rails, or exactly two nodes. */
+  get canCreateParallelTrack(): boolean {
+    return this.selection.segments.size > 0 || this.selection.nodes.size === 2
+  }
+
   /**
-   * Crée un doublement de voie parallèle à partir de 2 nœuds sélectionnés.
-   * Calcule le vecteur perpendiculaire et trace une voie secondaire à la distance parallèle active.
+   * Double the given rails with a parallel track at `off` metres (positive = left of the
+   * direction of travel of the first rail). Rails are oriented as one run so the copy stays
+   * on the same side all along; curves get a concentric copy and corners are mitred.
    */
-  createParallelTrackFromSelection = (customOffset?: number): boolean => {
+  private createParallelTrackFromSegments(segIds: string[], off: number): boolean {
+    const net = this.network
+    const ids = segIds.filter((id) => net.segments.has(id))
+    if (ids.length === 0 || off === 0) return false
+    const selected = new Set(ids)
+
+    // Orient every rail consistently with its neighbours
+    const reversed = new Map<string, boolean>()
+    for (const root of ids) {
+      if (reversed.has(root)) continue
+      reversed.set(root, false)
+      const queue = [root]
+      while (queue.length > 0) {
+        const sid = queue.pop()!
+        const seg = net.segments.get(sid)!
+        const rev = reversed.get(sid)!
+        for (const nid of [seg.from, seg.to]) {
+          const isHead = (nid === seg.to) !== rev
+          for (const otherId of net.adjacency.get(nid) ?? []) {
+            if (!selected.has(otherId) || reversed.has(otherId)) continue
+            const other = net.segments.get(otherId)!
+            // A neighbour leaves the node this rail arrives at, and arrives where it leaves
+            reversed.set(otherId, isHead ? other.from !== nid : other.to !== nid)
+            queue.push(otherId)
+          }
+        }
+      }
+    }
+
+    const pieces = ids.map((sid) => {
+      const seg = net.segments.get(sid)!
+      const rev = reversed.get(sid)!
+      const fromId = rev ? seg.to : seg.from
+      const toId = rev ? seg.from : seg.to
+      const a = net.nodes.get(fromId)!.pos
+      const b = net.nodes.get(toId)!.pos
+      if (seg.via) {
+        const par = computeParallelCurve(a, seg.via, b, off)
+        return { fromId, toId, start: par.start, end: par.end, via: par.via as Point | null }
+      }
+      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+      const nx = (-(b.y - a.y) / len) * off
+      const ny = ((b.x - a.x) / len) * off
+      return { fromId, toId, start: { x: a.x + nx, y: a.y + ny }, end: { x: b.x + nx, y: b.y + ny }, via: null }
+    })
+
+    // Where exactly two rails meet, both copies share one node (mitre of the two offsets)
+    const offsetsAt = new Map<string, Point[]>()
+    for (const p of pieces) {
+      for (const [nid, pos] of [[p.fromId, p.start], [p.toId, p.end]] as const) {
+        const origin = net.nodes.get(nid)!.pos
+        const list = offsetsAt.get(nid) ?? []
+        list.push({ x: pos.x - origin.x, y: pos.y - origin.y })
+        offsetsAt.set(nid, list)
+      }
+    }
+    const sharedNodeIds = new Map<string, string>()
+    const newNodes = new Set<string>()
+    const nodeFor = (nid: string, pos: Point): string => {
+      const shared = sharedNodeIds.get(nid)
+      if (shared) return shared
+      const vecs = offsetsAt.get(nid) ?? []
+      let target = pos
+      let isShared = false
+      if (vecs.length === 2) {
+        const cos = (vecs[0].x * vecs[1].x + vecs[0].y * vecs[1].y) / (off * off)
+        // Beyond ~120° the mitre runs away: leave the two ends apart
+        if (cos > -0.5) {
+          const origin = net.nodes.get(nid)!.pos
+          target = {
+            x: origin.x + (vecs[0].x + vecs[1].x) / (1 + cos),
+            y: origin.y + (vecs[0].y + vecs[1].y) / (1 + cos),
+          }
+          isShared = true
+        }
+      }
+      const node = addNode(net, target)
+      newNodes.add(node.id)
+      if (isShared) sharedNodeIds.set(nid, node.id)
+      return node.id
+    }
+
+    const newSegs = new Set<string>()
+    for (const p of pieces) {
+      const fromId = nodeFor(p.fromId, p.start)
+      const toId = nodeFor(p.toId, p.end)
+      const seg = p.via ? addCurveSegment(net, fromId, toId, p.via) : addSegment(net, fromId, toId)
+      if (seg) newSegs.add(seg.id)
+    }
+    if (newSegs.size === 0) return false
+
+    this.selection = { nodes: newNodes, segments: newSegs }
+    this.reconcileNetwork()
+    this.markDirty()
+    return true
+  }
+
+  /**
+   * Crée un doublement de voie parallèle à la distance parallèle active : à partir des rails
+   * donnés ou sélectionnés, sinon à partir de 2 nœuds sélectionnés (vecteur perpendiculaire).
+   */
+  createParallelTrackFromSelection = (customOffset?: number, segmentIds?: Iterable<string>): boolean => {
+    const segIds = [...(segmentIds ?? this.selection.segments)]
+    if (segIds.length > 0) {
+      return this.createParallelTrackFromSegments(segIds, customOffset ?? this.parallelOffset)
+    }
     if (this.selection.nodes.size !== 2) return false
     const [idA, idB] = [...this.selection.nodes]
     const nodeA = this.network.nodes.get(idA)
@@ -948,30 +1149,19 @@ export class EditorStore {
    * pruning any abandoned placement node that was created on click 1 with 0 connections.
    */
   cancelInteraction = (): void => {
-    const activeCandidates = [
-      this.lastNodeId,
-      this.curveState.startId,
-      this.turnoutStartId,
-      this.parallelLastNodeId,
-    ].filter(Boolean) as string[]
-
-    this.lastNodeId = null
-    this.curveState = { phase: 0, startId: null }
-    this.parallelMode = false
-    this.parallelLastNodeId = null
-    this.turnoutStartId = null
-    this.measureStart = null
-    this.measureEnd = null
-    this.isMeasuring = false
+    // Escape is two-step for the track tools: it first cancels what is pending (tool and
+    // selection are kept), and only with nothing pending does it go back to the select tool.
+    const hadPlacement = this.hasPendingPlacement
+    const hadPending =
+      hadPlacement ||
+      this.measureStart !== null ||
+      this.isNumericInputActive ||
+      this.isDraggingNode ||
+      this.gizmoDragAxis !== null ||
+      this.contextMenu.isOpen
 
     // Clean up any candidate nodes that have 0 connections
-    for (const nid of activeCandidates) {
-      const adj = this.network.adjacency.get(nid) ?? []
-      if (adj.length === 0) {
-        this.network.nodes.delete(nid)
-        this.network.adjacency.delete(nid)
-      }
-    }
+    this.discardPendingPlacement()
     // Restore dragged node positions if cancelled mid-drag
     for (const [nid, initPos] of this.draggedNodeInitialPositions) {
       const node = this.network.nodes.get(nid)
@@ -1000,16 +1190,37 @@ export class EditorStore {
     this.draggedNodeInitialPositions.clear()
     this.draggedViaInitialPositions.clear()
     this.pruneOrphans(false)
-    this.clearSelection()
     if (this.tool === 'locomotive' || this.tool === 'coupling') {
-      if (this.trainToolSubMode === 'delete') {
+      this.clearSelection()
+    } else if (hadPending) {
+      // The construction tools mark their working node through the selection: it goes with
+      // the placement. Any other selection survives the cancel.
+      if (hadPlacement) this.clearSelection()
+      else this.notify()
+    } else if (this.tool !== 'select') {
+      this.setTool('select')
+    } else {
+      this.clearSelection()
+    }
+    if (this.tool === 'locomotive' || this.tool === 'coupling') {
+      // Escape climbs one level at a time: placement (and its train in progress), deletion or
+      // coupling first fall back to the train selection, and only from there to the select tool
+      if (this.tool === 'coupling' || this.trainToolSubMode !== 'select') {
+        this.tool = 'locomotive'
         this.trainToolSubMode = 'select'
       } else {
         this.tool = 'select'
+        this.trainToolSubMode = 'place'
       }
+      this.trainChainId = null
+      this.draggingTrainItem = null
+      this.dragCursorScreen = null
       this.hoveredTrainDeleteVehicle = null
       this.locomotivePreview = null
+      this.trainPlacementPreview = null
+      this.couplerSnapTarget = null
       this.refreshCouplerPoints()
+      this.notify()
     }
   }
 
@@ -1040,8 +1251,6 @@ export class EditorStore {
 
     const sel = this.selection
     if (sel.segments.size === 0 && sel.nodes.size === 0) return
-
-    this.pushHistorySnapshot()
 
     const segsToDelete = new Set(sel.segments)
     const nodesToDelete = new Set(sel.nodes)
@@ -1365,15 +1574,7 @@ export class EditorStore {
   /** Complete train drag and drop onto track */
   endTrainDrag = (worldPos: Point): boolean => {
     if (!this.draggingTrainItem) return false
-    const item = this.draggingTrainItem
-    this.draggingTrainItem = null
-    this.dragCursorScreen = null
-    const res = this.handleDropTrainItem(item, worldPos)
-    this.locomotivePreview = null
-    this.trainPlacementPreview = null
-    this.couplerSnapTarget = null
-    this.notify()
-    return res
+    return this.handleDropTrainItem(this.draggingTrainItem, worldPos)
   }
 
   /** Cancel active train dragging */
@@ -1384,6 +1585,39 @@ export class EditorStore {
     this.trainPlacementPreview = null
     this.couplerSnapTarget = null
     this.notify()
+  }
+
+  /** The train being built in place mode, if it still exists */
+  get trainChain(): TrainSet | null {
+    if (!this.trainChainId) return null
+    return this.trains.find(t => t.id === this.trainChainId) ?? null
+  }
+
+  /**
+   * Where a vehicle of `kind` lands for a cursor at worldPos: coupled to a train end (`snap`),
+   * or alone on the track as a new train. Null when the cursor is too far from any rail.
+   * The ghost preview and the actual placement both go through here, so they always agree.
+   */
+  private computeTrainPlacement(worldPos: Point, kind: VehicleKind): { snap: CouplerSnapTarget | null; vehicle: Vehicle } | null {
+    // 1. Train in progress: its free ends reach further, so the next click along the track extends it
+    const chain = this.trainChain
+    if (chain) {
+      const chainSnapDist = Math.max(TRAIN_CHAIN_SNAP_DISTANCE, 60 / this.camera.scale)
+      const snap = findCouplerSnap(this.network, [chain], worldPos, kind, chainSnapDist)
+      if (snap) return { snap, vehicle: snap.snappedVehicle }
+    }
+
+    // 2. Magnetic coupler snap with any train
+    const maxCouplerSnapDist = Math.max(6.0, 30 / this.camera.scale)
+    const snap = findCouplerSnap(this.network, this.trains, worldPos, kind, maxCouplerSnapDist)
+    if (snap) return { snap, vehicle: snap.snappedVehicle }
+
+    // 3. Free placement on the track under the cursor, with the chosen heading: a new train
+    const maxTrackSnapDist = Math.max(12.0, 45 / this.camera.scale)
+    const trackSnap = snapToNearestTrack(this.network, worldPos, maxTrackSnapDist)
+    if (!trackSnap) return null
+    const vehicle = createVehicle(this.network, trackSnap.segId, trackSnap.t, kind, this.trainPlacementDirection)
+    return vehicle ? { snap: null, vehicle } : null
   }
 
   /** Update ghost preview when hovering track in locomotive tool or actively dragging */
@@ -1402,42 +1636,20 @@ export class EditorStore {
 
     const isWagon = this.draggingTrainItem === 'tgv_wagon' ||
       (!this.draggingTrainItem && this.trainPlacementKind === 'tgv_wagon')
-    const kind: VehicleKind = isWagon ? 'wagon' : 'loco'
+    const placement = this.computeTrainPlacement(worldPos, isWagon ? 'wagon' : 'loco')
 
-    // 1. Check for magnetic coupler snap with existing trains
-    const maxCouplerSnapDist = Math.max(6.0, 30 / this.camera.scale)
-    const couplerSnap = findCouplerSnap(this.network, this.trains, worldPos, kind, maxCouplerSnapDist)
-
-    if (couplerSnap) {
-      this.couplerSnapTarget = couplerSnap
-      this.trainPlacementPreview = makeTrainSet('preview_train', [couplerSnap.snappedVehicle])
-      this.locomotivePreview = null
-      this.notify()
-      return
-    }
-
-    this.couplerSnapTarget = null
-
-    // 2. Check for track hover preview (only when close to track)
-    const maxTrackSnapDist = Math.max(12.0, 45 / this.camera.scale)
-    const snap = snapToNearestTrack(this.network, worldPos, maxTrackSnapDist)
-    if (!snap) {
-      if (this.trainPlacementPreview !== null || this.locomotivePreview !== null) {
+    if (!placement) {
+      if (this.trainPlacementPreview !== null || this.locomotivePreview !== null || this.couplerSnapTarget !== null) {
         this.trainPlacementPreview = null
         this.locomotivePreview = null
+        this.couplerSnapTarget = null
         this.notify()
       }
       return
     }
 
-    // Place single vehicle preview with chosen heading orientation
-    const singleVeh = createVehicle(this.network, snap.segId, snap.t, kind, this.trainPlacementDirection)
-    if (singleVeh) {
-      this.trainPlacementPreview = makeTrainSet('preview_train', [singleVeh])
-    } else {
-      this.trainPlacementPreview = null
-    }
-
+    this.couplerSnapTarget = placement.snap
+    this.trainPlacementPreview = makeTrainSet('preview_train', [placement.vehicle])
     this.locomotivePreview = null
     this.notify()
   }
@@ -1534,29 +1746,25 @@ export class EditorStore {
     return res
   }
 
-  /** Handle Drag & Drop of a train part onto the canvas world */
+  /**
+   * Drop a vehicle picked outside the canvas (sidebar drag, context menu) at worldPos.
+   * Same result as a click in place mode: the train tool is armed with that vehicle kind
+   * and the vehicle goes through `placeTrainItem`.
+   */
   handleDropTrainItem = (itemType: 'tgv_loco' | 'tgv_wagon', worldPos: Point): boolean => {
-    if (itemType === 'tgv_loco') {
-      const placed = this.placeTrainLoco(worldPos)
-      if (placed) {
-        this.isTrainSelected = true
-        const ts = this.selectedTrain
-        if (ts) {
-          const snap = snapToNearestTrack(this.network, worldPos)
-          if (snap) {
-            const loco = createLocomotive(this.network, snap.segId, snap.t, this.locomotiveLength, 14, 2)
-            if (loco) this.locomotive = loco
-          }
-        }
-        this.notify()
-      }
-      return placed
-    } else if (itemType === 'tgv_wagon') {
-      const placed = this.placeTrainWagon(worldPos)
-      if (placed) this.notify()
-      return placed
+    this.draggingTrainItem = null
+    this.dragCursorScreen = null
+    if (this.isPlayMode) {
+      this.notify()
+      return false
     }
-    return false
+    if (this.tool !== 'locomotive') this.setTool('locomotive')
+    this.trainPlacementKind = itemType
+    this.trainToolSubMode = 'place'
+    this.hoveredTrainDeleteVehicle = null
+    const placed = this.placeTrainItem(worldPos, itemType)
+    this.notify()
+    return placed
   }
 
   /** Toggle train kinematic skeleton / debug visualization mode */
@@ -1591,8 +1799,14 @@ export class EditorStore {
       this.lastNodeId = null
       this.curveState = { phase: 0, startId: null }
       this.turnoutStartId = null
-      if (this.trains.length > 0 && !this.selectedTrainId) {
-        this.selectedTrainId = this.trains[0].id
+      this.trainChainId = null
+      this.draggingTrainItem = null
+      this.dragCursorScreen = null
+      this.trainPlacementPreview = null
+      this.couplerSnapTarget = null
+      this.hoveredTrainDeleteVehicle = null
+      if (this.trains.length > 0 && !this.selectedTrain) {
+        this.selectTrainById(this.trains[0].id)
       }
       if (this.followLocomotiveCamera) {
         this.focusOnLocomotive()
@@ -1603,6 +1817,11 @@ export class EditorStore {
       this.locomotiveCurrentSpeed = 0
       this.locomotiveThrottle = 0
       for (const t of this.trains) resetTrainControls(t)
+      // Where the trains were driven to is one undo step, and survives a reload
+      const lastSaved = this.history[this.historyIndex]?.trains ?? []
+      if (JSON.stringify(serializeTrains(this.trains)) !== JSON.stringify(lastSaved)) {
+        this.commitTrainChange()
+      }
     }
     this.notify()
   }
@@ -1712,6 +1931,11 @@ export class EditorStore {
 
   /** Steer the upcoming junction left or right relative to the locomotive */
   steerUpcomingTurnout = (steerDirection: 'left' | 'right'): void => {
+    const train = this.selectedTrain
+    if (train) {
+      if (steerTrainSetJunction(this.network, train, steerDirection)) this.notify()
+      return
+    }
     if (!this.locomotive) return
     steerJunction(this.network, this.locomotive, steerDirection)
     this.notify()
@@ -1776,52 +2000,99 @@ export class EditorStore {
 
   // ─── TrainSet fleet methods ──────────────────────────────────────────────────
 
-  /** Unified train placement: handles magnetic coupler attachment and free track placement */
-  placeTrainItem = (worldPos: Point, overrideKind?: 'tgv_loco' | 'tgv_wagon'): boolean => {
-    const isWagon = overrideKind === 'tgv_wagon' ||
-      (!overrideKind && this.trainPlacementKind === 'tgv_wagon')
-    const kind: VehicleKind = isWagon ? 'wagon' : 'loco'
-
-    // If magnetic coupler is snapped, attach directly to the target train
-    if (this.couplerSnapTarget) {
-      const targetTrain = this.couplerSnapTarget.train
-      const newVehId = generateId('veh')
-      const newVehicle = {
-        ...this.couplerSnapTarget.snappedVehicle,
-        id: newVehId,
-      }
-
-      if (this.couplerSnapTarget.end === 'rear') {
-        targetTrain.vehicles.push(newVehicle)
-      } else {
-        targetTrain.vehicles.unshift(newVehicle)
-      }
-
-      advanceTrainSet(this.network, targetTrain, 0)
-      this.selectTrainById(targetTrain.id, newVehId)
-      this.isTrainSelected = true
-      this.couplerSnapTarget = null
-      this.trainPlacementPreview = null
-      this.locomotivePreview = null
-      this.refreshCouplerPoints()
-      this.pushHistorySnapshot()
-      this.notify()
-      return true
-    }
-
-    // Free track placement (must be within track snap distance) with selected heading direction
-    const maxTrackSnapDist = Math.max(12.0, 45 / this.camera.scale)
-    const ts = createTrainSet(this.network, worldPos, kind, maxTrackSnapDist, this.trainPlacementDirection)
-    if (!ts) return false
-
-    this.trains = [...this.trains, ts]
-    this.selectTrainById(ts.id, ts.vehicles[0].id)
-    this.isTrainSelected = true
-    this.trainPlacementPreview = null
-    this.locomotivePreview = null
-    this.refreshCouplerPoints()
+  /**
+   * Save the trains and record one undo step. Every train edit (place, delete, couple, decouple)
+   * ends here, after the change is made.
+   */
+  private commitTrainChange(): void {
+    this.dirty = true
+    this.savePersistedState()
     this.pushHistorySnapshot()
     this.notify()
+  }
+
+  /** Keep the train selection pointing at a train and a vehicle that still exist */
+  private repairTrainSelection(): void {
+    const train = this.selectedTrain
+    if (!train) {
+      this.selectedTrainId = null
+      this.selectedTrainVehicleId = null
+      this.isTrainSelected = false
+    } else if (!train.vehicles.some(v => v.id === this.selectedTrainVehicleId)) {
+      this.selectedTrainVehicleId = train.vehicles[0]?.id ?? null
+    }
+    if (this.trainChainId && !this.trainChain) this.trainChainId = null
+  }
+
+  /** Drop the vehicles whose rails were removed by a network edit */
+  private syncTrainsWithNetwork(): void {
+    if (this.trains.length === 0) return
+    const pruned = pruneTrainsToNetwork(this.network, this.trains)
+    if (pruned === this.trains) return
+    this.trains = pruned
+    this.trainPlacementPreview = null
+    this.couplerSnapTarget = null
+    this.hoveredTrainDeleteVehicle = null
+    this.repairTrainSelection()
+    this.refreshCouplerPoints()
+    if (this.isPlayMode && this.trains.length === 0 && !this.locomotive) {
+      this.isPlayMode = false
+      this.stopSimulationLoop()
+    }
+  }
+
+  /** Replace the fleet with trains coming from a snapshot or a file: all stopped, driving mode left */
+  private restoreTrains(trains: TrainSet[]): void {
+    if (this.isPlayMode) {
+      this.isPlayMode = false
+      this.stopSimulationLoop()
+    }
+    this.trains = trains
+    this.locomotiveCurrentSpeed = 0
+    this.trainChainId = null
+    this.trainPlacementPreview = null
+    this.locomotivePreview = null
+    this.couplerSnapTarget = null
+    this.hoveredTrainDeleteVehicle = null
+    this.hoveredCouplerPoint = null
+    this.repairTrainSelection()
+    this.refreshCouplerPoints()
+  }
+
+  /**
+   * Unified train placement, the single path for every way of adding a vehicle: coupled to the
+   * train in progress or to a nearby train end, otherwise alone on the track as a new train.
+   * Refused (false) in play mode and when worldPos is too far from a rail.
+   */
+  placeTrainItem = (worldPos: Point, overrideKind?: 'tgv_loco' | 'tgv_wagon'): boolean => {
+    if (this.isPlayMode) return false
+    const isWagon = overrideKind === 'tgv_wagon' ||
+      (!overrideKind && this.trainPlacementKind === 'tgv_wagon')
+    const placement = this.computeTrainPlacement(worldPos, isWagon ? 'wagon' : 'loco')
+    if (!placement) return false
+
+    let train: TrainSet
+    let vehicle = placement.vehicle
+    if (placement.snap) {
+      train = placement.snap.train
+      vehicle = { ...vehicle, id: generateId('veh') }
+      if (placement.snap.end === 'rear') train.vehicles.push(vehicle)
+      else train.vehicles.unshift(vehicle)
+      advanceTrainSet(this.network, train, 0)
+    } else {
+      train = makeTrainSet(generateId('train'), [vehicle])
+      this.trains = [...this.trains, train]
+    }
+
+    this.trainChainId = train.id
+    this.selectTrainById(train.id, vehicle.id)
+    this.locomotivePreview = null
+    this.refreshCouplerPoints()
+    this.commitTrainChange()
+    // Show at once where the next vehicle would go
+    this.trainPlacementPreview = null
+    this.couplerSnapTarget = null
+    this.updateLocomotivePreview(worldPos)
     return true
   }
 
@@ -1870,6 +2141,7 @@ export class EditorStore {
     if (mode !== 'place') {
       this.trainPlacementPreview = null
       this.couplerSnapTarget = null
+      this.trainChainId = null
     }
     this.refreshCouplerPoints()
     this.notify()
@@ -1894,9 +2166,9 @@ export class EditorStore {
 
   /** Delete the vehicle directly under worldPos (used by Delete tool click) */
   deleteVehicleAt = (worldPos: Point): boolean => {
+    if (this.isPlayMode) return false
     const hit = this.findVehicleAt(worldPos)
     if (hit) {
-      this.pushHistorySnapshot()
       if (hit.train.vehicles.length > 1) {
         const updated = removeVehicleFromTrainSet(this.network, hit.train, hit.vehicleId)
         if (updated) {
@@ -1912,14 +2184,13 @@ export class EditorStore {
       }
       this.hoveredTrainDeleteVehicle = null
       this.refreshCouplerPoints()
-      this.notify()
+      this.commitTrainChange()
       return true
     }
 
     if (this.locomotive) {
       const locoHit = hitTestTGVTrain(this.network, this.locomotive, worldPos, 4.0 / this.camera.scale)
       if (locoHit.hit) {
-        this.pushHistorySnapshot()
         this.removeLocomotive()
         this.hoveredTrainDeleteVehicle = null
         this.notify()
@@ -1931,6 +2202,7 @@ export class EditorStore {
 
   /** Delete the currently selected train or vehicle */
   deleteSelectedTrainOrVehicle = (): void => {
+    if (this.isPlayMode) return
     if (!this.selectedTrainId) {
       if (this.locomotive) {
         this.removeLocomotive()
@@ -1955,7 +2227,7 @@ export class EditorStore {
       this.removeTrainSet(train.id)
     }
     this.refreshCouplerPoints()
-    this.notify()
+    this.commitTrainChange()
   }
 
   /** Remove a TrainSet from the layout */
@@ -1966,6 +2238,7 @@ export class EditorStore {
       this.selectedTrainVehicleId = this.selectedTrain?.vehicles[0]?.id ?? null
       this.isTrainSelected = this.selectedTrainId !== null
     }
+    if (this.trainChainId === id) this.trainChainId = null
     this.refreshCouplerPoints()
     this.notify()
   }
@@ -2015,10 +2288,12 @@ export class EditorStore {
       this.tool = 'locomotive'
       this.trainToolSubMode = 'select'
     } else {
+      if (this.isPlayMode) this.togglePlayMode()
       this.tool = 'coupling'
-      this.isPlayMode = false
-      this.stopSimulationLoop()
       this.hoveredTrainDeleteVehicle = null
+      this.trainPlacementPreview = null
+      this.couplerSnapTarget = null
+      this.trainChainId = null
     }
     this.refreshCouplerPoints()
     this.notify()
@@ -2029,6 +2304,7 @@ export class EditorStore {
     this.tool = 'select'
     this.trainToolSubMode = 'place'
     this.isTrainSelected = false
+    this.trainChainId = null
     this.locomotivePreview = null
     this.trainPlacementPreview = null
     this.couplerSnapTarget = null
@@ -2056,15 +2332,19 @@ export class EditorStore {
     }
   }
 
-  /** Handle a click in coupling mode */
+  /** Handle a click in coupling mode: couple two nearby ends or split at a joint (one undo step) */
   handleCouplingClick = (worldPos: Point): void => {
-    this.trains = handleCouplingClick(this.network, this.trains, worldPos)
-    this.refreshCouplerPoints()
-    // Update selected train id if it was merged/split
-    if (this.selectedTrainId && !this.trains.find(t => t.id === this.selectedTrainId)) {
-      this.selectedTrainId = this.trains.length > 0 ? this.trains[this.trains.length - 1].id : null
+    if (this.isPlayMode) return
+    const updated = handleCouplingClick(this.network, this.trains, worldPos)
+    if (updated === this.trains) return
+    this.trains = updated
+    // The selected train may have been merged or split into trains with new ids
+    if (!this.selectedTrain) {
+      this.selectTrainById(this.trains.length > 0 ? this.trains[this.trains.length - 1].id : null)
     }
-    this.notify()
+    this.repairTrainSelection()
+    this.refreshCouplerPoints()
+    this.commitTrainChange()
   }
 
   /** Find nearest coupler to a world position for hover highlight */

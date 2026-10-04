@@ -222,11 +222,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
               onMouseLeave={() => setHoverId((h) => (h === 'train-select' ? null : h))}
             >
               <button
-                onClick={() => {
-                  store.trainToolSubMode = 'select'
-                  store.tool = 'locomotive'
-                  store.notify()
-                }}
+                onClick={() => store.setTrainToolSubMode('select')}
                 className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'select' ? ' active' : ''}`}
                 aria-label="Sélectionner train ou wagon"
               >
@@ -244,22 +240,18 @@ export function ToolBar({ store }: { store: EditorStore }) {
               )}
             </div>
 
-            {/* Outil 2 : Poser Locomotive TGV (Draggable & Clickable) */}
+            {/* Outil 2 : Poser Locomotive TGV (Draggable & Clickable) — pas de pose pendant la conduite */}
             <div
               className="tb-btn-wrap"
+              style={store.isPlayMode ? { display: 'none' } : undefined}
               onMouseEnter={() => setHoverId('train-loco')}
               onMouseLeave={() => setHoverId((h) => (h === 'train-loco' ? null : h))}
             >
               <div
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'tgv_loco')}
-                onPointerDown={(e) => {
-                  if (e.button === 0) store.startTrainDrag('tgv_loco', { x: e.clientX, y: e.clientY })
-                }}
-                onClick={() => {
-                  store.trainToolSubMode = 'place'
-                  store.setTrainPlacementKind('tgv_loco')
-                }}
+                onDragEnd={() => store.cancelTrainDrag()}
+                onClick={() => store.setTrainPlacementKind('tgv_loco')}
                 className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'place' && store.trainPlacementKind === 'tgv_loco' ? ' active' : ''}`}
                 aria-label="Locomotive"
                 style={{ cursor: 'grab' }}
@@ -275,28 +267,24 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 <div className="tb-tooltip">
                   Motrice TGV
                   <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
-                    Glisser sur la voie ou cliquer pour poser
+                    Cliquer puis poser sur la voie, clic après clic · ou glisser sur la voie
                   </span>
                 </div>
               )}
             </div>
 
-            {/* Outil 3 : Poser Wagon Voyageurs (Draggable & Clickable) */}
+            {/* Outil 3 : Poser Wagon Voyageurs (Draggable & Clickable) — pas de pose pendant la conduite */}
             <div
               className="tb-btn-wrap"
+              style={store.isPlayMode ? { display: 'none' } : undefined}
               onMouseEnter={() => setHoverId('train-wagon')}
               onMouseLeave={() => setHoverId((h) => (h === 'train-wagon' ? null : h))}
             >
               <div
                 draggable
                 onDragStart={(e) => handleDragStart(e, 'tgv_wagon')}
-                onPointerDown={(e) => {
-                  if (e.button === 0) store.startTrainDrag('tgv_wagon', { x: e.clientX, y: e.clientY })
-                }}
-                onClick={() => {
-                  store.trainToolSubMode = 'place'
-                  store.setTrainPlacementKind('tgv_wagon')
-                }}
+                onDragEnd={() => store.cancelTrainDrag()}
+                onClick={() => store.setTrainPlacementKind('tgv_wagon')}
                 className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'place' && store.trainPlacementKind === 'tgv_wagon' ? ' active' : ''}`}
                 aria-label="Wagon"
                 style={{ cursor: 'grab' }}
@@ -314,7 +302,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 <div className="tb-tooltip">
                   Wagon voyageurs
                   <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
-                    Glisser sur la voie ou cliquer pour poser
+                    Cliquer puis poser sur la voie, clic après clic · ou glisser sur la voie
                   </span>
                 </div>
               )}
@@ -441,7 +429,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                   {hoverId === 'play' && (
                     <div className="tb-tooltip">
                       {store.isPlayMode ? 'Arrêter la conduite' : 'Prendre les commandes'}
-                      <kbd>Espace</kbd>
+                      <kbd>{store.isPlayMode ? 'Espace' : 'F5'}</kbd>
                     </div>
                   )}
                 </div>
@@ -677,7 +665,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
           <button
             className={`tb-btn${store.snap ? ' active' : ''}`}
             onClick={() => store.toggleSnap()}
-            aria-label="Toggle snap"
+            aria-label="Activer ou désactiver l’aimantation"
             aria-pressed={store.snap}
           >
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -687,7 +675,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
           </button>
           {hoverId === 'snap' && (
             <div className="tb-tooltip">
-              Accrochage grille {store.snap ? '(Actif)' : '(Inactif)'}
+              Aimantation {store.snap ? '(active)' : '(inactive)'}
               <kbd>G</kbd>
             </div>
           )}
@@ -933,7 +921,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
 
               {/* Accrochage quick toggle */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '6px', borderTop: '1px solid var(--border)' }}>
-                <span style={{ fontSize: '10px', opacity: 0.7 }}>Aimantation (Snap) :</span>
+                <span style={{ fontSize: '10px', opacity: 0.7 }}>Aimantation :</span>
                 <button
                   onClick={() => store.toggleSnap()}
                   style={{

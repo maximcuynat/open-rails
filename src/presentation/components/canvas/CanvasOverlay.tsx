@@ -1,68 +1,73 @@
-import type { EditorStore } from '@application/state/editorStore'
-import { getLocomotiveFrontPos } from '@domain/models/locomotive'
+import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { getLocomotiveFrontPos, positionOnSegment } from '@domain/models/locomotive'
+import { showToast } from '../common/Toast'
 import { screenToWorld } from '@infrastructure/render/camera'
+import { formatDistance } from '@domain/models/units'
 import { FloatingActionBar } from './FloatingActionBar'
 import { ContextMenu } from './ContextMenu'
 
 /** Contextual hint shown at the bottom-center of the canvas. */
 function hintText(store: EditorStore): string {
   if (store.isPlayMode) {
-    return '▶ Conduite · ↑ Accélérer · ↓ Freiner · R Changer de motrice · D Squelette · ←/→ Aiguillage · Espace Quitter'
+    return store.selectedTrain
+      ? '▶ Conduite · ↑/↓ Cran traction / frein · Maj+↑/↓ Inverseur · ⌫ Arrêt d’urgence · ←/→ Aiguillage · D Squelette · Espace ou Échap Quitter'
+      : '▶ Conduite · ↑ Accélérer · ↓ Freiner (maintenir) · R Inverser le sens · ←/→ Aiguillage · D Squelette · Espace ou Échap Quitter'
   }
   switch (store.tool) {
     case 'place':
       return store.lastNodeId
-        ? 'Clic pour poser le prochain rail · Clic-droit ou Échap pour terminer'
-        : 'Clic pour poser le premier nœud de voie'
+        ? 'Clic pour poser le prochain rail · Tab pour continuer en courbe · Chiffres puis Entrée pour une longueur exacte · Clic droit ou Échap pour terminer'
+        : 'Clic pour poser le premier nœud de voie · Échap pour revenir à la sélection'
     case 'curve':
       return store.curveState.phase === 1
-        ? 'Clic pour poser le coupon · Tab pour inverser côté · Échap pour annuler'
-        : 'Clic pour définir le point de départ de la courbe'
+        ? 'Clic pour poser la courbe et enchaîner · Clic droit ou Échap pour terminer'
+        : 'Clic pour définir le point de départ de la courbe · Échap pour revenir à la sélection'
     case 'turnout':
       return store.turnoutStartId
-        ? 'Déplacez le curseur pour fixer la fin et l’espacement · Clic pour poser · Échap pour annuler'
-        : 'Clic pour définir le point de départ de l’aiguillage sur une voie'
+        ? 'Déplacez le curseur pour fixer la fin et l’espacement · Clic pour poser · Clic droit ou Échap pour annuler'
+        : 'Clic sur une voie pour définir le point de départ de l’aiguillage'
     case 'split':
       return 'Cliquez sur un rail pour le découper ou sur un nœud pour le détacher'
     case 'measure':
-      return store.measureStart
-        ? 'Clic pour fixer la mesure · Échap pour réinitialiser'
-        : 'Clic pour fixer le point de départ de la mesure'
+      if (!store.measureStart) return 'Clic pour fixer le point de départ de la mesure'
+      return store.measureEnd
+        ? 'Clic pour commencer une nouvelle mesure · Clic droit ou Échap pour effacer'
+        : 'Clic pour fixer la mesure · Clic droit ou Échap pour annuler'
     case 'select':
       return store.selection.nodes.size > 0
         ? 'Glisser les axes (X/Y) ou l’arc pour pivoter · Glisser le fond pour déplacer la vue · Suppr pour effacer'
-        : 'Clic gauche pour sélectionner · Glisser le fond pour déplacer la vue · Shift + glisser pour rectangle de sélection · Molette pour zoomer'
+        : 'Clic gauche pour sélectionner · Glisser le fond pour déplacer la vue · Maj + glisser pour un rectangle de sélection · Molette pour zoomer'
     case 'pan':
-      return store.selection.nodes.size > 0
-        ? 'Glisser les axes (X/Y) pour déplacer le nœud · Glisser le fond pour déplacer la vue'
-        : 'Glisser pour déplacer la vue · Molette pour zoomer'
+      return 'Glisser pour déplacer la vue · Molette pour zoomer'
     default:
-      if (store.tool === 'locomotive' || store.isTrainSelected) {
-        if (store.couplerSnapTarget) {
-          return '🔗 Aimanté au convoi · Clic pour atteler · Éloignez le curseur pour poser librement'
-        }
+      if (store.tool === 'coupling') {
+        return 'Attelage · Clic sur une extrémité (bleue) proche d’un autre train pour atteler · Clic sur une pastille orange pour dételer · Échap pour quitter'
+      }
+      if (store.tool === 'locomotive') {
         if (store.trainToolSubMode === 'place') {
-          if (store.trainPlacementPreview) {
-            return store.trainPlacementKind === 'tgv_wagon'
-              ? 'Clic pour poser le wagon · R pour inverser le sens'
-              : 'Clic pour poser la motrice · R pour inverser le sens'
+          const what = store.trainPlacementKind === 'tgv_wagon' ? 'le wagon' : 'la motrice'
+          if (store.couplerSnapTarget) {
+            return `Clic pour atteler ${what} au train · Éloignez le curseur pour commencer un nouveau train · Échap pour terminer`
           }
-          return 'Approchez un rail pour prévisualiser · R pour inverser le sens'
+          if (store.trainPlacementPreview) {
+            return `Clic pour poser ${what} (nouveau train) · R ou Tab pour inverser le sens · Échap pour terminer`
+          }
+          return store.trainChain
+            ? 'Train en cours · Approchez de son extrémité pour atteler le véhicule suivant, ou d’un autre rail pour un nouveau train · Échap pour terminer'
+            : `Approchez le curseur d’un rail pour poser ${what} · R ou Tab pour inverser le sens · Échap pour terminer`
         }
         if (store.trainToolSubMode === 'delete') {
           return store.hoveredTrainDeleteVehicle
-            ? '🔴 Véhicule ciblé (contour rouge) · Clic pour le supprimer'
-            : 'Mode Suppression · Survolez une motrice ou un wagon pour le supprimer'
+            ? 'Véhicule ciblé (contour rouge) · Clic pour le supprimer · Échap pour quitter'
+            : 'Suppression · Survolez une motrice ou un wagon puis cliquez · Échap pour quitter'
         }
-        if (store.trainToolSubMode === 'select') {
-          return store.selectedTrainVehicleId && store.selectedTrain
-            ? `Véhicule sélectionné (${store.selectedTrain.vehicles.find(v => v.id === store.selectedTrainVehicleId)?.kind === 'loco' ? 'Motrice' : 'Wagon'}) · Suppr pour effacer`
-            : 'Cliquez sur un convoi ou un wagon pour le sélectionner'
-        }
-        return 'Glissez ou cliquez une motrice/wagon depuis la barre latérale pour poser sur la voie'
+        const selected = store.selectedTrain?.vehicles.find(v => v.id === store.selectedTrainVehicleId)
+        return store.isTrainSelected && selected
+          ? `${selected.kind === 'loco' ? 'Motrice sélectionnée' : 'Wagon sélectionné'} · Suppr pour effacer · F5 pour conduire · Échap pour quitter le mode train`
+          : 'Cliquez sur une motrice ou un wagon pour le sélectionner · Échap pour quitter le mode train'
       }
-      if (store.tool === 'coupling') {
-        return 'Mode Couplage · Cliquez deux extrémités proches pour coupler · Cliquez une pastille orange pour découpler'
+      if (store.isTrainSelected && store.selectedTrain) {
+        return 'Train sélectionné · Suppr pour effacer · F5 pour conduire'
       }
       return ''
   }
@@ -103,6 +108,25 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
     }
   }
 
+  // Badge on the ghost vehicle in train place mode: "attelé au train" vs "nouveau train"
+  let placementBadge: { sx: number; sy: number; coupled: boolean; label: string } | null = null
+  const ghost = store.trainPlacementPreview?.vehicles[0]
+  const isPlacingVehicle = store.draggingTrainItem !== null || (store.tool === 'locomotive' && store.trainToolSubMode === 'place')
+  if (ghost && isPlacingVehicle && !store.isPlayMode) {
+    const pos = positionOnSegment(store.network, ghost.front.segId, ghost.front.t)
+    if (pos) {
+      const snap = store.couplerSnapTarget
+      placementBadge = {
+        sx: (pos.x - store.camera.x) * store.camera.scale + store.viewport.w / 2,
+        sy: (pos.y - store.camera.y) * store.camera.scale + store.viewport.h / 2,
+        coupled: snap !== null,
+        label: snap
+          ? `Attelé au train T${store.trains.indexOf(snap.train) + 1} · ${snap.train.vehicles.length + 1} véhicules`
+          : `Nouveau train T${store.trains.length + 1}`,
+      }
+    }
+  }
+
   return (
     <div
       className="canvas-overlay"
@@ -123,7 +147,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
         const rect = e.currentTarget.getBoundingClientRect()
         const world = screenToWorld(store.camera, e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height)
         if (itemType === 'tgv_loco' || itemType === 'tgv_wagon') {
-          store.handleDropTrainItem(itemType, world)
+          if (!store.handleDropTrainItem(itemType, world)) showToast(TRAIN_PLACEMENT_REFUSED, 'warning')
           store.notify()
         }
       }}
@@ -155,6 +179,30 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
           <span>{store.draggingTrainItem === 'tgv_loco' ? 'Poser Motrice TGV' : 'Ajouter Voiture'}</span>
         </div>
       )}
+      {/* Placement badge on the ghost vehicle: appended to a train, or starting a new one */}
+      {placementBadge && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${placementBadge.sx}px`,
+            top: `${placementBadge.sy - 34}px`,
+            transform: 'translate(-50%, -100%)',
+            pointerEvents: 'none',
+            background: 'rgba(15, 23, 42, 0.92)',
+            border: `1.5px solid ${placementBadge.coupled ? '#34d399' : '#38bdf8'}`,
+            borderRadius: '12px',
+            padding: '2px 9px',
+            fontSize: '11px',
+            fontWeight: 700,
+            color: placementBadge.coupled ? '#6ee7b7' : '#7dd3fc',
+            whiteSpace: 'nowrap',
+            zIndex: 40,
+            userSelect: 'none',
+          }}
+        >
+          {placementBadge.label}
+        </div>
+      )}
       {/* Live Engineering HUD during placement */}
       {isPlacing && activeNode && (
         <div className="hud-realtime-card">
@@ -162,7 +210,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
               <path d="M21 21L3 3v18h18z" />
             </svg>
-            {currentDist.toFixed(1)} m
+            {formatDistance(currentDist, store.unit)}
           </span>
           {store.tool === 'curve' && (
             <>
@@ -196,7 +244,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
                   <line x1="12" y1="4" x2="12" y2="20" />
                   <line x1="20" y1="4" x2="20" y2="20" />
                 </svg>
-                Voie double ({store.parallelOffset}m)
+                Voie double ({formatDistance(store.parallelOffset, store.unit)})
               </span>
             </>
           )}
@@ -237,7 +285,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
               whiteSpace: 'nowrap',
               transition: 'transform 0.15s ease',
             }}
-            title="Prendre les commandes du train (Espace)"
+            title="Prendre les commandes du train (F5)"
             onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.06)')}
             onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
           >
@@ -249,7 +297,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
 
 
       {/* Live Play Mode HUD */}
-      {store.isPlayMode && store.locomotive && (
+      {store.isPlayMode && store.locomotive && store.trains.length === 0 && (
         <div className="hud-realtime-card" style={{ pointerEvents: 'auto', gap: '8px' }}>
           <span className="hud-pill" style={{ color: '#10b981', fontWeight: 600 }}>
             ▶ Conduite ({store.locomotiveLength}m)
@@ -366,7 +414,7 @@ export function CanvasOverlay({ store }: { store: EditorStore }) {
         >
           <span style={{ fontSize: '10px', color: '#94a3b8' }}>Longueur :</span>
           <span>{store.numericInput}</span>
-          <span style={{ fontSize: '10px' }}>m ↵</span>
+          <span style={{ fontSize: '10px' }}>{store.unit} ↵</span>
         </div>
       )}
 

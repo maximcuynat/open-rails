@@ -76,7 +76,7 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Réseaux disjoints" value={components} />
       </div>
 
-      <div className="sp-subheader">Grille & Accrochage</div>
+      <div className="sp-subheader">Grille & Aimantation</div>
       <div className="sp-section">
         <Field
           label="Grille visible"
@@ -165,7 +165,7 @@ function NetworkPanel({ store }: { store: EditorStore }) {
           }
         />
         <Field
-          label="Aimantation (Snap)"
+          label="Aimantation"
           value={
             <button
               onClick={() => store.toggleSnap()}
@@ -1179,8 +1179,8 @@ export function SidePanel({ store }: { store: EditorStore }) {
       <button
         className={`sp-toggle-btn ${isOpen ? 'open' : 'closed'}`}
         onClick={() => store.toggleSidePanel()}
-        title={isOpen ? 'Replier le volet d’informations (I)' : 'Ouvrir le volet d’informations (I)'}
-        aria-label="Toggle side panel"
+        title={isOpen ? 'Masquer l’inspecteur (I)' : 'Afficher l’inspecteur (I)'}
+        aria-label={isOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur'}
       >
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           {isOpen ? (
@@ -1194,11 +1194,11 @@ export function SidePanel({ store }: { store: EditorStore }) {
       {/* Floating drawer side panel */}
       <div className={`side-panel ${isOpen ? 'open' : 'collapsed'}`}>
         <div className="sp-top-bar">
-          <span className="sp-top-title">Inspecteur & Propriétés</span>
+          <span className="sp-top-title">Inspecteur</span>
           <button
             className="sp-close-btn"
             onClick={() => store.setSidePanelOpen(false)}
-            title="Fermer le volet"
+            title="Masquer l’inspecteur (I)"
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />

@@ -25,7 +25,7 @@ import {
  * - Turnouts with flared guard rails (contre-rails), frog point & wing rails,
  *   movable switch blades, stretcher bar, and switch machine.
  */
-export function generateRealisticSVG(net: Network, projectName = 'OpenRail'): string {
+export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): string {
   if (net.nodes.size === 0) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"></svg>`
   }

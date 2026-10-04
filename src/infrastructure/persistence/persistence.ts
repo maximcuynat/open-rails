@@ -1,11 +1,13 @@
 import type { Camera } from '@infrastructure/render/camera'
-import { createNetwork, syncIdCounter } from '../../domain/models/network'
+import { createNetwork, resetIdCounter, syncIdCounter } from '../../domain/models/network'
 import { findJunctionAtNode } from '../../domain/models/junction'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
 import type { Junction, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
+import { deserializeTrains, serializeTrains } from '../../domain/models/train'
+import type { SerializedTrain, TrainSet } from '../../domain/models/train'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -85,6 +87,8 @@ export interface SerializedProject {
   boardEnabled?: boolean
   boardWidth?: number
   boardHeight?: number
+  /** Trains standing on the layout (absent from files saved before trains were persisted) */
+  trains?: SerializedTrain[]
 }
 
 /**
@@ -106,6 +110,7 @@ export function serializeNetwork(
   boardEnabled?: boolean,
   boardWidth?: number,
   boardHeight?: number,
+  trains?: TrainSet[],
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -206,6 +211,7 @@ export function serializeNetwork(
     boardEnabled,
     boardWidth,
     boardHeight,
+    trains: trains && trains.length > 0 ? serializeTrains(trains) : undefined,
   }
 }
 
@@ -228,10 +234,11 @@ export function deserializeNetwork(data: SerializedProject): {
   boardEnabled?: boolean
   boardWidth?: number
   boardHeight?: number
+  trains: TrainSet[]
 } {
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
-    return { network: net }
+    return { network: net, trains: [] }
   }
 
   // 1. Restore nodes
@@ -310,6 +317,14 @@ export function deserializeNetwork(data: SerializedProject): {
   // 5. Update ID counter so that subsequent rails added will not have collision IDs
   syncIdCounter(net)
 
+  // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
+  const trains = deserializeTrains(net, data.trains)
+  if (trains.length > 0) {
+    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys()]
+    for (const train of trains) ids.push(train.id, ...train.vehicles.map((v) => v.id))
+    resetIdCounter(Math.max(0, ...ids.map((id) => Number(id.match(/_(\d+)$/)?.[1] ?? 0))))
+  }
+
   let camera: SerializedCamera | undefined
   if (data.camera && typeof data.camera === 'object') {
     const cx = typeof data.camera.x === 'number' && !Number.isNaN(data.camera.x) ? data.camera.x : 0
@@ -336,6 +351,7 @@ export function deserializeNetwork(data: SerializedProject): {
     boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
     boardHeight: typeof data.boardHeight === 'number' ? data.boardHeight : undefined,
+    trains,
   }
 }
 
@@ -396,6 +412,7 @@ export function saveNetworkToStorage(
   boardEnabled?: boolean,
   boardWidth?: number,
   boardHeight?: number,
+  trains?: TrainSet[],
 ): boolean {
   try {
     const storage = getStorage()
@@ -416,6 +433,7 @@ export function saveNetworkToStorage(
       boardEnabled,
       boardWidth,
       boardHeight,
+      trains,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -443,6 +461,7 @@ export function loadNetworkFromStorage(): {
   boardEnabled?: boolean
   boardWidth?: number
   boardHeight?: number
+  trains: TrainSet[]
 } | null {
   try {
     const storage = getStorage()

@@ -1,13 +1,17 @@
 import { useState } from 'react'
 import { Menu, MenuBar, type MenuItem } from './Menu'
-import type { EditorStore } from '@application/state/editorStore'
+import type { EditorStore, ThemeMode } from '@application/state/editorStore'
 import { exportSVG } from '@infrastructure/export/exportSvg'
-import { serializeNetwork } from '@infrastructure/persistence/persistence'
-import { computeTrackSections } from '@domain/models/sections'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
+
+const THEME_LABELS: Record<ThemeMode, string> = {
+  auto: 'automatique (système)',
+  light: 'clair',
+  dark: 'sombre',
+}
 
 interface TopBarProps {
   store: EditorStore
@@ -41,23 +45,23 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const editItems: MenuItem[] = [
     { id: 'undo', label: 'Annuler', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
-    { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Shift+Z', disabled: !store.canRedo, separatorAfter: true },
-    { id: 'delete', label: 'Supprimer', shortcut: 'Del' },
-    { id: 'duplicate', label: 'Dupliquer voie double', shortcut: 'D', disabled: store.selection.nodes.size !== 2 },
+    { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Maj+Z', disabled: !store.canRedo, separatorAfter: true },
+    { id: 'delete', label: 'Supprimer', shortcut: 'Suppr' },
+    { id: 'duplicate', label: 'Créer une voie parallèle', shortcut: 'D', disabled: !store.canCreateParallelTrack },
     { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A', separatorAfter: true },
     { id: 'reconcile', label: 'Réconcilier les jonctions & aiguillages', shortcut: 'R', separatorAfter: true },
-    { id: 'clear', label: 'Désélectionner tout', shortcut: 'Esc' },
+    { id: 'clear', label: 'Désélectionner tout' },
   ]
 
   const viewItems: MenuItem[] = [
     { id: 'fit', label: 'Ajuster à la vue', shortcut: 'F' },
     { id: 'fit-board', label: 'Cadrer le plateau de réseau', disabled: !store.boardEnabled },
-    { id: 'zoom-100', label: 'Zoom 100%', shortcut: 'Ctrl+0', separatorAfter: true },
-    { id: 'toggle-grid', label: 'Afficher la grille' },
-    { id: 'toggle-snap', label: 'Activer le magnétisme', shortcut: 'G' },
-    { id: 'toggle-dimensions', label: store.showDimensions ? '✓ Côtes dynamiques CAO' : 'Afficher les côtes CAO' },
-    { id: 'toggle-minimap', label: 'Afficher la mini-carte' },
-    { id: 'toggle-inspector', label: 'Panneau latéral de propriétés', shortcut: 'I', separatorAfter: true },
+    { id: 'zoom-100', label: 'Zoom par défaut', shortcut: 'Ctrl+0', separatorAfter: true },
+    { id: 'toggle-grid', label: store.showGrid ? 'Masquer la grille' : 'Afficher la grille' },
+    { id: 'toggle-snap', label: store.snap ? 'Désactiver l’aimantation' : 'Activer l’aimantation', shortcut: 'G' },
+    { id: 'toggle-dimensions', label: store.showDimensions ? 'Masquer les cotes dynamiques' : 'Afficher les cotes dynamiques' },
+    { id: 'toggle-minimap', label: store.showMinimap ? 'Masquer la mini-carte' : 'Afficher la mini-carte' },
+    { id: 'toggle-inspector', label: store.isSidePanelOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur', shortcut: 'I', separatorAfter: true },
     { id: 'open-settings', label: 'Paramètres & Échelles...', shortcut: 'Ctrl+,' },
   ]
 
@@ -72,7 +76,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           setShowNewModal(true)
         } else {
           store.newProject()
-          showToast('Nouveau projet initialisé', 'info')
+          showToast('Nouveau réseau créé', 'info')
         }
         break
       case 'settings':
@@ -89,7 +93,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           try {
             const data = JSON.parse(text)
             store.loadFromData(data)
-            showToast('Projet importé avec succès', 'success')
+            showToast('Réseau importé', 'success')
           } catch {
             showToast('Fichier JSON invalide', 'error')
           }
@@ -127,13 +131,18 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       case 'delete':
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))
         break
+      case 'duplicate':
+        if (!store.createParallelTrackFromSelection()) {
+          showToast('Sélectionnez une voie ou deux nœuds pour créer une voie parallèle', 'info')
+        }
+        break
       case 'select-all':
         store.selectAll()
         break
       case 'clear':
+        // A pose in progress is cancelled properly (its lone start node goes with it)
+        if (store.hasPendingPlacement) store.cancelInteraction()
         store.clearSelection()
-        store.lastNodeId = null
-        store.curveState = { phase: 0, startId: null }
         break
     }
   }
@@ -158,7 +167,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
         break
       case 'toggle-dimensions':
         store.toggleDimensions()
-        showToast(store.showDimensions ? 'Côtes dynamiques activées' : 'Côtes dynamiques masquées', 'info')
+        showToast(store.showDimensions ? 'Cotes dynamiques affichées' : 'Cotes dynamiques masquées', 'info')
         break
       case 'toggle-minimap':
         store.toggleMinimap()
@@ -207,7 +216,12 @@ export function TopBar({ store, onFitView }: TopBarProps) {
               title="Cliquer pour renommer"
             >
               {store.projectName}
-              {store.dirty && <span className="tb-dirty" title="Modifications non sauvegardées" />}
+              {store.dirty && (
+                <span
+                  className="tb-dirty"
+                  title="Modifications non exportées dans un fichier (enregistrées automatiquement dans ce navigateur)"
+                />
+              )}
             </button>
           )}
         </div>
@@ -257,7 +271,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           <button
             className="tb-icon-btn"
             onClick={store.cycleTheme}
-            title={`Thème : ${store.theme}`}
+            title={`Thème : ${THEME_LABELS[store.theme]}`}
             aria-label="Changer de thème"
           >
             {store.theme === 'light' && (
@@ -290,7 +304,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
         onClose={() => setShowNewModal(false)}
         onConfirm={() => {
           store.newProject()
-          showToast('Nouveau réseau initialisé', 'info')
+          showToast('Nouveau réseau créé', 'info')
         }}
       >
         <p>Voulez-vous réinitialiser le plan actuel ? Toutes les voies non exportées seront effacées.</p>
@@ -299,52 +313,74 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       {/* Modal Raccourcis Clavier (Figma Principle: Clarity & Discoverability) */}
       <Modal
         isOpen={showShortcutsModal}
-        title="Raccourcis clavier Open-Rail"
+        title="Raccourcis clavier Open Rails"
         closeLabel="Fermer"
         onClose={() => setShowShortcutsModal(false)}
       >
         <div className="shortcuts-grid">
+          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Outils</div>
           <div><span className="shortcut-kbd">V</span></div>
-          <div>Outil Sélection</div>
-
-          <div><span className="shortcut-kbd">T</span> ou <span className="shortcut-kbd">N</span></div>
-          <div>Poser une voie droite</div>
-
+          <div>Sélection et déplacement</div>
+          <div><span className="shortcut-kbd">N</span></div>
+          <div>Voie droite</div>
           <div><span className="shortcut-kbd">C</span></div>
-          <div>Poser une courbe</div>
-
+          <div>Voie courbe</div>
+          <div><span className="shortcut-kbd">P</span></div>
+          <div>Aiguillage</div>
+          <div><span className="shortcut-kbd">K</span></div>
+          <div>Ciseaux (scinder une voie)</div>
+          <div><span className="shortcut-kbd">M</span></div>
+          <div>Règle (mesurer)</div>
           <div><span className="shortcut-kbd">H</span></div>
-          <div>Déplacer la vue (Pan)</div>
-
-          <div><span className="shortcut-kbd">G</span></div>
-          <div>Activer / désactiver le magnétisme</div>
-
+          <div>Déplacer la vue</div>
+          <div><span className="shortcut-kbd">L</span></div>
+          <div>Trains (pose et sélection)</div>
+          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Pose des voies</div>
+          <div><span className="shortcut-kbd">0</span>–<span className="shortcut-kbd">9</span> puis <span className="shortcut-kbd">Entrée</span></div>
+          <div>Saisir la longueur exacte de la voie droite en cours</div>
+          <div><span className="shortcut-kbd">Tab</span></div>
+          <div>Continuer en courbe depuis le nœud de la voie droite en cours</div>
+          <div><span className="shortcut-kbd">Échap</span></div>
+          <div>Annuler la pose en cours, puis revenir à l’outil Sélection</div>
+          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Édition</div>
+          <div><span className="shortcut-kbd">T</span></div>
+          <div>Basculer l’aiguillage sélectionné</div>
+          <div><span className="shortcut-kbd">D</span></div>
+          <div>Créer une voie parallèle à la sélection</div>
+          <div><span className="shortcut-kbd">R</span></div>
+          <div>Réconcilier les jonctions et aiguillages</div>
+          <div><span className="shortcut-kbd">Suppr</span> ou <span className="shortcut-kbd">Retour arrière</span></div>
+          <div>Supprimer la sélection</div>
+          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">A</span></div>
+          <div>Tout sélectionner</div>
+          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Z</span></div>
+          <div>Annuler</div>
+          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Maj</span> + <span className="shortcut-kbd">Z</span> ou <span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Y</span></div>
+          <div>Rétablir</div>
+          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Affichage</div>
+          <div><span className="shortcut-kbd">Espace</span> + glisser</div>
+          <div>Déplacer la vue</div>
           <div><span className="shortcut-kbd">F</span></div>
           <div>Ajuster tout le réseau à la vue</div>
-
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Z</span></div>
-          <div>Annuler (Undo)</div>
-
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Shift</span> + <span className="shortcut-kbd">Z</span></div>
-          <div>Rétablir (Redo)</div>
-
-          <div><span className="shortcut-kbd">D</span></div>
-          <div>Dupliquer la voie en voie double (2 nœuds sélectionnés)</div>
-
-          <div><span className="shortcut-kbd">+</span> / <span className="shortcut-kbd">-</span></div>
-          <div>Changer de niveau d'élévation (Pont / Tunnel)</div>
-
-          <div><span className="shortcut-kbd">Tab</span></div>
-          <div>Inverser le côté de courbure</div>
-
-          <div><span className="shortcut-kbd">Suppr</span></div>
-          <div>Supprimer la sélection</div>
-
+          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">0</span></div>
+          <div>Zoom par défaut</div>
+          <div><span className="shortcut-kbd">G</span></div>
+          <div>Activer / désactiver l’aimantation</div>
+          <div><span className="shortcut-kbd">I</span></div>
+          <div>Afficher / masquer l’inspecteur</div>
           <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">,</span> ou <span className="shortcut-kbd">,</span></div>
-          <div>Paramètres du réseau (Échelles, Unités)</div>
-
-          <div><span className="shortcut-kbd">Échap</span></div>
-          <div>Désélectionner / Terminer la pose</div>
+          <div>Paramètres du réseau (échelles, unités)</div>
+          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Conduite</div>
+          <div><span className="shortcut-kbd">F5</span></div>
+          <div>Entrer en mode conduite / le quitter</div>
+          <div><span className="shortcut-kbd">↑</span> / <span className="shortcut-kbd">↓</span></div>
+          <div>Manipulateur : un cran de traction / de freinage</div>
+          <div><span className="shortcut-kbd">Maj</span> + <span className="shortcut-kbd">↑</span> / <span className="shortcut-kbd">↓</span></div>
+          <div>Inverseur (avant · neutre · arrière)</div>
+          <div><span className="shortcut-kbd">Retour arrière</span></div>
+          <div>Arrêt d’urgence</div>
+          <div><span className="shortcut-kbd">←</span> / <span className="shortcut-kbd">→</span></div>
+          <div>Orienter le prochain aiguillage</div>
         </div>
       </Modal>
       <SettingsModal
@@ -359,10 +395,9 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 // --- Export helpers (JSON / SVG / PNG) ---
 
 function exportJSON(store: EditorStore): void {
-  const sections = computeTrackSections(store.network, store.sectionMeta)
-  const data = serializeNetwork(store.network, store.projectName, store.camera, store.sectionMeta, store.gridMode, store.gridSpacing, sections)
+  // Same payload as the autosave: one store method builds both
   download(
-    JSON.stringify(data, null, 2),
+    JSON.stringify(store.exportProject(), null, 2),
     `${store.projectName.replace(/\s+/g, '-').toLowerCase()}.json`,
     'application/json',
   )

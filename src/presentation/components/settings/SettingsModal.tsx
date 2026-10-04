@@ -166,7 +166,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
         {/* Section 2 : Unité de travail & Saisie */}
         <div className="settings-section">
           <label className="settings-label">
-            Unité d'affichage & des côtes
+            Unité d'affichage & des cotes
             <span className="settings-hint">Toutes les longueurs et rayons seront exprimés dans cette unité</span>
           </label>
           <div className="unit-selector-row">
@@ -230,7 +230,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
         {/* Section 4 : Plateau / Table de modélisme (Baseboard) */}
         <div className="settings-section">
           <label className="settings-label">
-            Plateau / Table de travail (Baseboard)
+            Plateau / Table de travail
             <span className="settings-hint">Délimite physiquement la surface de votre réseau (ex. 2,40 m × 1,20 m) sur le canvas</span>
           </label>
           <label className="settings-checkbox-row">
@@ -330,7 +330,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
           )}
         </div>
 
-        {/* Section 5 : Dessin & Côtes CAO */}
+        {/* Section 5 : Dessin & Cotes CAO */}
         <div className="settings-section">
           <label className="settings-label">
             Aides de construction CAO
@@ -342,7 +342,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
               onChange={(e) => setShowDimensions(e.target.checked)}
             />
             <span className="settings-checkbox-text">
-              Afficher les côtes de construction dynamiques en direct (longueur, rayon, angle et entraxe)
+              Afficher les cotes de construction dynamiques en direct (longueur, rayon, angle et entraxe)
             </span>
           </label>
         </div>

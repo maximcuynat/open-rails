@@ -352,23 +352,24 @@ describe('EditorStore persistence', () => {
       expect(store.locomotive!.direction).toBe(1)
     })
 
-    it('handleDropTrainItem places loco and appends passenger wagons via drag and drop', () => {
+    it('handleDropTrainItem places a TrainSet loco and couples the wagon dropped behind it', () => {
       const store = new EditorStore()
       const n1 = addNode(store.network, { x: 0, y: 0 })
       const n2 = addNode(store.network, { x: 300, y: 0 })
       addSegment(store.network, n1.id, n2.id)
 
-      // 1. Drag & drop d'une motrice
+      // 1. Drag & drop d'une motrice : un TrainSet, jamais de locomotive legacy
       const droppedLoco = store.handleDropTrainItem('tgv_loco', { x: 50, y: 0 })
       expect(droppedLoco).toBe(true)
-      expect(store.locomotive).not.toBeNull()
+      expect(store.locomotive).toBeNull()
+      expect(store.trains).toHaveLength(1)
       expect(store.isTrainSelected).toBe(true)
 
-      // 2. Drag & drop d'un wagon sur la voie → crée un TrainSet wagon indépendant
-      const droppedWagon = store.handleDropTrainItem('tgv_wagon', { x: 40, y: 0 })
+      // 2. Drag & drop d'un wagon juste derrière → attelé au train en cours
+      const droppedWagon = store.handleDropTrainItem('tgv_wagon', { x: 30, y: 0 })
       expect(droppedWagon).toBe(true)
-      // New behavior: wagon creates an independent TrainSet, not added to the loco count
-      expect(store.trains.length).toBeGreaterThanOrEqual(1)
+      expect(store.trains).toHaveLength(1)
+      expect(store.trains[0].vehicles.map(v => v.kind)).toEqual(['loco', 'wagon'])
 
       // 3. Vérification de sélection et survol
       const hover = store.checkTrainHover({ x: 50, y: 0 })

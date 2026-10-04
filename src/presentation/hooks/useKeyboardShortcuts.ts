@@ -55,12 +55,21 @@ export function useKeyboardShortcuts(store: EditorStore): void {
           store.togglePlayMode()
           return
         }
+        // While driving, the editing shortcuts stay off: only view keys pass through
+        const isViewKey =
+          e.key === 'F5' ||
+          e.key === 'f' || e.key === 'F' ||
+          e.key === 'i' || e.key === 'I' ||
+          ((e.ctrlKey || e.metaKey) && e.key === '0')
+        if (!isViewKey) return
       }
+
+      const hasModifier = e.ctrlKey || e.metaKey || e.altKey
 
       // Numeric CAD input live typing during track placement
       const isPlacing = (store.tool === 'place' && store.lastNodeId !== null) ||
                         (store.tool === 'curve' && store.curveState.phase === 1)
-      if (isPlacing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (isPlacing && !hasModifier) {
         if (/^[0-9.,]$/.test(e.key)) {
           e.preventDefault()
           store.setNumericInput(store.numericInput + (e.key === ',' ? '.' : e.key))
@@ -88,10 +97,46 @@ export function useKeyboardShortcuts(store: EditorStore): void {
         return
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        store.deleteSelection()
+        // While a rail is being placed the selection is only the tool's working node:
+        // these keys (e.g. Backspace after the last typed digit) must not delete it
+        if (!store.hasPendingPlacement) store.deleteSelection()
+        return
       } else if (e.key === 'Escape') {
-        store.cancelInteraction()
-      } else if (e.key === 'v' || e.key === 'V') {
+        // An open menu or dialog closes itself on Escape: that press must not also cancel a
+        // placement or leave the current tool
+        if (!document.querySelector('.menu-dropdown, .modal-backdrop')) store.cancelInteraction()
+        return
+      }
+
+      // --- Ctrl / Cmd combinations ---
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z' || e.key === 'Z') {
+          e.preventDefault()
+          if (e.shiftKey) {
+            store.redo()
+          } else {
+            store.undo()
+          }
+        } else if (e.key === 'y' || e.key === 'Y') {
+          e.preventDefault()
+          store.redo()
+        } else if (e.key === '0') {
+          e.preventDefault()
+          store.resetZoom()
+        } else if (e.key === 'a' || e.key === 'A') {
+          e.preventDefault()
+          store.selectAll()
+        } else if (e.key === ',' || e.code === 'Comma' || e.key === 'p' || e.key === 'P') {
+          e.preventDefault()
+          store.toggleSettings()
+        }
+        return
+      }
+
+      // --- Plain keys: never fire with Ctrl / Cmd / Alt, so browser and OS shortcuts stay free ---
+      if (hasModifier) return
+
+      if (e.key === 'v' || e.key === 'V') {
         store.setTool('select')
       } else if (e.key === 'n' || e.key === 'N') {
         store.setTool('place')
@@ -115,33 +160,16 @@ export function useKeyboardShortcuts(store: EditorStore): void {
       } else if (e.key === 'f' || e.key === 'F') {
         // Fit-to-view handled by App via a custom event (needs viewport size)
         window.dispatchEvent(new CustomEvent('rail:fit-view'))
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault()
-        if (e.shiftKey) {
-          store.redo()
-        } else {
-          store.undo()
-        }
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
-        e.preventDefault()
-        store.redo()
-      } else if ((e.key === '0' || e.key === '0') && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault()
-        store.resetZoom()
-      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault()
-        store.selectAll()
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === ',' || e.code === 'Comma' || e.key === 'p' || e.key === 'P')) {
-        e.preventDefault()
-        store.toggleSettings()
-      } else if (e.key === ',' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      } else if (e.key === ',') {
         e.preventDefault()
         store.toggleSettings()
       } else if (e.key === 'Tab') {
         if (store.tool === 'place' && store.lastNodeId) {
           e.preventDefault()
-          store.setTool('curve')
+          // Carry on as a curve from the same start node (setTool would discard the placement)
+          store.tool = 'curve'
           store.curveState = { phase: 1, startId: store.lastNodeId }
+          store.clearNumericInput()
           store.notify()
         } else if (store.tool === 'curve') {
           e.preventDefault()
@@ -154,27 +182,23 @@ export function useKeyboardShortcuts(store: EditorStore): void {
           store.flipTrainPlacementDirection()
         }
       } else if (e.key === 'd' || e.key === 'D') {
-        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-          if (store.selection.nodes.size === 2) {
-            e.preventDefault()
-            store.createParallelTrackFromSelection()
-          } else if (store.locomotive || store.tool === 'locomotive') {
-            e.preventDefault()
-            store.toggleTrainDebug()
-          }
+        if (store.tool === 'select' && store.canCreateParallelTrack) {
+          e.preventDefault()
+          store.createParallelTrackFromSelection()
+        } else if (store.locomotive || store.tool === 'locomotive') {
+          e.preventDefault()
+          store.toggleTrainDebug()
         }
       } else if (e.key === 'i' || e.key === 'I') {
         store.toggleSidePanel()
       } else if (e.key === 'r' || e.key === 'R') {
-        if (!e.ctrlKey && !e.metaKey) {
-          e.preventDefault()
-          if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
-            store.flipTrainPlacementDirection()
-          } else if (store.isTrainSelected || store.tool === 'coupling') {
-            store.flipLocomotiveDirection()
-          } else {
-            store.reconcileTopology()
-          }
+        e.preventDefault()
+        if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
+          store.flipTrainPlacementDirection()
+        } else if (store.isTrainSelected || store.tool === 'coupling') {
+          store.flipLocomotiveDirection()
+        } else {
+          store.reconcileTopology()
         }
       } else if (e.key === '[') {
         if (store.tool === 'curve') store.cycleCurveProfile(-1)

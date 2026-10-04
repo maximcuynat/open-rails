@@ -1203,25 +1203,50 @@ export function snapToNearestTrack(
     const to = net.nodes.get(seg.to)
     if (!from || !to) continue
 
-    const N = 32
-    for (let i = 0; i <= N; i++) {
-      const t = i / N
-      let p: Point
-      if (seg.kind === 'straight' || !seg.via) {
-        p = {
-          x: from.pos.x + (to.pos.x - from.pos.x) * t,
-          y: from.pos.y + (to.pos.y - from.pos.y) * t,
+    let t: number
+    let p: Point
+    if (seg.kind === 'straight' || !seg.via) {
+      // Exact orthogonal projection on the straight rail
+      const dx = to.pos.x - from.pos.x
+      const dy = to.pos.y - from.pos.y
+      const len2 = dx * dx + dy * dy
+      t = len2 === 0 ? 0 : ((worldPos.x - from.pos.x) * dx + (worldPos.y - from.pos.y) * dy) / len2
+      t = Math.max(0, Math.min(1, t))
+      p = { x: from.pos.x + dx * t, y: from.pos.y + dy * t }
+    } else {
+      // Curve: coarse sampling, then refine around the best sample
+      const via = seg.via
+      const distAt = (u: number) => {
+        const q = bezierPoint(u, from.pos, via, to.pos)
+        return Math.hypot(q.x - worldPos.x, q.y - worldPos.y)
+      }
+      const N = 32
+      t = 0
+      let best = Infinity
+      for (let i = 0; i <= N; i++) {
+        const d = distAt(i / N)
+        if (d < best) {
+          best = d
+          t = i / N
         }
-      } else {
-        p = bezierPoint(t, from.pos, seg.via, to.pos)
       }
+      let lo = Math.max(0, t - 1 / N)
+      let hi = Math.min(1, t + 1 / N)
+      for (let iter = 0; iter < 24; iter++) {
+        const m1 = lo + (hi - lo) / 3
+        const m2 = hi - (hi - lo) / 3
+        if (distAt(m1) < distAt(m2)) hi = m2
+        else lo = m1
+      }
+      t = (lo + hi) / 2
+      p = bezierPoint(t, from.pos, via, to.pos)
+    }
 
-      const dist = Math.hypot(p.x - worldPos.x, p.y - worldPos.y)
-      if (dist < minDist) {
-        minDist = dist
-        closestSegId = seg.id
-        closestT = t
-      }
+    const dist = Math.hypot(p.x - worldPos.x, p.y - worldPos.y)
+    if (dist < minDist) {
+      minDist = dist
+      closestSegId = seg.id
+      closestT = t
     }
   }
 

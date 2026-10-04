@@ -17,6 +17,8 @@ import {
   STORAGE_KEY,
 } from './persistence'
 import { createCamera } from '@infrastructure/render/camera'
+import { createVehicle, makeTrainSet, setNotch, setReverser } from '../../domain/models/train'
+import { generateId } from '../../domain/models/network'
 
 describe('persistence module', () => {
   beforeEach(() => {
@@ -185,5 +187,76 @@ describe('persistence module', () => {
       expect(loaded?.network.nodes.size).toBe(0)
     }
   })
-})
 
+  describe('trains', () => {
+    function networkWithTrain() {
+      const net = createNetwork()
+      const n1 = addNode(net, { x: 0, y: 0 })
+      const n2 = addNode(net, { x: 500, y: 0 })
+      const seg = addSegment(net, n1.id, n2.id)!
+      const train = makeTrainSet(generateId('train'), [
+        createVehicle(net, seg.id, 0.5, 'loco')!,
+        createVehicle(net, seg.id, 0.4, 'wagon')!,
+      ])
+      return { net, seg, train }
+    }
+
+    it('round-trips trains through JSON, stopped and with controls at rest', () => {
+      const { net, train } = networkWithTrain()
+      setReverser(train, 'forward')
+      setNotch(train, 5)
+      train.currentSpeed = 30
+
+      const data = JSON.parse(JSON.stringify(serializeNetwork(
+        net, 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, [train],
+      )))
+      const restored = deserializeNetwork(data)
+
+      expect(restored.trains).toHaveLength(1)
+      expect(restored.trains[0].id).toBe(train.id)
+      expect(restored.trains[0].vehicles).toEqual(train.vehicles)
+      expect(restored.trains[0].currentSpeed).toBe(0)
+      expect(restored.trains[0].notch).toBe(0)
+      expect(restored.trains[0].reverser).toBe('neutral')
+    })
+
+    it('keeps the existing positional arguments working and omits the key without trains', () => {
+      const { net } = networkWithTrain()
+      const data = serializeNetwork(net, 'P', createCamera(1, 2, 3))
+      expect(data.name).toBe('P')
+      expect(data.camera).toEqual({ x: 1, y: 2, scale: 3 })
+      expect('trains' in JSON.parse(JSON.stringify(data))).toBe(false)
+    })
+
+    it('loads an old file without trains', () => {
+      const { net } = networkWithTrain()
+      const data = JSON.parse(JSON.stringify(serializeNetwork(net, 'Old')))
+      const restored = deserializeNetwork(data)
+      expect(restored.network.segments.size).toBe(1)
+      expect(restored.trains).toEqual([])
+      expect(deserializeNetwork(null as never).trains).toEqual([])
+    })
+
+    it('drops trains standing on segments missing from the file', () => {
+      const { net, seg, train } = networkWithTrain()
+      const data = serializeNetwork(net, 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, [train])
+      data.segments = data.segments.filter(s => s.id !== seg.id)
+      expect(deserializeNetwork(data).trains).toEqual([])
+    })
+
+    it('keeps new ids clear of the restored train and vehicle ids', () => {
+      const { net, train } = networkWithTrain()
+      saveNetworkToStorage(net, 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined, [train])
+      resetIdCounter(0)
+
+      const loaded = loadNetworkFromStorage()!
+      expect(loaded.trains).toHaveLength(1)
+      const used = new Set([loaded.trains[0].id, ...loaded.trains[0].vehicles.map(v => v.id)])
+      expect(used.has(generateId('train'))).toBe(false)
+      expect(used.has(generateId('veh'))).toBe(false)
+    })
+  })
+})
