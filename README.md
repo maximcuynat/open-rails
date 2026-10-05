@@ -110,4 +110,6 @@ src/
 
 ## 📄 Licence
 
-Ce projet est sous licence open-source libre. Consultez le fichier [LICENSE](LICENSE) pour plus de détails.
+Copyright © 2026 Maxim Cuynat.
+
+Open Rails est un logiciel libre distribué sous licence [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). Vous pouvez l'utiliser, l'étudier, le modifier et le redistribuer ; toute version modifiée que vous distribuez ou que vous mettez à disposition sur un réseau doit être publiée sous la même licence, avec son code source.
