@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
 import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
-import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
+import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
@@ -17,7 +17,7 @@ import {
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
-import { levelRange, levelRangeLabel } from '../common/trackLevel'
+import { levelRange, levelRangeLabel, rampSummary } from '../common/trackLevel'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>
@@ -32,8 +32,19 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-/** Heights of the selected rail (of its two nodes), with − / + to send it under or over the other tracks. */
-function LevelField({ store, range }: { store: EditorStore; range: { min: number; max: number } }) {
+/**
+ * Heights of the selected rail (of its two nodes) or node, with − / + to send it under or over the
+ * other tracks. `onStep` acts through the store: by default on the current selection.
+ */
+function LevelField({
+  store,
+  range,
+  onStep = (delta) => { store.shiftSelectionLevel(delta) },
+}: {
+  store: EditorStore
+  range: { min: number; max: number }
+  onStep?: (delta: 1 | -1) => void
+}) {
   const stepButton = (delta: 1 | -1, disabled: boolean) => (
     <button
       type="button"
@@ -52,7 +63,7 @@ function LevelField({ store, range }: { store: EditorStore; range: { min: number
         opacity: disabled ? 0.4 : 1,
       }}
       disabled={disabled}
-      onClick={() => { store.shiftSelectionLevel(delta) }}
+      onClick={() => onStep(delta)}
       title={delta > 0 ? 'Monter d’un niveau (pont)' : 'Descendre d’un niveau (tunnel)'}
       aria-label={delta > 0 ? 'Monter d’un niveau' : 'Descendre d’un niveau'}
     >
@@ -282,8 +293,17 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     store.deleteSelection()
   }
 
+  // The panel shows one node, whatever else is selected with it: the level acts on that node alone
+  const shiftNodeLevel = (delta: 1 | -1) => {
+    store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+    store.shiftSelectionLevel(delta)
+  }
+
   const isDeadEnd = adj.length === 1
-  const kinematicIssues = analyzeKinematics(store.network, store.gauge).filter((i) => i.nodeId === nodeId)
+  const kinematicIssues = analyzeKinematics(store.network, store.gauge, {
+    levelHeight: store.levelHeight,
+    maxGradient: store.maxGradient,
+  }).filter((i) => i.nodeId === nodeId)
 
   return (
     <>
@@ -359,6 +379,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             onBlur={(e) => applyY(parseFloat(e.target.value) || 0)}
           />
         </label>
+        <LevelField store={store} range={{ min: nodeLevel(node), max: nodeLevel(node) }} onStep={shiftNodeLevel} />
       </div>
 
       {junction && (
@@ -535,6 +556,13 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     len = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
   }
 
+  // Null for a flat rail: nothing more than its level is shown
+  const ramp = rampSummary(store.network, seg, {
+    levelHeight: store.levelHeight,
+    maxGradient: store.maxGradient,
+    unit: store.unit,
+  })
+
   const selectNode = (id: string) => {
     store.setSelection({ nodes: new Set([id]), segments: new Set() })
   }
@@ -605,6 +633,24 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
         <LevelField store={store} range={levelRange(store.network, [seg.id]) ?? { min: 0, max: 0 }} />
+        {ramp && (
+          <>
+            <Field label="Niveau de départ" value={ramp.from} />
+            <Field label="Niveau d’arrivée" value={ramp.to} />
+            <Field label="Dénivelé" value={ramp.rise} />
+            <Field
+              label="Pente"
+              value={
+                <span
+                  style={ramp.tooSteep ? { color: '#dc2626', fontWeight: 700 } : undefined}
+                  title={ramp.tooSteep ? `Au-delà de la pente maximale (${Math.round(store.maxGradient)} ‰)` : undefined}
+                >
+                  {ramp.gradient}
+                </span>
+              }
+            />
+          </>
+        )}
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}

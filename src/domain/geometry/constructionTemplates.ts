@@ -1,5 +1,5 @@
 import type { Network, Point, RailNode } from '@domain/models/types'
-import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, nodeLevel } from '@domain/models/network'
+import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, nodeLevel, segmentHeightNear, spreadGradient } from '@domain/models/network'
 import { splitSegment } from '@domain/models/junction'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
@@ -693,30 +693,37 @@ export function computePassingSidingPreview(
 export function applyPassingSiding(net: Network, preview: SidingPreview, tolerance?: number): boolean {
   if (!preview.valid) return false
 
+  // Height of the main line at the exit turnout, read before the line is cut: on a ramp the exit
+  // node must sit on the slope, not at the height of the entry
+  const mainSeg = net.segments.get(preview.segId)
+  const entryLevel = mainSeg ? segmentHeightNear(net, mainSeg, preview.entryTurnoutPos) : 0
+  const exitLevel = mainSeg ? segmentHeightNear(net, mainSeg, preview.exitTurnoutPos) : 0
+
   // Split at entry and exit
   const split1 = splitSegment(net, preview.segId, preview.entryTurnoutPos)
-  const nEntry = split1 ? split1.midNode : addNode(net, preview.entryTurnoutPos)
+  const nEntry = split1 ? split1.midNode : addNode(net, preview.entryTurnoutPos, entryLevel)
 
   const split2 = splitSegment(net, preview.segId, preview.exitTurnoutPos)
-  const nExit = split2 ? split2.midNode : addNode(net, preview.exitTurnoutPos, nodeLevel(nEntry))
+  const nExit = split2 ? split2.midNode : addNode(net, preview.exitTurnoutPos, exitLevel)
 
-  // Add siding transition and track nodes: each end of the siding at the height of its turnout,
-  // so that the siding runs alongside the main line, ramp included
+  // Add siding transition and track nodes
   const nEntryMid = addNode(net, preview.entryMidPos, nodeLevel(nEntry))
   const nSStart = addNode(net, preview.sidingStartPos, nodeLevel(nEntry))
   const nSEnd = addNode(net, preview.sidingEndPos, nodeLevel(nExit))
   const nExitMid = addNode(net, preview.exitMidPos, nodeLevel(nExit))
 
-  // Entry S-curve (2 curves)
-  addCurveSegment(net, nEntry.id, nEntryMid.id, preview.entryVia1)
-  addCurveSegment(net, nEntryMid.id, nSStart.id, preview.entryVia2)
-
-  // Siding body (straight)
-  addSegment(net, nSStart.id, nSEnd.id)
-
-  // Exit S-curve (2 curves)
-  addCurveSegment(net, nSEnd.id, nExitMid.id, preview.exitVia1)
-  addCurveSegment(net, nExitMid.id, nExit.id, preview.exitVia2)
+  const siding = [
+    // Entry S-curve (2 curves)
+    addCurveSegment(net, nEntry.id, nEntryMid.id, preview.entryVia1),
+    addCurveSegment(net, nEntryMid.id, nSStart.id, preview.entryVia2),
+    // Siding body (straight)
+    addSegment(net, nSStart.id, nSEnd.id),
+    // Exit S-curve (2 curves)
+    addCurveSegment(net, nSEnd.id, nExitMid.id, preview.exitVia1),
+    addCurveSegment(net, nExitMid.id, nExit.id, preview.exitVia2),
+  ]
+  // On a ramp the siding climbs from one turnout to the other at an even slope, like the main line
+  spreadGradient(net, siding.flatMap((seg) => (seg ? [seg.id] : [])))
 
   reconcileNetworkIntersections(net, tolerance)
   return true
@@ -731,6 +738,8 @@ export interface BalloonLoopPreview {
   loopNodes: Point[]
   radius: number
   side: 1 | -1
+  /** Height of the end node the loop starts from (absent = ground) */
+  level?: number
 }
 
 export function computeBalloonLoopPreview(
@@ -768,6 +777,7 @@ export function computeBalloonLoopPreview(
     loopNodes: pts,
     radius,
     side,
+    level: nodeLevel(node),
   }
 }
 
@@ -777,12 +787,14 @@ export function computeBalloonLoopPreview(
 export function applyBalloonLoop(net: Network, preview: BalloonLoopPreview, tolerance?: number): boolean {
   if (!preview.valid || preview.loopNodes.length < 3) return false
 
-  let prevNodeId = addNode(net, preview.turnoutPos).id
+  // The whole loop lies at the height of the end node it leaves from, which it is then welded to
+  const level = preview.level ?? 0
+  let prevNodeId = addNode(net, preview.turnoutPos, level).id
   const startNodeId = prevNodeId
 
   for (let i = 1; i < preview.loopNodes.length - 1; i++) {
     const pt = preview.loopNodes[i]
-    const n = addNode(net, pt)
+    const n = addNode(net, pt, level)
     addSegment(net, prevNodeId, n.id)
     prevNodeId = n.id
   }

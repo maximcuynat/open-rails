@@ -39,45 +39,45 @@ Pente = dénivelé × hauteur d'un niveau ÷ longueur du segment, en ‰. Deux r
 
 ## Phase 1 — Migration du modèle, sans élément graphique nouveau (un agent, avant les deux autres)
 
-- [ ] 1.1 `types.ts` : `RailNode.level?` ; `Segment.level` retiré du modèle (lu seulement à l'ouverture d'une ancienne sauvegarde)
-- [ ] 1.2 `network.ts` : `nodeLevel(node)`, `segmentEndLevels(net, seg)`, `segmentHeightAt(net, seg, t)`, `isRamp(net, seg)`, `segmentBand(net, seg)` (niveau de dessin : le bout le plus haut, ou le plus bas pour une voie sous le sol), `setNodesLevel(net, ids, level)` ; `segmentLevel` / `nodeLevels` / `branchLevel` / `setSegmentsLevel` remplacés
-- [ ] 1.3 Tous les appelants adaptés (réconciliation, croisements, pointage, gabarits, store, rendu, export, interface) en gardant le comportement actuel pour les voies à plat
-- [ ] 1.4 Persistance : `level` sur `SerializedNode` (écrit seulement s'il est non nul) ; ancienne sauvegarde avec `level` sur les segments : chaque nœud prend, parmi les niveaux de ses rails, celui qui est le plus éloigné du sol
-- [ ] 1.5 Les 684 tests passent, adaptés seulement là où ils posent `seg.level` à la main ; `npm run typecheck`, `npm run build`
+- [x] 1.1 `types.ts` : `RailNode.level?` ; `Segment.level` retiré du modèle (lu seulement à l'ouverture d'une ancienne sauvegarde)
+- [x] 1.2 `network.ts` : `nodeLevel(node)`, `segmentEndLevels(net, seg)`, `segmentHeightAt(net, seg, t)`, `isRamp(net, seg)`, `segmentBand(net, seg)` (niveau de dessin : le bout le plus haut, ou le plus bas pour une voie sous le sol), `setNodesLevel(net, ids, level)` ; `segmentLevel` / `nodeLevels` / `branchLevel` / `setSegmentsLevel` remplacés
+- [x] 1.3 Tous les appelants adaptés (réconciliation, croisements, pointage, gabarits, store, rendu, export, interface) en gardant le comportement actuel pour les voies à plat
+- [x] 1.4 Persistance : `level` sur `SerializedNode` (écrit seulement s'il est non nul) ; ancienne sauvegarde avec `level` sur les segments : chaque nœud prend, parmi les niveaux de ses rails, celui qui est le plus éloigné du sol
+- [x] 1.5 Les 684 tests passent, adaptés seulement là où ils posent `seg.level` à la main ; `npm run typecheck`, `npm run build`
 
 ## Phase 2 — Agent A : domaine, sauvegarde, store
 
-- [ ] A1. Règle de hauteur dans la réconciliation (`reconcile.ts`) : candidats `cross`, `split`, `weld` et doublons décidés sur l'écart de hauteur au point de rencontre ; `weldNodes` garde la hauteur du nœud conservé
-- [ ] A2. Croisements (`crossing.ts`) : `detectCrossings` sur la même règle ; `separateLevelsAtNode` inchangé dans son rôle (le nœud jumeau reçoit la hauteur de la voie du dessus)
-- [ ] A3. Découpe et fusion : le nœud créé par une découpe prend la hauteur interpolée ; `dissolveNode` refuse de supprimer un nœud dont la hauteur n'est pas alignée avec ses deux voisins (sinon la pente changerait sans le dire)
-- [ ] A4. Pose : un nœud créé en prolongeant une voie prend la hauteur du nœud de départ ; arriver sur un nœud existant d'une autre hauteur donne une rampe ; gabarits (`constructionTemplates.ts`) et voie parallèle recopient les hauteurs
-- [ ] A5. Pente (`network.ts` ou `services/`) : `segmentGradient(net, seg, levelHeight)` en ‰, signée dans le sens du segment ; `spreadGradient(net, segmentIds)` : sur une suite de rails bout à bout, répartit le dénivelé entre les deux extrémités au prorata des longueurs
-- [ ] A6. Diagnostic (`kinematicDiagnostics.ts`) : nouveau type « pente trop forte » quand un segment dépasse `maxGradient`
-- [ ] A7. Store : `levelHeight`, `maxGradient` (valeurs par défaut dans `SCALE_PRESETS`, sauvegardés avec le projet) ; `shiftSelectionLevel(delta)` agit sur les nœuds des rails sélectionnés, ou sur les nœuds sélectionnés seuls ; `spreadSelectionGradient()` ; même enchaînement que les autres éditions (trains gardés en place, réconciliation, historique, `notify()`)
-- [ ] A8. Pointage : à distance égale, la voie la plus haute **à cet endroit** l'emporte
-- [ ] A9. Tests pour chaque point
+- [x] A1. Règle de hauteur dans la réconciliation (`reconcile.ts`) : candidats `cross`, `split`, `weld` et doublons décidés sur l'écart de hauteur au point de rencontre ; `weldNodes` garde la hauteur du nœud conservé
+- [x] A2. Croisements (`crossing.ts`) : `detectCrossings` sur la même règle ; `separateLevelsAtNode` inchangé dans son rôle (le nœud jumeau reçoit la hauteur de la voie du dessus)
+- [x] A3. Découpe et fusion : le nœud créé par une découpe prend la hauteur interpolée ; `dissolveNode` refuse de supprimer un nœud dont la hauteur n'est pas alignée avec ses deux voisins (sinon la pente changerait sans le dire)
+- [x] A4. Pose : un nœud créé en prolongeant une voie prend la hauteur du nœud de départ ; arriver sur un nœud existant d'une autre hauteur donne une rampe ; gabarits (`constructionTemplates.ts`) et voie parallèle recopient les hauteurs
+- [x] A5. Pente (`network.ts` ou `services/`) : `segmentGradient(net, seg, levelHeight)` en ‰, signée dans le sens du segment ; `spreadGradient(net, segmentIds)` : sur une suite de rails bout à bout, répartit le dénivelé entre les deux extrémités au prorata des longueurs
+- [x] A6. Diagnostic (`kinematicDiagnostics.ts`) : nouveau type « pente trop forte » quand un segment dépasse `maxGradient`
+- [x] A7. Store : `levelHeight`, `maxGradient` (valeurs par défaut dans `SCALE_PRESETS`, sauvegardés avec le projet) ; `shiftSelectionLevel(delta)` agit sur les nœuds des rails sélectionnés, ou sur les nœuds sélectionnés seuls ; `spreadSelectionGradient()` ; même enchaînement que les autres éditions (trains gardés en place, réconciliation, historique, `notify()`)
+- [x] A8. Pointage : à distance égale, la voie la plus haute **à cet endroit** l'emporte
+- [x] A9. Tests pour chaque point
 
 ## Phase 2 — Agent B : visuel et interface
 
 Consigne de l'utilisateur (2026-10-05) : visuel très sobre, on garde le dessin actuel. Juste les rails, pas de traverses ni d'élément nouveau ; pointillés légers pour les tunnels ; pont comme aujourd'hui.
 
-- [ ] B1. Ordre de dessin par `segmentBand` ; un véhicule est dessiné avec le segment qui le porte
-- [ ] B2. Rampe : rails seuls. Le style existant s'applique simplement à la partie de la rampe qui est réellement au-dessus ou au-dessous : tablier actuel là où la hauteur dépasse un demi-niveau (c'est ce qui masque la voie du dessous), pointillés actuels du tunnel là où elle passe sous un demi-niveau. Culée actuelle au début du tablier. Aucun talus, hachure, portail, chevron ni étiquette
-- [ ] B3. Export SVG : même règle
-- [ ] B4. Interface :
+- [x] B1. Ordre de dessin par `segmentBand` ; un véhicule est dessiné avec le segment qui le porte
+- [x] B2. Rampe : rails seuls. Le style existant s'applique simplement à la partie de la rampe qui est réellement au-dessus ou au-dessous : tablier actuel là où la hauteur dépasse un demi-niveau (c'est ce qui masque la voie du dessous), pointillés actuels du tunnel là où elle passe sous un demi-niveau. Culée actuelle au début du tablier. Aucun talus, hachure, portail, chevron ni étiquette
+- [x] B3. Export SVG : même règle
+- [x] B4. Interface :
   - `SegmentPanel` : niveau de départ et d'arrivée, dénivelé en mètres, pente en ‰ (rouge si trop forte)
   - `NodePanel` : compteur « Niveau » du nœud
   - barre contextuelle : le compteur agit sur la sélection (rails ou nœuds), il affiche « 0 à +1 » sur une rampe ; action « Lisser la pente » active quand la sélection est une suite de rails dont les deux bouts ne sont pas à la même hauteur ; mêmes règles de stabilité que le reste de la barre
   - paramètres : « Hauteur d'un niveau » et « Pente maximale »
-- [ ] B5. Pente trop forte : signalée sur le canevas par le marqueur de diagnostic existant, sans dessin nouveau
-- [ ] B6. Tests de rendu (contexte enregistreur de `trackLevels.test.ts`), de la barre contextuelle et de l'export
+- [x] B5. Pente trop forte : signalée sur le canevas par le marqueur de diagnostic existant, sans dessin nouveau
+- [x] B6. Tests de rendu (contexte enregistreur de `trackLevels.test.ts`), de la barre contextuelle et de l'export
 
 ## Vérification finale
 
-- [ ] `npm test`, `npm run typecheck`, `npm run build`
-- [ ] Relecture du diff complet
-- [ ] Navigateur : pont avec deux rampes, tunnel avec ses deux descentes, rampe trop raide signalée, « Lisser la pente » sur trois coupons, ancienne sauvegarde relue
-- [ ] Contrôle à l'œil par l'utilisateur
+- [x] `npm test`, `npm run typecheck`, `npm run build`
+- [x] Relecture du diff complet
+- [x] Navigateur sans écran : pont avec deux rampes, tunnel avec ses deux descentes, rampe trop raide signalée, ancienne sauvegarde relue, barre contextuelle
+- [ ] Contrôle à l'œil par l'utilisateur : panneaux segment et nœud, paramètres, « Lisser la pente » en vrai, export SVG, train sur une rampe
 
 ## Tests clés
 
@@ -89,6 +89,19 @@ Consigne de l'utilisateur (2026-10-05) : visuel très sobre, on garde le dessin 
 - Pente au-delà de `maxGradient` : diagnostic présent ; en deçà : absent
 - Ancienne sauvegarde (`level` sur les segments) relue sans perdre de pont ; sauvegarde → chargement → hauteurs identiques, y compris décimales
 - Réseau sans aucune hauteur : mêmes appels de dessin et même fichier de sauvegarde qu'avant
+
+## Revue (2026-10-05)
+
+- `npm test` : 767 tests verts (39 fichiers) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
+- Vu dans un navigateur sans écran : rampe en rails seuls jusqu'à mi-hauteur puis tablier actuel avec sa culée ; tunnel en pointillés seulement sous un demi-niveau ; marqueur « Pente 60 ‰ » au pied d'une rampe de 100 m ; fichier à l'ancien format relu avec son pont et ses voisines devenues rampes ; compteur « 0 à +1 » et « Lisser la pente » dans la barre.
+- Non vu à l'écran : panneaux segment et nœud, fenêtre des paramètres, « Lisser la pente » exécuté à la souris, export SVG, train sur une rampe (tous couverts par des tests de logique, pas d'interface).
+- Ajouté à la relecture : « Lisser la pente » n'est proposé que si les deux bouts de la suite sont à des hauteurs différentes ; sur un pont entier avec ses deux rampes il l'aurait aplati jusqu'au sol.
+- Écarts au plan :
+  - l'ordre de dessin se fait par morceau de rail coupé aux demi-niveaux (`levelPieces.ts`), pas par rail entier ;
+  - `detectCrossings` en courbe garde une hauteur estimée sur la polyligne (écart d'environ un millième du dénivelé) ;
+  - le calcul de pente et le diagnostic ont été posés avant les agents ; la pente est affichée à une décimale.
+- Corrigé au passage : évitement posé sur une rampe (la voie principale garde sa pente), boucle de retournement posée à la hauteur de son nœud d'entrée.
+- Restes connus : voir « Niveaux et pentes » dans les défauts connus.
 
 ## Hors périmètre
 
@@ -142,14 +155,17 @@ Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été
 - Réseaux déjà enregistrés : gardent le nom « Untitled Network »
 - Thème clair des éléments flottants et styles de boutons non unifiés
 
-## Niveaux de voie
+## Niveaux et pentes
 
-- Un clic sur une voie sélectionne toute la section : le compteur de niveau lève tous ses coupons ensemble ; pour n'en lever qu'un il faut le sélectionner seul
+- Un clic sur une voie sélectionne toute la section : le compteur de niveau lève tous ses nœuds ensemble ; pour n'en lever qu'une partie il faut la sélectionner seule
+- Une soudure ou une découpe entre deux hauteurs distantes de moins d'un demi-niveau aligne la voie sur le nœud conservé : sa pente change sans avertissement
+- Changer d'échelle remet la hauteur d'un niveau et la pente maximale aux valeurs de l'échelle (comme l'entraxe) ; la fenêtre des paramètres marque le projet modifié à chaque enregistrement
 - En vue à plusieurs niveaux, `renderNetwork` (et `computeTrackSections`) tourne une fois par niveau visible plus une : coût à mesurer sur un grand réseau
-- `applyBalloonLoop` n'hérite pas du niveau ; pas d'étiquette de niveau sur le canevas ; tablier calé sur la constante `GAUGE`, comme les rails
-- Debug des trains possiblement masqué par un pont ; l'ancienne `Locomotive` prend le niveau de sa motrice en un bloc
-- Une voie qui passe par le niveau 0 en croisant une autre y est coupée ; les deux moitiés restent séparées ensuite
-- Non vu à l'écran : un train sous un pont, le champ « Niveau » du panneau latéral, l'export SVG ; figeage de la barre au survol et élargissement des valeurs sans test automatique
+- Pointillés du tunnel repris à zéro à chaque morceau de rail ; en vue simplifiée le tunnel n'a pas de style ; pas des traverses légèrement différent de part et d'autre d'une coupe dans le SVG
+- `detectCrossings` ne voit pas un croisement sans nœud qui tombe exactement sur un sommet de la polyligne d'une courbe (défaut ancien, aussi sur des voies à plat)
+- Debug des trains possiblement masqué par un pont ; tablier calé sur la constante `GAUGE`, comme les rails
+- `NodePanel` change la sélection avant d'appeler le store (comme sa suppression) : une méthode dédiée serait plus propre ; `heightBand` / `segmentLevelPieces` auraient leur place dans le domaine
+- Figeage de la barre au survol et élargissement des valeurs sans test automatique
 
 ## Code à retirer ou à brancher
 

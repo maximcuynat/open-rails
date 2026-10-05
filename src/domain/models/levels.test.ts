@@ -7,8 +7,10 @@ import {
   addCurveSegment,
   addNode,
   addSegment,
+  canSpreadGradient,
   createNetwork,
   dissolveNode,
+  gradientRun,
   hitNode,
   hitSegment,
   isRamp,
@@ -18,8 +20,11 @@ import {
   resetIdCounter,
   segmentBand,
   segmentEndLevels,
+  segmentGradient,
   segmentHeightAt,
+  segmentRunLength,
   setNodesLevel,
+  spreadGradient,
 } from './network'
 import type { Network, Segment } from './types'
 import { detectCrossings, separateLevelsAtNode } from './crossing'
@@ -772,5 +777,199 @@ describe('trains on stacked tracks', () => {
     for (let i = 0; i < 120; i++) if (!advanceTrainSet(net, a, 0.5, [a, b])) refusedA++
     expect(refusedA).toBe(0)
     expect(Math.abs(trainNose(net, a).x)).toBeGreaterThan(15)
+  })
+})
+
+describe('gradient of a ramp', () => {
+  it('a rail from a node on level 1 down to a ground node: rise × level height ÷ length, in ‰, signed along the rail', () => {
+    const net = createNetwork()
+    const top = addNode(net, { x: 0, y: 0 }, 1)
+    const foot = addNode(net, { x: 150, y: 200 }) // 250 m away
+    const seg = addSegment(net, top.id, foot.id)!
+
+    expect(net.segments.size).toBe(1)
+    expect(isRamp(net, seg)).toBe(true)
+    expect(segmentGradient(net, seg, 6)).toBeCloseTo(-24, 9) // 6 m down over 250 m
+    expect(segmentGradient(net, seg, 6 / 87)).toBeCloseTo(-24 / 87, 9)
+    // The same rail laid the other way climbs
+    const back = createNetwork()
+    const a = addNode(back, { x: 150, y: 200 })
+    const b = addNode(back, { x: 0, y: 0 }, 1)
+    expect(segmentGradient(back, addSegment(back, a.id, b.id)!, 6)).toBeCloseTo(24, 9)
+  })
+
+  it('is 0 on a flat rail, whatever its height, and counts half levels', () => {
+    expect(segmentGradient(rail(0, 0).net, rail(0, 0).seg, 6)).toBe(0)
+    const bridge = rail(2, 2)
+    expect(segmentGradient(bridge.net, bridge.seg, 6)).toBe(0)
+    const half = rail(0, 0.5)
+    expect(segmentGradient(half.net, half.seg, 6)).toBeCloseTo(30, 9)
+  })
+
+  it('cut in the middle, a ramp gives two rails of the same slope as before', () => {
+    const { net, seg } = rail(1, 0)
+    const before = segmentGradient(net, seg, 6)
+    expect(before).toBeCloseTo(-60, 9)
+
+    const cut = splitSegment(net, seg.id, { x: 50, y: 0 })!
+    expect(nodeLevel(cut.midNode)).toBeCloseTo(0.5, 9)
+    const pieces = [...net.segments.values()]
+    expect(pieces).toHaveLength(2)
+    for (const piece of pieces) {
+      // Each piece keeps the direction of the rail it comes from
+      expect(Math.abs(segmentGradient(net, piece, 6))).toBeCloseTo(60, 9)
+      expect(segmentRunLength(net, piece)).toBeCloseTo(50, 9)
+    }
+  })
+})
+
+describe('evening out the slope of a run of rails', () => {
+  /** Rails laid end to end along x through `xs`, the nodes at `levels` */
+  function run(xs: number[], levels: number[]) {
+    const net = createNetwork()
+    const nodes = xs.map((x, i) => addNode(net, { x, y: 0 }, levels[i]))
+    const segs = nodes.slice(1).map((node, i) => addSegment(net, nodes[i].id, node.id)!)
+    return { net, nodes, segs, ids: segs.map((seg) => seg.id) }
+  }
+  const gradients = (net: Network, segs: Segment[]) => segs.map((seg) => segmentGradient(net, seg, 6))
+
+  it('three rails of different lengths end up on one slope, the two ends where they were', () => {
+    // 100 m, 300 m and 200 m: the climb is all on the first rail
+    const { net, nodes, segs, ids } = run([0, 100, 400, 600], [0, 1, 1, 1])
+    expect(gradients(net, segs)).toEqual([60, 0, 0])
+    expect(canSpreadGradient(net, ids)).toBe(true)
+
+    expect(spreadGradient(net, ids)).toBe(2)
+
+    expect(nodes.map(nodeLevel)).toEqual([0, 1 / 6, 4 / 6, 1])
+    for (const permille of gradients(net, segs)) expect(permille).toBeCloseTo(10, 9) // 6 m over 600 m
+    // Nothing left to do
+    expect(canSpreadGradient(net, ids)).toBe(false)
+    expect(spreadGradient(net, ids)).toBe(0)
+  })
+
+  it('does not depend on the order of the rails given, nor on the way each one was laid', () => {
+    const net = createNetwork()
+    const n = [0, 100, 400, 600].map((x, i) => addNode(net, { x, y: 0 }, i === 3 ? -2 : 0))
+    const first = addSegment(net, n[1].id, n[0].id)! // laid backwards
+    const second = addSegment(net, n[1].id, n[2].id)!
+    const third = addSegment(net, n[3].id, n[2].id)! // laid backwards
+
+    expect(spreadGradient(net, [third.id, first.id, second.id])).toBe(2)
+    n.map(nodeLevel).forEach((level, i) => expect(level).toBeCloseTo([0, -2 / 6, -8 / 6, -2][i], 12))
+    expect(segmentGradient(net, first, 6)).toBeCloseTo(20, 9) // climbs towards n0
+    expect(segmentGradient(net, second, 6)).toBeCloseTo(-20, 9)
+    expect(segmentGradient(net, third, 6)).toBeCloseTo(20, 9)
+  })
+
+  it('flattens a hump between two ends at the same height', () => {
+    const { net, nodes, ids } = run([0, 100, 200], [1, 2, 1])
+    expect(canSpreadGradient(net, ids)).toBe(true)
+    expect(spreadGradient(net, ids)).toBe(1)
+    expect(nodes.map(nodeLevel)).toEqual([1, 1, 1])
+
+    // Back on the ground the height is stored as no field at all
+    const ground = run([0, 100, 200], [0, 1, 0])
+    spreadGradient(ground.net, ground.ids)
+    expect('level' in ground.nodes[1]).toBe(false)
+  })
+
+  it('measures curves along their arc', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    const c = addNode(net, { x: 200, y: 100 }, 1)
+    const straight = addSegment(net, a.id, b.id)!
+    const curve = addCurveSegment(net, b.id, c.id, { x: 200, y: 0 })!
+
+    expect(spreadGradient(net, [straight.id, curve.id])).toBe(1)
+    const arc = segmentRunLength(net, curve)
+    expect(arc).toBeGreaterThan(Math.hypot(100, 100))
+    expect(nodeLevel(b)).toBeCloseTo(100 / (100 + arc), 9)
+    expect(segmentGradient(net, straight, 6)).toBeCloseTo(segmentGradient(net, curve, 6), 9)
+  })
+
+  it('a turnout along the run is no obstacle: its branch, not selected, follows the node', () => {
+    const { net, nodes, ids } = run([0, 100, 200], [0, 0, 1])
+    const side = addNode(net, { x: 200, y: 30 })
+    const branch = addSegment(net, nodes[1].id, side.id)!
+
+    expect(gradientRun(net, ids)?.nodeIds).toEqual(nodes.map((node) => node.id))
+    expect(spreadGradient(net, ids)).toBe(1)
+    expect(nodeLevel(nodes[1])).toBe(0.5)
+    expect(segmentEndLevels(net, branch)).toEqual({ from: 0.5, to: 0 })
+    // With the branch in the selection there is a fork: not a run
+    expect(gradientRun(net, [...ids, branch.id])).toBeNull()
+  })
+
+  it('does nothing when the rails are not one run', () => {
+    const untouched = (net: Network, ids: string[]) => {
+      const before = [...net.nodes.values()].map(nodeLevel)
+      expect(gradientRun(net, ids)).toBeNull()
+      expect(canSpreadGradient(net, ids)).toBe(false)
+      expect(spreadGradient(net, ids)).toBe(0)
+      expect([...net.nodes.values()].map(nodeLevel)).toEqual(before)
+    }
+
+    // A single rail, nothing, or rails that are gone
+    const single = run([0, 100], [0, 1])
+    untouched(single.net, single.ids)
+    untouched(single.net, [])
+    untouched(single.net, ['s_404', 's_405'])
+
+    // Two stretches that do not touch
+    const apart = run([0, 100, 200, 300, 400], [0, 1, 0, 1, 0])
+    untouched(apart.net, [apart.ids[0], apart.ids[1], apart.ids[3]])
+    untouched(apart.net, [apart.ids[0], apart.ids[3]])
+
+    // A fork inside the selection
+    const fork = run([0, 100, 200], [0, 1, 0])
+    const side = addNode(fork.net, { x: 200, y: 30 }, 2)
+    untouched(fork.net, [...fork.ids, addSegment(fork.net, fork.nodes[1].id, side.id)!.id])
+
+    // A closed loop has no ends
+    const loop = createNetwork()
+    const p = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 80 }].map((pos, i) => addNode(loop, pos, i))
+    const sides = [addSegment(loop, p[0].id, p[1].id)!, addSegment(loop, p[1].id, p[2].id)!, addSegment(loop, p[2].id, p[0].id)!]
+    untouched(loop, sides.map((seg) => seg.id))
+    // A run next to a loop: two ends, but not one stretch
+    const q = [{ x: 300, y: 0 }, { x: 400, y: 0 }, { x: 500, y: 0 }].map((pos, i) => addNode(loop, pos, i === 1 ? 1 : 0))
+    const stretch = [addSegment(loop, q[0].id, q[1].id)!, addSegment(loop, q[1].id, q[2].id)!]
+    untouched(loop, [...sides, ...stretch].map((seg) => seg.id))
+  })
+
+  it('once evened out, the inner nodes of a straight run can be dissolved without changing the slope', () => {
+    const { net, nodes, ids } = run([0, 100, 400, 600], [0, 1, 1, 1])
+    expect(dissolveNode(net, nodes[1].id)).toBeNull() // uneven: removing the node would change the slope
+    spreadGradient(net, ids)
+    expect(dissolveNode(net, nodes[1].id)).not.toBeNull()
+    expect(dissolveNode(net, nodes[2].id)).not.toBeNull()
+    const [merged] = [...net.segments.values()]
+    expect(Math.abs(segmentGradient(net, merged, 6))).toBeCloseTo(10, 9)
+  })
+})
+
+describe('a curved ramp crossing a ground track', () => {
+  it('detectCrossings and reconcile agree on which of its two crossings is a level crossing', () => {
+    // A curve from (-100, 0) to (100, 0) bulging up to y = 50 and climbing from 0 to 1, over a
+    // ground track along y = 32: reached at t = 0.2 and t = 0.8, where the curve is at 0.2 and 0.8
+    const net = createNetwork()
+    const a = addNode(net, { x: -100, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 }, 1)
+    addCurveSegment(net, a.id, b.id, { x: 0, y: 100 })
+    const w = addNode(net, { x: -200, y: 32 })
+    const e = addNode(net, { x: 200, y: 32 })
+    addSegment(net, w.id, e.id)
+
+    const found = detectCrossings(net)
+    expect(found).toHaveLength(1)
+    expect(found[0].center.x).toBeCloseTo(-60, 0)
+
+    const nodes = net.nodes.size
+    reconcileNetworkIntersections(net, 0.5)
+    expect(net.nodes.size).toBe(nodes + 1)
+    const added = [...net.nodes.values()].at(-1)!
+    expect(added.pos.x).toBeCloseTo(-60, 1)
+    expect(added.pos.y).toBeCloseTo(32, 6)
   })
 })

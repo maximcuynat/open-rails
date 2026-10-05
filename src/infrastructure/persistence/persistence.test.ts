@@ -266,6 +266,48 @@ describe('persistence module', () => {
   })
 })
 
+describe('gradient settings', () => {
+  beforeEach(() => resetMemoryStorage())
+
+  const save = (gradient?: { levelHeight?: number; maxGradient?: number }) =>
+    serializeNetwork(createNetwork(), 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, gradient)
+
+  it('round-trip the height of a level and the steepest slope, decimals included', () => {
+    const data = JSON.parse(JSON.stringify(save({ levelHeight: 6 / 87, maxGradient: 27.5 })))
+    expect(data.levelHeight).toBe(6 / 87)
+    expect(data.maxGradient).toBe(27.5)
+    const restored = deserializeNetwork(data)
+    expect(restored.levelHeight).toBe(6 / 87)
+    expect(restored.maxGradient).toBe(27.5)
+  })
+
+  it('are absent from a file saved without them, and read as undefined', () => {
+    const data = JSON.parse(JSON.stringify(save()))
+    expect('levelHeight' in data).toBe(false)
+    expect('maxGradient' in data).toBe(false)
+    const restored = deserializeNetwork(data)
+    expect(restored.levelHeight).toBeUndefined()
+    expect(restored.maxGradient).toBeUndefined()
+  })
+
+  it('unusable values in a file are dropped', () => {
+    for (const bad of [0, -6, 'six', null, {}]) {
+      const restored = deserializeNetwork({ ...save(), levelHeight: bad, maxGradient: bad } as never)
+      expect(restored.levelHeight).toBeUndefined()
+      expect(restored.maxGradient).toBeUndefined()
+    }
+  })
+
+  it('go through the storage', () => {
+    saveNetworkToStorage(createNetwork(), 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { levelHeight: 0.04, maxGradient: 30 })
+    const loaded = loadNetworkFromStorage()!
+    expect(loaded.levelHeight).toBe(0.04)
+    expect(loaded.maxGradient).toBe(30)
+  })
+})
+
 describe('track levels', () => {
   beforeEach(() => resetIdCounter(0))
 

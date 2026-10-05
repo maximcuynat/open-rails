@@ -1,5 +1,6 @@
-import { nodeLevel } from '@domain/models/network'
-import type { Network, NodeId, SegmentId } from '@domain/models/types'
+import { nodeLevel, segmentEndLevels, segmentGradient } from '@domain/models/network'
+import type { Network, NodeId, Segment, SegmentId } from '@domain/models/types'
+import { formatDistance, type Unit } from '@domain/models/units'
 
 /** A height as shown to the user: no sign, a decimal comma, two decimals at most. */
 function formatLevel(level: number): string {
@@ -47,4 +48,39 @@ export function levelRange(net: Network, segmentIds: Iterable<SegmentId>): { min
     nodeIds.add(seg.to)
   }
   return nodeLevelRange(net, nodeIds)
+}
+
+/** What the inspector says about the slope of a rail */
+export interface RampSummary {
+  /** Level at the `from` end and at the `to` end, as `levelLabel` names them */
+  from: string
+  to: string
+  /** Height climbed (always positive), in the display unit */
+  rise: string
+  /** Slope in ‰, rounded, with the way it goes from `from` to `to`: « 35 ‰ en montée » */
+  gradient: string
+  /** Steeper than the maximum slope of the project */
+  tooSteep: boolean
+}
+
+/**
+ * Slope of a rail for the inspector, or null when it is flat (on the ground, a bridge or in a
+ * tunnel): a flat rail shows nothing more than its level.
+ */
+export function rampSummary(
+  net: Network,
+  seg: Segment,
+  settings: { levelHeight: number; maxGradient: number; unit: Unit },
+): RampSummary | null {
+  const ends = segmentEndLevels(net, seg)
+  if (ends.from === ends.to) return null
+  const permille = segmentGradient(net, seg, settings.levelHeight)
+  return {
+    from: levelLabel(ends.from),
+    to: levelLabel(ends.to),
+    rise: formatDistance(Math.abs(ends.to - ends.from) * settings.levelHeight, settings.unit),
+    gradient: `${Math.round(Math.abs(permille))} ‰ ${permille > 0 ? 'en montée' : 'en descente'}`,
+    // Same tolerance as the diagnostic (`analyzeKinematics`): both agree on what is too steep
+    tooSteep: Math.abs(permille) > settings.maxGradient + 1e-6,
+  }
 }

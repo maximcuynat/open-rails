@@ -6,6 +6,7 @@ import { placementThresholds } from '../../domain/geometry/scale'
 import type { Junction, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
+import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
 import { deserializeTrains, serializeTrains } from '../../domain/models/train'
 import type { SerializedTrain, TrainSet } from '../../domain/models/train'
 
@@ -95,6 +96,10 @@ export interface SerializedProject {
   scalePreset?: ScalePresetId
   gauge?: number
   trackSpacing?: number
+  /** Height of one track level, in world meters (absent from files saved before ramps: default of the scale) */
+  levelHeight?: number
+  /** Steepest slope allowed, in ‰ (absent from files saved before ramps: default of the scale) */
+  maxGradient?: number
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -123,6 +128,7 @@ export function serializeNetwork(
   boardWidth?: number,
   boardHeight?: number,
   trains?: TrainSet[],
+  gradient?: Partial<GradientLimits>,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -220,12 +226,19 @@ export function serializeNetwork(
     scalePreset,
     gauge,
     trackSpacing,
+    levelHeight: gradient?.levelHeight,
+    maxGradient: gradient?.maxGradient,
     showDimensions,
     boardEnabled,
     boardWidth,
     boardHeight,
     trains: trains && trains.length > 0 ? serializeTrains(trains) : undefined,
   }
+}
+
+/** A setting read from a file: kept only when it is a usable (finite, positive) number */
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 /**
@@ -243,6 +256,8 @@ export function deserializeNetwork(data: SerializedProject): {
   scalePreset?: ScalePresetId
   gauge?: number
   trackSpacing?: number
+  levelHeight?: number
+  maxGradient?: number
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -378,6 +393,8 @@ export function deserializeNetwork(data: SerializedProject): {
     scalePreset: data.scalePreset,
     gauge: typeof data.gauge === 'number' ? data.gauge : undefined,
     trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
+    levelHeight: positiveNumber(data.levelHeight),
+    maxGradient: positiveNumber(data.maxGradient),
     showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
     boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
@@ -444,6 +461,7 @@ export function saveNetworkToStorage(
   boardWidth?: number,
   boardHeight?: number,
   trains?: TrainSet[],
+  gradient?: Partial<GradientLimits>,
 ): boolean {
   try {
     const storage = getStorage()
@@ -465,6 +483,7 @@ export function saveNetworkToStorage(
       boardWidth,
       boardHeight,
       trains,
+      gradient,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -488,6 +507,8 @@ export function loadNetworkFromStorage(): {
   scalePreset?: ScalePresetId
   gauge?: number
   trackSpacing?: number
+  levelHeight?: number
+  maxGradient?: number
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number

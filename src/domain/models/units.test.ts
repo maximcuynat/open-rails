@@ -21,6 +21,18 @@ describe('Units and Scale System', () => {
     expect(SCALE_PRESETS['Z'].defaultGauge).toBe(0.0065)
   })
 
+  it('gives every scale a level of 6 real meters and a steepest slope of 35 ‰', () => {
+    expect(SCALE_PRESETS['1:1'].defaultLevelHeight).toBe(6)
+    expect(SCALE_PRESETS.custom.defaultLevelHeight).toBe(6)
+    expect(SCALE_PRESETS.HO.defaultLevelHeight).toBeCloseTo(0.069, 3) // 6.9 cm
+    for (const preset of Object.values(SCALE_PRESETS)) {
+      expect(preset.defaultLevelHeight * preset.ratio).toBeCloseTo(6, 12)
+      expect(preset.defaultMaxGradient).toBe(35)
+      // One level at the steepest slope: about 171 m of ramp at full size
+      expect((preset.defaultLevelHeight / (preset.defaultMaxGradient / 1000)) * preset.ratio).toBeCloseTo(171.43, 2)
+    }
+  })
+
   it('formats distances correctly in meters, centimeters and millimeters', () => {
     expect(formatDistance(12.3456, 'm')).toBe('12.35 m')
     expect(formatDistance(0.248, 'mm', 0)).toBe('248 mm')

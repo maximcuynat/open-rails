@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from './editorStore'
-import { addNode, addSegment, isRamp, MAX_LEVEL, MIN_LEVEL, nodeLevel, resetIdCounter, segmentEndLevels, setNodesLevel } from '@domain/models/network'
+import { addNode, addSegment, isRamp, MAX_LEVEL, MIN_LEVEL, nodeLevel, resetIdCounter, segmentEndLevels, segmentGradient, setNodesLevel } from '@domain/models/network'
 import type { Network, Point } from '@domain/models/types'
+import { LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE, SCALE_PRESETS } from '@domain/models/units'
+import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { detectCrossings } from '@domain/models/crossing'
 import { positionOnSegment } from '@domain/models/locomotive'
-import { loadNetworkFromStorage, resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { getStorage, loadNetworkFromStorage, resetMemoryStorage, STORAGE_KEY } from '@infrastructure/persistence/persistence'
 
 beforeEach(() => {
   resetIdCounter(0)
@@ -289,5 +291,266 @@ describe('shiftSelectionLevel', () => {
     // The bridge is not welded back onto the track below
     expect(nodesAtOrigin(store.network)).toHaveLength(2)
     expect(detectCrossings(store.network)).toHaveLength(0)
+  })
+})
+
+/** A store holding three rails end to end along x (100 m, 300 m, 200 m), the climb all on the first */
+function storeWithUnevenRun() {
+  const store = new EditorStore()
+  const net = store.network
+  const nodes = [0, 100, 400, 600].map((x, i) => addNode(net, { x, y: 0 }, i === 0 ? 0 : 1))
+  const segs = nodes.slice(1).map((node, i) => addSegment(net, nodes[i].id, node.id)!)
+  store.markDirty()
+  const select = (ids = segs.map((seg) => seg.id)) => store.setSelection({ nodes: new Set(), segments: new Set(ids) })
+  const heights = () => nodes.map((node) => nodeLevel(store.network.nodes.get(node.id)))
+  const slopes = () => segs.map((seg) => segmentGradient(store.network, store.network.segments.get(seg.id)!, store.levelHeight))
+  return { store, nodes, segs, select, heights, slopes }
+}
+
+describe('spreadSelectionGradient', () => {
+  it('puts three rails of different lengths on one slope, in one undo step', () => {
+    const { store, segs, select, heights, slopes } = storeWithUnevenRun()
+    expect(slopes()).toEqual([60, 0, 0])
+    select()
+    expect(store.canSpreadSelectionGradient).toBe(true)
+    const steps = undoSteps(store)
+
+    expect(store.spreadSelectionGradient()).toBe(true)
+
+    expect(undoSteps(store)).toBe(steps + 1)
+    for (const permille of slopes()) expect(permille).toBeCloseTo(10, 9)
+    expect(heights()[0]).toBe(0)
+    expect(heights()[3]).toBe(1)
+    // The rails are the same rails, still selected, and the button has nothing left to do
+    expect([...store.selection.segments]).toEqual(segs.map((seg) => seg.id))
+    expect(store.canSpreadSelectionGradient).toBe(false)
+    expect(store.dirty).toBe(true)
+    // Saved as it is
+    const saved = loadNetworkFromStorage()!.network
+    expect([...saved.nodes.values()].map(nodeLevel)).toEqual(heights())
+
+    store.undo()
+    expect(heights()).toEqual([0, 1, 1, 1])
+    store.redo()
+    for (const permille of slopes()) expect(permille).toBeCloseTo(10, 9)
+  })
+
+  it('returns false and records nothing when there is nothing to even out', () => {
+    const { store, segs, select } = storeWithUnevenRun()
+    const steps = undoSteps(store)
+    const refused = () => {
+      expect(store.canSpreadSelectionGradient).toBe(false)
+      expect(store.spreadSelectionGradient()).toBe(false)
+      expect(undoSteps(store)).toBe(steps)
+    }
+
+    refused() // nothing selected
+    select([segs[0].id]) // a single rail
+    refused()
+    select([segs[0].id, segs[2].id]) // two rails that do not touch
+    refused()
+    select([segs[1].id, segs[2].id]) // a run already flat
+    refused()
+    store.setSelection({ nodes: new Set(store.network.nodes.keys()), segments: new Set() }) // nodes only
+    refused()
+  })
+
+  it('clears the "too steep" report of the rail that carried the whole climb', () => {
+    const { store, select } = storeWithUnevenRun()
+    const steep = () => analyzeKinematics(store.network, store.gauge, store.gradientLimits).filter((i) => i.kind === 'steep_gradient')
+    expect(steep()).toHaveLength(1) // 60 ‰ against 35 ‰
+    select()
+    store.spreadSelectionGradient()
+    expect(steep()).toHaveLength(0) // 10 ‰ everywhere
+  })
+
+  it('leaves the trains standing on the run exactly where they were', () => {
+    const { store, select } = storeWithUnevenRun()
+    store.camera.scale = 3
+    store.setTrainPlacementKind('tgv_loco')
+    expect(store.placeTrainItem({ x: 100, y: 0 })).toBe(true) // astride the first inner node
+    const bogies = (): Point[] =>
+      store.trains.flatMap((t) => t.vehicles.flatMap((v) => [v.front, v.rear].map((p) => positionOnSegment(store.network, p.segId, p.t)!)))
+    const before = bogies()
+    expect(before).toHaveLength(2)
+    select()
+
+    expect(store.spreadSelectionGradient()).toBe(true)
+    bogies().forEach((p, i) => {
+      expect(p.x).toBeCloseTo(before[i].x, 9)
+      expect(p.y).toBeCloseTo(before[i].y, 9)
+    })
+  })
+
+  it('a node brought down onto the track it was passing over is joined to it', () => {
+    // Ground, level 1, level 0.5. A ground track crosses under the top, without a node; evened
+    // out, the middle node comes down to 0.25, within reach of that track
+    const store = new EditorStore()
+    const net = store.network
+    const nodes = [-100, 0, 100].map((x, i) => addNode(net, { x, y: 0 }, [0, 1, 0.5][i]))
+    const segs = nodes.slice(1).map((node, i) => addSegment(net, nodes[i].id, node.id)!)
+    const s = addNode(net, { x: 0, y: -100 })
+    const n = addNode(net, { x: 0, y: 100 })
+    addSegment(net, s.id, n.id)
+    store.reconcileNetwork()
+    store.markDirty()
+    expect(net.segments.size).toBe(3)
+    const steps = undoSteps(store)
+
+    store.setSelection({ nodes: new Set(), segments: new Set(segs.map((seg) => seg.id)) })
+    expect(store.spreadSelectionGradient()).toBe(true)
+
+    expect(nodesAtOrigin(store.network)).toHaveLength(1)
+    expect(store.network.segments.size).toBe(4)
+    expect(undoSteps(store)).toBe(steps + 1)
+  })
+})
+
+describe('spreadSelectionGradient — a run back at the height it left', () => {
+  it('is not offered on a whole bridge with its two ramps: it would flatten the bridge', () => {
+    const store = new EditorStore()
+    const net = store.network
+    const nodes = [0, 100, 200, 300].map((x, i) => addNode(net, { x, y: 0 }, [0, 1, 1, 0][i]))
+    const segs = nodes.slice(1).map((node, i) => addSegment(net, nodes[i].id, node.id)!)
+    store.setSelection({ nodes: new Set(), segments: new Set(segs.map((seg) => seg.id)) })
+
+    expect(store.canSpreadSelectionGradient).toBe(false)
+    expect(store.spreadSelectionGradient()).toBe(false)
+    expect(nodes.map((node) => node.level ?? 0)).toEqual([0, 1, 1, 0])
+
+    // One ramp and the span next to it: two different ends, the action applies
+    store.setSelection({ nodes: new Set(), segments: new Set([segs[0].id, segs[1].id]) })
+    expect(store.canSpreadSelectionGradient).toBe(true)
+  })
+})
+
+describe('gradient settings', () => {
+  it('start at 6 m per level and 35 ‰, and follow the scale', () => {
+    const store = new EditorStore()
+    expect(store.gradientLimits).toEqual({ levelHeight: 6, maxGradient: 35 })
+
+    store.setScalePreset('HO', false)
+    expect(store.levelHeight).toBeCloseTo(6 / 87, 12)
+    expect(store.levelHeight).toBe(SCALE_PRESETS.HO.defaultLevelHeight)
+    expect(store.maxGradient).toBe(35)
+    // Saved with the project by the change of scale itself
+    expect(loadNetworkFromStorage()!.levelHeight).toBe(store.levelHeight)
+
+    store.setScalePreset('N', false)
+    expect(store.levelHeight).toBeCloseTo(6 / 160, 12)
+    store.setScalePreset('1:1', false)
+    expect(store.levelHeight).toBe(6)
+  })
+
+  it('a change of scale resets a custom limit, as it resets the track spacing', () => {
+    const store = new EditorStore()
+    store.setGradientSettings({ levelHeight: 8, maxGradient: 20 })
+    store.setScalePreset('HO', false)
+    expect(store.gradientLimits).toEqual({ levelHeight: SCALE_PRESETS.HO.defaultLevelHeight, maxGradient: 35 })
+  })
+
+  it('setGradientSettings changes one setting or both, in one undo step, and saves them', () => {
+    const store = new EditorStore()
+    const steps = undoSteps(store)
+    let notified = 0
+    store.subscribe(() => notified++)
+
+    store.setGradientSettings({ maxGradient: 25 })
+    expect(store.gradientLimits).toEqual({ levelHeight: 6, maxGradient: 25 })
+    expect(undoSteps(store)).toBe(steps + 1)
+    expect(notified).toBeGreaterThan(0)
+    expect(store.dirty).toBe(true)
+
+    store.setGradientSettings({ levelHeight: 7.5 })
+    expect(store.gradientLimits).toEqual({ levelHeight: 7.5, maxGradient: 25 })
+    store.setGradientSettings({ levelHeight: 5, maxGradient: 40 })
+    expect(store.gradientLimits).toEqual({ levelHeight: 5, maxGradient: 40 })
+    expect(undoSteps(store)).toBe(steps + 3)
+
+    const saved = loadNetworkFromStorage()!
+    expect(saved.levelHeight).toBe(5)
+    expect(saved.maxGradient).toBe(40)
+  })
+
+  it('ignores values that are not positive finite numbers and keeps the others within bounds', () => {
+    const store = new EditorStore()
+    const steps = undoSteps(store)
+
+    for (const bad of [0, -3, NaN, Infinity, -Infinity, undefined, '12' as unknown as number]) {
+      store.setGradientSettings({ levelHeight: bad, maxGradient: bad })
+    }
+    store.setGradientSettings({})
+    store.setGradientSettings({ levelHeight: 6, maxGradient: 35 }) // no change
+    expect(store.gradientLimits).toEqual({ levelHeight: 6, maxGradient: 35 })
+    expect(undoSteps(store)).toBe(steps)
+
+    store.setGradientSettings({ levelHeight: 1e9, maxGradient: 1e9 })
+    expect(store.gradientLimits).toEqual({ levelHeight: LEVEL_HEIGHT_RANGE.max, maxGradient: MAX_GRADIENT_RANGE.max })
+    store.setGradientSettings({ levelHeight: 1e-9, maxGradient: 1e-9 })
+    expect(store.gradientLimits).toEqual({ levelHeight: LEVEL_HEIGHT_RANGE.min, maxGradient: MAX_GRADIENT_RANGE.min })
+    // A bad value does not stop the good one given with it
+    store.setGradientSettings({ levelHeight: NaN, maxGradient: 30 })
+    expect(store.gradientLimits).toEqual({ levelHeight: LEVEL_HEIGHT_RANGE.min, maxGradient: 30 })
+  })
+
+  it('are restored by undo and redo', () => {
+    const store = new EditorStore()
+    store.setGradientSettings({ levelHeight: 5, maxGradient: 20 })
+    store.setGradientSettings({ maxGradient: 50 })
+
+    store.undo()
+    expect(store.gradientLimits).toEqual({ levelHeight: 5, maxGradient: 20 })
+    store.undo()
+    expect(store.gradientLimits).toEqual({ levelHeight: 6, maxGradient: 35 })
+    store.redo()
+    store.redo()
+    expect(store.gradientLimits).toEqual({ levelHeight: 5, maxGradient: 50 })
+  })
+
+  it('are saved with the project and read back: autosave, JSON export and import', () => {
+    const store = new EditorStore()
+    store.setScalePreset('HO', false)
+    store.setGradientSettings({ levelHeight: 0.08, maxGradient: 28.5 })
+
+    // Autosave: a new session starts with them
+    const reopened = new EditorStore()
+    expect(reopened.scalePreset).toBe('HO')
+    expect(reopened.gradientLimits).toEqual({ levelHeight: 0.08, maxGradient: 28.5 })
+
+    // File export and import into an empty session
+    const json = JSON.stringify(store.exportProject())
+    expect(JSON.parse(json)).toMatchObject({ levelHeight: 0.08, maxGradient: 28.5 })
+    resetMemoryStorage()
+    const fresh = new EditorStore()
+    expect(fresh.gradientLimits).toEqual({ levelHeight: 6, maxGradient: 35 })
+    fresh.loadFromData(JSON.parse(json))
+    expect(fresh.gradientLimits).toEqual({ levelHeight: 0.08, maxGradient: 28.5 })
+  })
+
+  it('a project saved without them gets the defaults of its scale', () => {
+    const store = new EditorStore()
+    store.setScalePreset('N', false)
+    const data = JSON.parse(JSON.stringify(store.exportProject()))
+    delete data.levelHeight
+    delete data.maxGradient
+
+    // Imported over a session that had its own settings
+    resetMemoryStorage()
+    const fresh = new EditorStore()
+    fresh.setGradientSettings({ levelHeight: 9, maxGradient: 12 })
+    fresh.loadFromData(data)
+    expect(fresh.scalePreset).toBe('N')
+    expect(fresh.gradientLimits).toEqual({ levelHeight: SCALE_PRESETS.N.defaultLevelHeight, maxGradient: 35 })
+
+    // Found in the autosave of an older version
+    resetMemoryStorage()
+    getStorage()!.setItem(STORAGE_KEY, JSON.stringify(data))
+    const reopened = new EditorStore()
+    expect(reopened.scalePreset).toBe('N')
+    expect(reopened.gradientLimits).toEqual({ levelHeight: SCALE_PRESETS.N.defaultLevelHeight, maxGradient: 35 })
+
+    // Unusable values in a file count as absent
+    fresh.loadFromData({ ...data, levelHeight: -1, maxGradient: 'steep' })
+    expect(fresh.gradientLimits).toEqual({ levelHeight: SCALE_PRESETS.N.defaultLevelHeight, maxGradient: 35 })
   })
 })

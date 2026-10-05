@@ -255,7 +255,7 @@ describe('generateRealisticSVG', () => {
       expect(svg).not.toContain('class="bridge-deck" />')
     })
 
-    it('ramp: an abutment closes the flat span at the node where the ramp comes up', () => {
+    it('ramp: its lower half is on the ground, its upper half on a deck that starts with an abutment', () => {
       const net = createNetwork()
       const a = addNode(net, { x: 0, y: 0 })
       const b = addNode(net, { x: 100, y: 0 }, 1)
@@ -265,12 +265,57 @@ describe('generateRealisticSVG', () => {
       addSegment(net, b.id, c.id)
 
       const svg = generateRealisticSVG(net, 'Ramp')
-      // The ramp is drawn with the level it reaches: both rails in the level-1 group, on a deck
-      expect(svg).not.toContain('<g id="level-0">')
-      expect(svg.match(/class="bridge-deck" \/>/g)).toHaveLength(2)
+      const ground = svg.indexOf('<g id="level-0">')
+      const bridge = svg.indexOf('<g id="level-1">')
+      expect(ground).toBeGreaterThan(-1)
+      expect(bridge).toBeGreaterThan(ground)
+      // Decks: the upper half of the ramp (from x = 50) and the span; nothing under the lower half
+      expect(svg.match(/<path d="[^"]+" class="bridge-deck" \/>/g)).toEqual([
+        '<path d="M 50 0 L 100 0" class="bridge-deck" />',
+        '<path d="M 100 0 L 200 0" class="bridge-deck" />',
+      ])
+      // The rails of the ramp are cut at the same place: 0 → 50 with the ground, 50 → 100 on the deck
+      const groundRails = svg.slice(svg.indexOf('<g id="rails">'), bridge)
+      expect(groundRails).toContain('<line x1="0" y1="0.72" x2="50" y2="0.72" class="rail" />')
+      expect(groundRails).not.toContain('x2="100"')
+      const bridgeRails = svg.slice(svg.indexOf('<g id="rails-l1">'))
+      expect(bridgeRails).toContain('<line x1="50" y1="0.72" x2="100" y2="0.72" class="rail" />')
+      expect(bridgeRails).toContain('<line x1="100" y1="0.72" x2="200" y2="0.72" class="rail" />')
+      // One abutment: a closing line across the deck at x = 50, wings splayed towards the foot
       expect(svg.match(/class="bridge-abutment" \/>/g)).toHaveLength(1)
-      // Closing line across the deck at x = 100, wings splayed towards the ramp
-      expect(svg).toMatch(/<path d="M 9[0-9.]+ [0-9.-]+ L 100 2\.32 L 100 -2\.32 L 9[0-9.]+ [0-9.-]+" class="bridge-abutment"/)
+      expect(svg).toMatch(/<path d="M 4[0-9.]+ [0-9.-]+ L 50 2\.32 L 50 -2\.32 L 4[0-9.]+ [0-9.-]+" class="bridge-abutment"/)
+    })
+
+    it('ramp into a tunnel: only the part below half a level is in the dimmed, dashed group', () => {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 })
+      const b = addNode(net, { x: 100, y: 0 }, -1)
+      addSegment(net, a.id, b.id)
+
+      const svg = generateRealisticSVG(net, 'Descent')
+      const tunnel = svg.indexOf('<g id="level--1" class="tunnel">')
+      const ground = svg.indexOf('<g id="level-0">')
+      expect(tunnel).toBeGreaterThan(-1)
+      expect(ground).toBeGreaterThan(tunnel)
+      const tunnelPart = svg.slice(tunnel, ground)
+      expect(tunnelPart).toContain('<line x1="50" y1="0.72" x2="100" y2="0.72" class="rail" />')
+      expect(tunnelPart).not.toContain('x1="0"')
+      expect(svg.slice(ground)).toContain('<line x1="0" y1="0.72" x2="50" y2="0.72" class="rail" />')
+      expect(svg).not.toContain('class="bridge-deck" />')
+    })
+
+    it('a curved ramp: the deck follows the upper part of the curve', () => {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 })
+      const b = addNode(net, { x: 200, y: 100 }, 1)
+      addCurveSegment(net, a.id, b.id, { x: 200, y: 0 })
+
+      const svg = generateRealisticSVG(net, 'Curved ramp')
+      // Half of the curve, from its point at t = 0.5 (150, 25) to its end
+      expect(svg.match(/<path d="[^"]+" class="bridge-deck" \/>/g)).toEqual([
+        '<path d="M 150 25 Q 200 50 200 100" class="bridge-deck" />',
+      ])
+      expect(svg.match(/class="bridge-abutment" \/>/g)).toHaveLength(1)
     })
   })
 })

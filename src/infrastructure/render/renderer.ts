@@ -6,9 +6,17 @@ import { bezierDerivative1, bezierNormal, bezierPoint, bezierTangent, curveLengt
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
-import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
+import { analyzeKinematics, type GradientLimits, type KinematicIssue } from '@domain/services/kinematicDiagnostics'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
-import { isRamp, nodeLevel, segmentBand } from '@domain/models/network'
+import {
+  deckAbutments,
+  groupPiecesByLevel,
+  isWholePiece,
+  nodeJointBand,
+  segmentLevelPieces,
+  trackPositionBand,
+  type TrackPiece,
+} from './levelPieces'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -496,8 +504,13 @@ export interface RenderNetworkOptions {
    * Used to slip the trains between two track levels (`renderNetworkWithTrains`).
    */
   part?: 'tracks' | 'overlays'
-  /** Rails of this level only (see `segmentBand`). Absent: every level, lowest first. */
+  /** Rails of this level only (see `segmentLevelPieces`). Absent: every level, lowest first. */
   level?: number
+  /**
+   * Height of one level and steepest slope allowed: with it, a ramp steeper than that is reported
+   * by the diagnostic marker. Absent: slopes are not checked.
+   */
+  gradient?: GradientLimits
 }
 
 // ─────────────────── Track levels (bridges and tunnels) ───────────────────
@@ -523,14 +536,19 @@ export function inLevelBand(level: number, band?: LevelBand): boolean {
   return !band || (level > band.above && level <= band.upTo)
 }
 
-/** Drawing level (`segmentBand`) of the rail a bogie stands on. */
-export function trackPositionLevel(net: Network, pos: { segId: string }): number {
-  const seg = net.segments.get(pos.segId)
-  return seg ? segmentBand(net, seg) : 0
+/** Drawing level of the rail under a bogie: its real height there (see `heightBand`). */
+export function trackPositionLevel(net: Network, pos: { segId: string; t: number }): number {
+  return trackPositionBand(net, pos)
 }
 
-/** Level of a vehicle: the rail under its bogies, the higher of the two when it straddles a ramp. */
-export function vehicleLevel(net: Network, vehicle: { front: { segId: string }; rear: { segId: string } }): number {
+/**
+ * Level of a vehicle: the height of the rail under its bogies, the higher of the two when it
+ * straddles a change of level. At the foot of a ramp it is still on the ground.
+ */
+export function vehicleLevel(
+  net: Network,
+  vehicle: { front: { segId: string; t: number }; rear: { segId: string; t: number } },
+): number {
   return Math.max(trackPositionLevel(net, vehicle.front), trackPositionLevel(net, vehicle.rear))
 }
 
@@ -545,38 +563,6 @@ function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
   return visible
 }
 
-/**
- * True when the bridge deck of `seg` ends on an abutment at `nodeId`: a flat rail above ground
- * meets there a ramp that goes down from it.
- */
-export function isDeckEndAt(net: Network, seg: Segment, nodeId: string): boolean {
-  if (isRamp(net, seg)) return false
-  const height = nodeLevel(net.nodes.get(nodeId))
-  if (height <= 0) return false
-  for (const sid of net.adjacency.get(nodeId) ?? []) {
-    const other = net.segments.get(sid)
-    if (!other || other.id === seg.id) continue
-    if (nodeLevel(net.nodes.get(other.from === nodeId ? other.to : other.from)) < height) return true
-  }
-  return false
-}
-
-/** Segments split by drawing level (`segmentBand`), lowest first; the order inside a level is kept. */
-function groupSegmentsByLevel(net: Network, segs: Segment[]): { level: number; segs: Segment[] }[] {
-  if (segs.length === 0) return []
-  const first = segmentBand(net, segs[0])
-  // A network on a single level (every network without a bridge): one group, nothing to sort
-  if (segs.every((seg) => segmentBand(net, seg) === first)) return [{ level: first, segs }]
-  const byLevel = new Map<number, Segment[]>()
-  for (const seg of segs) {
-    const level = segmentBand(net, seg)
-    const group = byLevel.get(level)
-    if (group) group.push(seg)
-    else byLevel.set(level, [seg])
-  }
-  return [...byLevel.entries()].sort((x, y) => x[0] - y[0]).map(([level, group]) => ({ level, segs: group }))
-}
-
 /** Levels of the rails in view, lowest first. A network without bridge or tunnel gives `[0]`. */
 export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: number): number[] {
   let hasLevels = false
@@ -588,8 +574,31 @@ export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: nu
   }
   if (!hasLevels) return [0]
   const levels = new Set<number>()
-  for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) levels.add(segmentBand(net, seg))
+  for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) {
+    for (const piece of segmentLevelPieces(net, seg)) levels.add(piece.band)
+  }
   return [...levels].sort((x, y) => x - y)
+}
+
+/** Geometry of a piece of rail: the whole rail, or the part of it between `t0` and `t1` */
+function pieceGeometry(net: Network, piece: TrackPiece): { a: Point; b: Point; via?: Point } | null {
+  const from = net.nodes.get(piece.seg.from)
+  const to = net.nodes.get(piece.seg.to)
+  if (!from || !to) return null
+  if (piece.seg.kind === 'curve' && piece.seg.via) {
+    const sub = subdivideCurve(from.pos, piece.seg.via, to.pos, piece.t0, piece.t1)
+    return { a: sub.p0, b: sub.p2, via: sub.via }
+  }
+  return subdivideStraight(from.pos, to.pos, piece.t0, piece.t1)
+}
+
+/** The drawing intervals of a rail (see `getSegmentRenderIntervals`) limited to one of its pieces */
+function pieceRenderIntervals(net: Network, piece: TrackPiece, a: Point, b: Point): SegmentSubInterval[] {
+  const intervals = getSegmentRenderIntervals(net, piece.seg, a, b)
+  if (isWholePiece(piece)) return intervals
+  return intervals
+    .map((inter) => ({ ...inter, t0: Math.max(inter.t0, piece.t0), t1: Math.min(inter.t1, piece.t1) }))
+    .filter((inter) => inter.t1 > inter.t0)
 }
 
 function traceCenterline(
@@ -613,10 +622,11 @@ function traceCenterline(
 }
 
 /**
- * Bridge decks of the rails of one level above ground: an opaque band wider than the ballast,
- * with a parapet along each edge, that hides whatever runs below. Drawn before the rails it
- * carries. Where a flat span meets a ramp going down (`isDeckEndAt`) it gets an abutment: a closing
- * line and two splayed wing walls, the usual map symbol of a bridge end.
+ * Bridge decks of the pieces of rail of one level above ground: an opaque band wider than the
+ * ballast, with a parapet along each edge, that hides whatever runs below. Drawn before the rails
+ * it carries. A ramp only has a deck over the part that is more than half a level up; where the
+ * deck starts (`deckAbutments`) it gets an abutment: a closing line and two splayed wing walls, the
+ * usual map symbol of a bridge end.
  */
 export function renderBridgeDecks(
   ctx: CanvasRenderingContext2D,
@@ -624,11 +634,11 @@ export function renderBridgeDecks(
   vw: number,
   vh: number,
   net: Network,
-  segs: Segment[],
+  pieces: TrackPiece[],
   level: number,
   gauge: number = GAUGE,
 ): void {
-  if (level <= 0 || segs.length === 0) return
+  if (level <= 0 || pieces.length === 0) return
   const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const edge = getCanvasStyle(ctx.canvas, '--rail', '#526071')
@@ -639,12 +649,6 @@ export function renderBridgeDecks(
   const deckPx = DECK_WIDTH * ratio * s
   const parapetPx = Math.max(1, DECK_PARAPET_WIDTH * ratio * s)
 
-  const ends = (seg: Segment) => {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    return a && b ? { a, b, via: seg.kind === 'curve' ? seg.via : undefined } : null
-  }
-
   ctx.save()
   ctx.lineCap = 'butt'
   ctx.lineJoin = 'miter'
@@ -653,20 +657,20 @@ export function renderBridgeDecks(
   // parapets first, so that the deck of one span never gets cut by the edge of the next.
   ctx.strokeStyle = edge
   ctx.lineWidth = deckPx
-  for (const seg of segs) {
-    const e = ends(seg)
+  for (const piece of pieces) {
+    const e = pieceGeometry(net, piece)
     if (!e) continue
-    traceCenterline(ctx, cam, vw, vh, e.a.pos, e.b.pos, e.via)
+    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
     ctx.stroke()
   }
 
   // Deck: the background colour (opaque, it hides the lower rails), lightly tinted with the ink
   // so that it reads as a slab in the light theme as in the dark one.
   ctx.lineWidth = Math.max(1, deckPx - 2 * parapetPx)
-  for (const seg of segs) {
-    const e = ends(seg)
+  for (const piece of pieces) {
+    const e = pieceGeometry(net, piece)
     if (!e) continue
-    traceCenterline(ctx, cam, vw, vh, e.a.pos, e.b.pos, e.via)
+    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
     ctx.strokeStyle = paper
     ctx.globalAlpha = 1
     ctx.stroke()
@@ -676,21 +680,18 @@ export function renderBridgeDecks(
   }
   ctx.globalAlpha = 1
 
-  // Abutments at the ramp nodes
+  // Abutments where a deck starts
   ctx.strokeStyle = edge
   ctx.lineWidth = Math.max(1.5, parapetPx * 1.5)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   const wing = halfDeck * 0.6
-  for (const seg of segs) {
-    for (const nodeId of [seg.from, seg.to]) {
-      const node = net.nodes.get(nodeId)
-      if (!node || !isDeckEndAt(net, seg, nodeId)) continue
-      // `tangent` points from the node into the deck: the wings splay the other way
-      const { tangent, normal } = getNodeSegmentEndVector(net, seg, nodeId)
+  for (const piece of pieces) {
+    // `tangent` points into the deck: the wings splay the other way
+    for (const { pos, tangent, normal } of deckAbutments(net, piece)) {
       const corner = (side: 1 | -1): Point => ({
-        x: node.pos.x + normal.x * halfDeck * side,
-        y: node.pos.y + normal.y * halfDeck * side,
+        x: pos.x + normal.x * halfDeck * side,
+        y: pos.y + normal.y * halfDeck * side,
       })
       const tip = (side: 1 | -1): Point => {
         const c = corner(side)
@@ -774,12 +775,13 @@ export function renderNetwork(
 
   // Rails are drawn level by level, lowest first, so that a bridge covers what runs below it.
   // Without bridge or tunnel there is a single group: the whole network, in its own order.
-  const allGroups = groupSegmentsByLevel(net, visibleSegments)
+  // A ramp is cut where it crosses a half level: each piece goes with the level it is really at.
+  const allGroups = groupPiecesByLevel(net, visibleSegments)
   const levelGroups = options?.level === undefined ? allGroups : allGroups.filter((g) => g.level === options.level)
   // Each rail joint belongs to one level only when several are drawn
   const jointsByLevel = allGroups.length > 1 || options?.level !== undefined
 
-  const drawSimplifiedTracks = (segs: Segment[], level: number): void => {
+  const drawSimplifiedTracks = (pieces: TrackPiece[], level: number): void => {
     // Draw simplified single-line representation for low zoom levels
     const lineW = Math.max(2.5, 0.8 * cam.scale)
     // A rail above ground gets an edging in the background colour: it reads as passing over
@@ -790,7 +792,8 @@ export function renderNetwork(
       ctx.lineCap = 'butt'
       ctx.stroke()
     }
-    for (const seg of segs) {
+    for (const piece of pieces) {
+      const seg = piece.seg
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
       if (!a || !b) continue
@@ -798,7 +801,7 @@ export function renderNetwork(
       const selected = selection.segments.has(seg.id)
       const sec = findSectionBySegment(trackSections, seg.id)
       const secColor = selected ? accent : (sec?.color ?? ink)
-      const intervals = getSegmentRenderIntervals(net, seg, a.pos, b.pos)
+      const intervals = pieceRenderIntervals(net, piece, a.pos, b.pos)
 
       for (const inter of intervals) {
         ctx.save()
@@ -842,18 +845,18 @@ export function renderNetwork(
     }
   }
 
-  const drawDetailedTracks = (segs: Segment[], level: number): void => {
+  const drawDetailedTracks = (pieces: TrackPiece[], level: number): void => {
     // 0. BRIDGE DECK under the rails of a level above ground
-    renderBridgeDecks(ctx, cam, vw, vh, net, segs, level, GAUGE)
+    renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
     const tunnel = level < 0
 
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
     if (!hideSectionCenterline) {
-      for (const seg of segs) {
-        const a = net.nodes.get(seg.from)
-        const b = net.nodes.get(seg.to)
-        if (!a || !b) continue
+      for (const piece of pieces) {
+        const seg = piece.seg
+        const line = pieceGeometry(net, piece)
+        if (!line) continue
 
         const sec = findSectionBySegment(trackSections, seg.id)
         const secColor = sec?.color ?? '#94a3b8'
@@ -868,32 +871,21 @@ export function renderNetwork(
         if (isStation) {
           ctx.setLineDash([8, 4])
         }
-        ctx.beginPath()
-        const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
-        const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
-        const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
-        const by = (b.pos.y - cam.y) * cam.scale + vh / 2
-        ctx.moveTo(ax, ay)
-        if (seg.kind === 'curve' && seg.via) {
-          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-          ctx.quadraticCurveTo(vx, vy, bx, by)
-        } else {
-          ctx.lineTo(bx, by)
-        }
+        traceCenterline(ctx, cam, vw, vh, line.a, line.b, line.via)
         ctx.stroke()
         ctx.restore()
       }
     }
 
     // 2. PURE RAIL RENDERING
-    for (const seg of segs) {
+    for (const piece of pieces) {
+      const seg = piece.seg
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
       if (!a || !b) continue
 
       const selected = selection.segments.has(seg.id)
-      const intervals = getSegmentRenderIntervals(net, seg, a.pos, b.pos)
+      const intervals = pieceRenderIntervals(net, piece, a.pos, b.pos)
 
       for (const inter of intervals) {
         ctx.save()
@@ -928,8 +920,8 @@ export function renderNetwork(
 
   if (options?.part !== 'overlays') {
     for (const group of levelGroups) {
-      if (simplified) drawSimplifiedTracks(group.segs, group.level)
-      else drawDetailedTracks(group.segs, group.level)
+      if (simplified) drawSimplifiedTracks(group.pieces, group.level)
+      else drawDetailedTracks(group.pieces, group.level)
     }
   }
   if (options?.part === 'tracks') return
@@ -1250,7 +1242,7 @@ export function renderNetwork(
 
   // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
   if (!hideConstructionNodes) {
-    const kinematicIssues = analyzeKinematics(net, options?.gauge)
+    const kinematicIssues = analyzeKinematics(net, options?.gauge, options?.gradient)
     for (const issue of kinematicIssues) {
       if (options?.quietNodeIds?.has(issue.nodeId)) continue
       const node = net.nodes.get(issue.nodeId)
@@ -1293,7 +1285,7 @@ export function renderNetwork(
       // Label badge above if zoom is reasonable
       if (cam.scale >= 0.9) {
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const label = issue.kind === 'track_gap' ? 'Voie interrompue' : issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
+        const label = diagnosticLabel(issue)
         const tw = ctx.measureText(label).width
         const ty = sy - signR - 10
 
@@ -1313,6 +1305,13 @@ export function renderNetwork(
   }
 }
 
+
+/** Short text of the badge above a diagnostic marker */
+export function diagnosticLabel(issue: KinematicIssue): string {
+  if (issue.kind === 'track_gap') return 'Voie interrompue'
+  if (issue.kind === 'steep_gradient') return `Pente ${issue.gradientPermille ?? 0} ‰`
+  return issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
+}
 
 export function renderDetailedRailBallast(
   ctx: CanvasRenderingContext2D,
@@ -2197,7 +2196,7 @@ export function renderRailJoints(
   accent: string,
   bounds?: ViewportBounds,
   gauge: number = GAUGE,
-  /** Only the joints of this level; a joint between two levels (ramp) goes with the higher one */
+  /** Only the joints of this level: the level the two rails are drawn with where they meet */
   level?: number,
 ): void {
   const s = cam.scale
@@ -2219,7 +2218,7 @@ export function renderRailJoints(
     const pairs = getConnectedEndPairs(node, ends, cam, vw, vh, gauge)
 
     for (const p of pairs) {
-      if (level !== undefined && Math.max(trackPositionLevel(net, p.e1), trackPositionLevel(net, p.e2)) !== level) continue
+      if (level !== undefined && nodeJointBand(net, node.id, [p.e1.segId, p.e2.segId]) !== level) continue
       const isSel = p.e1.selected || p.e2.selected
       const isDim = p.e1.isInactive || p.e2.isInactive
       const col = isSel ? accent : railColor

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel } from '@domain/models/network'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
@@ -20,7 +20,8 @@ import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, ty
 import type { Junction, JunctionId, Network, Point, Selection, Segment } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
-import { type Unit, type ScalePresetId, SCALE_PRESETS } from '@domain/models/units'
+import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
+import type { GradientLimits } from '@domain/services/kinematicDiagnostics'
 import type { Locomotive } from '@domain/models/locomotive'
 import {
   createLocomotive,
@@ -178,6 +179,8 @@ export class EditorStore {
   scalePreset: ScalePresetId = '1:1'
   gauge: number = 1.435 // rail gauge in meters (UIC standard 1.435m, HO: 0.0165m, N: 0.009m)
   trackSpacing: number = 3.80 // standard double-track center-to-center spacing in meters
+  levelHeight: number = 6 // height of one track level in world meters (6 m at 1:1, scaled down for model scales)
+  maxGradient: number = 35 // steepest slope allowed, in ‰ (a ramp above it is reported)
   showDimensions: boolean = true // live CAD dimensioning HUD overlay
   isSettingsOpen: boolean = false
 
@@ -414,6 +417,7 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
+      this.gradientLimits,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
@@ -447,6 +451,7 @@ export class EditorStore {
           this.trackSpacing = res.trackSpacing
           this.parallelOffset = res.trackSpacing
         }
+        this.restoreGradientSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.resetPendingToolState()
@@ -478,6 +483,7 @@ export class EditorStore {
           this.trackSpacing = res.trackSpacing
           this.parallelOffset = res.trackSpacing
         }
+        this.restoreGradientSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.resetPendingToolState()
@@ -610,6 +616,7 @@ export class EditorStore {
       this.trackSpacing = saved.trackSpacing
       this.parallelOffset = saved.trackSpacing
     }
+    this.restoreGradientSettings(saved)
     if (typeof saved.showDimensions === 'boolean') {
       this.showDimensions = saved.showDimensions
     }
@@ -648,6 +655,7 @@ export class EditorStore {
       this.trackSpacing = res.trackSpacing
       this.parallelOffset = res.trackSpacing
     }
+    this.restoreGradientSettings(res)
     if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
     if (typeof res.boardEnabled === 'boolean') {
       this.boardEnabled = res.boardEnabled
@@ -688,6 +696,7 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
+      this.gradientLimits,
     )
   }
 
@@ -713,6 +722,7 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
+      this.gradientLimits,
     )
   }
 
@@ -1083,6 +1093,8 @@ export class EditorStore {
       this.gauge = preset.defaultGauge
       this.trackSpacing = preset.defaultTrackSpacing
       this.parallelOffset = preset.defaultTrackSpacing
+      this.levelHeight = preset.defaultLevelHeight
+      this.maxGradient = preset.defaultMaxGradient
       if (preset.defaultBoardWidth && preset.defaultBoardHeight) {
         this.boardWidth = preset.defaultBoardWidth
         this.boardHeight = preset.defaultBoardHeight
@@ -1560,6 +1572,80 @@ export class EditorStore {
     this.markDirty()
     this.notify()
     return true
+  }
+
+  /**
+   * True when « Lisser la pente » would change something: the selected rails form one run laid
+   * end to end (at least two rails, no fork among them), its two ends are not at the same height,
+   * and a node inside it is not on the even slope between them. A run that comes back to the
+   * height it left (a whole bridge with its two ramps) is left out on purpose: evening it out
+   * would flatten the bridge.
+   */
+  get canSpreadSelectionGradient(): boolean {
+    const run = gradientRun(this.network, this.selection.segments)
+    if (!run) return false
+    const first = nodeLevel(this.network.nodes.get(run.nodeIds[0]))
+    const last = nodeLevel(this.network.nodes.get(run.nodeIds[run.nodeIds.length - 1]))
+    return first !== last && canSpreadGradient(this.network, this.selection.segments)
+  }
+
+  /**
+   * Even out the slope along the selected run of rails: the heights of its inner nodes are set so
+   * that every rail climbs at the same rate between its two ends. Returns true when a node moved.
+   */
+  spreadSelectionGradient = (): boolean => {
+    const net = this.network
+    if (!this.canSpreadSelectionGradient) return false
+
+    // Same sequence as shiftSelectionLevel: the rails keep their shape and the trains their place,
+    // and a node brought to the height of a track it was passing over or under meets it
+    this.pinTrains()
+    if (spreadGradient(net, this.selection.segments) === 0) {
+      this.unpinTrains()
+      return false
+    }
+    this.reconcileNetwork()
+    this.realignTrains()
+    this.unpinTrains()
+
+    const segments = new Set([...this.selection.segments].filter((sid) => net.segments.has(sid)))
+    const nodes = new Set([...this.selection.nodes].filter((nid) => net.nodes.has(nid)))
+    this.selection = { ...this.selection, nodes, segments }
+
+    this.markDirty()
+    this.notify()
+    return true
+  }
+
+  /** What slopes are measured against (see `analyzeKinematics`): the two slope settings of the project */
+  get gradientLimits(): GradientLimits {
+    return { levelHeight: this.levelHeight, maxGradient: this.maxGradient }
+  }
+
+  /**
+   * Change the height of one level (world metres) and / or the steepest slope allowed (‰).
+   * A value that is not a positive finite number is ignored; the others are kept within
+   * LEVEL_HEIGHT_RANGE / MAX_GRADIENT_RANGE. One undo step when something changed.
+   */
+  setGradientSettings = (settings: { levelHeight?: number; maxGradient?: number }): void => {
+    const within = (value: number | undefined, range: { min: number; max: number }, current: number): number =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.max(range.min, Math.min(range.max, value))
+        : current
+    const levelHeight = within(settings.levelHeight, LEVEL_HEIGHT_RANGE, this.levelHeight)
+    const maxGradient = within(settings.maxGradient, MAX_GRADIENT_RANGE, this.maxGradient)
+    if (levelHeight === this.levelHeight && maxGradient === this.maxGradient) return
+    this.levelHeight = levelHeight
+    this.maxGradient = maxGradient
+    this.markDirty()
+    this.notify()
+  }
+
+  /** Slope settings read from a project; one saved without them gets those of its scale */
+  private restoreGradientSettings(saved: { levelHeight?: number; maxGradient?: number }): void {
+    const preset = SCALE_PRESETS[this.scalePreset] ?? SCALE_PRESETS['1:1']
+    this.levelHeight = saved.levelHeight ?? preset.defaultLevelHeight
+    this.maxGradient = saved.maxGradient ?? preset.defaultMaxGradient
   }
 
   /**

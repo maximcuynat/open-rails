@@ -515,6 +515,129 @@ export function hitNode(net: Network, pos: Point, maxDist: number): NodeId | nul
   return best
 }
 
+/**
+ * Slope of a rail in ‰, positive when it climbs from `from` to `to`: its rise (in levels, times
+ * the height of one level in world metres) over its length. 0 for a flat rail.
+ */
+export function segmentGradient(net: Network, seg: Segment, levelHeight: number): number {
+  const ends = segmentEndLevels(net, seg)
+  const rise = (ends.to - ends.from) * levelHeight
+  if (rise === 0) return 0
+  const length = segmentRunLength(net, seg)
+  return length > 0 ? (rise / length) * 1000 : 0
+}
+
+/** Length of a rail on the plan (world metres), the run its slope is measured over. 0 when an end is missing. */
+export function segmentRunLength(net: Network, seg: Segment): number {
+  const a = net.nodes.get(seg.from)
+  const b = net.nodes.get(seg.to)
+  if (!a || !b) return 0
+  return seg.kind === 'curve' && seg.via ? curveLength(a.pos, seg.via, b.pos) : Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
+}
+
+/**
+ * The rails `segmentIds` as one run laid end to end, or null when they are not one: fewer than two
+ * rails, a fork or a loop among them, or several separate stretches. Rails outside the list do not
+ * count: a turnout along the run is fine as long as its branch is not part of it.
+ * `nodeIds` are in order from one end to the other (one more than `lengths`, the length of the rail
+ * between each node and the next); which end comes first follows the order of the network, so the
+ * result is stable for a given set of rails.
+ */
+export function gradientRun(
+  net: Network,
+  segmentIds: Iterable<SegmentId>,
+): { nodeIds: NodeId[]; lengths: number[] } | null {
+  const rails = new Map<SegmentId, Segment>()
+  for (const id of segmentIds) {
+    const seg = net.segments.get(id)
+    if (seg) rails.set(id, seg)
+  }
+  if (rails.size < 2) return null
+
+  // Rails of the run at each node: one at the two ends, two everywhere else
+  const atNode = new Map<NodeId, Segment[]>()
+  for (const seg of rails.values()) {
+    if (seg.from === seg.to) return null
+    for (const nid of [seg.from, seg.to]) {
+      const list = atNode.get(nid)
+      if (list) list.push(seg)
+      else atNode.set(nid, [seg])
+    }
+  }
+  const ends: NodeId[] = []
+  for (const [nid, list] of atNode) {
+    if (list.length > 2) return null
+    if (list.length === 1) ends.push(nid)
+  }
+  if (ends.length !== 2) return null
+
+  const nodeIds: NodeId[] = [ends[0]]
+  const lengths: number[] = []
+  let previous: Segment | undefined
+  let current = ends[0]
+  while (current !== ends[1]) {
+    const next: Segment | undefined = atNode.get(current)!.find((seg) => seg !== previous)
+    if (!next) return null
+    current = next.from === current ? next.to : next.from
+    nodeIds.push(current)
+    lengths.push(segmentRunLength(net, next))
+    previous = next
+  }
+  // Two ends and every rail walked: one stretch, no loop left aside
+  return lengths.length === rails.size ? { nodeIds, lengths } : null
+}
+
+/** Heights closer than this (levels) are the same height when a slope is evened out. */
+const GRADIENT_EPSILON = 1e-9
+
+/** Inner nodes of the run `segmentIds` with the height an even slope between its two ends gives them. */
+function evenGradientLevels(net: Network, segmentIds: Iterable<SegmentId>): Map<NodeId, number> | null {
+  const run = gradientRun(net, segmentIds)
+  if (!run) return null
+  const total = run.lengths.reduce((sum, len) => sum + len, 0)
+  if (!(total > 0)) return null
+  const start = nodeLevel(net.nodes.get(run.nodeIds[0]))
+  const rise = nodeLevel(net.nodes.get(run.nodeIds[run.nodeIds.length - 1])) - start
+  const levels = new Map<NodeId, number>()
+  let covered = 0
+  for (let i = 1; i < run.nodeIds.length - 1; i++) {
+    covered += run.lengths[i - 1]
+    levels.set(run.nodeIds[i], rise === 0 ? start : start + (rise * covered) / total)
+  }
+  return levels
+}
+
+/**
+ * True when `spreadGradient` would move a node: the rails are one run (see `gradientRun`) and at
+ * least one of its inner nodes is not on the even slope between its two ends. This covers a run
+ * whose slope is uneven as well as a hump or a dip between two ends at the same height.
+ */
+export function canSpreadGradient(net: Network, segmentIds: Iterable<SegmentId>): boolean {
+  const levels = evenGradientLevels(net, segmentIds)
+  if (!levels) return false
+  for (const [nid, level] of levels) {
+    if (Math.abs(nodeLevel(net.nodes.get(nid)) - level) > GRADIENT_EPSILON) return true
+  }
+  return false
+}
+
+/**
+ * Even out the slope along a run of rails laid end to end: its two ends keep their height and every
+ * node in between is put on the straight slope from one to the other, by length, so that all the
+ * rails climb at the same rate. Does nothing when the rails are not one run (see `gradientRun`).
+ * Returns the number of nodes whose height changed.
+ */
+export function spreadGradient(net: Network, segmentIds: Iterable<SegmentId>): number {
+  const levels = evenGradientLevels(net, segmentIds)
+  if (!levels) return 0
+  let changed = 0
+  for (const [nid, level] of levels) {
+    if (Math.abs(nodeLevel(net.nodes.get(nid)) - level) <= GRADIENT_EPSILON) continue
+    changed += setNodesLevel(net, [nid], level)
+  }
+  return changed
+}
+
 /** Height of a rail at its point closest to `pos` (the height of its ends when it is flat). */
 export function segmentHeightNear(net: Network, seg: Segment, pos: Point): number {
   const ends = segmentEndLevels(net, seg)

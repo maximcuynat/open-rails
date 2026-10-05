@@ -350,6 +350,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const networkOptions: RenderNetworkOptions = {
       tool: store.tool,
       gauge: store.gauge,
+      gradient: { levelHeight: store.levelHeight, maxGradient: store.maxGradient },
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
