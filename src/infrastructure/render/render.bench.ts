@@ -3,6 +3,7 @@ import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import { renderNetworkWithTrains } from '@infrastructure/render/renderer'
 import type { Network } from '@domain/models/types'
+import { DEFAULT_LINE_SETTINGS } from '@domain/models/speedLimits'
 
 /**
  * Time of one frame of the network at several zooms. Run with `npm run bench`; not part of
@@ -49,7 +50,15 @@ const VH = 1080
 /** Camera scales in px/m: detailed, edge of the line drawing, line, edge of the schematic, schematic */
 const ZOOMS = [8, 2.5, 1, 0.4, 0.1]
 const selection = { nodes: new Set<string>(), segments: new Set<string>() }
-const options = { gauge: 1.435, gradient: { levelHeight: 6, maxGradient: 0.035 } }
+/**
+ * Cant and slope marks are drawn, as they are by default in the editor (the curves of the yard get
+ * a cant; it has no ramp). `BENCH_NO_INCLINATION=1` leaves them out, to measure what they cost.
+ */
+const options = {
+  gauge: 1.435,
+  gradient: { levelHeight: 6, maxGradient: 0.035 },
+  ...(process.env.BENCH_NO_INCLINATION ? {} : { inclination: { line: DEFAULT_LINE_SETTINGS } }),
+}
 
 for (const [lines, perLine] of [[20, 50], [40, 100]] as const) {
   const net = buildYard(lines, perLine)

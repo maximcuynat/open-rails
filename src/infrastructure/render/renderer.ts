@@ -8,10 +8,14 @@ import { lineLineIntersection, type DiamondCrossing } from '@domain/models/cross
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
 import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import type { LineSettings } from '@domain/models/speedLimits'
 import { networkDerived } from './networkDerived'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { renderLineTracks, renderSchematicTracks } from './lodTracks'
+import { renderCantMarks } from './cantRender'
+import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGradientChevrons, type GradientColors } from './gradientRender'
+import { trackProfile } from '@domain/models/trackSpeed'
 import { gaugeOnScreen, nodeMarkerShown, trackLod } from './lod'
 import {
   BADGES_ALL_FROM_PX,
@@ -517,6 +521,11 @@ export interface RenderNetworkOptions {
   speedZones?: SpeedZoneHighlight
   /** Signals, blocks and what goes with them (see `renderSignalling`). Absent: no signal is drawn. */
   signals?: SignalRenderOptions
+  /**
+   * Cant and slopes marked on the track (`cantRender.ts`, `gradientRender.ts`). Absent: neither is
+   * drawn. The cant is read under `line` — full size only — and the slopes need `gradient`.
+   */
+  inclination?: { line: LineSettings }
 }
 
 // ─────────────────── Track levels (bridges and tunnels) ───────────────────
@@ -803,6 +812,24 @@ export function renderNetwork(
   // Each rail joint belongs to one level only when several are drawn
   const jointsByLevel = allGroups.length > 1 || options?.level !== undefined
 
+  // Cant and slopes marked on the track. The profile of the track and the ramps are kept from one
+  // frame to the next (`trackProfile`, `networkDerived`): only what is in view is traced here.
+  const inclination = options?.inclination
+  const cantProfile = inclination && drawsRails && lod === 'detail' && inclination.line.realScale !== false
+    ? trackProfile(net, inclination.line)
+    : null
+  const cantColor = cantProfile && cantProfile.rails.size > 0 ? getCanvasStyle(ctx.canvas, '--accent', '#2563eb') : ''
+  const rampIndex = inclination && options?.gradient && lod !== 'schematic' ? derived.ramps(options.gradient.levelHeight) : null
+  const ramps = rampIndex && rampIndex.ramps.length > 0 ? rampIndex : null
+  const steepRails = ramps ? derived.steepRails(options?.gauge, options?.gradient) : undefined
+  const gradientColors: GradientColors | null = ramps
+    ? {
+        ink: getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a'),
+        alert: getCanvasStyle(ctx.canvas, '--danger', '#dc2626'),
+        paper: getCanvasStyle(ctx.canvas, '--paper', '#ffffff'),
+      }
+    : null
+
   /** What lies under the rails of a level, whatever the tier the rails are drawn in */
   const drawTrackUnderlays = (pieces: TrackPiece[], level: number): void => {
     if (!showsTrackObjects) return
@@ -819,6 +846,10 @@ export function renderNetwork(
     const tunnel = level < 0
 
     drawTrackUnderlays(pieces, level)
+    // Cant: the outer rail of the canted curves, highlighted under the rails
+    if (cantProfile && cantColor) {
+      renderCantMarks(ctx, cam, vw, vh, net, pieces, cantProfile, GAUGE, GAUGE, tunnel ? TUNNEL_ALPHA : 1, cantColor)
+    }
 
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
@@ -886,6 +917,10 @@ export function renderNetwork(
     }
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE, jointsByLevel ? level : undefined)
     if (tunnel) ctx.restore()
+    // Slopes: chevrons between the rails of the ramps, pointing up
+    if (ramps && steepRails && gradientColors) {
+      renderGradientChevrons(ctx, cam, vw, vh, net, pieces, ramps, steepRails, GAUGE, tunnel ? TUNNEL_ALPHA : 1, gradientColors)
+    }
   }
 
   if (options?.part !== 'overlays') {
@@ -984,7 +1019,8 @@ export function renderNetwork(
     }
     ctx.restore()
 
-    for (const badge of placeBadges(badges)) {
+    const placedBadges = placeBadges(badges)
+    for (const badge of placedBadges) {
       const { sec, text, cx: sx, cy: badgeY, w: bgW, h: bgH, selected: isSecSelected } = badge
       ctx.save()
       ctx.font = '600 10px Archivo, system-ui, sans-serif'
@@ -1006,6 +1042,20 @@ export function renderNetwork(
       ctx.textBaseline = 'middle'
       ctx.fillText(text, sx, badgeY)
       ctx.restore()
+    }
+
+    // Slope of each ramp (« 35 ‰ »), in the detailed and the line drawing. A label gives way to the
+    // section badges and to the longer ramps: same placement as the badges.
+    if (ramps && steepRails && gradientColors) {
+      ctx.save()
+      ctx.font = GRADIENT_LABEL_FONT
+      const labels = gradientLabelBoxes(ctx, cam, vw, vh, net, ramps, steepRails)
+      ctx.restore()
+      if (labels.length > 0) {
+        const taken: BadgeBox[] = placedBadges.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, selected: true, renamed: false, length: b.length }))
+        const kept = new Set<BadgeBox>(placeBadges<BadgeBox>([...taken, ...labels]))
+        drawGradientLabels(ctx, labels.filter((label) => kept.has(label)), gradientColors)
+      }
     }
   }
 
@@ -4625,6 +4675,26 @@ function drawTrainSetBody(
   ctx.stroke()
 }
 
+/** Flank of a leaning body, seen from above beside its roof: the tint of the body, denser */
+function drawTrainSetFlank(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  flank: Point[],
+  isGhost = false,
+): void {
+  ctx.beginPath()
+  ctx.moveTo(toSx(flank[0]), toSy(flank[0]))
+  for (let pi = 1; pi < flank.length; pi++) ctx.lineTo(toSx(flank[pi]), toSy(flank[pi]))
+  ctx.closePath()
+  ctx.fillStyle = isGhost ? 'rgba(14, 165, 233, 0.25)' : 'rgba(14, 165, 233, 0.45)'
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.50)'
+  ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+  ctx.stroke()
+}
+
 /** Colours of the marker a train is in the schematic drawing: ink, accent when selected, red under the delete tool */
 function trainMarkerStyle(ctx: CanvasRenderingContext2D, selected: boolean, deleting: boolean): { color: string; halo: string } {
   const color = deleting
@@ -4653,6 +4723,7 @@ export function renderTrainSet(
   selectedVehicleId?: string | null,
   deleteVehicleId?: string | null,
   band?: LevelBand,
+  line?: LineSettings,
 ): void {
   // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
   // beyond the train (stopping distance, vectors), so it is never skipped.
@@ -4661,7 +4732,8 @@ export function renderTrainSet(
   const inView = (points: Point[]): boolean => pointsInBounds(points, bounds)
   const lod = trackLod(cam.scale, GAUGE)
 
-  const visuals = getTrainSetVisuals(net, train)
+  // The lean of the bodies only shows close up: further out it is under a pixel, and not asked for
+  const visuals = getTrainSetVisuals(net, train, lod === 'detail' ? line : undefined)
   if (!visuals) return
 
   ctx.save()
@@ -4772,7 +4844,9 @@ export function renderTrainSet(
   for (const v of visuals.vehicles) {
     if (lod === 'schematic' || !inView(v.polygon)) continue
     atLevel(levelOf(v.id), () => {
-      drawTrainSetBody(ctx, cam, toSx, toSy, v.polygon, isDebugSkeleton, telemetry)
+      // A leaning body: the flank it shows first, then its roof in place of the footprint
+      if (v.roof && v.flank && v.flank.length > 0) drawTrainSetFlank(ctx, cam, toSx, toSy, v.flank, isGhost)
+      drawTrainSetBody(ctx, cam, toSx, toSy, v.roof ?? v.polygon, isDebugSkeleton, telemetry)
     })
   }
 

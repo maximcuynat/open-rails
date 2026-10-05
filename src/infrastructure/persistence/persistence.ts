@@ -166,12 +166,19 @@ export interface SerializedProject {
   showSignalBlocks?: boolean
   /** Display: the track held for each train while driving; only written when ticked (off by default) */
   showSignalReservations?: boolean
+  /** Display: cant and slopes marked on the track; only written when unticked (on by default) */
+  hideInclination?: boolean
 }
 
-/** The two displays of the signalling a project remembers; both off by default */
+/**
+ * The displays a project remembers: the two of the signalling, both off by default, and the marks
+ * of cant and slopes, on by default
+ */
 export interface SignalDisplaySettings {
   blocks?: boolean
   reservations?: boolean
+  /** False when the marks of cant and slopes are hidden; absent or true: shown */
+  inclination?: boolean
 }
 
 /**
@@ -344,6 +351,8 @@ export function serializeNetwork(
     // Off by default: a project that shows neither carries neither
     showSignalBlocks: signalDisplay?.blocks ? true : undefined,
     showSignalReservations: signalDisplay?.reservations ? true : undefined,
+    // On by default: only a project that hides the marks says so
+    hideInclination: signalDisplay?.inclination === false ? true : undefined,
   }
 }
 
@@ -472,6 +481,7 @@ export function deserializeNetwork(data: SerializedProject): {
   signalStopEnforced?: boolean
   showSignalBlocks?: boolean
   showSignalReservations?: boolean
+  hideInclination?: boolean
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -618,6 +628,7 @@ export function deserializeNetwork(data: SerializedProject): {
     signalStopEnforced: typeof data.signalStopEnforced === 'boolean' ? data.signalStopEnforced : undefined,
     showSignalBlocks: data.showSignalBlocks === true ? true : undefined,
     showSignalReservations: data.showSignalReservations === true ? true : undefined,
+    hideInclination: data.hideInclination === true ? true : undefined,
     showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
     boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
@@ -744,6 +755,7 @@ export function loadNetworkFromStorage(): {
   signalStopEnforced?: boolean
   showSignalBlocks?: boolean
   showSignalReservations?: boolean
+  hideInclination?: boolean
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number

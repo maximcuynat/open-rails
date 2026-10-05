@@ -31,6 +31,8 @@ export interface RollingStockSpec {
     /** Body length beyond the bogie pivot on the trailer side */
     rearOverhang: number
     width: number
+    /** Height of the roof above the rail, m */
+    height: number
     /** Mass in working order, kg */
     mass: number
     /** Power at the wheel rims, W */
@@ -48,6 +50,8 @@ export interface RollingStockSpec {
     /** Extra body length of an end trailer beyond its own bogie, on the power car side */
     endExtension: number
     width: number
+    /** Height of the roof above the rail, m */
+    height: number
     /** Mass with a normal load of passengers, kg */
     mass: number
   }
@@ -67,6 +71,11 @@ export interface RollingStockSpec {
   cantDeficiency: Record<LineType, readonly CantDeficiencyStep[]>
   /** Cant deficiency (mm) at which the stock overturns */
   overturningDeficiency: number
+  /**
+   * Roll of the body on its suspensions (souplesse): the angle it leans outwards by, as a share of
+   * the angle of the cant deficiency it runs with
+   */
+  rollCoefficient: number
 }
 
 export interface CantDeficiencyStep {
@@ -92,6 +101,13 @@ const TGV_CANT_DEFICIENCY: Record<LineType, readonly CantDeficiencyStep[]> = {
 const TGV_OVERTURNING_DEFICIENCY = 525
 
 /**
+ * Roll coefficient of a TGV. ESTIMATED: 0.2 is the figure given for « a TGV » in general (Noblet,
+ * against 0.4 for a Corail coach and 0.25 for a multiple unit); nothing is published for the Duplex
+ * or the TGV M themselves (`tasks/recherche-devers.md`, « Inclinaison de la caisse »).
+ */
+const TGV_ROLL_COEFFICIENT = 0.2
+
+/**
  * Lengths over couplers add up to the real trainset: power cars + N trailer pitches + 2 end
  * extensions. Values marked "deduced" or "estimated" do not come from a manufacturer sheet.
  *
@@ -110,6 +126,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       noseOverhang: 5.005, // estimated split of the 8.15 m of overhang
       rearOverhang: 3.145, // estimated, same as the end trailer extension
       width: 2.814,
+      height: 4.1,
       mass: 68_000,
       power: 4_400_000, // 8 800 kW per trainset under 25 kV
       maxEffort: 106_000, // 212 kN per trainset
@@ -120,6 +137,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       pitch: 18.7,
       endExtension: 3.145, // deduced: (200.19 − 2 × 22.15 − 8 × 18.70) / 2
       width: 2.904,
+      height: 4.32, // 4.318 m
       mass: 36_000, // deduced: (424 t loaded − 2 × 68 t) / 8
     },
     trailerCount: 8,
@@ -127,6 +145,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
     maxSpeed: 320 / 3.6,
     cantDeficiency: TGV_CANT_DEFICIENCY,
     overturningDeficiency: TGV_OVERTURNING_DEFICIENCY,
+    rollCoefficient: TGV_ROLL_COEFFICIENT, // estimated: the figure of TGVs in general
   },
   // TGV M (Avelia Horizon): M + 9 R + M = 202 m, the end extension is the "greffon" module
   tgvm: {
@@ -138,6 +157,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       noseOverhang: 4.07, // estimated
       rearOverhang: 2.55, // estimated
       width: 2.814, // estimated: same as Duplex
+      height: 4.1, // estimated: same as Duplex
       mass: 68_000, // estimated: same as Duplex
       power: 3_880_000, // 7 760 kW per trainset at the rims
       maxEffort: 122_000, // estimated: 244 kN per trainset, unsourced figure
@@ -148,6 +168,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       pitch: 17.7, // deduced: Duplex trailer shortened by 1 m
       endExtension: 3.35, // deduced: (202 − 2 × 18 − 9 × 17.70) / 2
       width: 2.904, // estimated: same as Duplex
+      height: 4.32, // published for the trainset, taken as that of its trailers
       mass: 36_000, // estimated: (460 t loaded, itself estimated − 2 × 68 t) / 9
     },
     trailerCount: 9,
@@ -156,6 +177,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
     maxSpeed: 320 / 3.6,
     cantDeficiency: TGV_CANT_DEFICIENCY, // estimated: same as Duplex
     overturningDeficiency: TGV_OVERTURNING_DEFICIENCY, // estimated: same as Duplex
+    rollCoefficient: TGV_ROLL_COEFFICIENT, // estimated: same as Duplex
   },
 }
 
@@ -187,6 +209,12 @@ export function bogieDistance(veh: StockVehicle): number {
 export function bodyWidth(veh: StockVehicle): number {
   const spec = stockSpec(veh)
   return veh.kind === 'loco' ? spec.powerCar.width : spec.trailer.width
+}
+
+/** Height of the roof of a vehicle above the rail, m */
+export function bodyHeight(veh: StockVehicle): number {
+  const spec = stockSpec(veh)
+  return veh.kind === 'loco' ? spec.powerCar.height : spec.trailer.height
 }
 
 export function jointKind(prev: StockVehicle, next: StockVehicle): JointKind {

@@ -636,6 +636,113 @@ export function gradientRun(
   return lengths.length === rails.size ? { nodeIds, lengths } : null
 }
 
+/** One rail of a ramp, as the ramp is climbed */
+export interface RampRail {
+  segId: SegmentId
+  /** True when the rail climbs from its `from` node to its `to` node */
+  climbsForward: boolean
+  /** Distance from the foot of the ramp to the low end of the rail, m */
+  offset: number
+  /** Length of the rail on the plan, m */
+  length: number
+}
+
+/** Rails that follow each other on one slope, from the foot of the ramp to its top */
+export interface GradientRamp {
+  rails: RampRail[]
+  footNode: NodeId
+  topNode: NodeId
+  /** Length on the plan, m */
+  length: number
+  /** Slope in ‰, always positive: the rise of the whole ramp over its length */
+  gradient: number
+}
+
+/** Two rails that follow each other are one ramp when their slopes differ by no more than this (‰) */
+const SAME_RAMP_TOLERANCE = 0.5
+
+/**
+ * The ramps of the network: every rail that is not level, grouped with the rails that carry the
+ * same slope on (`segmentGradient`, within `SAME_RAMP_TOLERANCE`) through the nodes that join two
+ * rails only, and put in order from the foot to the top (`gradientRun`). A change of slope, a
+ * summit, a dip or a fork ends a ramp. Slopes are a matter of every scale.
+ */
+export function gradientRamps(net: Network, levelHeight: number): GradientRamp[] {
+  /** Signed slope of each rail that is not level */
+  const slopes = new Map<SegmentId, number>()
+  for (const seg of net.segments.values()) {
+    const slope = segmentGradient(net, seg, levelHeight)
+    if (slope !== 0 && Number.isFinite(slope)) slopes.set(seg.id, slope)
+  }
+  if (slopes.size === 0) return []
+
+  // Rails of one ramp share a group; a node joins its two rails when one climbs to it and the
+  // other climbs on from it, at the same rate
+  const group = new Map<SegmentId, SegmentId>()
+  const find = (id: SegmentId): SegmentId => {
+    let root = id
+    while (group.get(root) !== root) root = group.get(root)!
+    group.set(id, root)
+    return root
+  }
+  for (const id of slopes.keys()) group.set(id, id)
+  for (const [nodeId, railIds] of net.adjacency) {
+    if (railIds.length !== 2 || railIds[0] === railIds[1]) continue
+    const a = net.segments.get(railIds[0])
+    const b = net.segments.get(railIds[1])
+    const slopeA = a && slopes.get(a.id)
+    const slopeB = b && slopes.get(b.id)
+    if (!a || !b || slopeA === undefined || slopeB === undefined) continue
+    const arrivesClimbing = (seg: Segment, slope: number): boolean => (seg.to === nodeId) === slope > 0
+    if (arrivesClimbing(a, slopeA) === arrivesClimbing(b, slopeB)) continue
+    if (Math.abs(Math.abs(slopeA) - Math.abs(slopeB)) > SAME_RAMP_TOLERANCE) continue
+    group.set(find(a.id), find(b.id))
+  }
+  const members = new Map<SegmentId, SegmentId[]>()
+  for (const id of slopes.keys()) {
+    const root = find(id)
+    const list = members.get(root)
+    if (list) list.push(id)
+    else members.set(root, [id])
+  }
+
+  const ramps: GradientRamp[] = []
+  const build = (orderedNodes: NodeId[], lengths: number[], railAt: (i: number) => Segment): void => {
+    const climbing = nodeLevel(net.nodes.get(orderedNodes[0])) <= nodeLevel(net.nodes.get(orderedNodes[orderedNodes.length - 1]))
+    const count = lengths.length
+    const rails: RampRail[] = []
+    let offset = 0
+    for (let k = 0; k < count; k++) {
+      const i = climbing ? k : count - 1 - k
+      const seg = railAt(i)
+      const low = climbing ? orderedNodes[i] : orderedNodes[i + 1]
+      rails.push({ segId: seg.id, climbsForward: seg.from === low, offset, length: lengths[i] })
+      offset += lengths[i]
+    }
+    const footNode = climbing ? orderedNodes[0] : orderedNodes[count]
+    const topNode = climbing ? orderedNodes[count] : orderedNodes[0]
+    const rise = (nodeLevel(net.nodes.get(topNode)) - nodeLevel(net.nodes.get(footNode))) * levelHeight
+    if (offset > 0) ramps.push({ rails, footNode, topNode, length: offset, gradient: (rise / offset) * 1000 })
+  }
+  for (const ids of members.values()) {
+    const run = ids.length > 1 ? gradientRun(net, ids) : null
+    if (run) {
+      // The rail between each node of the run and the next
+      const between = (i: number): Segment =>
+        ids.map((id) => net.segments.get(id)!).find((seg) =>
+          (seg.from === run.nodeIds[i] && seg.to === run.nodeIds[i + 1]) || (seg.to === run.nodeIds[i] && seg.from === run.nodeIds[i + 1]))!
+      build(run.nodeIds, run.lengths, between)
+      continue
+    }
+    // A rail on its own (or rails that are not one run, which cannot be): one ramp each
+    for (const id of ids) {
+      const seg = net.segments.get(id)!
+      build([seg.from, seg.to], [segmentRunLength(net, seg)], () => seg)
+    }
+  }
+  return ramps
+}
+
 /** Heights closer than this (levels) are the same height when a slope is evened out. */
 const GRADIENT_EPSILON = 1e-9
 

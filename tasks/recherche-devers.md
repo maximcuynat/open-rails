@@ -308,3 +308,27 @@ Le seuil de 525 mm repose sur un seul accident et sur un TGV Duplex ; il faudra 
 - **Kato** : valeur du dévers des courbes Unitrack à dévers non trouvée.
 - **Paliers de vitesse TVM et marges KVB** : non vérifiés.
 - **Seuils de ripage de voie et de montée de roue** : aucune valeur sourcée ; seul le renversement est chiffré.
+
+## Inclinaison de la caisse (recherche du 2026-10-05, pour `tasks/plan-inclinaison-visible.md`)
+
+Deux chiffres manquaient pour dessiner la caisse penchée : la hauteur de caisse et le coefficient de souplesse.
+
+| Donnée | Valeur retenue | Source | Statut |
+|---|---|---|---|
+| Hauteur des remorques du TGV Duplex | 4,32 m (4,318 m) | https://fr.wikipedia.org/wiki/TGV_Duplex ; https://tcdurable.canalblog.com/pages/tgv-duplex/32015650.html | publié (source secondaire) |
+| Hauteur des motrices du TGV Duplex | 4,10 m | mêmes pages | publié (source secondaire) |
+| Hauteur du TGV M | 4,32 m pour la rame | https://fr.wikipedia.org/wiki/Avelia_Horizon (« leur hauteur de 4,32 m ») | publié pour la rame ; appliqué aux remorques. Motrice : ESTIMÉ, 4,10 m comme le Duplex |
+| Coefficient de souplesse | 0,2 | Noblet, déjà cité plus haut (« 0,4 voiture Corail, 0,25 automoteur, 0,2 TGV ») | ESTIMÉ pour le Duplex comme pour le TGV M : c'est la valeur « TGV » en général |
+
+Non trouvé : aucune valeur mesurée du coefficient de souplesse propre au Duplex ou au TGV M. Le coefficient se mesure selon la fiche UIC 505-1 et l'EN 14363 (https://www.eurailtest.com/en/our-offer/roll-flexibility-coefficient/), mais les rapports d'essai ne sont pas publics. La hauteur du centre de roulis n'est pas publiée non plus : le dessin fait tourner la caisse autour de l'axe de la voie, au niveau du rail.
+
+Conséquence chiffrée, sans exagération (écartement des contacts 1 500 mm, remorque de 4,32 m) :
+
+| Cas, courbe à 150 mm de dévers | Angle de la caisse | Décalage du toit |
+|---|---|---|
+| À l'arrêt (excès de 150 mm) | 5,74° × 1,2 = 6,9° vers l'intérieur | 0,52 m |
+| Vitesse d'équilibre | 5,74° vers l'intérieur | 0,43 m |
+| Insuffisance de 300 mm | 3,4° vers l'intérieur | 0,26 m |
+| Insuffisance de 525 mm (renversement) | 1,6° vers l'intérieur | 0,12 m |
+
+Avec une souplesse de 0,2, la caisse ne penche vers l'extérieur que si l'insuffisance dépasse cinq fois le dévers : jamais avant le renversement sur une courbe à 150 mm, seulement sur une courbe peu déversée (moins de 105 mm). Le plan annonçait « en survitesse elle verse vers l'extérieur » : avec les chiffres réels elle se redresse, sans plus.

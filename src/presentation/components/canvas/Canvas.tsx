@@ -360,6 +360,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       tool: store.tool,
       gauge: store.gauge,
       gradient: { levelHeight: store.levelHeight, maxGradient: store.maxGradient },
+      // Cant and slopes marked on the track: part of it, so they stay while driving
+      inclination: store.showInclination ? { line: store.lineSettings } : undefined,
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
@@ -406,6 +408,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     // Trains on top of the track network. With `band` (bridges or tunnels in view): only the
     // vehicles standing on those track levels, so that the next level up can cover them.
+    const lineSettings = store.lineSettings
     const drawTrains = (band?: LevelBand): void => {
       if (store.trains.length > 0) {
         for (const t of store.trains) {
@@ -430,6 +433,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             isSelected ? store.selectedTrainVehicleId : null,
             deleteVehicleId,
             band,
+            // The bodies lean with the cant and the speed (full size only)
+            lineSettings,
           )
         }
       } else if (store.locomotive) {
@@ -476,7 +481,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.trainPlacementPreview,
           false,
           true, // isGhost
-          store.showTrainDebug
+          store.showTrainDebug,
+          undefined,
+          null,
+          null,
+          undefined,
+          // Leaning as the vehicle will once it is laid there
+          store.lineSettings,
         )
       }
       if (store.couplerSnapTarget) {

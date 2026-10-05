@@ -457,6 +457,8 @@ export class EditorStore {
   showSignalBlocks = false
   /** Display, while driving: the track held for each train. Saved and restored like `showSignalBlocks` */
   showSignalReservations = false
+  /** Display: cant and slopes marked on the track. On by default; saved and restored like `showSignalBlocks` */
+  showInclination = true
   /**
    * The blocks show while a signal is being laid or moved, whatever `showSignalBlocks` says, until
    * the display is unticked during it: this then stays off for the session. Not saved.
@@ -3303,13 +3305,14 @@ export class EditorStore {
 
   /** The two displays of the signalling the project remembers */
   get signalDisplaySettings(): SignalDisplaySettings {
-    return { blocks: this.showSignalBlocks, reservations: this.showSignalReservations }
+    return { blocks: this.showSignalBlocks, reservations: this.showSignalReservations, inclination: this.showInclination }
   }
 
   /** Displays of a project just loaded: both off unless it says otherwise */
-  private restoreSignalDisplay(saved: { showSignalBlocks?: boolean; showSignalReservations?: boolean }): void {
+  private restoreSignalDisplay(saved: { showSignalBlocks?: boolean; showSignalReservations?: boolean; hideInclination?: boolean }): void {
     this.showSignalBlocks = saved.showSignalBlocks === true
     this.showSignalReservations = saved.showSignalReservations === true
+    this.showInclination = saved.hideInclination !== true
   }
 
   /** The track held for each train is shown: the display is ticked, and only while driving */
@@ -3335,6 +3338,13 @@ export class EditorStore {
   /** Tick or untick the display of the track held for each train: saved with the project (no undo step) */
   toggleSignalReservations = (): void => {
     this.showSignalReservations = !this.showSignalReservations
+    this.savePersistedState()
+    this.notify()
+  }
+
+  /** Tick or untick the marks of cant and slopes on the track: saved with the project (no undo step) */
+  toggleInclination = (): void => {
+    this.showInclination = !this.showInclination
     this.savePersistedState()
     this.notify()
   }

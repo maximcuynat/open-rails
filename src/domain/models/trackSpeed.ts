@@ -153,11 +153,16 @@ export interface TrackCurve {
  * Part of a rail over which the cant is run in or out next to the end of a curve: it goes linearly
  * from `cantLo` at parameter `lo` to `cantHi` at parameter `hi` (`lo` < `hi`).
  */
-interface CantRamp {
+export interface CantRamp {
   lo: number
   hi: number
   cantLo: number
   cantHi: number
+  /**
+   * On straight track only: the side the curve this ramp leads to turns to, seen as on a curved
+   * rail (`RailCurve.hand`) — when the rail is run from its `from` node to its `to` node
+   */
+  hand?: 1 | -1
 }
 
 /** Line settings with every optional one filled in */
@@ -357,12 +362,13 @@ function buildProfile(net: Network, line: ResolvedLine): TrackProfile {
     else ramps.set(segId, [ramp])
   }
   /** Lay on one rail the part `x0`…`x1` (m from the tangent point) of a ramp worth `value(x)` */
-  const layOn = (segId: SegmentId, length: number, entersAtFrom: boolean, offset: number, x0: number, x1: number, value: (x: number) => number): void => {
+  const layOn = (segId: SegmentId, length: number, entersAtFrom: boolean, offset: number, x0: number, x1: number, value: (x: number) => number, hand?: 1 | -1): void => {
     if (!(length > 0) || x1 <= x0) return
     const t0 = (x0 - offset) / length
     const t1 = (x1 - offset) / length
-    if (entersAtFrom) addRamp(segId, { lo: t0, hi: t1, cantLo: value(x0), cantHi: value(x1) })
-    else addRamp(segId, { lo: 1 - t1, hi: 1 - t0, cantLo: value(x1), cantHi: value(x0) })
+    const side = hand === undefined ? {} : { hand }
+    if (entersAtFrom) addRamp(segId, { lo: t0, hi: t1, cantLo: value(x0), cantHi: value(x1), ...side })
+    else addRamp(segId, { lo: 1 - t1, hi: 1 - t0, cantLo: value(x1), cantHi: value(x0), ...side })
   }
 
   for (const curve of curves) {
@@ -406,7 +412,10 @@ function buildProfile(net: Network, line: ResolvedLine): TrackProfile {
         if (!(length > 0)) break
         lengths.set(next.id, length)
         const entersAtFrom = next.from === node
-        layOn(next.id, length, entersAtFrom, offset, offset, Math.min(offset + length, half), (x) => endRail.cant * share(-x))
+        // The straight rail is walked away from the curve: run from `from` to `to` it leads away
+        // from it when entered at `from`, and the inside of the curve is then on its other hand
+        const hand = (entersAtFrom ? -handAway : handAway) as 1 | -1
+        layOn(next.id, length, entersAtFrom, offset, offset, Math.min(offset + length, half), (x) => endRail.cant * share(-x), hand)
         offset += length
         node = entersAtFrom ? next.to : next.from
         previous = next
@@ -480,6 +489,36 @@ function cantOn(profile: TrackProfile, segId: SegmentId, t: number): number {
  */
 export function localCant(net: Network, segId: SegmentId, t: number, line: LineSettings = DEFAULT_LINE_SETTINGS): number {
   return cantOn(trackProfile(net, line), segId, t)
+}
+
+/** The cant at a place of the track and the side it leans to */
+export interface TrackCant {
+  /** Cant, mm (see `localCant`) */
+  cant: number
+  /**
+   * Side of the low rail — the inside of the curve — when the rail is run from its `from` node to
+   * its `to` node, as `RailCurve.hand`; 0 on plain straight track, where nothing leans
+   */
+  inside: 1 | -1 | 0
+  /** Radius of the rail, m; `Infinity` on straight track (a cant ramp leading to a curve included) */
+  radius: number
+}
+
+/** Cant, side and radius at a place of a profile already in hand: what the drawing of the lean reads */
+export function trackCantOn(profile: TrackProfile, segId: SegmentId, t: number): TrackCant {
+  const rail = profile.rails.get(segId)
+  if (rail) return { cant: cantOn(profile, segId, t), inside: rail.hand, radius: rail.radius }
+  let cant = 0
+  let inside: 1 | -1 | 0 = 0
+  for (const ramp of profile.ramps.get(segId) ?? []) {
+    if (t < ramp.lo || t > ramp.hi || ramp.hand === undefined) continue
+    const value = ramp.cantLo + ((ramp.cantHi - ramp.cantLo) * (t - ramp.lo)) / (ramp.hi - ramp.lo)
+    if (value > cant) {
+      cant = value
+      inside = ramp.hand
+    }
+  }
+  return { cant, inside, radius: Infinity }
 }
 
 /** Cant deficiency (mm) at `speed` km/h at a place: 0 or less on straight track */

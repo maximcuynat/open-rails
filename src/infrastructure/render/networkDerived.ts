@@ -1,4 +1,5 @@
 import type { Network, SegmentId } from '@domain/models/types'
+import { gradientRamps, type GradientRamp, type RampRail } from '@domain/models/network'
 import { bezierPoint } from '@domain/geometry/curve'
 import {
   computeTrackSections,
@@ -22,6 +23,12 @@ export interface SectionPolyline {
   tunnel: boolean
 }
 
+/** The ramps of the network and, for each rail of one, the ramp it belongs to */
+export interface RampIndex {
+  ramps: readonly GradientRamp[]
+  ofSegment: ReadonlyMap<SegmentId, { ramp: GradientRamp; rail: RampRail }>
+}
+
 /** What the drawing reads from the network besides its geometry. Recomputed only when the network changes. */
 export interface NetworkDerived {
   sections: TrackSection[]
@@ -30,6 +37,10 @@ export interface NetworkDerived {
   kinematicIssues(gauge?: number, gradient?: GradientLimits): KinematicIssue[]
   /** One polyline per section, built on first use: only the schematic drawing reads them */
   sectionPolylines(): SectionPolyline[]
+  /** The ramps (`gradientRamps`) for this height of one level, built on first use */
+  ramps(levelHeight: number): RampIndex
+  /** Rails the diagnostics report as steeper than the limit: the ones `kinematicIssues` names, built on first use */
+  steepRails(gauge?: number, gradient?: GradientLimits): ReadonlySet<SegmentId>
 }
 
 /**
@@ -184,12 +195,15 @@ function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | un
   }
   const issues = new Map<string, KinematicIssue[]>()
   let polylines: SectionPolyline[] | undefined
+  const rampIndexes = new Map<number, RampIndex>()
+  const steep = new Map<string, Set<SegmentId>>()
+  const issueKey = (gauge?: number, gradient?: GradientLimits): string => `${gauge}|${gradient?.levelHeight}|${gradient?.maxGradient}`
   return {
     sections,
     sectionOfSegment,
     conflicts: detectDirectionConflicts(net, sections),
     kinematicIssues(gauge, gradient) {
-      const key = `${gauge}|${gradient?.levelHeight}|${gradient?.maxGradient}`
+      const key = issueKey(gauge, gradient)
       let found = issues.get(key)
       if (!found) {
         found = analyzeKinematics(net, gauge, gradient)
@@ -206,6 +220,30 @@ function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | un
         }
       }
       return polylines
+    },
+    ramps(levelHeight) {
+      let index = rampIndexes.get(levelHeight)
+      if (!index) {
+        const ramps = gradientRamps(net, levelHeight)
+        const ofSegment = new Map<SegmentId, { ramp: GradientRamp; rail: RampRail }>()
+        for (const ramp of ramps) for (const rail of ramp.rails) ofSegment.set(rail.segId, { ramp, rail })
+        index = { ramps, ofSegment }
+        rampIndexes.set(levelHeight, index)
+      }
+      return index
+    },
+    steepRails(gauge, gradient) {
+      const key = issueKey(gauge, gradient)
+      let rails = steep.get(key)
+      if (!rails) {
+        rails = new Set()
+        for (const issue of this.kinematicIssues(gauge, gradient)) {
+          if (issue.kind !== 'steep_gradient') continue
+          for (const id of issue.involvedSegmentIds ?? []) rails.add(id)
+        }
+        steep.set(key, rails)
+      }
+      return rails
     },
   }
 }

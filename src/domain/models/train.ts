@@ -10,7 +10,8 @@
 import type { Junction, Network, Point, SegmentId } from './types'
 import type { Derailment } from './speedLimits'
 import type { CabOverspeed, SignalPassedAtDanger } from './trainSignalling'
-import { DEFAULT_LINE_SETTINGS } from './speedLimits'
+import { DEFAULT_LINE_SETTINGS, type LineSettings } from './speedLimits'
+import { leanedOutline, rakeLean } from './bodyLean'
 import { consistOverturningDeficiency } from './cant'
 import { cantDeficiencyIn, rakeSpeedLimitIn, trackProfile, type TrackProfile } from './trackSpeed'
 import {
@@ -55,6 +56,7 @@ import { rakeOccupancy } from './occupancy'
 import type { RollingStockModel, StockVehicle } from './rollingStock'
 import {
   UNIT_COUPLING_GAP,
+  bodyHeight,
   bodyWidth,
   bogieDistance,
   consistMaxSpeed,
@@ -995,7 +997,15 @@ export function handleCouplingClick(
 export interface TrainVehicleVisual {
   id: string
   kind: 'loco' | 'wagon'
+  /** Footprint of the body on the ground: what selection, hit-testing, collisions and coupling read */
   polygon: Point[]
+  /**
+   * Outline of the roof when the body leans (cant, speed in a curve, derailment): the footprint,
+   * point for point, as it shows from above. Absent when the body stands upright.
+   */
+  roof?: Point[]
+  /** Flank showing beside the roof of a leaning body (see `leanedOutline`); absent or empty when none shows */
+  flank?: Point[]
   windshield?: Point[]
   headlights?: { left: Point; right: Point }
   tgvDetails?: TGVDetails
@@ -1014,9 +1024,13 @@ const TRAILER_END_MARGIN = 0.35
 /**
  * Compute the complete visual geometry for a TrainSet: body outlines, bogies with axles (a bogie
  * shared by two trailers appears once) and one gangway per joint.
+ *
+ * With `line`, the lean of the bodies is worked out as well (`rakeLean`): a leaning vehicle gets
+ * its `roof` and `flank`, and the gangways hang between the roofs. The footprints never change.
  */
-export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisuals | null {
+export function getTrainSetVisuals(net: Network, train: TrainSet, line?: LineSettings): TrainSetVisuals | null {
   if (train.vehicles.length === 0) return null
+  const leans = line && line.realScale !== false ? rakeLean(net, trackProfile(net, line), train) : null
 
   const visuals: TrainVehicleVisual[] = []
   const bogies: BogieFrame[] = []
@@ -1024,6 +1038,19 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
 
   // Left/right corners of both body ends of each vehicle, to hang the gangways on
   const vehicleFrames: ({ rear: [Point, Point]; front: [Point, Point] } | null)[] = []
+
+  /** Add the roof and the flank of a leaning vehicle to its visual; returns the outline the gangways hang on */
+  const leanBody = (i: number, visual: TrainVehicleVisual): Point[] => {
+    const lean = leans?.[i]
+    const veh = train.vehicles[i]
+    const pF = lean ? positionOnSegment(net, veh.front.segId, veh.front.t) : null
+    const pR = lean ? positionOnSegment(net, veh.rear.segId, veh.rear.t) : null
+    const leaned = lean && pF && pR ? leanedOutline(visual.polygon, pR, pF, lean, bodyHeight(veh)) : null
+    if (!leaned) return visual.polygon
+    visual.roof = leaned.roof
+    visual.flank = leaned.flank
+    return leaned.roof
+  }
 
   for (let i = 0; i < train.vehicles.length; i++) {
     const veh = train.vehicles[i]
@@ -1054,21 +1081,23 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
         halfWidth: spec.width / 2,
       })
       if (tgv) {
-        visuals.push({
+        const visual: TrainVehicleVisual = {
           id: veh.id,
           kind: 'loco',
           polygon: tgv.polygon,
           windshield: tgv.windshield,
           headlights: tgv.headlights,
           tgvDetails: tgv,
-        })
+        }
+        visuals.push(visual)
+        const outline = leanBody(i, visual)
 
         // Body ends: the tip of the nose and the flat back
         // tgv.polygon: 0=noseTipL, 9=noseTipR, 4=backL, 5=backR
-        const tipL = tgv.polygon[0]
-        const tipR = tgv.polygon[9]
-        const backL = tgv.polygon[4]
-        const backR = tgv.polygon[5]
+        const tipL = outline[0]
+        const tipR = outline[9]
+        const backL = outline[4]
+        const backR = outline[5]
         // Turned around, the flat back faces the head of the train and left/right swap sides
         vehicleFrames[i] = veh.flipped
           ? { front: [backR, backL], rear: [tipR, tipL] }
@@ -1102,15 +1131,17 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
           const c3 = { x: cRearCenter.x - nx * w, y: cRearCenter.y - ny * w }
           const c4 = { x: cRearCenter.x + nx * w, y: cRearCenter.y + ny * w }
 
-          visuals.push({
+          const visual: TrainVehicleVisual = {
             id: veh.id,
             kind: 'wagon',
             polygon: [c1, c2, c3, c4],
-          })
+          }
+          visuals.push(visual)
+          const outline = leanBody(i, visual)
 
           vehicleFrames[i] = {
-            front: [c1, c2],
-            rear: [c4, c3],
+            front: [outline[0], outline[1]],
+            rear: [outline[3], outline[2]],
           }
         }
       }
