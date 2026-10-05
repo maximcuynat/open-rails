@@ -415,11 +415,15 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
 /** Menu ids of the example networks: this prefix, then the id of the example */
 const EXAMPLE_ITEM_PREFIX = 'example:'
 
-/** Replace the current network with an example, then frame it (an example carries no camera) */
+/**
+ * Replace the current network with an example. One that carries a camera opens on it — the train
+ * to drive, on a line too long to show whole; the others are framed.
+ */
 async function openExample(store: EditorStore, example: ExampleNetwork, onFitView: () => void): Promise<void> {
   try {
-    store.loadFromData(await loadExample(example))
-    onFitView()
+    const project = await loadExample(example)
+    store.loadFromData(project)
+    if (!project.camera) onFitView()
     showToast(`Exemple « ${example.label} » ouvert`, 'success')
   } catch {
     showToast("Impossible de charger l'exemple", 'error')

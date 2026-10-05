@@ -1,0 +1,728 @@
+{
+  "version": 2,
+  "name": "Voie unique avec évitement",
+  "nodes": [
+    {
+      "id": "n_1",
+      "x": -2500,
+      "y": 0
+    },
+    {
+      "id": "n_2",
+      "x": -500,
+      "y": 0
+    },
+    {
+      "id": "n_3",
+      "x": 500,
+      "y": 0
+    },
+    {
+      "id": "n_4",
+      "x": 2500,
+      "y": 0
+    },
+    {
+      "id": "n_8",
+      "x": -455,
+      "y": 2.25
+    },
+    {
+      "id": "n_9",
+      "x": -410,
+      "y": 4.5
+    },
+    {
+      "id": "n_13",
+      "x": 455,
+      "y": 2.25
+    },
+    {
+      "id": "n_14",
+      "x": 410,
+      "y": 4.5
+    }
+  ],
+  "segments": [
+    {
+      "id": "s_5",
+      "from": "n_1",
+      "to": "n_2",
+      "kind": "straight"
+    },
+    {
+      "id": "s_6",
+      "from": "n_2",
+      "to": "n_3",
+      "kind": "straight"
+    },
+    {
+      "id": "s_7",
+      "from": "n_3",
+      "to": "n_4",
+      "kind": "straight"
+    },
+    {
+      "id": "s_10",
+      "from": "n_2",
+      "to": "n_8",
+      "kind": "curve",
+      "via": {
+        "x": -477.44375,
+        "y": 0
+      }
+    },
+    {
+      "id": "s_11",
+      "from": "n_8",
+      "to": "n_9",
+      "kind": "curve",
+      "via": {
+        "x": -432.55625,
+        "y": 4.5
+      }
+    },
+    {
+      "id": "s_15",
+      "from": "n_3",
+      "to": "n_13",
+      "kind": "curve",
+      "via": {
+        "x": 477.44375,
+        "y": 0
+      }
+    },
+    {
+      "id": "s_16",
+      "from": "n_13",
+      "to": "n_14",
+      "kind": "curve",
+      "via": {
+        "x": 432.55625,
+        "y": 4.5
+      }
+    },
+    {
+      "id": "s_18",
+      "from": "n_9",
+      "to": "n_14",
+      "kind": "straight"
+    }
+  ],
+  "junctions": [
+    {
+      "id": "j_12",
+      "nodeId": "n_2",
+      "kind": "turnout",
+      "passages": [
+        [
+          "s_5",
+          "s_6"
+        ],
+        [
+          "s_5",
+          "s_10"
+        ]
+      ],
+      "positions": [
+        [
+          0
+        ],
+        [
+          1
+        ]
+      ],
+      "active": 0
+    },
+    {
+      "id": "j_17",
+      "nodeId": "n_3",
+      "kind": "turnout",
+      "passages": [
+        [
+          "s_7",
+          "s_6"
+        ],
+        [
+          "s_7",
+          "s_15"
+        ]
+      ],
+      "positions": [
+        [
+          0
+        ],
+        [
+          1
+        ]
+      ],
+      "active": 0
+    }
+  ],
+  "camera": {
+    "x": -1398,
+    "y": 0,
+    "scale": 4
+  },
+  "sectionMeta": {
+    "s_6": {
+      "name": "Voie directe",
+      "type": "station_stop",
+      "color": "#06b6d4",
+      "direction": "two_way",
+      "isCustomName": true
+    },
+    "s_5": {
+      "name": "Section A",
+      "type": "circulation",
+      "color": "#3b82f6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_7": {
+      "name": "Section B",
+      "type": "circulation",
+      "color": "#f59e0b",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_10-s_11-s_15-s_16-s_18": {
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": true
+    },
+    "s_10": {
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": true
+    },
+    "s_11": {
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": true
+    },
+    "s_18": {
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": true
+    },
+    "s_16": {
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": true
+    },
+    "s_15": {
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": true
+    }
+  },
+  "gridMode": "fixed",
+  "gridSpacing": 5,
+  "sections": [
+    {
+      "id": "s_5",
+      "name": "Section A",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#3b82f6",
+      "segmentIds": [
+        "s_5"
+      ],
+      "nodeIds": [
+        "n_1",
+        "n_2"
+      ],
+      "totalLength": 2000,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": [
+        "s_6",
+        "s_10-s_11-s_15-s_16-s_18"
+      ]
+    },
+    {
+      "id": "s_6",
+      "name": "Voie directe",
+      "type": "station_stop",
+      "direction": "two_way",
+      "color": "#06b6d4",
+      "segmentIds": [
+        "s_6"
+      ],
+      "nodeIds": [
+        "n_2",
+        "n_3"
+      ],
+      "totalLength": 1000,
+      "adjacentSectionIds": [
+        "s_5",
+        "s_10-s_11-s_15-s_16-s_18",
+        "s_7"
+      ]
+    },
+    {
+      "id": "s_7",
+      "name": "Section B",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#f59e0b",
+      "segmentIds": [
+        "s_7"
+      ],
+      "nodeIds": [
+        "n_3",
+        "n_4"
+      ],
+      "totalLength": 2000,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": [
+        "s_6",
+        "s_10-s_11-s_15-s_16-s_18"
+      ]
+    },
+    {
+      "id": "s_10-s_11-s_15-s_16-s_18",
+      "name": "Voie d’évitement",
+      "type": "siding",
+      "direction": "two_way",
+      "color": "#8b5cf6",
+      "segmentIds": [
+        "s_10",
+        "s_11",
+        "s_18",
+        "s_16",
+        "s_15"
+      ],
+      "nodeIds": [
+        "n_2",
+        "n_8",
+        "n_9",
+        "n_14",
+        "n_13",
+        "n_3"
+      ],
+      "totalLength": 1000.3,
+      "adjacentSectionIds": [
+        "s_5",
+        "s_6",
+        "s_7"
+      ]
+    }
+  ],
+  "unit": "m",
+  "scalePreset": "1:1",
+  "gauge": 1.435,
+  "trackSpacing": 3.8,
+  "levelHeight": 6,
+  "maxGradient": 35,
+  "lineSpeed": 100,
+  "showDimensions": true,
+  "boardEnabled": false,
+  "boardWidth": 2.4,
+  "boardHeight": 1.2,
+  "trains": [
+    {
+      "id": "train_28",
+      "direction": 1,
+      "vehicles": [
+        {
+          "id": "veh_27",
+          "kind": "loco",
+          "front": {
+            "segId": "s_5",
+            "t": 0.6,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.593,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_30",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.589855,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.580505,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_32",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.580505,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5711550000000001,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_34",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5711550000000001,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5618050000000001,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_36",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5618050000000001,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5524550000000001,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_38",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5524550000000001,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5431050000000002,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_40",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5431050000000002,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5337550000000002,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_42",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5337550000000002,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5244050000000002,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_44",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5244050000000002,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5150550000000003,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_46",
+          "kind": "loco",
+          "front": {
+            "segId": "s_5",
+            "t": 0.5119100000000003,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_5",
+            "t": 0.5049100000000003,
+            "forward": true
+          },
+          "flipped": true,
+          "model": "duplex"
+        }
+      ]
+    },
+    {
+      "id": "train_49",
+      "direction": 1,
+      "vehicles": [
+        {
+          "id": "veh_48",
+          "kind": "loco",
+          "front": {
+            "segId": "s_7",
+            "t": 0.4,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.40700000000000003,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_51",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.41014500000000004,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.41949500000000006,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_53",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.41949500000000006,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.4288450000000001,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_55",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.4288450000000001,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.4381950000000001,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_57",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.4381950000000001,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.44754500000000014,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_59",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.44754500000000014,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.45689500000000016,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_61",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.45689500000000016,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.4662450000000002,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_63",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.4662450000000002,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.4755950000000002,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_65",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_7",
+            "t": 0.4755950000000002,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.48494500000000024,
+            "forward": false
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_67",
+          "kind": "loco",
+          "front": {
+            "segId": "s_7",
+            "t": 0.48809000000000025,
+            "forward": false
+          },
+          "rear": {
+            "segId": "s_7",
+            "t": 0.49509000000000025,
+            "forward": false
+          },
+          "flipped": true,
+          "model": "duplex"
+        }
+      ]
+    }
+  ],
+  "speedZones": [
+    {
+      "id": "z_19",
+      "speed": 60,
+      "spans": [
+        {
+          "segId": "s_10",
+          "t0": 0,
+          "t1": 1
+        },
+        {
+          "segId": "s_11",
+          "t0": 0,
+          "t1": 1
+        },
+        {
+          "segId": "s_18",
+          "t0": 0,
+          "t1": 1
+        },
+        {
+          "segId": "s_16",
+          "t0": 1,
+          "t1": 0
+        },
+        {
+          "segId": "s_15",
+          "t0": 1,
+          "t1": 0
+        }
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "id": "sig_20",
+      "segId": "s_5",
+      "t": 0.995,
+      "forward": true,
+      "role": "protection"
+    },
+    {
+      "id": "sig_21",
+      "segId": "s_7",
+      "t": 0.005,
+      "forward": false,
+      "role": "protection"
+    },
+    {
+      "id": "sig_22",
+      "segId": "s_6",
+      "t": 0.9,
+      "forward": true,
+      "role": "protection"
+    },
+    {
+      "id": "sig_23",
+      "segId": "s_6",
+      "t": 0.1,
+      "forward": false,
+      "role": "protection"
+    },
+    {
+      "id": "sig_24",
+      "segId": "s_18",
+      "t": 0.9878048780487805,
+      "forward": true,
+      "role": "protection"
+    },
+    {
+      "id": "sig_25",
+      "segId": "s_18",
+      "t": 0.012195121951219513,
+      "forward": false,
+      "role": "protection"
+    }
+  ]
+}

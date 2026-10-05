@@ -1,0 +1,655 @@
+{
+  "version": 2,
+  "name": "Saut-de-mouton",
+  "nodes": [
+    {
+      "id": "n_1",
+      "x": -1500,
+      "y": -1.9
+    },
+    {
+      "id": "n_2",
+      "x": 0,
+      "y": -1.9
+    },
+    {
+      "id": "n_3",
+      "x": 2500,
+      "y": -1.9
+    },
+    {
+      "id": "n_6",
+      "x": -1500,
+      "y": 1.9
+    },
+    {
+      "id": "n_7",
+      "x": 2500,
+      "y": 1.9
+    },
+    {
+      "id": "n_9",
+      "x": 125,
+      "y": -15.899999999999999
+    },
+    {
+      "id": "n_10",
+      "x": 250,
+      "y": -29.9
+    },
+    {
+      "id": "n_14",
+      "x": 490,
+      "y": -29.9,
+      "level": 1
+    },
+    {
+      "id": "n_15",
+      "x": 520,
+      "y": -29.9,
+      "level": 1
+    },
+    {
+      "id": "n_18",
+      "x": 806.7882181755231,
+      "y": 60.52397785550414,
+      "level": 1
+    },
+    {
+      "id": "n_19",
+      "x": 621.108786166019,
+      "y": -19.570310882775743,
+      "level": 1
+    },
+    {
+      "id": "n_21",
+      "x": 718.0398830195784,
+      "y": 10.991946559863038,
+      "level": 1
+    },
+    {
+      "id": "n_24",
+      "x": 1003.3847088048811,
+      "y": 198.18232257975518
+    },
+    {
+      "id": "n_26",
+      "x": 1290.172926980404,
+      "y": 288.6063004352592
+    },
+    {
+      "id": "n_27",
+      "x": 1092.1330439608257,
+      "y": 247.71435387539628
+    },
+    {
+      "id": "n_29",
+      "x": 1189.0641408143852,
+      "y": 278.27661131803495
+    },
+    {
+      "id": "n_32",
+      "x": 1890.172926980404,
+      "y": 288.6063004352592
+    }
+  ],
+  "segments": [
+    {
+      "id": "s_4",
+      "from": "n_1",
+      "to": "n_2",
+      "kind": "straight"
+    },
+    {
+      "id": "s_5",
+      "from": "n_2",
+      "to": "n_3",
+      "kind": "straight"
+    },
+    {
+      "id": "s_8",
+      "from": "n_6",
+      "to": "n_7",
+      "kind": "straight"
+    },
+    {
+      "id": "s_11",
+      "from": "n_2",
+      "to": "n_9",
+      "kind": "curve",
+      "via": {
+        "x": 63.284,
+        "y": -1.9
+      }
+    },
+    {
+      "id": "s_12",
+      "from": "n_9",
+      "to": "n_10",
+      "kind": "curve",
+      "via": {
+        "x": 186.716,
+        "y": -29.9
+      }
+    },
+    {
+      "id": "s_16",
+      "from": "n_10",
+      "to": "n_14",
+      "kind": "straight"
+    },
+    {
+      "id": "s_17",
+      "from": "n_14",
+      "to": "n_15",
+      "kind": "straight"
+    },
+    {
+      "id": "s_20",
+      "from": "n_15",
+      "to": "n_19",
+      "kind": "curve",
+      "via": {
+        "x": 571.0820548288606,
+        "y": -29.9
+      }
+    },
+    {
+      "id": "s_22",
+      "from": "n_19",
+      "to": "n_21",
+      "kind": "curve",
+      "via": {
+        "x": 671.1355175031773,
+        "y": -9.240621765551492
+      }
+    },
+    {
+      "id": "s_23",
+      "from": "n_21",
+      "to": "n_18",
+      "kind": "curve",
+      "via": {
+        "x": 764.9442485359795,
+        "y": 31.224514885277536
+      }
+    },
+    {
+      "id": "s_25",
+      "from": "n_18",
+      "to": "n_24",
+      "kind": "straight"
+    },
+    {
+      "id": "s_28",
+      "from": "n_24",
+      "to": "n_27",
+      "kind": "curve",
+      "via": {
+        "x": 1045.2286784444248,
+        "y": 227.4817855499818
+      }
+    },
+    {
+      "id": "s_30",
+      "from": "n_27",
+      "to": "n_29",
+      "kind": "curve",
+      "via": {
+        "x": 1139.037409477227,
+        "y": 267.9469222008108
+      }
+    },
+    {
+      "id": "s_31",
+      "from": "n_29",
+      "to": "n_26",
+      "kind": "curve",
+      "via": {
+        "x": 1239.0908721515434,
+        "y": 288.6063004352592
+      }
+    },
+    {
+      "id": "s_33",
+      "from": "n_26",
+      "to": "n_32",
+      "kind": "straight"
+    }
+  ],
+  "junctions": [
+    {
+      "id": "j_13",
+      "nodeId": "n_2",
+      "kind": "turnout",
+      "passages": [
+        [
+          "s_4",
+          "s_5"
+        ],
+        [
+          "s_4",
+          "s_11"
+        ]
+      ],
+      "positions": [
+        [
+          0
+        ],
+        [
+          1
+        ]
+      ],
+      "active": 1
+    }
+  ],
+  "camera": {
+    "x": -128,
+    "y": -2,
+    "scale": 4
+  },
+  "sectionMeta": {
+    "s_4": {
+      "name": "Section A",
+      "type": "circulation",
+      "color": "#3b82f6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_5": {
+      "name": "Section B",
+      "type": "circulation",
+      "color": "#10b981",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_8": {
+      "name": "Section C",
+      "type": "circulation",
+      "color": "#f59e0b",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_11-s_12-s_16-s_17-s_20-s_22-s_23-s_25-s_28-s_30-s_31-s_33": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_11": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_12": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_16": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_17": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_20": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_22": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_23": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_25": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_28": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_30": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_31": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    },
+    "s_33": {
+      "name": "Section D",
+      "type": "circulation",
+      "color": "#8b5cf6",
+      "direction": "two_way",
+      "isCustomName": false
+    }
+  },
+  "gridMode": "fixed",
+  "gridSpacing": 5,
+  "sections": [
+    {
+      "id": "s_4",
+      "name": "Section A",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#3b82f6",
+      "segmentIds": [
+        "s_4"
+      ],
+      "nodeIds": [
+        "n_1",
+        "n_2"
+      ],
+      "totalLength": 1500,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": [
+        "s_5",
+        "s_11-s_12-s_16-s_17-s_20-s_22-s_23-s_25-s_28-s_30-s_31-s_33"
+      ]
+    },
+    {
+      "id": "s_5",
+      "name": "Section B",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#10b981",
+      "segmentIds": [
+        "s_5"
+      ],
+      "nodeIds": [
+        "n_2",
+        "n_3"
+      ],
+      "totalLength": 2500,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": [
+        "s_4",
+        "s_11-s_12-s_16-s_17-s_20-s_22-s_23-s_25-s_28-s_30-s_31-s_33"
+      ]
+    },
+    {
+      "id": "s_8",
+      "name": "Section C",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#f59e0b",
+      "segmentIds": [
+        "s_8"
+      ],
+      "nodeIds": [
+        "n_6",
+        "n_7"
+      ],
+      "totalLength": 4000,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": []
+    },
+    {
+      "id": "s_11-s_12-s_16-s_17-s_20-s_22-s_23-s_25-s_28-s_30-s_31-s_33",
+      "name": "Section D",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#8b5cf6",
+      "segmentIds": [
+        "s_11",
+        "s_12",
+        "s_16",
+        "s_17",
+        "s_20",
+        "s_22",
+        "s_23",
+        "s_25",
+        "s_28",
+        "s_30",
+        "s_31",
+        "s_33"
+      ],
+      "nodeIds": [
+        "n_2",
+        "n_9",
+        "n_10",
+        "n_14",
+        "n_15",
+        "n_19",
+        "n_21",
+        "n_18",
+        "n_24",
+        "n_27",
+        "n_29",
+        "n_26",
+        "n_32"
+      ],
+      "totalLength": 1972.96,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": [
+        "s_4",
+        "s_5"
+      ]
+    }
+  ],
+  "unit": "m",
+  "scalePreset": "1:1",
+  "gauge": 1.435,
+  "trackSpacing": 3.8,
+  "levelHeight": 6,
+  "maxGradient": 35,
+  "showDimensions": true,
+  "boardEnabled": false,
+  "boardWidth": 2.4,
+  "boardHeight": 1.2,
+  "trains": [
+    {
+      "id": "train_37",
+      "direction": 1,
+      "vehicles": [
+        {
+          "id": "veh_36",
+          "kind": "loco",
+          "front": {
+            "segId": "s_4",
+            "t": 0.98,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.9706666666666667,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_39",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.9664733333333333,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.9540066666666667,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_41",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.9540066666666667,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.94154,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_43",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.94154,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.9290733333333334,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_45",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.9290733333333334,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.9166066666666668,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_47",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.9166066666666668,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.9041400000000002,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_49",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.9041400000000002,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.8916733333333335,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_51",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.8916733333333335,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.8792066666666669,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_53",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_4",
+            "t": 0.8792066666666669,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.8667400000000003,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_55",
+          "kind": "loco",
+          "front": {
+            "segId": "s_4",
+            "t": 0.8625466666666669,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_4",
+            "t": 0.8532133333333336,
+            "forward": true
+          },
+          "flipped": true,
+          "model": "duplex"
+        }
+      ]
+    }
+  ],
+  "speedZones": [
+    {
+      "id": "z_34",
+      "speed": 60,
+      "spans": [
+        {
+          "segId": "s_11",
+          "t0": 0,
+          "t1": 1
+        },
+        {
+          "segId": "s_12",
+          "t0": 0,
+          "t1": 1
+        }
+      ]
+    }
+  ]
+}
