@@ -2696,7 +2696,9 @@ export function trainSetTelemetry(net: Network, train: TrainSet, env?: DrivingEn
   return {
     speed: train.currentSpeed,
     maxSpeed: train.maxSpeed,
-    throttle: dynamics.brakeCylinderBar > BRAKING_SHOWN_FROM_BAR ? -1 : dynamics.tractionEffort > 0 ? 1 : 0,
+    throttle: dynamics.brakeCylinderBar > BRAKING_SHOWN_FROM_BAR || dynamics.electricBrakeForce > 0
+      ? -1
+      : dynamics.tractionEffort > 0 ? 1 : 0,
     realAcceleration: dynamics.acceleration,
     stoppingDistance: dynamics.stoppingDistance,
   }

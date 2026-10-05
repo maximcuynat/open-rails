@@ -62,16 +62,18 @@ describe('keyboard shortcuts', () => {
     expect(train.notch).toBe(1)
   })
 
-  it('keeps the traction handle between N and P5: no brake notches under N', () => {
+  it('keeps the handle between B5 and P5: electric brake notches under N', () => {
     const store = drivingStore()
     const train = store.selectedTrain!
 
     for (let i = 0; i < 3; i++) handleKeyDown(store, keyEvent('KeyD', 'd'))
-    expect(train.notch).toBe(0)
+    expect(train.notch).toBe(-3)
     handleKeyDown(store, keyEvent('ArrowDown', 'ArrowDown'))
-    expect(train.notch).toBe(0)
+    expect(train.notch).toBe(-4)
+    for (let i = 0; i < 4; i++) handleKeyDown(store, keyEvent('KeyD', 'd'))
+    expect(train.notch).toBe(-5)
 
-    for (let i = 0; i < 8; i++) handleKeyDown(store, keyEvent('KeyA', 'a'))
+    for (let i = 0; i < 13; i++) handleKeyDown(store, keyEvent('KeyA', 'a'))
     expect(train.notch).toBe(5)
   })
 

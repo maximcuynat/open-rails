@@ -39,8 +39,8 @@ const EDIT: readonly KeyContext[] = ['edit']
 const BOTH: readonly KeyContext[] = ['drive', 'edit']
 
 export const ACTIONS = [
-  { id: 'drive.notchUp', label: 'Traction : un cran de plus', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyA' }, { code: 'ArrowUp' }] },
-  { id: 'drive.notchDown', label: 'Traction : un cran de moins', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyD' }, { code: 'ArrowDown' }] },
+  { id: 'drive.notchUp', label: 'Manipulateur : un cran de plus', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyA' }, { code: 'ArrowUp' }] },
+  { id: 'drive.notchDown', label: 'Manipulateur : un cran de moins', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyD' }, { code: 'ArrowDown' }] },
   { id: 'drive.brakeApply', label: 'Serrer le frein (maintenir)', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyE' }, null] },
   { id: 'drive.brakeRelease', label: 'Desserrer le frein (maintenir)', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyQ' }, null] },
   { id: 'drive.reverserForward', label: 'Inverseur vers l’avant', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyW' }, { code: 'ArrowUp', shift: true }] },

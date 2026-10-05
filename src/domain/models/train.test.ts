@@ -23,6 +23,7 @@ import {
   releaseEmergencyBrake,
   switchDrivingCab,
   MAX_NOTCH,
+  MIN_NOTCH,
   makeTrainSet,
   serializeTrains,
   deserializeTrains,
@@ -178,7 +179,27 @@ describe('driving controls', () => {
     expect(ts.brakeCylinder).toBe(1)
     expect(ts.brakeCommand).toBe('hold')
     expect(ts.tractionEffort).toBe(0)
+    expect(ts.electricBrakeEffort).toBe(0)
     expect(ts.maxSpeed).toBeCloseTo(320 / 3.6, 9)
+  })
+
+  it('locks the reverser while the handle is on an electric brake notch', () => {
+    const { ts } = makeTrain()
+    setNotch(ts, -1)
+    expect(setReverser(ts, 'forward')).toBe(false)
+    setNotch(ts, 0)
+    expect(setReverser(ts, 'forward')).toBe(true)
+  })
+
+  it('the emergency brake takes the electric brake off and brings the handle back to N', () => {
+    const { ts } = makeTrain()
+    releaseBrake(ts)
+    ts.currentSpeed = 30
+    setNotch(ts, MIN_NOTCH)
+    ts.electricBrakeEffort = 1
+    triggerEmergencyBrake(ts)
+    expect(ts.notch).toBe(0)
+    expect(ts.electricBrakeEffort).toBe(0)
   })
 
   it('gives no traction while the reverser is in neutral', () => {
@@ -284,12 +305,15 @@ describe('driving controls', () => {
     expect(trainDynamics(net, ts).stoppingDistance).toBe(0)
   })
 
-  it('clamps the handle to 0…MAX_NOTCH', () => {
+  it('clamps the handle to MIN_NOTCH…MAX_NOTCH: B5 to P5', () => {
     const { ts } = makeTrain()
     setNotch(ts, 99)
     expect(ts.notch).toBe(MAX_NOTCH)
+    setNotch(ts, -2)
+    expect(ts.notch).toBe(-2)
     setNotch(ts, -99)
-    expect(ts.notch).toBe(0)
+    expect(ts.notch).toBe(MIN_NOTCH)
+    expect(MIN_NOTCH).toBe(-5)
   })
 
   it('moves forward or backward according to the reverser', () => {

@@ -1,8 +1,8 @@
 import { useEffect, type CSSProperties } from 'react'
 import { trainImpactMessage, type EditorStore } from '@application/state/editorStore'
 import type { Reverser, TrainSet } from '@domain/models/train'
-import { MAX_NOTCH, isTrainStopped } from '@domain/models/train'
-import type { BrakeCommand } from '@domain/models/trainDynamics'
+import { MAX_NOTCH, MIN_NOTCH, isTrainStopped } from '@domain/models/train'
+import type { BrakeCommand, TrainDynamics } from '@domain/models/trainDynamics'
 import type { ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../common/Toast'
 import {
@@ -14,6 +14,7 @@ import {
   effortPercent,
   gaugeRatio,
   gradientLabel,
+  handleEffort,
   isBrakeHolding,
   notchLabel,
   speedDialTicks,
@@ -47,7 +48,7 @@ const REVERSER_ORDER: Reverser[] = ['reverse', 'neutral', 'forward']
 const REVERSER_LABEL: Record<Reverser, string> = { forward: '▲ AV', neutral: 'N', reverse: '▼ AR' }
 
 const TRAIN_COMMANDS: [actions: ActionId[], label: string][] = [
-  [['drive.notchUp', 'drive.notchDown'], 'Traction'],
+  [['drive.notchUp', 'drive.notchDown'], 'Manipulateur'],
   [['drive.brakeRelease', 'drive.brakeApply'], 'Frein −/+'],
   [['drive.reverserForward', 'drive.reverserBackward'], 'Inverseur'],
   [['drive.emergencyBrake'], 'Urgence'],
@@ -115,10 +116,14 @@ const kbd: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-/** Text and colour of the traction handle field: N, P1..P5 with the effort really applied */
-function handleField(train: TrainSet, tractionEffort: number): { label: string; color: string; fill: number } {
-  const label = `${notchLabel(train.notch)} · ${effortPercent(tractionEffort)} %`
+/** Text and colour of the handle field: B5..B1, N, P1..P5 with the effort really applied */
+function handleField(
+  train: TrainSet,
+  dynamics: Pick<TrainDynamics, 'tractionEffort' | 'electricBrakeEffort'>,
+): { label: string; color: string; fill: number } {
+  const label = `${notchLabel(train.notch)} · ${effortPercent(handleEffort(train.notch, dynamics))} %`
   if (train.notch > 0) return { label, color: GREEN, fill: train.notch / MAX_NOTCH }
+  if (train.notch < 0) return { label, color: AMBER, fill: train.notch / MIN_NOTCH }
   return { label, color: '#94a3b8', fill: 0 }
 }
 
@@ -254,7 +259,7 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
 
   const legacyThrottle = store.locomotiveThrottle
   const field = train
-    ? handleField(train, dynamics?.tractionEffort ?? 0)
+    ? handleField(train, dynamics ?? { tractionEffort: 0, electricBrakeEffort: 0 })
     : legacyThrottle === 1
     ? { label: 'ACCÉL.', color: GREEN, fill: 1 }
     : legacyThrottle === -1
@@ -265,7 +270,7 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
   const releaseBrakeButton = (held: BrakeCommand) => {
     if (store.selectedTrain?.brakeCommand === held) store.setSelectedTrainBrakeCommand('hold')
   }
-  const reverserLocked = train ? !isTrainStopped(train) || train.notch > 0 : false
+  const reverserLocked = train ? !isTrainStopped(train) || train.notch !== 0 : false
   const emergencyReleasable = train ? train.emergencyBrake && isTrainStopped(train) : false
   // Traction asked for with the reverser in neutral: flag the reverser, nothing will move
   const reverserNeeded = train ? train.notch > 0 && train.reverser === 'neutral' : false
@@ -427,10 +432,10 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
           </div>
         </div>
 
-        {/* Traction handle (legacy locomotive: throttle state) */}
+        {/* Traction and electric brake handle (legacy locomotive: throttle state) */}
         <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
           {train && (
-            <button onClick={() => store.stepSelectedTrainNotch(-1)} style={stepButton} title={`Un cran de traction en moins${store.shortcutHint('drive.notchDown')}`}>
+            <button onClick={() => store.stepSelectedTrainNotch(-1)} style={stepButton} title={`Un cran de moins : moins de traction, puis frein électrique sous N${store.shortcutHint('drive.notchDown')}`}>
               −
             </button>
           )}
@@ -447,12 +452,12 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
               background: `${field.color}${Math.round(field.fill * 0.6 * 255).toString(16).padStart(2, '0')}`,
               color: field.fill > 0.7 ? '#fff' : field.color,
             }}
-            title={train ? 'Cran de traction et effort réellement appliqué' : 'Commande de la locomotive'}
+            title={train ? 'Cran du manipulateur (P : traction, B : frein électrique) et effort réellement appliqué' : 'Commande de la locomotive'}
           >
             {field.label}
           </div>
           {train && (
-            <button onClick={() => store.stepSelectedTrainNotch(1)} style={stepButton} title={`Un cran de traction en plus${store.shortcutHint('drive.notchUp')}`}>
+            <button onClick={() => store.stepSelectedTrainNotch(1)} style={stepButton} title={`Un cran de plus : moins de frein électrique, puis traction au-dessus de N${store.shortcutHint('drive.notchUp')}`}>
               +
             </button>
           )}

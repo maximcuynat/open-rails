@@ -11,6 +11,7 @@ import type { Junction, Network, Point, SegmentId } from './types'
 import {
   BRAKE_PIPE_FULL_SERVICE,
   DEFAULT_DRIVING_ENVIRONMENT,
+  ELECTRIC_BRAKE_NOTCHES,
   PHYSICS_STEP,
   TRACTION_NOTCHES,
   stepTrainDynamics,
@@ -111,7 +112,10 @@ export interface TrainSet {
    * tractive effort pushes: the train itself may roll the other way (see `direction`).
    */
   reverser: Reverser
-  /** Traction handle: 0 (N) … MAX_NOTCH, each notch an equal share of the available effort */
+  /**
+   * Combined handle: 1 … MAX_NOTCH traction, 0 neutral (N), -1 … MIN_NOTCH electric brake, each
+   * notch an equal share of the available effort
+   */
   notch: number
   /** Emergency brake latched until the train has stopped */
   emergencyBrake: boolean
@@ -125,6 +129,8 @@ export interface TrainSet {
   brakeCommand: BrakeCommand
   /** Share of the available tractive effort applied, 0…1: follows the notch with a ramp */
   tractionEffort: number
+  /** Share of the available electric brake effort applied, 0…1: follows the notch with a ramp */
+  electricBrakeEffort: number
   /** Speed (m/s) at which the last tick ran the train into a buffer stop or another train, else 0 */
   impactSpeed: number
 }
@@ -133,6 +139,8 @@ export type Reverser = 'forward' | 'neutral' | 'reverse'
 
 /** Number of traction notches on the handle */
 export const MAX_NOTCH = TRACTION_NOTCHES
+/** Lowest notch of the handle: the strongest electric brake notch */
+export const MIN_NOTCH = -ELECTRIC_BRAKE_NOTCHES
 
 /** Below this speed (m/s) the train counts as stopped */
 const STANDSTILL_SPEED = 0.001
@@ -165,6 +173,7 @@ export function makeTrainSet(id: TrainSetId, vehicles: Vehicle[]): TrainSet {
     brakeLag: 0,
     brakeCommand: 'hold',
     tractionEffort: 0,
+    electricBrakeEffort: 0,
     impactSpeed: 0,
   }
 }
@@ -215,12 +224,12 @@ export function isTrainStopped(train: TrainSet): boolean {
 }
 
 /**
- * Move the reverser. Refused while the train is moving or the handle is in traction.
+ * Move the reverser. Refused while the train is moving or the handle is off N.
  * A non-neutral position also sets the travel direction.
  */
 export function setReverser(train: TrainSet, reverser: Reverser): boolean {
   if (train.reverser === reverser) return true
-  if (!isTrainStopped(train) || train.notch > 0) return false
+  if (!isTrainStopped(train) || train.notch !== 0) return false
   train.reverser = reverser
   if (reverser !== 'neutral') train.direction = reverser === 'forward' ? 1 : -1
   return true
@@ -234,24 +243,25 @@ export function shiftReverser(train: TrainSet, step: 1 | -1): boolean {
 }
 
 /**
- * Put the traction handle on a notch (clamped to 0…MAX_NOTCH).
+ * Put the handle on a notch (clamped to MIN_NOTCH…MAX_NOTCH).
  * While the emergency brake is latched the handle is locked until the train has stopped;
  * moving it at standstill releases the emergency brake.
  */
 export function setNotch(train: TrainSet, notch: number): boolean {
   if (train.emergencyBrake && !releaseEmergencyBrake(train)) return false
-  train.notch = Math.max(0, Math.min(MAX_NOTCH, Math.round(notch)))
+  train.notch = Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, Math.round(notch)))
   return true
 }
 
 /**
- * Latch the emergency brake: the brake pipe is vented, the traction is cut and the handle comes
- * back to N. Nothing can be released before the train has stopped.
+ * Latch the emergency brake: the brake pipe is vented, the traction and the electric brake are
+ * cut and the handle comes back to N. Nothing can be released before the train has stopped.
  */
 export function triggerEmergencyBrake(train: TrainSet): void {
   train.emergencyBrake = true
   train.notch = 0
   train.tractionEffort = 0
+  train.electricBrakeEffort = 0
   train.brakeCommand = 'hold'
 }
 
@@ -271,6 +281,7 @@ export function resetTrainControls(train: TrainSet): void {
   train.notch = 0
   train.reverser = 'neutral'
   train.tractionEffort = 0
+  train.electricBrakeEffort = 0
   train.impactSpeed = 0
   applyParkedBrake(train)
 }

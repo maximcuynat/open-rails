@@ -4,7 +4,8 @@
  * Shared contract of the realistic driving physics (see `tasks/todo.md`): the store, the HUD and
  * the debug drawing read everything they show from `trainDynamics`, never from the controls.
  *
- * Equation of motion, along the train: `k · m · dv/dt = traction − brake − R(v) − grade − curve`.
+ * Equation of motion, along the train:
+ * `k · m · dv/dt = traction − brake − electric brake − R(v) − grade − curve`.
  * Figures and formulas come from `tasks/recherche-traction.md` and `tasks/recherche-freinage.md`.
  *
  * This module only imports types from `train.ts` (which imports this one for real).
@@ -18,6 +19,7 @@ import { segmentHeightAt } from './network'
 import {
   adhesiveMass,
   bogieDistance,
+  consistElectricBrakeEffort,
   consistMass,
   consistMaxEffort,
   consistPower,
@@ -45,6 +47,8 @@ export const BRAKE_CYLINDER_MAX_BAR = 3.8
 
 /** Number of traction notches: each one is an equal share of the available effort */
 export const TRACTION_NOTCHES = 5
+/** Number of electric brake notches under N: each one is an equal share of the available effort */
+export const ELECTRIC_BRAKE_NOTCHES = 5
 
 /** Longest step (s) the motion is integrated with: a longer tick is cut into equal steps */
 export const PHYSICS_STEP = 1 / 30
@@ -61,6 +65,14 @@ const TRACTION_FALL_TIME = 1
 const MIN_POWER_SPEED = 0.5
 /** Speed range (m/s) above the maximum speed over which the tractive effort fades to nothing */
 const OVERSPEED_FADE = 0.25
+
+/** Seconds for the electric brake effort to rise from nothing to full (about 30 kN/s on a trainset) */
+const ELECTRIC_BRAKE_RISE_TIME = 4
+/** Seconds for the electric brake effort to fall from full to nothing */
+const ELECTRIC_BRAKE_FALL_TIME = 1
+/** Speeds (m/s) between which the electric brake fades out, from full to nothing (estimated) */
+const ELECTRIC_BRAKE_FADE_FROM = 30 / 3.6
+const ELECTRIC_BRAKE_FADE_TO = 10 / 3.6
 
 /** Curve resistance as an equivalent slope: 0.8 / R (800/R in ‰, Rochard & Schmid) */
 const CURVE_RESISTANCE_METRES = 0.8
@@ -104,8 +116,10 @@ export interface TrainDynamics {
   mass: number
   /** Tractive effort at the wheels, N (≥ 0, along the reverser) */
   tractionForce: number
-  /** Braking effort, N (≥ 0, against the motion) */
+  /** Braking effort of the air brake, N (≥ 0, against the motion) */
   brakeForce: number
+  /** Braking effort of the electric brake, N (≥ 0, against the motion) */
+  electricBrakeForce: number
   /** Running resistance A + B·v + C·v², N (≥ 0, against the motion) */
   resistanceForce: number
   /** Gravity along the track, N: negative uphill, positive downhill, in the direction of motion */
@@ -118,6 +132,8 @@ export interface TrainDynamics {
   gradientPermille: number
   /** Share of the available tractive effort actually applied, 0…1 (follows the notch with a ramp) */
   tractionEffort: number
+  /** Share of the available electric brake effort actually applied, 0…1 (follows the notch with a ramp) */
+  electricBrakeEffort: number
   /** Brake pipe pressure, bar (5 released, 3.5 full service, 0 emergency) */
   brakePipeBar: number
   /** Brake cylinder pressure, bar (0 released … BRAKE_CYLINDER_MAX_BAR) */
@@ -135,6 +151,7 @@ interface RakePhysics {
   mass: number
   power: number
   maxEffort: number
+  electricBrakeEffort: number
   adhesiveMass: number
   /** Running resistance coefficients */
   a: number
@@ -148,6 +165,7 @@ function rakePhysics(train: TrainSet): RakePhysics {
     mass: consistMass(train.vehicles),
     power: consistPower(train.vehicles),
     maxEffort: consistMaxEffort(train.vehicles),
+    electricBrakeEffort: consistElectricBrakeEffort(train.vehicles),
     adhesiveMass: adhesiveMass(train.vehicles),
     ...consistResistanceCoefficients(train.vehicles),
     maxSpeed: train.maxSpeed,
@@ -199,6 +217,38 @@ function stepTraction(train: TrainSet, rake: RakePhysics, h: number): void {
   train.tractionEffort = demand > train.tractionEffort
     ? Math.min(demand, train.tractionEffort + h / TRACTION_RISE_TIME)
     : Math.max(demand, train.tractionEffort - h / TRACTION_FALL_TIME)
+}
+
+// ─── Electric brake ───────────────────────────────────────────────────────────
+
+/**
+ * Electric (rheostatic) brake effort (N) available at full handle: the lowest of its largest
+ * effort, the power hyperbola P/v and the adhesion of the driven axles. It fades out at low
+ * speed, so it slows the train down but neither stops it nor holds it. The power is taken equal
+ * to the traction power: nothing is published for it (estimated).
+ */
+function availableElectricBrake(rake: RakePhysics, speed: number): number {
+  if (rake.electricBrakeEffort <= 0) return 0
+  const effort = Math.min(
+    rake.electricBrakeEffort,
+    rake.power / Math.max(speed, MIN_POWER_SPEED),
+    brakeAdhesion(speed) * rake.adhesiveMass * GRAVITY,
+  )
+  const fade = (speed - ELECTRIC_BRAKE_FADE_TO) / (ELECTRIC_BRAKE_FADE_FROM - ELECTRIC_BRAKE_FADE_TO)
+  return effort * Math.max(0, Math.min(1, fade))
+}
+
+/**
+ * Let the applied electric brake effort follow the notches under N: a ramp up, a quicker one
+ * down. The motors cannot pull and brake at once, so it waits for the traction to be gone. It
+ * works whatever the reverser says, and the emergency brake takes it off with the handle.
+ */
+function stepElectricBrake(train: TrainSet, rake: RakePhysics, h: number): void {
+  const available = !train.emergencyBrake && rake.electricBrakeEffort > 0 && train.tractionEffort <= 0
+  const demand = available ? Math.max(0, Math.min(1, -train.notch / ELECTRIC_BRAKE_NOTCHES)) : 0
+  train.electricBrakeEffort = demand > train.electricBrakeEffort
+    ? Math.min(demand, train.electricBrakeEffort + h / ELECTRIC_BRAKE_RISE_TIME)
+    : Math.max(demand, train.electricBrakeEffort - h / ELECTRIC_BRAKE_FALL_TIME)
 }
 
 // ─── Air brake ────────────────────────────────────────────────────────────────
@@ -364,9 +414,10 @@ interface Forces {
   /** Gravity along the train, N */
   gravity: number
   brake: number
+  electricBrake: number
   resistance: number
   curve: number
-  /** Brake, running resistance and curve resistance, N ≥ 0: they only ever oppose the motion */
+  /** Brakes, running resistance and curve resistance, N ≥ 0: they only ever oppose the motion */
   dissipative: number
   /** Rise over run under the train, positive when its head is higher than its tail */
   slope: number
@@ -381,6 +432,11 @@ function computeForces(net: Network, train: TrainSet, env: DrivingEnvironment, r
   const traction = train.tractionEffort * availableTraction(rake, speed)
   const reverser = train.reverser === 'forward' ? 1 : train.reverser === 'reverse' ? -1 : 0
   const brake = brakeForce(rake, train, speed)
+  // The two brakes share the adhesion of the train: the air brake takes its part first
+  const electricBrake = Math.min(
+    train.electricBrakeEffort * availableElectricBrake(rake, speed),
+    Math.max(0, brakeAdhesion(speed) * rake.mass * GRAVITY - brake),
+  )
   const resistance = runningResistance(rake, speed)
   const { force: curve, maxCurvature } = curveLoad(net, train)
   return {
@@ -388,9 +444,10 @@ function computeForces(net: Network, train: TrainSet, env: DrivingEnvironment, r
     active: traction * reverser + gravity,
     gravity,
     brake,
+    electricBrake,
     resistance,
     curve,
-    dissipative: brake + resistance + curve,
+    dissipative: brake + electricBrake + resistance + curve,
     slope,
     maxCurvature,
   }
@@ -398,7 +455,7 @@ function computeForces(net: Network, train: TrainSet, env: DrivingEnvironment, r
 
 /**
  * Distance (m) to stop from `speed` with the brake handle held on `apply` from now on (or with the
- * emergency brake when it is latched), traction cut, on a constant slope: the application delay of
+ * emergency brake when it is latched), traction and electric brake cut, on a constant slope: the application delay of
  * the brake is part of it. Infinity when the brake cannot stop the train on that slope.
  */
 function integrateStop(rake: RakePhysics, train: TrainSet, speed: number, gravityAlongMotion: number): number {
@@ -449,12 +506,14 @@ export function trainDynamics(net: Network, train: TrainSet, env: DrivingEnviron
     mass: rake.mass,
     tractionForce: forces.traction,
     brakeForce: forces.brake,
+    electricBrakeForce: forces.electricBrake,
     resistanceForce: forces.resistance,
     gradeForce: train.direction * forces.gravity,
     curveForce: forces.curve,
     acceleration,
     gradientPermille: train.direction * forces.slope * 1000,
     tractionEffort: train.tractionEffort,
+    electricBrakeEffort: train.electricBrakeEffort,
     brakePipeBar: train.brakePipe,
     brakeCylinderBar: train.brakeCylinder * BRAKE_CYLINDER_MAX_BAR,
     stoppingDistance: rake.mass > 0 ? integrateStop(rake, train, speed, train.direction * forces.gravity) : 0,
@@ -493,6 +552,7 @@ export function stepTrainDynamics(
   const rake = rakePhysics(train)
   stepBrake(train, h)
   stepTraction(train, rake, h)
+  stepElectricBrake(train, rake, h)
   const forces = computeForces(net, train, env, rake)
   const inertia = ROTATING_MASS_FACTOR * rake.mass
   if (!(inertia > 0) || !(h > 0)) {

@@ -7,6 +7,7 @@ import {
   bogieDistance,
   consistLength,
   consistMass,
+  consistElectricBrakeEffort,
   consistMaxEffort,
   consistMaxSpeed,
   consistPower,
@@ -122,6 +123,8 @@ describe('physical data of a rake', () => {
     expect(consistMass(duplex)).toBe(424_000)
     expect(consistPower(duplex)).toBe(8_800_000)
     expect(consistMaxEffort(duplex)).toBe(212_000)
+    // Electric brake: 30 kN per motor bogie, four of them
+    expect(consistElectricBrakeEffort(duplex)).toBe(120_000)
     expect(adhesiveMass(duplex)).toBe(136_000)
     expect(consistMaxSpeed(duplex)).toBeCloseTo(320 * KMH, 9)
   })
@@ -151,6 +154,7 @@ describe('physical data of a rake', () => {
     const trailers: StockVehicle[] = [{ kind: 'wagon' }, { kind: 'wagon' }]
     expect(consistPower(trailers)).toBe(0)
     expect(consistMaxEffort(trailers)).toBe(0)
+    expect(consistElectricBrakeEffort(trailers)).toBe(0)
     expect(adhesiveMass(trailers)).toBe(0)
     expect(consistMass(trailers)).toBe(72_000)
     expect(consistResistance(trailers, 10)).toBeGreaterThan(0)

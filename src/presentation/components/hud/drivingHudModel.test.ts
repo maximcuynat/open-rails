@@ -7,6 +7,7 @@ import {
   effortPercent,
   gaugeRatio,
   gradientLabel,
+  handleEffort,
   isBrakeHolding,
   notchLabel,
   speedDialTicks,
@@ -45,8 +46,15 @@ describe('driving console model', () => {
     })
   })
 
-  it('names the traction notches N, P1 … P5', () => {
-    expect([0, 1, 5].map(notchLabel)).toEqual(['N', 'P1', 'P5'])
+  it('names the notches B5 … B1, N, P1 … P5', () => {
+    expect([-5, -1, 0, 1, 5].map(notchLabel)).toEqual(['B5', 'B1', 'N', 'P1', 'P5'])
+  })
+
+  it('reads the effort of the side the handle is on: electric brake under N, traction otherwise', () => {
+    const dynamics = { tractionEffort: 0.4, electricBrakeEffort: 0.6 }
+    expect(handleEffort(-3, dynamics)).toBe(0.6)
+    expect(handleEffort(0, dynamics)).toBe(0.4)
+    expect(handleEffort(2, dynamics)).toBe(0.4)
   })
 
   it('gives the applied effort as a percentage', () => {

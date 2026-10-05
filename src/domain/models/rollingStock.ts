@@ -35,6 +35,8 @@ export interface RollingStockSpec {
     power: number
     /** Starting tractive effort, N */
     maxEffort: number
+    /** Largest effort of the electric (rheostatic) brake, N */
+    electricBrakeEffort: number
     /** Mass carried by the driven axles, kg: what the adhesion limit applies to */
     adhesiveMass: number
   }
@@ -80,6 +82,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       mass: 68_000,
       power: 4_400_000, // 8 800 kW per trainset under 25 kV
       maxEffort: 106_000, // 212 kN per trainset
+      electricBrakeEffort: 60_000, // 30 kN per motor bogie, 120 kN per trainset
       adhesiveMass: 68_000, // all four axles driven
     },
     trailer: {
@@ -105,6 +108,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       mass: 68_000, // estimated: same as Duplex
       power: 3_880_000, // 7 760 kW per trainset at the rims
       maxEffort: 122_000, // estimated: 244 kN per trainset, unsourced figure
+      electricBrakeEffort: 60_000, // estimated: same as Duplex
       adhesiveMass: 68_000, // estimated
     },
     trailer: {
@@ -251,6 +255,11 @@ export function consistPower(vehicles: readonly StockVehicle[]): number {
 /** Starting tractive effort of a rake, N: 0 without a power car */
 export function consistMaxEffort(vehicles: readonly StockVehicle[]): number {
   return sumOver(vehicles, (veh) => (veh.kind === 'loco' ? stockSpec(veh).powerCar.maxEffort : 0))
+}
+
+/** Largest effort of the electric brake of a rake, N: 0 without a power car */
+export function consistElectricBrakeEffort(vehicles: readonly StockVehicle[]): number {
+  return sumOver(vehicles, (veh) => (veh.kind === 'loco' ? stockSpec(veh).powerCar.electricBrakeEffort : 0))
 }
 
 /** Mass on the driven axles of a rake, kg */

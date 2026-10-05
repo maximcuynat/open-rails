@@ -350,12 +350,14 @@ describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
           mass: 424000,
           tractionForce: 0,
           brakeForce: 0,
+          electricBrakeForce: 0,
           resistanceForce: 0,
           gradeForce: 0,
           curveForce: 0,
           acceleration: 0,
           gradientPermille: 0,
           tractionEffort: 0,
+          electricBrakeEffort: 0,
           brakePipeBar: 5,
           brakeCylinderBar: 0,
           stoppingDistance: 0,
@@ -387,6 +389,13 @@ describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
         expect(texts.some(t => t.includes('FREINAGE'))).toBe(true)
         expect(texts.some(t => t.includes('a = -1.1 m/s²'))).toBe(true)
         expect(texts.some(t => t.includes('Distance d\'arrêt : 284.0 m'))).toBe(true)
+      })
+
+      it('shows a train on the electric brake as braking, with no air in the cylinders', () => {
+        physicsSays({ electricBrakeEffort: 1, electricBrakeForce: 120_000, acceleration: -0.34, stoppingDistance: 284 })
+        const texts = drawnTexts(25, 150)
+        expect(texts.some(t => t.includes('FREINAGE'))).toBe(true)
+        expect(texts.some(t => t.includes('a = -0.3 m/s²'))).toBe(true)
       })
 
       it('shows a train under power as pulling, with the acceleration the physics gives', () => {

@@ -41,6 +41,7 @@ import { setBrakeCommand, trainDynamics, type BrakeCommand, type DrivingEnvironm
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
   MAX_NOTCH,
+  MIN_NOTCH,
   makeTrainSet,
   setReverser,
   shiftReverser,
@@ -2593,13 +2594,13 @@ export class EditorStore {
     return train ? trainDynamics(this.network, train, this.drivingEnvironment) : null
   }
 
-  /** Put the selected train's traction handle on a notch: 0 (N) … MAX_NOTCH (P5) */
+  /** Put the selected train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
   setSelectedTrainNotch = (notch: number): void => {
     const train = this.selectedTrain
-    if (train && setNotch(train, Math.max(0, Math.min(MAX_NOTCH, notch)))) this.notify()
+    if (train && setNotch(train, Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, notch)))) this.notify()
   }
 
-  /** Move the selected train's traction handle by one notch; it stops at N and at P5 */
+  /** Move the selected train's handle by one notch; it stops at B5 and at P5 */
   stepSelectedTrainNotch = (step: 1 | -1): void => {
     const train = this.selectedTrain
     if (train) this.setSelectedTrainNotch(train.notch + step)

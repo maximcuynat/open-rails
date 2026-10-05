@@ -44,9 +44,9 @@ export function isBrakeHolding(status: BrakeStatus): boolean {
   return status.tone === 'applied' || status.tone === 'applying'
 }
 
-/** Traction handle position: N, P1 … P5 */
+/** Handle position: B5 … B1 (electric brake), N, P1 … P5 (traction) */
 export function notchLabel(notch: number): string {
-  return notch > 0 ? `P${notch}` : 'N'
+  return notch > 0 ? `P${notch}` : notch < 0 ? `B${-notch}` : 'N'
 }
 
 /** A number with a French decimal comma */
@@ -56,9 +56,14 @@ export function decimal(value: number, digits: number): string {
   return (rounded === 0 ? 0 : rounded).toFixed(digits).replace('.', ',')
 }
 
-/** Share of the tractive effort applied, as a whole percentage */
-export function effortPercent(tractionEffort: number): number {
-  return Math.round(Math.max(0, Math.min(1, tractionEffort)) * 100)
+/** Share of an effort applied, as a whole percentage */
+export function effortPercent(effort: number): number {
+  return Math.round(Math.max(0, Math.min(1, effort)) * 100)
+}
+
+/** The effort the handle commands where it stands: the electric brake under N, the traction otherwise */
+export function handleEffort(notch: number, dynamics: Pick<TrainDynamics, 'tractionEffort' | 'electricBrakeEffort'>): number {
+  return notch < 0 ? dynamics.electricBrakeEffort : dynamics.tractionEffort
 }
 
 /** Signed acceleration: "+0,32 m/s²", "−1,10 m/s²", "0,00 m/s²" */

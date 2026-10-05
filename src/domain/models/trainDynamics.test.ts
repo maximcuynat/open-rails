@@ -4,6 +4,7 @@ import type { Network } from './types'
 import {
   COUPLING_GAP,
   MAX_NOTCH,
+  MIN_NOTCH,
   advanceTrainSet,
   createVehicle,
   makeTrainSet,
@@ -579,6 +580,160 @@ describe('air brake', () => {
     expect(trainDynamics(net, train).acceleration).toBeCloseTo(-1.1, 6)
     train.currentSpeed = 320 * KMH
     expect(trainDynamics(net, train).acceleration).toBeCloseTo(-0.75, 6)
+  })
+})
+
+describe('electric brake', () => {
+  /** Trainset running at `kmh`, electric brake established on `notch`; downhill when the gradient is negative */
+  function braking(kmh: number, notch = MIN_NOTCH, gradient = 0) {
+    const { net, segId, env, length } = line(60_000, gradient)
+    const train = running(trainset(net, segId, 1000, length), kmh)
+    setNotch(train, notch)
+    train.electricBrakeEffort = Math.abs(notch / MIN_NOTCH)
+    return { net, env, train }
+  }
+
+  const force = (kmh: number, notch = MIN_NOTCH) => {
+    const { net, train } = braking(kmh, notch)
+    return trainDynamics(net, train).electricBrakeForce
+  }
+
+  it('gives 120 kN on a Duplex, less above the power limit, and fades out between 30 and 10 km/h', () => {
+    expect(force(200)).toBeCloseTo(120_000, 6)
+    // 8 800 kW at 300 km/h
+    expect(force(300) / 1000).toBeCloseTo(105.6, 1)
+    expect(force(30)).toBeCloseTo(120_000, 6)
+    expect(force(20)).toBeCloseTo(60_000, 6)
+    expect(force(10)).toBe(0)
+    expect(force(5)).toBe(0)
+  })
+
+  it('each notch is a fifth of the effort', () => {
+    expect(force(200, -3)).toBeCloseTo(72_000, 6)
+    expect(force(200, -1)).toBeCloseTo(24_000, 6)
+    expect(force(200, 0)).toBe(0)
+  })
+
+  it('slows a Duplex down by about 0.34 m/s² at 200 km/h on level track', () => {
+    const { net, train } = braking(200)
+    const dynamics = trainDynamics(net, train)
+    expect(dynamics.brakeForce).toBe(0)
+    expect(dynamics.acceleration).toBeCloseTo(-0.34, 2)
+  })
+
+  it('builds up in 4 s, once the traction is gone, and falls back in 1 s', () => {
+    const { net, segId, length } = line(60_000)
+    const train = running(trainset(net, segId, 1000, length), 200)
+    setNotch(train, MAX_NOTCH)
+    train.tractionEffort = 1
+
+    // The motors cannot pull and brake at once
+    setNotch(train, MIN_NOTCH)
+    tickTrainSet(net, train, 0.5)
+    expect(train.tractionEffort).toBeCloseTo(0.5, 6)
+    expect(train.electricBrakeEffort).toBe(0)
+    tickTrainSet(net, train, 0.6)
+    expect(train.tractionEffort).toBe(0)
+
+    tickTrainSet(net, train, 2)
+    expect(train.electricBrakeEffort).toBeCloseTo(0.5, 1)
+    tickTrainSet(net, train, 2.2)
+    expect(train.electricBrakeEffort).toBe(1)
+
+    setNotch(train, 0)
+    tickTrainSet(net, train, 0.5)
+    expect(train.electricBrakeEffort).toBeCloseTo(0.5, 6)
+    tickTrainSet(net, train, 0.6)
+    expect(train.electricBrakeEffort).toBe(0)
+  })
+
+  it('slows the train down but does not stop it: under 10 km/h it rolls on', () => {
+    const { net, train } = braking(100)
+    const { time } = run(net, train, () => train.currentSpeed < 10 * KMH)
+    expect(time).toBeLessThan(200)
+    expect(train.currentSpeed).toBeGreaterThan(0)
+    expect(trainDynamics(net, train).electricBrakeForce).toBe(0)
+    tickTrainSet(net, train, 5)
+    expect(train.currentSpeed).toBeGreaterThan(0)
+  })
+
+  it('holds the speed down a 35 ‰ slope, where a coasting train runs away', () => {
+    const held = braking(180, MIN_NOTCH, -35)
+    run(held.net, held.train, () => false, held.env, 300)
+    expect(held.train.currentSpeed / KMH).toBeGreaterThan(170)
+    expect(held.train.currentSpeed / KMH).toBeLessThan(190)
+
+    const coasting = braking(180, 0, -35)
+    run(coasting.net, coasting.train, () => false, coasting.env, 300)
+    expect(coasting.train.currentSpeed / KMH).toBeGreaterThan(250)
+  })
+
+  it('does not hold a standing train on a ramp', () => {
+    const { net, segId, env, length } = line(5000, 35)
+    const train = trainset(net, segId, 2000, length)
+    releaseBrake(train)
+    setNotch(train, MIN_NOTCH)
+    tickTrainSet(net, train, 5, [], undefined, env)
+    expect(train.currentSpeed).toBeGreaterThan(0)
+    expect(train.direction).toBe(-1)
+  })
+
+  it('works whatever the reverser says, and not at all without a power car', () => {
+    const { net, train } = braking(200)
+    train.reverser = 'neutral'
+    tickTrainSet(net, train, 1)
+    expect(train.electricBrakeEffort).toBe(1)
+    expect(trainDynamics(net, train).electricBrakeForce).toBeCloseTo(120_000, 6)
+
+    const { net: net2, segId, length } = line(5000)
+    const trailers = running(rake(net2, segId, 2000, length, ['wagon', 'wagon', 'wagon']), 100)
+    setNotch(trailers, MIN_NOTCH)
+    tickTrainSet(net2, trailers, 5)
+    expect(trailers.electricBrakeEffort).toBe(0)
+    expect(trainDynamics(net2, trailers).electricBrakeForce).toBe(0)
+  })
+
+  it('adds up with the air brake within the adhesion of the train', () => {
+    const { net, train } = braking(200)
+    const alone = trainDynamics(net, train)
+    train.brakePipe = BRAKE_PIPE_FULL_SERVICE
+    train.brakeCylinder = 1
+    const both = trainDynamics(net, train)
+    expect(both.brakeForce).toBeGreaterThan(0)
+    expect(both.electricBrakeForce).toBeCloseTo(120_000, 6)
+    expect(both.acceleration).toBeLessThan(alone.acceleration)
+
+    // A lone power car: the two brakes together would ask for more than the rail can give
+    const { net: net2, segId, length } = line(5000)
+    const car = running(rake(net2, segId, 2000, length, ['loco']), 100)
+    setNotch(car, MIN_NOTCH)
+    car.electricBrakeEffort = 1
+    expect(trainDynamics(net2, car).electricBrakeForce).toBeCloseTo(60_000, 6)
+    car.brakePipe = BRAKE_PIPE_FULL_SERVICE
+    car.brakeCylinder = 1
+    const capped = trainDynamics(net2, car)
+    expect(capped.electricBrakeForce).toBeLessThan(60_000)
+    expect(capped.brakeForce + capped.electricBrakeForce).toBeCloseTo(brakeAdhesion(100 * KMH) * capped.mass * GRAVITY, 3)
+  })
+
+  it('the emergency brake takes it off', () => {
+    const { net, train } = braking(200)
+    triggerEmergencyBrake(train)
+    tickTrainSet(net, train, 1)
+    expect(train.notch).toBe(0)
+    expect(train.electricBrakeEffort).toBe(0)
+    expect(trainDynamics(net, train).electricBrakeForce).toBe(0)
+  })
+
+  it('gives the same slowing down within 1 % at 60 frames per second and at 10', () => {
+    const slow = (dt: number) => {
+      const { net, segId, length } = line(60_000)
+      const train = running(trainset(net, segId, 1000, length), 200)
+      setNotch(train, MIN_NOTCH)
+      for (let i = 0; i < Math.round(60 / dt); i++) tickTrainSet(net, train, dt)
+      return train.currentSpeed
+    }
+    expect(slow(0.1) / slow(1 / 60)).toBeCloseTo(1, 2)
   })
 })
 
