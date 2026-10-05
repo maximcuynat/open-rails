@@ -208,20 +208,40 @@ describe('track levels — rails', () => {
     expect(indices(ops, isDeckStroke)).toEqual([])
   })
 
-  it('simplified view: order and an edging in the background colour around the upper rail, nothing else', () => {
+  it('line tier: one stroke per rail, the upper one over an edging in the background colour, no deck', () => {
+    // 1 px/m: 1.4 px between the rails
+    const mid = createCamera(100, 0, 1)
+    const lines = (ops: Op[]) => ops.filter((op) => op.name === 'stroke' && op.start && !isBufferStopStroke(op))
+    const width = 1.435 + 1.2
+    const strokes = lines(drawPlain(crossingTracks(1).net, mid))
+    // Ground line, then edging + line of the upper rail
+    expect(strokes.map((op) => op.lineWidth)).toEqual([width, width + 4, width])
+    expect(strokes.map((op) => op.strokeStyle)).toEqual(['#526071', '#ffffff', '#526071'])
+    expect(strokes[0].start![0]).toBeCloseTo(VW / 2 - 100)
+    expect(strokes[2].start![1]).toBeCloseTo(VH / 2 - 50)
+
+    // Same tracks on one level: both rails in a single stroke
+    const flat = lines(drawPlain(crossingTracks(0).net, mid))
+    expect(flat.map((op) => op.lineWidth)).toEqual([width])
+
+    // In a tunnel: dimmed and dashed, drawn before the ground
+    const tunnel = lines(drawPlain(crossingTracks(-1).net, mid))
+    expect(tunnel.map((op) => op.globalAlpha)).toEqual([TUNNEL_ALPHA, 1])
+    expect(tunnel.map((op) => op.dash)).toEqual([TUNNEL_DASH, []])
+  })
+
+  it('schematic tier: one line per section in its colour, the levels are not layered', () => {
     const far = createCamera(100, 0, 0.02)
-    // Strokes of a traced line, the buffer stops at the ends of the tracks aside
     const lines = (ops: Op[]) => ops.filter((op) => op.name === 'stroke' && op.start && !isBufferStopStroke(op))
     const strokes = lines(drawPlain(crossingTracks(1).net, far))
-    // Ground line, then edging + line of the upper rail
-    expect(strokes.map((op) => op.lineWidth)).toEqual([2.5, 6.5, 2.5])
-    expect(strokes[1].strokeStyle).toBe('#ffffff')
-    expect(strokes[0].start![0]).toBeCloseTo(VW / 2 - 100 * 0.02)
-    expect(strokes[2].start![1]).toBeCloseTo(VH / 2 - 50 * 0.02)
+    expect(strokes.map((op) => op.lineWidth)).toEqual([2, 2])
+    expect(strokes.map((op) => op.strokeStyle)).not.toContain('#ffffff')
+    expect(strokes[0].start![1]).toBeCloseTo(VH / 2 - 50 * 0.02)
+    expect(strokes[1].start![0]).toBeCloseTo(VW / 2 - 100 * 0.02)
 
-    // Same tracks on one level: two plain lines
-    const flat = lines(drawPlain(crossingTracks(0).net, far))
-    expect(flat.map((op) => op.lineWidth)).toEqual([2.5, 2.5])
+    // A track wholly below ground is dimmed
+    const tunnel = lines(drawPlain(crossingTracks(-1).net, far))
+    expect(tunnel.map((op) => op.globalAlpha)).toEqual([TUNNEL_ALPHA, 1])
   })
 
   it('ramp: the abutment is where the deck starts on the ramp, not at the node where the span begins', () => {

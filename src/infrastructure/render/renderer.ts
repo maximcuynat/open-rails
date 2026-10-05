@@ -9,9 +9,22 @@ import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
 import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
 import { networkDerived } from './networkDerived'
-import { drawDiagnosticMarker } from './diagnosticMarker'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
+import { renderLineTracks, renderSchematicTracks } from './lodTracks'
+import { gaugeOnScreen, nodeMarkerShown, trackLod } from './lod'
+import {
+  BADGES_ALL_FROM_PX,
+  BADGE_FULL_FROM_PX,
+  DIAGNOSTIC_CLUSTER_RADIUS_PX,
+  DIAGNOSTIC_LABEL_FROM_PX,
+  clusterMarkers,
+  placeBadges,
+  sectionArrowSegments,
+  sectionBadgeWanted,
+  type BadgeBox,
+  type MarkerSeverity,
+} from './lodOverlays'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
   deckAbutments,
@@ -282,7 +295,10 @@ export const BALLAST_WIDTH = 3.20
 /** Minimum curve radius for full-speed classical tracks (meters) */
 export const MIN_RADIUS = 150.0
 
-/** Below this scale (pixels per meter), render as a single simplified line. */
+/**
+ * Below this scale (pixels per meter) the previews of the drawing tools in `Canvas.tsx` are a plain
+ * line. The network itself no longer reads it: its tiers come from `trackLod`.
+ */
 export const SIMPLIFY_THRESHOLD = 0.05
 
 export interface ViewportBounds {
@@ -717,7 +733,8 @@ export function renderNetworkWithTrains(
   drawTrains: (band?: LevelBand) => void,
   drawOverTracks?: () => void,
 ): void {
-  const levels = visibleTrackLevels(net, cam, vw, vh)
+  // The schematic does not layer the levels: one pass, and no sorting of the rails by level
+  const levels = trackLod(cam.scale, GAUGE) === 'schematic' ? [] : visibleTrackLevels(net, cam, vw, vh)
   if (levels.length <= 1) {
     renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, options)
     drawOverTracks?.()
@@ -746,7 +763,6 @@ export function renderNetwork(
   sectionMeta?: Record<string, SectionMetadata>,
   options?: RenderNetworkOptions,
 ): void {
-  const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
@@ -756,7 +772,8 @@ export function renderNetwork(
   const hideSectionCenterline = options?.hideSectionCenterline ?? isPan
   const onlyRenamedSectionBadges = options?.onlyRenamedSectionBadges ?? isPan
 
-  const simplified = cam.scale < SIMPLIFY_THRESHOLD
+  // Level of detail of this frame: the rails are drawn with the constant `GAUGE`, so it reads that one
+  const lod = trackLod(cam.scale, GAUGE)
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
@@ -767,7 +784,16 @@ export function renderNetwork(
     const sec = derived.sectionOfSegment.get(sid)
     if (sec) selectedSections.add(sec)
   }
-  const visibleSegments = segmentsInBounds(net, bounds)
+  // Speed zones and signalling stay readable when the track is no longer drawn in detail: they
+  // only go once the whole network is a few pixels wide
+  const showsTrackObjects = cam.scale >= SIMPLIFY_THRESHOLD
+
+  // The schematic draws sections, not rails: no rail is sorted for it, nor for the overlays alone —
+  // unless a band or a stripe has to be laid along the rails under the diagram
+  const drawsRails = options?.part !== 'overlays' && lod !== 'schematic'
+  const underlaysOnly = options?.part !== 'overlays' && lod === 'schematic' && showsTrackObjects &&
+    (net.speedZones.size > 0 || options?.signals !== undefined)
+  const visibleSegments = drawsRails || underlaysOnly ? segmentsInBounds(net, bounds) : []
 
   // Rails are drawn level by level, lowest first, so that a bridge covers what runs below it.
   // Without bridge or tunnel there is a single group: the whole network, in its own order.
@@ -777,69 +803,14 @@ export function renderNetwork(
   // Each rail joint belongs to one level only when several are drawn
   const jointsByLevel = allGroups.length > 1 || options?.level !== undefined
 
-  const drawSimplifiedTracks = (pieces: TrackPiece[], level: number): void => {
-    // Draw simplified single-line representation for low zoom levels
-    const lineW = Math.max(2.5, 0.8 * cam.scale)
-    // A rail above ground gets an edging in the background colour: it reads as passing over
-    const paper = level > 0 ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
-    const halo = (): void => {
-      if (level <= 0) return
-      ctx.strokeStyle = paper
-      ctx.lineWidth = lineW + 4
-      ctx.lineCap = 'butt'
-      ctx.stroke()
-    }
-    for (const piece of pieces) {
-      const seg = piece.seg
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-
-      const selected = selection.segments.has(seg.id)
-      const sec = derived.sectionOfSegment.get(seg.id)
-      const secColor = selected ? accent : (sec?.color ?? ink)
-      const intervals = pieceRenderIntervals(net, piece, a.pos, b.pos)
-
-      for (const inter of intervals) {
-        ctx.save()
-        if (inter.isTurnout) {
-          ctx.globalAlpha = 0.4
-          ctx.setLineDash([5, 4])
-        }
-
-        if (seg.kind === 'curve' && seg.via) {
-          const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
-          const p0x = (sub.p0.x - cam.x) * cam.scale + vw / 2
-          const p0y = (sub.p0.y - cam.y) * cam.scale + vh / 2
-          const vx = (sub.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (sub.via.y - cam.y) * cam.scale + vh / 2
-          const p2x = (sub.p2.x - cam.x) * cam.scale + vw / 2
-          const p2y = (sub.p2.y - cam.y) * cam.scale + vh / 2
-
-          ctx.beginPath()
-          ctx.moveTo(p0x, p0y)
-          ctx.quadraticCurveTo(vx, vy, p2x, p2y)
-        } else {
-          const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
-          const ax = (sub.a.x - cam.x) * cam.scale + vw / 2
-          const ay = (sub.a.y - cam.y) * cam.scale + vh / 2
-          const bx = (sub.b.x - cam.x) * cam.scale + vw / 2
-          const by = (sub.b.y - cam.y) * cam.scale + vh / 2
-
-          ctx.beginPath()
-          ctx.moveTo(ax, ay)
-          ctx.lineTo(bx, by)
-        }
-
-        halo()
-        ctx.strokeStyle = secColor
-        ctx.lineWidth = lineW
-        ctx.lineCap = 'round'
-        ctx.stroke()
-
-        ctx.restore()
-      }
-    }
+  /** What lies under the rails of a level, whatever the tier the rails are drawn in */
+  const drawTrackUnderlays = (pieces: TrackPiece[], level: number): void => {
+    if (!showsTrackObjects) return
+    const alpha = level < 0 ? TUNNEL_ALPHA : 1
+    // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
+    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones)
+    // Blocks and track held for the trains: stripes beside the rails of this level
+    renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, alpha, options?.signals)
   }
 
   const drawDetailedTracks = (pieces: TrackPiece[], level: number): void => {
@@ -847,10 +818,7 @@ export function renderNetwork(
     renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
     const tunnel = level < 0
 
-    // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
-    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, tunnel ? TUNNEL_ALPHA : 1, options?.speedZones)
-    // Blocks and track held for the trains: stripes beside the rails of this level
-    renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, tunnel ? TUNNEL_ALPHA : 1, options?.signals)
+    drawTrackUnderlays(pieces, level)
 
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
@@ -921,34 +889,52 @@ export function renderNetwork(
   }
 
   if (options?.part !== 'overlays') {
-    for (const group of levelGroups) {
-      if (simplified) drawSimplifiedTracks(group.pieces, group.level)
-      else drawDetailedTracks(group.pieces, group.level)
+    if (lod === 'schematic') {
+      for (const group of levelGroups) drawTrackUnderlays(group.pieces, group.level)
+      // Once for the whole network: the levels are not layered in this tier
+      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { accent })
+    } else if (lod === 'line') {
+      const paper = levelGroups.some((g) => g.level > 0) ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
+      for (const group of levelGroups) {
+        drawTrackUnderlays(group.pieces, group.level)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE)
+      }
+    } else {
+      for (const group of levelGroups) drawDetailedTracks(group.pieces, group.level)
     }
   }
   if (options?.part === 'tracks') return
 
-  if (!simplified) {
-    // 3. SECTION BADGES (LOD: multi-level representation according to cam.scale)
-    // - Scale < 1.0 (Macro view): hide all labels unless the section is actively selected
-    // - 1.0 <= Scale < 3.0 (Overview): compact badge (name + arrow) only if section is >= 45px on screen
-    // - Scale >= 3.0 (Detailed view): full badge with type prefix, name, arrow, and exact length
-    const showAllBadges = cam.scale >= 1.0
+  // Pixels between the two rails: what the thresholds of the overlays are measured against
+  const gaugePx = gaugeOnScreen(cam.scale, GAUGE)
+
+  {
+    // 3. SECTION BADGES (LOD: multi-level representation according to the gauge on screen)
+    // - Below BADGES_ALL_FROM_PX (macro view, schematic tier included): only the selected section
+    //   and the ones the user renamed
+    // - Up to BADGE_FULL_FROM_PX (overview): compact badge (name + arrow) only if section is >= 45px on screen
+    // - From BADGE_FULL_FROM_PX (detailed view): full badge with type prefix, name, arrow, and exact length
+    // A badge never covers another one: they are all measured first, then `placeBadges` keeps
+    // the ones that fit, by priority.
+    const fullBadges = gaugePx >= BADGE_FULL_FROM_PX
+    const badges: (BadgeBox & { sec: TrackSection; text: string; cx: number; cy: number })[] = []
+    ctx.save()
+    ctx.font = '600 10px Archivo, system-ui, sans-serif'
     for (const sec of options?.hideSectionBadges ? [] : trackSections) {
       if (sec.segmentIds.length === 0) continue
       const isSecSelected = selectedSections.has(sec)
+      const renamed = isRenamedSection(sec)
 
       if (onlyRenamedSectionBadges) {
         // En mode déplacement / vue épurée : uniquement les voies renommées par l'utilisateur
-        if (!isRenamedSection(sec)) continue
+        if (!renamed) continue
         if (sec.totalLength * cam.scale < 30 && !isSecSelected) continue
       } else {
-        // When zoomed out (< 1.0), only show badge for the currently selected section
-        if (!showAllBadges && !isSecSelected) continue
+        if (!sectionBadgeWanted(gaugePx, { selected: isSecSelected, renamed })) continue
 
-        // In overview mode (1.0 to 3.0), avoid drawing badges on tiny track fragments (< 45px on screen)
+        // In overview mode, avoid drawing badges on tiny track fragments (< 45px on screen)
         const secScreenLen = sec.totalLength * cam.scale
-        if (!isSecSelected && cam.scale < 3.0 && secScreenLen < 45) continue
+        if (!isSecSelected && gaugePx >= BADGES_ALL_FROM_PX && !fullBadges && secScreenLen < 45) continue
       }
 
       const midSegIdx = Math.floor(sec.segmentIds.length / 2)
@@ -970,7 +956,7 @@ export function renderNetwork(
 
       const dirSymbol = sec.direction === 'forward' ? ' →' : sec.direction === 'backward' ? ' ←' : ''
       let text: string
-      if (cam.scale >= 3.0 || isSecSelected) {
+      if (fullBadges || isSecSelected) {
         const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Évit. · ' : ''
         text = `${typePrefix}${sec.name}${dirSymbol} (${sec.totalLength.toFixed(1)} m)`
       } else {
@@ -978,8 +964,6 @@ export function renderNetwork(
         text = `${sec.name}${dirSymbol}`
       }
 
-      ctx.save()
-      ctx.font = '600 10px Archivo, system-ui, sans-serif'
       const metrics = ctx.measureText(text)
       const bgW = metrics.width + 12
       const bgH = 18
@@ -992,6 +976,18 @@ export function renderNetwork(
       ) {
         badgeY = keepOut.y + keepOut.h + bgH / 2 + 2
       }
+      badges.push({
+        x: sx - bgW / 2, y: badgeY - bgH / 2, w: bgW, h: bgH,
+        selected: isSecSelected, renamed, length: sec.totalLength,
+        sec, text, cx: sx, cy: badgeY,
+      })
+    }
+    ctx.restore()
+
+    for (const badge of placeBadges(badges)) {
+      const { sec, text, cx: sx, cy: badgeY, w: bgW, h: bgH, selected: isSecSelected } = badge
+      ctx.save()
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
 
       // Pill background
       ctx.fillStyle = isSecSelected ? sec.color : sec.type === 'station_stop' ? 'rgba(8, 51, 68, 0.92)' : 'rgba(30, 41, 59, 0.85)'
@@ -1015,7 +1011,7 @@ export function renderNetwork(
 
   // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
   // with the bands at far zoom.
-  if (!simplified) {
+  if (showsTrackObjects) {
     renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
       highlight: options?.speedZones,
       showOverlaps: !hideConstructionNodes,
@@ -1026,7 +1022,8 @@ export function renderNetwork(
 
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
   // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
-  for (const node of net.nodes.values()) {
+  // Detail tier only: further out it is smaller than the stroke of the rail it ends.
+  for (const node of lod === 'detail' ? net.nodes.values() : []) {
     if (!isPointInBounds(node.pos, bounds)) continue
     if ((net.adjacency.get(node.id) ?? []).length === 1) {
       renderBufferStop(ctx, cam, node, net, vw, vh, options?.gauge ?? GAUGE)
@@ -1043,6 +1040,7 @@ export function renderNetwork(
       const selected = selection.nodes.has(node.id)
       const adj = net.adjacency.get(node.id) ?? []
       const connectionCount = adj.length
+      if (!nodeMarkerShown(lod, { selected, degree: connectionCount })) continue
 
       if (selected) {
         // Selected node: accent ring + central white point
@@ -1112,14 +1110,14 @@ export function renderNetwork(
   }
 
   // 6. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)
-  // Skip at macro zoom (< 0.8) to keep network schematic clean
-  if (!hideConstructionNodes && cam.scale >= 0.8) {
+  // One per rail in the detail tier, one per section in the line tier, none in the schematic
+  if (!hideConstructionNodes) {
     for (const sec of trackSections) {
       if (sec.direction === 'two_way' || sec.orderedNodeIds.length < 2) continue
       const isForward = sec.direction === 'forward'
 
-      // Draw discreet directional arrow along each segment of the section
-      for (const sid of sec.segmentIds) {
+      // Draw discreet directional arrow along the segments of the section that carry one
+      for (const sid of sectionArrowSegments(lod, sec.segmentIds)) {
         const seg = net.segments.get(sid)
       if (!seg) continue
       const a = net.nodes.get(seg.from)
@@ -1212,19 +1210,21 @@ export function renderNetwork(
       ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
       ctx.fill()
 
-      // Pulsing warning text above the sign
-      ctx.font = '700 10px Archivo, system-ui, sans-serif'
-      const warnText = 'SENS INTERDIT · CONFLIT'
-      const tw = ctx.measureText(warnText).width
-      const textY = sy - signR - 12
-      ctx.fillStyle = '#dc2626'
-      ctx.beginPath()
-      ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
-      ctx.fill()
-      ctx.fillStyle = '#ffffff'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(warnText, sx, textY)
+      // Pulsing warning text above the sign (the schematic tier keeps the sign alone)
+      if (lod !== 'schematic') {
+        ctx.font = '700 10px Archivo, system-ui, sans-serif'
+        const warnText = 'SENS INTERDIT · CONFLIT'
+        const tw = ctx.measureText(warnText).width
+        const textY = sy - signR - 12
+        ctx.fillStyle = '#dc2626'
+        ctx.beginPath()
+        ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
+        ctx.fill()
+        ctx.fillStyle = '#ffffff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(warnText, sx, textY)
+      }
 
       ctx.restore()
     }
@@ -1232,15 +1232,78 @@ export function renderNetwork(
 
   // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
   if (!hideConstructionNodes) {
+    // One marker per issue, with its label when there is room for it. In the schematic tier the
+    // markers that would pile up are merged into one that shows how many it stands for.
+    const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
     for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
       if (options?.quietNodeIds?.has(issue.nodeId)) continue
       const node = net.nodes.get(issue.nodeId)
       if (!node || !isPointInBounds(node.pos, bounds)) continue
+      markers.push({
+        x: (node.pos.x - cam.x) * cam.scale + vw / 2,
+        y: (node.pos.y - cam.y) * cam.scale + vh / 2,
+        severity: issue.severity,
+        mark: '!',
+        label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
+      })
+    }
+    const drawn = lod !== 'schematic'
+      ? markers
+      : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
+        ...c, mark: c.count > 1 ? String(c.count) : '!', label: undefined,
+      }))
+    for (const marker of drawn) {
+      const { x: sx, y: sy, label } = marker
 
-      const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-      const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+      ctx.save()
+      const isErr = marker.severity === 'error'
+      const badgeColor = isErr ? '#ef4444' : '#f59e0b'
+      const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
 
-      drawDiagnosticMarker(ctx, sx, sy, cam.scale, issue.severity, diagnosticLabel(issue))
+      // Pulse halo
+      ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
+      ctx.beginPath()
+      ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
+      ctx.fill()
+
+      // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+      ctx.fillStyle = badgeColor
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(sx, sy - signR)
+      ctx.lineTo(sx + signR, sy)
+      ctx.lineTo(sx, sy + signR)
+      ctx.lineTo(sx - signR, sy)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+
+      // Exclamation point or angle
+      ctx.fillStyle = '#ffffff'
+      ctx.font = '900 11px Archivo, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(marker.mark, sx, sy)
+
+      // Label badge above if zoom is reasonable
+      if (label !== undefined) {
+        ctx.font = '600 10px Archivo, system-ui, sans-serif'
+        const tw = ctx.measureText(label).width
+        const ty = sy - signR - 10
+
+        ctx.fillStyle = badgeColor
+        ctx.beginPath()
+        ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
+        ctx.fill()
+
+        ctx.fillStyle = '#ffffff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(label, sx, ty)
+      }
+
+      ctx.restore()
     }
   }
 }
@@ -2646,6 +2709,7 @@ import { getTrainSetVisuals, MAX_COUPLE_DISTANCE } from '@domain/models/train'
 import { trainDynamics, type DrivingEnvironment } from '@domain/models/trainDynamics'
 
 import type { TrainDebugOptions } from '@application/state/editorStore'
+import { drawTrainMarker, pointsInBounds, vehiclesInBounds } from './lodTrains'
 
 export interface TrainTelemetry {
   speed?: number
@@ -2733,6 +2797,14 @@ export function renderLocomotive(
   const train = getFullTGVTrain(net, loco)
   if (!train) return
 
+  // Nothing of the consist in view: nothing to draw. The debug overlay reaches far beyond the
+  // train (stopping distance, vectors), so it is never skipped.
+  if (!isDebugSkeleton) {
+    const bounds = getViewportBounds(cam, vw, vh)
+    const bodies = [train.leadLoco, ...train.cars, ...(train.rearLoco ? [train.rearLoco] : [])]
+    if (!bodies.some(body => pointsInBounds(body.polygon, bounds))) return
+  }
+
   ctx.save()
 
   // Convert world points to screen
@@ -2741,6 +2813,18 @@ export function renderLocomotive(
 
   if (isGhost) {
     ctx.globalAlpha = 0.45
+  }
+
+  // Schematic drawing: the consist is a marker of constant size (the caller handles its level)
+  if (!isDebugSkeleton && trackLod(cam.scale, GAUGE) === 'schematic') {
+    drawTrainMarker(
+      ctx, toSx, toSy,
+      train.bogies.map(b => ({ pos: b.center, level: 0 })),
+      trainMarkerStyle(ctx, isSelected && !isGhost, isDeleteHovered && !isGhost),
+      (_level, draw) => draw(),
+    )
+    ctx.restore()
+    return
   }
 
   // Ligne de sélection fine et nette sans aucun effet de glow baveux (désactivé en mode squelette pour clarté)
@@ -4541,6 +4625,14 @@ function drawTrainSetBody(
   ctx.stroke()
 }
 
+/** Colours of the marker a train is in the schematic drawing: ink, accent when selected, red under the delete tool */
+function trainMarkerStyle(ctx: CanvasRenderingContext2D, selected: boolean, deleting: boolean): { color: string; halo: string } {
+  const color = deleting
+    ? '#ef4444'
+    : selected ? getCanvasStyle(ctx.canvas, '--accent', '#2563eb') : getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
+  return { color, halo: getCanvasStyle(ctx.canvas, '--paper', '#ffffff') }
+}
+
 /**
  * Render a complete TrainSet from the fleet on the canvas.
  * With `band`, only what stands on those track levels is drawn (one pass of the layered drawing,
@@ -4562,6 +4654,13 @@ export function renderTrainSet(
   deleteVehicleId?: string | null,
   band?: LevelBand,
 ): void {
+  // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
+  // beyond the train (stopping distance, vectors), so it is never skipped.
+  const bounds = getViewportBounds(cam, vw, vh)
+  if (!isDebugSkeleton && !vehiclesInBounds(net, train.vehicles, bounds)) return
+  const inView = (points: Point[]): boolean => pointsInBounds(points, bounds)
+  const lod = trackLod(cam.scale, GAUGE)
+
   const visuals = getTrainSetVisuals(net, train)
   if (!visuals) return
 
@@ -4600,14 +4699,24 @@ export function renderTrainSet(
     ctx.restore()
   }
 
+  // Schematic drawing: the whole train is a marker of constant size, along its bogies
+  if (lod === 'schematic') {
+    drawTrainMarker(
+      ctx, toSx, toSy,
+      visuals.bogies.map(b => ({ pos: b.center, level: b.pos ? trackPositionLevel(net, b.pos) : topLevel })),
+      trainMarkerStyle(ctx, isSelected && !isGhost, !!deleteVehicleId && !isGhost),
+      atLevel,
+    )
+  }
+
   // Selection outline for entire train
-  if (isSelected && !isGhost && !isDebugSkeleton) {
+  if (isSelected && !isGhost && !isDebugSkeleton && lod !== 'schematic') {
     ctx.save()
     ctx.strokeStyle = '#38bdf8'
     ctx.lineWidth = 1.5
     ctx.lineJoin = 'round'
     for (const v of visuals.vehicles) {
-      if (v.polygon.length > 0 && inLevelBand(levelOf(v.id), band)) {
+      if (inView(v.polygon) && inLevelBand(levelOf(v.id), band)) {
         ctx.beginPath()
         ctx.moveTo(toSx(v.polygon[0]), toSy(v.polygon[0]))
         for (let pi = 1; pi < v.polygon.length; pi++) {
@@ -4621,9 +4730,9 @@ export function renderTrainSet(
   }
 
   // Targeted vehicle highlight (when a specific car or loco in the train is selected)
-  if (selectedVehicleId && !isGhost) {
+  if (selectedVehicleId && !isGhost && lod !== 'schematic') {
     const selV = visuals.vehicles.find(v => v.id === selectedVehicleId)
-    if (selV && selV.polygon.length > 0 && inLevelBand(levelOf(selV.id), band)) {
+    if (selV && inView(selV.polygon) && inLevelBand(levelOf(selV.id), band)) {
       ctx.save()
       ctx.strokeStyle = '#f59e0b'
       ctx.lineWidth = 2.5
@@ -4641,8 +4750,10 @@ export function renderTrainSet(
 
   // 1. Bogies: each physical bogie once (two trailers share one), the first is the lead bogie
   // A bogie is at the level of its own rail
+  // Bogies and gangways are close-up detail: below it a vehicle is its plain silhouette
   for (let i = 0; i < visuals.bogies.length; i++) {
     const bogie = visuals.bogies[i]
+    if (lod !== 'detail' || !inView(bogie.polygon)) continue
     atLevel(bogie.pos ? trackPositionLevel(net, bogie.pos) : topLevel, () => {
       drawTrainSetBogie(ctx, cam, toSx, toSy, bogie, i === 0, isGhost)
     })
@@ -4650,6 +4761,8 @@ export function renderTrainSet(
 
   // 2. Accordions
   for (let i = 0; i < visuals.accordions.length; i++) {
+    const acc = visuals.accordions[i]
+    if (lod !== 'detail' || !inView([...acc.frontFrame, ...acc.rearFrame])) continue
     atLevel(gangwayLevel(i), () => {
       drawTrainSetAccordion(ctx, cam, toSx, toSy, visuals.accordions[i], isGhost)
     })
@@ -4657,15 +4770,16 @@ export function renderTrainSet(
 
   // 3. Vehicles
   for (const v of visuals.vehicles) {
+    if (lod === 'schematic' || !inView(v.polygon)) continue
     atLevel(levelOf(v.id), () => {
       drawTrainSetBody(ctx, cam, toSx, toSy, v.polygon, isDebugSkeleton, telemetry)
     })
   }
 
   // 3.5 Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
-  if (deleteVehicleId && !isGhost) {
+  if (deleteVehicleId && !isGhost && lod !== 'schematic') {
     const delV = visuals.vehicles.find(v => v.id === deleteVehicleId)
-    if (delV && delV.polygon.length > 0 && inLevelBand(levelOf(delV.id), band)) {
+    if (delV && inView(delV.polygon) && inLevelBand(levelOf(delV.id), band)) {
       ctx.save()
       ctx.shadowColor = 'rgba(239, 68, 68, 0.85)'
       ctx.shadowBlur = 10
