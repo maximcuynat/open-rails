@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
-import { autoDetectJunctions, toggleJunction } from '@domain/models/junction'
+import { autoDetectJunctions, toggleJunction, activeBranchOf } from '@domain/models/junction'
 import {
   getNodeSegmentEndVector,
   getNodeSegmentEnds,
@@ -143,7 +143,7 @@ describe('Junction Alignment & Dynamic Geometry', () => {
     const sDiv = addCurveSegment(net, apex.id, div.id, { x: 120, y: 0 })!
 
     const [junc] = autoDetectJunctions(net)
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
 
     // In 'straight' mode, diverging branch is inactive
     let ends = getNodeSegmentEnds(net, apex, dummyCam, 0, 0, dummySel)
@@ -154,7 +154,7 @@ describe('Junction Alignment & Dynamic Geometry', () => {
 
     // Toggle junction to 'diverging'
     toggleJunction(junc)
-    expect(junc.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junc)).toBe('diverging')
 
     ends = getNodeSegmentEnds(net, apex, dummyCam, 0, 0, dummySel)
     divEnd = ends.find(e => e.segId === sDiv.id)

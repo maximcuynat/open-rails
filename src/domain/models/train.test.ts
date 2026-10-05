@@ -29,6 +29,7 @@ import {
   deserializeTrains,
   pruneTrainsToNetwork,
   steerTrainSetJunction,
+  trackLeftAhead,
   trainRouteStart,
   isJunctionOccupied,
   handleCouplingClick,
@@ -42,7 +43,7 @@ import { walkForward, snapToNearestTrack, positionOnSegment, tangentOnSegment, f
 import type { TrackPosition } from './locomotive'
 import { removeSegment, addArcCurve } from './network'
 import { ROLLING_STOCK, type RollingStockModel } from './rollingStock'
-import { addJunction, placeTurnout, autoDetectJunctions } from './junction'
+import { addJunction, placeTurnout, autoDetectJunctions, activeBranchOf, turnoutView, setJunctionBranch } from './junction'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 
@@ -719,9 +720,9 @@ describe('steerTrainSetJunction', () => {
     const train = makeTrainSet('t', [createVehicle(net, sStem.id, 0.5, 'loco', 1)!])
 
     expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
   })
 
   it('starts the route at the lead bogie running forward and at the last bogie in reverse', () => {
@@ -749,13 +750,13 @@ describe('steerTrainSetJunction', () => {
 
     // Running forward (towards -x) there is no facing turnout ahead
     expect(steerTrainSetJunction(net, train, 'right')).toBe(false)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
 
     setReverser(train, 'reverse')
     expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
   })
 
   it('does nothing for an empty train', () => {
@@ -784,7 +785,7 @@ const frontEnd = (net: Network, train: TrainSet) => vehicleFrontEndPos(net, trai
 const rearEnd = (net: Network, train: TrainSet) => vehicleRearEndPos(net, train.vehicles[train.vehicles.length - 1])!
 
 describe('advanceTrainSet is all-or-nothing', () => {
-  it('reversing into a buffer stop leaves the whole train where it was', () => {
+  it('reversing into a buffer stop brings the tail up to it, then leaves the whole train where it is', () => {
     const { net, segId } = makeStraightNetwork(600)
     const train = consist(net, segId, 0.5, 4) // nose towards +x, wagons towards the buffer at x=0
     const spacing = (pts: { x: number }[]) => pts.slice(1).map((p, i) => pts[i].x - p.x)
@@ -796,16 +797,34 @@ describe('advanceTrainSet is all-or-nothing', () => {
       const before = JSON.stringify(train.vehicles)
       if (!advanceTrainSet(net, train, 0.5)) {
         refused++
-        expect(JSON.stringify(train.vehicles)).toBe(before)
+        // The first refusal is the last, shortened step up to the buffer; after it nothing moves
+        if (refused > 1) expect(JSON.stringify(train.vehicles)).toBe(before)
       }
     }
 
     expect(refused).toBeGreaterThan(0)
     const after = bogiePoints(net, train)
     spacing(after).forEach((gap, i) => expect(gap).toBeCloseTo(laidOut[i], 6))
-    // The last bogie stands within one step of the buffer, never beyond it
-    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(0)
-    expect(after[after.length - 1].x).toBeLessThan(0.5)
+    // The tail of the train stands on the buffer, its last bogie never beyond it
+    expect(rearEnd(net, train).x).toBeCloseTo(0, 6)
+    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(-1e-9)
+  })
+
+  it('running forward, stops with its nose on the end of the track, not its leading bogie', () => {
+    const { net, segId } = makeStraightNetwork(600)
+    const train = consist(net, segId, 0.5, 2)
+    expect(trackLeftAhead(net, train, 50)).toBeNull()
+
+    let steps = 0
+    while (advanceTrainSet(net, train, 0.5) && steps < 2000) steps++
+
+    expect(frontEnd(net, train).x).toBeCloseTo(600, 6)
+    expect(bogiePoints(net, train)[0].x).toBeLessThan(599)
+    expect(trackLeftAhead(net, train, 50)).toBeCloseTo(0, 6)
+    // Nothing more to gain by insisting
+    const before = JSON.stringify(train.vehicles)
+    expect(advanceTrainSet(net, train, 0.5)).toBe(false)
+    expect(JSON.stringify(train.vehicles)).toBe(before)
   })
 
   it('does not move the lead when a follower has no track to stand on', () => {
@@ -920,7 +939,7 @@ describe('junction under a train', () => {
     const straightExt = addSegment(net, t.straightNode.id, sEnd.id)!
     autoDetectJunctions(net)
     const junction = [...net.junctions.values()][0]
-    return { net, junction, stem, straightExt, straightSegId: junction.straightSegmentId }
+    return { net, junction, stem, straightExt, straightSegId: turnoutView(net, junction)!.straightSegmentId }
   }
 
   it('is occupied exactly while a vehicle stands over its points', () => {
@@ -950,10 +969,10 @@ describe('junction under a train', () => {
 
     // The diverging branch leaves towards +y: the right-hand side when running towards +x
     expect(steerTrainSetJunction(net, driven, 'right', [driven, parked])).toBe(false)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
     // With the points clear the same command goes through
     expect(steerTrainSetJunction(net, driven, 'right', [driven])).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
   })
 
   it('keeps the vehicles on their branch if the points move under a trailing train anyway', () => {
@@ -964,14 +983,14 @@ describe('junction under a train', () => {
     let biggestMove = 0
     for (let i = 0; i < 1200; i++) {
       // Thrown behind the store's back once the lead is 30 m past the points
-      if (prev[0].x < -30) junction.activeBranch = 'diverging'
+      if (prev[0].x < -30) setJunctionBranch(junction, 'diverging')
       expect(advanceTrainSet(net, train, 0.5)).toBe(true)
       const cur = bogiePoints(net, train)
       cur.forEach((p, k) => (biggestMove = Math.max(biggestMove, Math.hypot(p.x - prev[k].x, p.y - prev[k].y))))
       prev = cur
     }
 
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(biggestMove).toBeLessThanOrEqual(0.5 + 1e-6)
     expect(prev.every((p) => Math.abs(p.y) < 1e-6)).toBe(true)
   })
@@ -1005,13 +1024,15 @@ describe('sharp corners and crossings', () => {
       const { net, first, second } = corner(angle)
       const train = consist(net, first.id, 0.5, 0)
       for (let i = 0; i < 150; i++) advanceTrainSet(net, train, 0.5)
+      // The nose stops on the corner, the bogie under it short of it
       expect(train.vehicles[0].front.segId).toBe(first.id)
-      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeCloseTo(0, 6)
+      expect(frontEnd(net, train).x).toBeCloseTo(0, 6)
+      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeLessThan(-1)
 
       const back = consist(net, second.id, 0.5, 0, -1)
       for (let i = 0; i < 150; i++) advanceTrainSet(net, back, 0.5)
       expect(back.vehicles[0].front.segId).toBe(second.id)
-      expect(back.vehicles[0].front.t).toBeCloseTo(0, 6)
+      expect(Math.hypot(frontEnd(net, back).x, frontEnd(net, back).y)).toBeCloseTo(0, 6)
     }
   })
 
@@ -1030,7 +1051,7 @@ describe('sharp corners and crossings', () => {
     const fromStub = consist(net, stub.id, 0.5, 0, -1) // heading down to the main line
     for (let i = 0; i < 400; i++) advanceTrainSet(net, fromStub, 0.5)
     expect(fromStub.vehicles[0].front.segId).toBe(stub.id)
-    expect(bogiePoints(net, fromStub)[0].y).toBeCloseTo(0, 6)
+    expect(frontEnd(net, fromStub).y).toBeCloseTo(0, 6)
 
     const west = [...net.segments.values()].find((s) => s.id !== stub.id && (s.from === w.id || s.to === w.id))!
     const through = consist(net, west.id, 0.5, 0, west.from === w.id ? 1 : -1)
@@ -1343,14 +1364,14 @@ describe('articulated trainsets', () => {
       autoDetectJunctions(net)
       const junction = [...net.junctions.values()][0]
       // Extend the diverging branch along its end tangent
-      const via = net.segments.get(junction.divergingSegmentId)!.via!
+      const via = net.segments.get(turnoutView(net, junction)!.divergingSegmentId)!.via!
       const end = t.divergingNode.pos
       const len = Math.hypot(end.x - via.x, end.y - via.y)
       const far = addNode(net, { x: end.x + ((end.x - via.x) / len) * 400, y: end.y + ((end.y - via.y) / len) * 400 })
       const divergingExt = addSegment(net, t.divergingNode.id, far.id)!
 
       const train = buildRake(net, createVehicle(net, stem.id, 0.6, 'loco')!, ['wagon', 'wagon', 'wagon', 'wagon', 'loco'])
-      junction.activeBranch = 'diverging'
+      setJunctionBranch(junction, 'diverging')
 
       const pitch = ROLLING_STOCK.duplex.trailer.pitch
       let straddled = 0

@@ -1,268 +1,278 @@
-# Correctifs du système de pose de rails
+# Tâches
 
-Suite au bilan du 2026-10-04. Pas de commit tant que l'utilisateur ne le demande pas.
-
-## Plan
-
-- [x] 1. Ciseaux : ne couper que le segment réellement sous le curseur (`performTrackCut`)
-- [x] 2. Gizmo / glisser de nœud : les points de contrôle `via` suivent (translation, rotation, nœud seul)
-- [x] 3. Seuils relatifs à l'échelle (tolérance de réconciliation, corde mini, décalages) dérivés de l'écartement
-- [x] 4. Courbes fidèles au cercle : découpage automatique en pièces d'angle borné
-- [x] 5. Rayon minimal réellement appliqué (courbe, accrochage, aiguillage parallèle)
-- [x] 6. Une seule fonction de géométrie pour l'outil Courbe, partagée par l'aperçu, le clic et le survol
-- [x] Tests ajoutés pour chaque point, `vitest`, `tsc --noEmit` et build verts
-
-## Hors périmètre (signalé, non traité)
-
-- Extraction complète des outils de `Canvas.tsx` vers `IToolStrategy`
-- Suppression ou branchement des gabarits non utilisés (liaison croisée, évitement, boucle)
-
-## Revue
-
-- `vitest` : 395 tests verts (28 fichiers) ; `tsc --noEmit` et `npm run build` verts, relancés après relecture.
-- Chaque correctif rejoué par un test jetable indépendant : ciseaux, arc 90° R500 (6 pièces, rayon mini 495,7 m, écart 0,018 m), gizmo, rotation d'un nœud seul, HO.
-- Câblage `Canvas.tsx` non vérifié dans le navigateur (pas de test d'interface).
-- Ajouté à la relecture : accrochage grille du gizmo X/Y stable sur un nœud hors grille ; libellé « RR » de l'aiguillage.
-- Restes connus : ciseaux sur un nœud (segment détaché arbitraire, priorité du nœud sur le segment à faible zoom) ; fermeture de boucle sur un nœud existant (aperçu ≠ pose) ; `turnoutRadius` non branché ; mode catalogue et arrondi 0,1 m non adaptés aux échelles modélisme.
+Nettoyé le 2026-10-05 : les chantiers terminés ont été retirés (leur plan et leur revue restent dans l'historique git de ce fichier). Ne restent que le chantier en cours, ce qui est encore à faire et les défauts connus.
 
 ---
 
-# Pilotage des trains : inverseur, crans, arrêt d'urgence
+# À valider — Physique de conduite réaliste
 
-Validé le 2026-10-04. Pas de commit tant que l'utilisateur ne le demande pas.
+Branche `feature/track-levels` (ou une branche dédiée, au choix de l'utilisateur). Plan rédigé le 2026-10-05 après recherche ; **rien n'est codé**. Sources et chiffres détaillés : `tasks/recherche-traction.md`, `tasks/recherche-freinage.md`. Pas de commit tant que l'utilisateur ne le demande pas.
 
-## Plan
+## Ce qui change pour le joueur
 
-- [x] 1. Domaine (`train.ts`) : `reverser` AV/N/AR, `notch` -5…+5, `emergencyBrake`, fonctions pures de commande, `tickTrainSet` proportionnel aux crans, suppression de `throttle` / `isReversing`
-- [x] 2. Store : actions de pilotage du train sélectionné, remise à zéro des commandes en sortie de pilotage, locomotive legacy inchangée
-- [x] 3. Clavier : ↑/↓ un cran par appui, Maj+↑/↓ inverseur, Retour arrière arrêt d'urgence
-- [x] 4. HUD bas-droite refait : vitesse, inverseur, échelle de crans, arrêt d'urgence, légende des commandes
-- [x] 5. Tests domaine + store, `npm test`, `npm run typecheck`
+- Le train a une masse, une puissance et une résistance à l'avancement : il accélère fort au départ, de moins en moins vite ensuite (0 → 300 km/h en près de 5 minutes pour un Duplex), et ralentit tout seul très lentement en roue libre.
+- La pente compte, en montée comme en descente : 35 ‰ retirent ou ajoutent 0,34 m/s². Un Duplex à pleine puissance ne tient qu'environ 185 km/h dans une rampe de 35 ‰.
+- Le frein est un frein à air : on serre et on desserre, la pression de la conduite générale descend ou remonte, les cylindres suivent avec un délai. Un arrêt d'urgence depuis 300 km/h prend 3,3 km et 74 s, pas 170 m.
+- À l'arrêt sur une rampe, un train frein desserré part en dérive. En entrant en conduite, tous les trains sont freins serrés : il faut desserrer pour partir.
 
-## Revue
+## Modèle
 
-- `npm test` : 329 tests verts ; `npm run typecheck` et `npm run build` verts.
-- HUD non vérifié visuellement dans le navigateur.
-- Corrigé au passage : la déclaration du champ `selectedTrainVehicleId` manquait dans `EditorStore` (le typecheck échouait déjà avant ce chantier).
-- `R` / `Tab` ne retournent plus un `TrainSet` en pilotage ; le bouton « Inverser le sens » de la barre d'outils bascule l'inverseur AV ↔ AR.
-- HUD refait en version compacte : raccourcis au-dessus, cadran de vitesse avec inverseur au centre, cran dans un seul champ avec `−` / `+`, distance d'arrêt, arrêt d'urgence.
-- Marche arrière : la motrice n'est plus retournée au dessin, le train refoule (voir `tasks/lessons.md`).
-- Valeurs : P5 = 5,5 m/s², B5 = 10 m/s², urgence = 20 m/s² (arcade, à ajuster si besoin).
+Équation (sens positif = sens de marche) : `k · m · dv/dt = F_traction − F_frein − R(v) − F_pente − F_courbe`
 
----
+| Terme | Formule | Origine |
+|---|---|---|
+| Masses tournantes | `k = 1,04` | thèse Bosquet, confirmé |
+| Traction | `F = commande × min(F_max, P/v, μ(v) · m_adhérente · g)`, nulle sans motrice et au-delà de la vitesse maximale | fiches Alstom / SNCF |
+| Adhérence (rail sec) | `μ = 7,5/(V+44) + 0,161`, V en km/h, plafonnée à 0,30 | Curtius-Kniffler |
+| Résistance | `R = A + B·v + C·v²` ; A et B suivent la masse, C la longueur de la rame | base SNCF Thor (Dasye) |
+| Pente | `F = m · g · (z_tête − z_queue) / L_rame` : moyenne sur toute la rame, adoucit les cassures de profil | usage courant, forme retenue par nous |
+| Courbe | `F = m · g · 0,8 / R` (R en m) : négligeable sur LGV, sensible sous 1 000 m | Rochard & Schmid |
+| Frein | décélération visée selon la vitesse × remplissage des cylindres, plafonnée par l'adhérence (`0,15 g`, décroissante au-delà de 250 km/h) | STI, EPSF |
 
-# Branche `feature/train-coupling` : à faire avant de la supprimer
+Forces dissipatives (frein, résistance) : elles s'opposent au mouvement et, à l'arrêt, retiennent le train jusqu'à leur maximum. C'est ce qui permet à la fois la tenue en pente frein serré et la dérive frein desserré.
 
-Mis de côté le 2026-10-04. Rien n'est lancé tant que l'utilisateur ne le demande pas.
+### Données par modèle (`rollingStock.ts`)
 
-- [ ] 1. Commiter et pousser le travail en cours (il n'existe que localement) ; `CLAUDE.md` dans un commit `docs:` séparé
-- [ ] 2. Vérifier `npm run typecheck` et `npm run build` verts
-- [ ] 3. Fusionner `main` dans la branche (2 commits de retard : CI et `base` GitHub Pages)
-- [ ] 4. Fusionner dans `developement`, puis supprimer la branche en local et sur le dépôt distant
-- [ ] 5. Traiter ensuite `feature/curve-angle-rotation-gizmo` (conflits attendus sur `gizmo.ts` et `ToolBar.tsx`)
+| | TGV Duplex | TGV M | Confiance |
+|---|---|---|---|
+| Motrice : masse / puissance / effort max | 68 t / 4 400 kW / 106 kN | 68 t / 3 880 kW / 122 kN | Duplex confirmé ; effort du TGV M non sourcé |
+| Remorque : masse en charge | 36 t (rame de 424 t) | ≈ 46 t (rame de 460 t estimée) | TGV M estimé |
+| Résistance, rame complète | A 2 680 N, B 115 N·s/m, C 6,93 N·s²/m² | A 2 910, B 125, C 6,03 | Duplex : une source solide ; TGV M estimé |
+| Vitesse maximale | 320 km/h | 320 km/h | confirmé |
 
----
+Masse, puissance, effort et résistance d'une rame sont **calculés à la demande** à partir de ses véhicules (aucune valeur en cache : les rames sont recomposées à huit endroits du code). Une rame sans motrice n'a aucun effort ; deux rames attelées additionnent tout.
 
-# Harmonisation de l'interface (suite au topo du 2026-10-04)
+### Frein à air
 
-Deux agents en parallèle, périmètres de fichiers disjoints, puis relecture et commit.
+- État par train : pression de la **conduite générale** (5,0 bar desserré, 4,5 bar à la première dépression, 3,5 bar au serrage maximal, 0 en urgence) et remplissage des **cylindres de frein** (0 à 100 %, affiché en bar).
+- Commande à impulsions, comme le robinet réel et comme Train Sim World : tant que « serrer » est tenu, la conduite se vide (à fond en 3,5 s) ; tant que « desserrer » est tenu, elle se regonfle (à fond en 4 s) ; relâché, la pression reste où elle est.
+- Les cylindres suivent la dépression avec un délai (temps mort 0,5 s, montée 3 s, desserrage 4 à 5 s) : c'est ce délai qui donne les distances d'arrêt réelles.
+- Décélération visée, rail sec, en palier (m/s²) :
 
-## Agent A — mode train « comme la pose de rail »
+| | > 300 km/h | 300–230 | 230–170 | < 170 |
+|---|---|---|---|---|
+| Serrage maximal de service | 0,75 | 0,85 | 1,00 | 1,10 |
+| Urgence | 0,81 | 0,98 | 1,14 | 1,30 |
 
-- [x] A1. Un seul chemin de pose : clic, glisser-déposer et menu contextuel donnent le même `TrainSet`, sans ancienne `Locomotive` cachée
-- [x] A2. « Train en cours » : chaque clic ajoute un véhicule au bout ; Échap arrête la chaîne, puis revient à Sélection
-- [x] A3. Pas d'édition (pose, suppression, attelage) pendant la conduite
-- [x] A4. Aiguiller en conduite (←/→) fonctionne pour un `TrainSet`
-- [x] A5. Trains sauvegardés (stockage local + JSON), annulables, nettoyés par « Nouveau réseau » et quand leur voie disparaît
-- [x] A6. Textes d'aide du mode train à jour, refus de pose signalé
+  Interpolée entre les tranches, proportionnelle au remplissage des cylindres. Ces valeurs sont des décélérations totales : la résistance à l'avancement en est retranchée pour ne pas la compter deux fois.
+- Urgence : vidange de la conduite, traction coupée, desserrage impossible avant l'arrêt (verrou actuel conservé).
+- La traction est coupée dès que le frein est serré, comme sur le matériel réel.
 
-## Agent B — fiabilité de l'éditeur de voie et cohérence générale
+### Traction
 
-- [x] B1. Export JSON complet (échelle, unité, écartement, entraxe, plateau)
-- [x] B2. Suppr / Retour arrière pendant une pose ne supprime plus le nœud de départ
-- [x] B3. Une action = une étape d'annulation ; annuler remet l'outil en cours à zéro
-- [x] B4. Menu contextuel : « Supprimer l'aiguillage » et « Créer voie parallèle » agissent sur la cible ; « Dupliquer voie double » branché ou retiré
-- [x] B5. Pose de rail enchaînée ; Échap annule la pose en cours, puis revient à Sélection, sans vider la sélection par surprise
-- [x] B6. Raccourcis : pas de déclenchement avec Ctrl/Cmd, Espace/F5 cohérents, fenêtre d'aide et README exacts
-- [x] B7. Barre d'état affichée ; textes d'aide faux corrigés
-- [x] B8. Vocabulaire : un nom par notion, plus d'anglais résiduel, nom du produit unique
+- Le manipulateur garde ses crans, de N à P5 (20 % d'effort par cran). Les crans négatifs B1…B5 disparaissent : le frein a ses propres touches.
+- L'effort monte progressivement (0 à 100 % en 5 s), pas d'à-coup.
+- L'inverseur garde ses règles (changement à l'arrêt seulement). Il fixe le sens de l'effort moteur ; le sens réel du mouvement peut s'en écarter quand la rame dérive.
 
-## Hors périmètre de ce lot
+### Intégration
 
-- Thème clair des éléments flottants et unification des styles de boutons
-- Suppression complète du code de l'ancienne `Locomotive` (rendu compris)
-- Mode catalogue Kato (inatteignable aujourd'hui)
+- Pas de calcul fixe d'au plus 1/30 s : un pas d'affichage long est découpé, le résultat ne dépend plus de la fluidité.
+- La vitesse reste positive avec un sens séparé, comme aujourd'hui ; le sens bascule tout seul quand la rame repart en arrière.
+- Tous les trains sont simulés en conduite, y compris à l'arrêt (aujourd'hui un train arrêté sans traction est ignoré).
 
-## Revue
+## Touches (réassignables)
 
-- `tsc --noEmit`, `vitest` (451 tests, 31 fichiers) et `vite build` verts, relancés après relecture.
-- Rien n'a été vérifié dans le navigateur : les gestionnaires de `Canvas.tsx`, le clavier et les composants React n'ont pas de tests ; seule la logique du store, du domaine et de la persistance est couverte.
-- Ajouté à la relecture : en conduite, les raccourcis d'édition sont coupés (seuls F5, F, I et Ctrl+0 passent).
-- Restes connus : couper un rail sous un train retire les véhicules posés dessus (annulable) ; une pose libre au milieu d'un train peut le chevaucher ; basculer un aiguillage sous un train déplace ses wagons ; les boutons de la barre d'outils restent cliquables en conduite ; les réseaux déjà enregistrés gardent le nom « Untitled Network » ; code mort à retirer (`TrainBuilderPalette`, repli glisser au pointeur dans `Canvas.tsx`, Tab et `[` `]` en courbe).
+| Action | Défaut | Aujourd'hui |
+|---|---|---|
+| Traction : un cran de plus / de moins | A / D (et ↑ / ↓) | inchangé, mais D ne descend plus sous N |
+| Serrer le frein (maintenu) | E | nouveau |
+| Desserrer le frein (maintenu) | Q | nouveau |
+| Freinage d'urgence | Retour arrière | inchangé |
+| Inverseur | W / S | inchangé |
 
----
+Les lettres désignent la position des touches (clavier QWERTY), comme pour les commandes actuelles.
 
-# Comportement des trains et conflits de rails (suite à la vérification du 2026-10-04)
+## Étapes
 
-Tous les défauts ci-dessous ont été reproduits sur `c775df8` juste avant de lancer les corrections. Un agent code, un second vérifie de façon indépendante, puis rapport. Pas de commit tant que l'utilisateur ne le demande pas.
+### Socle commun (moi, avant les agents)
 
-## Plan
+- [ ] 0.1 Types et signatures : données physiques dans `RollingStockSpec`, état du frein dans `TrainSet` (`brakePipe`, `brakeCylinder`, commande de frein, effort appliqué), `DrivingEnvironment` (`levelHeight`), `TrainDynamics` (forces, accélération réelle, pente, pressions, distance d'arrêt, accélération transversale)
+- [ ] 0.2 Script de référence de la recherche (`sim.py`) recopié dans `tasks/` pour vérifier l'implémentation contre les mêmes chiffres
 
-- [x] T1. Collision : un train s'arrête au contact d'un autre au lieu de le traverser
-- [x] T2. Marche arrière contre un butoir : le train ne se tasse plus (déplacement tout ou rien)
-- [x] T3. Aiguillage occupé par un train : bascule refusée
-- [x] T4. Angles vifs : pas d'aiguillage reconnu au-delà d'un angle réaliste, et un train ne franchit pas un coude ; coude signalé
-- [x] R1. Rails superposés (doublon, rail court sur rail long, chevauchement partiel) : fusionnés, plus d'aiguillage fantôme
-- [x] R2. Courbe coupant une droite : tous les points de croisement, placés sur les deux voies
-- [x] R3. Traversées reconnues aussi pour un croisement très fermé ou courbe/droite
-- [x] R4. Trou entre deux bouts de rail proches : signalé
-- [x] Tests pour chaque point ; `vitest`, `tsc --noEmit`, build verts
+### Agent A — domaine
 
-## Laissé tel quel
+- [ ] A1. `rollingStock.ts` : données par modèle, `consistMass`, `consistPower`, `consistMaxEffort`, `adhesiveMass`, `consistResistance(v)` ; tests (rame de 424 t, 8 800 kW, 212 kN ; R(300) ≈ 60 kN, R(100) ≈ 11 kN)
+- [ ] A2. Forces (`train.ts` ou un fichier `trainDynamics.ts`) : traction, adhérence, résistance, pente moyennée sur la rame, courbe ; `trainDynamics(net, train, env)` renvoie le détail
+- [ ] A3. Frein à air : conduite générale, cylindres, décélération visée par vitesse, plafond d'adhérence, urgence
+- [ ] A4. Intégration : pas fixe, forces dissipatives qui retiennent à l'arrêt, basculement du sens en dérive, vitesse ramenée exactement à zéro quand le frein tient
+- [ ] A5. `tickTrainSet` et `advanceTrainSet` : collision vérifiée aussi quand la rame recule en dérive ; butoir et obstacle retiennent la rame sans tremblement ; vitesse du choc renvoyée
+- [ ] A6. `stoppingDistance` par intégration (serrage maximal de service, délai compris, pente actuelle) ; accélération transversale `v²/R` exposée par véhicule (point d'accroche du futur plan dévers)
+- [ ] A7. Commandes : cran de traction 0…5, serrer / desserrer, urgence ; état de départ « frein serré » ; `resetTrainControls`, attelage, dételage et changement de cabine remis d'aplomb
+- [ ] A8. Tests de contrôle (voir plus bas) et réécriture des 13 tests qui figent les valeurs actuelles
 
-- Arrêt net au butoir (de la vitesse courante à 0, moins d'un pas avant la fin de voie) : choix à faire par l'utilisateur.
+### Agent B — store, clavier, HUD, rendu
 
-## Revue
-
-- Trois passages de code, deux vérifications indépendantes, puis contrôle final : `tsc --noEmit`, `vitest` (506 tests) et build verts ; sondes rejouées sur le code final.
-- Rien n'a été vérifié dans le navigateur.
-- Limite d'angle franchissable : 15° (`MAX_TRANSITION_DEFLECTION_DEG`), partagée par les trains, la détection d'aiguillage, le diagnostic et l'outil courbe.
-- Non revérifié de façon indépendante : le contrôle du raccord d'arrivée de l'outil courbe (`checkCurveJoins`), couvert seulement par les tests de l'agent de code.
-- Restes connus : pas de collision entre deux voies d'une traversée ni au gabarit d'un aiguillage ; pas d'auto-collision sur une boucle plus courte que le train ; chevauchement partiel de deux courbes non fusionné ; réconciliation limitée à 40 opérations par appel ; `findPath` / `reachableFrom` faux sur les doubles croisements (sans appelant hors tests) ; gabarit « boucle de retournement » infranchissable (non branché à l'interface) ; anciens aiguillages dessinés à la main entre 15° et 45° devenus infranchissables ; un scénario où `notify()` redéfinit les rôles des branches sous un train le décale de 5 m, à examiner.
-
----
-
-# Locomotive attelée à l'envers (rame réversible)
-
-Validé le 2026-10-04. Pas de commit tant que l'utilisateur ne le demande pas.
-
-## Plan
-
-- [x] 1. Domaine (`train.ts`) : `Vehicle.flipped`, `reverseTrainSet`, `findCouplerSnap(..., flipped)`, attelage arrière-arrière / nez à nez dans `handleCouplingClick`, dessin de la loco retournée et de ses accordéons
-- [x] 2. Dételage / suppression : un train à l'arrêt dont toutes les locos sont retournées est remis nez en avant
-- [x] 3. Sauvegarde : `flipped` conservé, anciens fichiers compatibles
-- [x] 4. Store : la touche R / « Inverser le sens » retourne aussi le véhicule aimanté sur un attelage
-- [x] 5. Tests domaine + store, `npm test`, `npm run typecheck`
-
-## Revue
-
-- `vitest` : 555 tests verts (33 fichiers) ; `tsc --noEmit` vert.
-- `front` / `rear` restent dans l'ordre de la rame : cinématique, collisions et aiguillages inchangés.
-- Non vérifié dans le navigateur (pas de test d'interface).
-- Reste connu : en pose aimantée le sens R est relatif au train, en pose libre il est relatif au segment.
-
----
-
-# Raccourcis clavier réassignables (conduite + outils)
-
-Validé le 2026-10-04. Pas de commit tant que l'utilisateur ne le demande pas.
-
-## Plan
-
-- [x] 1. Catalogue d'actions et correspondance touche → action (`application/keybindings/keybindings.ts`) : WASD par défaut en conduite, flèches en secondaire, debug sur F3
-- [x] 2. Sauvegarde séparée du projet (`open-rail:keybindings`) et état dans le store
-- [x] 3. `useKeyboardShortcuts` lit le catalogue ; `handleKeyDown` / `handleKeyUp` extraits pour les tests
-- [x] 4. Section « Raccourcis clavier » dans les paramètres (capture, conflit, retrait, réinitialisation)
-- [x] 5. Indications de touches (barre d'outils, menus, barre contextuelle, inspecteur, HUD, fenêtre d'aide) lues depuis le catalogue
-- [x] 6. Tests, `npm test`, `npm run typecheck`, `npm run build`
-- [ ] 7. Contrôle dans le navigateur
-
-## Revue
-
-- `vitest` : 573 tests verts (34 fichiers, 20 nouveaux) ; `tsc --noEmit` et build verts.
-- Écart au plan : les touches de conduite sont liées à la position (`e.code`), les touches d'outils à la lettre (`e.key`). En tout-position, « M pour mesure » tombait sur la touche `,` en AZERTY.
-- `D` ne bascule plus le debug (F3 partout) ; `[` / `]` sont liés à la position, donc atteignables en AZERTY.
-- Non vérifié dans le navigateur : la section des paramètres (capture d'une touche, conflit) et l'affichage des lettres AZERTY n'ont aucun test d'interface.
-- Reste connu : pendant que la fenêtre des paramètres est ouverte, les raccourcis globaux restent actifs hors capture (comportement antérieur).
-
----
-
-# Pilotage : voir où mène le prochain aiguillage
-
-Validé le 2026-10-04 (options 1 + 2 + portée variable). Pas de commit tant que l'utilisateur ne le demande pas.
-
-## Plan
-
-- [x] 1. Domaine (`locomotive.ts`) : `findJunctionAhead` (aiguillage, distance, cap à l'arrivée, pointe/talon, branches de gauche à droite) ; `findUpcomingJunction` et `steerJunction` s'appuient dessus (gauche/droite selon le sens d'arrivée sur l'aiguille)
-- [x] 2. Domaine (`train.ts`) : `trainRouteStart`, le bout de rame dont part l'itinéraire, partagé avec `steerTrainSetJunction`
-- [x] 3. Rendu : `renderDrivingRoute` — faisceau d'itinéraire (portée selon la vitesse, cyan en voie directe, ambre après une aiguille déviée), anneau + pictogramme de l'aiguille commandée, aiguille prise en talon fermée en rouge
-- [x] 4. `Canvas.tsx` : dessin en pilotage pour le train conduit (et la locomotive legacy)
-- [x] 5. Tests domaine + rendu, `npm test`, `npm run typecheck`
-
-## Revue
-
-- `vitest` : 593 tests verts (35 fichiers) ; `tsc --noEmit` vert.
-- Le faisceau « Trajet 50m » existant n'est dessiné qu'en mode debug : l'aide au pilotage est une fonction à part (`renderDrivingRoute`), dessinée sous les trains dès qu'on pilote. Le faisceau debug n'est pas modifié.
-- Changement de comportement : `← →` classe les branches selon le sens d'arrivée sur l'aiguille et non plus selon le cap du train (les deux coïncident en approche rectiligne ; après une courbe l'ancien calcul pouvait inverser gauche et droite).
-- Non vérifié dans le navigateur (pas de test d'interface) : tailles, couleurs et position du pictogramme à régler à l'œil.
-- Restes connus : pas d'indication « aiguille occupée » sur le canevas ; le faisceau debug en marche arrière part toujours du premier véhicule et non de la queue ; pictogramme HUD (option 3) non fait.
-
----
-
-# Rames TGV articulées (Duplex / TGV M)
-
-Plan validé le 2026-10-04 (détail : `~/.claude/plans/replicated-sauteeing-wave.md`). Pas de commit tant que l'utilisateur ne le demande pas.
-
-- [x] 1. Table de matériel et règles de jonction : `src/domain/models/rollingStock.ts` + tests (Duplex 200,19 m / 13 bogies, TGV M 202 m / 14 bogies)
-- [x] 2. Placement le long de la voie (`train.ts`) : `jointSpacing` / `endOverhang` à la place de la formule fixe, bogie partagé entre remorques
-- [x] 3. Attelage et construction : dételage seulement entre deux motrices, modèle choisi dans la barre d'outils
-- [x] 4. Visuels en contour : bogies dédoublonnés, caisses de pivot à pivot, soufflet sur le bogie partagé
-- [x] 5. Persistance : champ `model`, recalage des anciennes sauvegardes au chargement
-- [x] 6. Tests existants mis à jour, `npm test`, `npm run typecheck`, `npm run build`
-- [ ] 7. Contrôle dans le navigateur
-
-## Revue
-
-- `npm test` : 614 tests verts (35 fichiers) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
-- Contrôle indépendant : Duplex M+8R+M = 200,190 m sur 13 bogies ; TGV M à 9 voitures = 202,000 m sur 14 bogies ; en courbe R150, bogie partagé identique à chaque pas et décalage latéral maxi 4 cm aux jonctions articulées.
-- Non vérifié dans le navigateur (sélecteur de modèle, rendu en contour).
-- Restes connus : bout libre d'une remorque sans porte-à-faux (le bogie dépasse de 1,35 m, léger chevauchement à l'arrêt contre un autre train) ; fantôme d'une remorque posée contre une motrice dessiné sans son extension ; cotes TGV M en grande partie estimées.
-
----
-
-# Niveaux de voie (ponts, sauts-de-mouton, tunnels)
-
-Plan proposé le 2026-10-04, à valider. Prérequis de l'import OSM (hors périmètre ici). Pas de commit tant que l'utilisateur ne le demande pas.
-
-## Principe
-
-Un entier optionnel `level` sur `Segment` (absent = 0, plage −5…+5, équivalent du `layer` d'OSM). Pas d'altitude, pas de pente, pas de niveau sur les nœuds : le niveau d'un nœud se déduit de ses segments (un nœud de rampe touche deux niveaux). Le niveau ne joue que là où deux voies se croisent ou se touchent **sans nœud commun**.
-
-Règle unique, partagée par tous les points ci-dessous : deux voies n'interagissent (croisement, soudure, découpe, doublon) que si elles ont un niveau en commun.
-
-## Plan
-
-- [ ] 1. Modèle (`types.ts`, `network.ts`) : champ `level?`, `segmentLevel(seg)`, `nodeLevels(net, nodeId)`, `setSegmentsLevel(net, ids, level)` (0 = champ supprimé, pour ne pas changer les fichiers existants)
-- [ ] 2. Héritage du niveau partout où un segment est recréé, via un seul helper qui copie `parentSegmentId` + `level` : `splitSegmentAtNode` (`reconcile.ts`, droite et courbe), les deux découpes de `junction.ts` (l. 547 et 587), `dissolveNode` (`network.ts` : fusion refusée si les deux moitiés n'ont pas le même niveau), ciseaux et voie parallèle (`constructionTemplates.ts`)
-- [ ] 3. Réconciliation (`reconcile.ts`, `network.ts`) :
-  - candidats `cross` ignorés si les niveaux diffèrent
-  - candidats `split` / `weld` nœud-sur-segment et nœud-sur-nœud ignorés sans niveau commun (un nœud isolé reste compatible avec tout)
-  - `removeDuplicateSegments` ne supprime pas un doublon d'un autre niveau
-- [ ] 4. Croisements (`crossing.ts`) : la détection géométrique sans nœud de `detectCrossings` ignore les paires de niveaux différents (corrige d'un coup le panneau latéral, le rendu des cœurs et l'export SVG)
-- [ ] 5. Décroiser un croisement existant (`crossing.ts` ou `network.ts`) : `separateLevelsAtNode(net, nodeId)` — quand un nœud de degré 4 porte deux voies traversantes de niveaux différents, la voie du dessus reçoit un nœud jumeau au même endroit. C'est ce qui permet de transformer un diamant déjà posé en pont ; la règle du point 3 empêche la réconciliation de ressouder les deux nœuds
-- [ ] 6. Persistance (`persistence.ts`) : `level` optionnel dans `SerializedSegment`, écrit seulement s'il est non nul, validé (entier borné) à la lecture, lu **avant** la réconciliation du chargement. Pas de changement de `version` ; l'undo suit tout seul (instantanés)
-- [ ] 7. Store (`editorStore.ts`) : `shiftSelectionLevel(delta)` → `setSegmentsLevel`, `separateLevelsAtNode` sur les nœuds touchés, `reconcileNetwork()` (redescendre un pont à 0 doit recréer le croisement), `pushHistorySnapshot()`, `notify()`
-- [ ] 8. Interface : champ « Niveau » avec `−` / `+` dans `SegmentPanel` (`SidePanel.tsx`) ; actions « Monter » / « Descendre » dans la barre contextuelle des voies (`contextBarModel.ts`), qui marchent sur une sélection multiple (un pont = plusieurs coupons)
-- [ ] 9. Rendu (`renderer.ts`, `exportSvg.ts`) : segments dessinés par niveau croissant ; niveau > 0 : tablier (bande plus large que le ballast + garde-corps) dessiné sous la voie, qui masque ce qui passe dessous ; niveau < 0 : voie atténuée et en pointillés (tunnel) ; mode simplifié (faible zoom) : ordre + liseré seulement
-- [ ] 10. Pointage (`hitSegment`, `hitNode`, `snapToNearestTrack`) : à distance égale, le niveau le plus haut l'emporte (on clique ce qu'on voit)
-- [ ] 11. Tests pour chaque point, `npm test`, `npm run typecheck`, `npm run build`, contrôle dans le navigateur sur un huit avec pont
-
-## Tests clés
-
-- Deux droites qui se croisent à des niveaux différents : aucun nœud créé, aucun croisement détecté, deux sections indépendantes ; au même niveau : comportement actuel inchangé
-- Un segment de niveau 1 coupé (ciseaux, aiguillage, réconciliation) donne deux moitiés de niveau 1
-- Diamant existant, une voie montée à 1 : deux nœuds superposés, plus de croisement ; redescendue à 0 : le diamant revient
-- Sauvegarde → chargement : niveaux conservés, pas de nœud recréé sous le pont ; un fichier sans `level` se charge à l'identique
-- Rendu (mock `ctx`) : la voie de niveau 1 est tracée après celle de niveau 0
-
-## À vérifier pendant l'implémentation
-
-- Collisions entre trains (`train.ts` l. 400) : si elles sont calculées le long de la voie, rien à faire ; si elles sont géométriques, filtrer par niveau
-- `computeTrackSections` : fondé sur les nœuds, donc a priori rien à changer une fois qu'aucun nœud n'est créé sous le pont
+- [ ] B1. Boucle du store : tous les trains simulés en conduite, `levelHeight` transmis, fin de l'arrêt net imposé par le store, entrée en conduite freins serrés
+- [ ] B2. Clavier : actions « serrer » et « desserrer » maintenues (appui / relâchement), catalogue de raccourcis, fenêtre d'aide
+- [ ] B3. HUD : deux manomètres (conduite générale, cylindres de frein), effort de traction en %, accélération **réelle**, pente sous la rame en ‰, distance d'arrêt réelle dans l'unité du projet, cadran gradué jusqu'à la vitesse maximale du modèle
+- [ ] B4. Rendu debug : vecteur d'accélération et ruban d'arrêt lus dans `TrainDynamics` (corrige au passage la distance d'arrêt infinie hors freinage)
+- [ ] B5. Choc contre un butoir ou un autre train au-dessus de quelques km/h : message à l'écran
+- [ ] B6. Tests du store et du clavier
+
+### Vérification finale
+
+- [ ] `npm test`, `npm run typecheck`, `npm run build`, relecture du diff
+- [ ] Comparaison au script de référence : mêmes temps et distances à 2 % près
+- [ ] Navigateur : départ arrêté, montée en vitesse, arrêt de service, urgence, rampe de 35 ‰ dans les deux sens, dérive frein desserré, manomètres
+
+## Tests de contrôle
+
+Chiffres réels ou réglementaires :
+
+| Test | Attendu | Origine |
+|---|---|---|
+| Urgence 300 → 0, palier | 3 300 m ± 5 %, ≈ 74 s | TGV réel, KTX-I |
+| Urgence 200 → 0 / 250 → 0 / 160 → 0 | ≤ 1 500 / 2 430 / 1 250 m | STI, EPSF |
+| Serrage maximal de service 320 → 0 | ≤ 5 300 m | EPSF (lignes TVM) |
+| Urgence à 230 km/h en descente de 35 ‰ | la rame s'arrête | cas d'étude EPSF |
+| Accélération moyenne 0–40 / 0–120 / 0–160 km/h | ≥ 0,40 / 0,32 / 0,17 m/s² | STI |
+| Accélération résiduelle à 320 km/h | ≥ 0,05 m/s² | STI |
+| Résistance à 300 et 100 km/h | ≈ 60 et ≈ 12 kN | SNCF |
+| Rampe de 35 ‰ sur une rame de 430 t | 148 kN | calcul, repris dans la thèse |
+
+Chiffres du modèle de référence (à reproduire, pas des mesures) : Duplex 0 → 300 km/h en 289 s sur 15,3 km ; vitesse d'équilibre de 184 km/h en rampe de 35 ‰ ; roue libre depuis 300 km/h : 250 km/h après 119 s et 9 km.
+
+Comportements : frein serré, la rame tient sur 35 ‰ ; frein desserré sans traction, elle part en arrière ; P5 la fait démarrer en rampe de 35 ‰ ; une rame sans motrice ne tracte pas ; même résultat à 1 % près avec un pas d'affichage de 1/60 s ou de 0,1 s.
+
+## Décisions prises, à confirmer
+
+- **Crans de traction conservés**, frein à touches séparées (le manipulateur réel est continu ; les crans restent plus jouables au clavier).
+- **Freins serrés à l'entrée en conduite** plutôt qu'une retenue automatique : c'est le comportement réel, et ça évite qu'un train posé sur une rampe parte tout seul.
+- **TGV M** : mêmes courbes de freinage que le Duplex, masse et résistance estimées. Presque rien n'est publié ; les valeurs sont étiquetées comme estimées dans le code.
+- **Ancienne `Locomotive`** : laissée telle quelle avec sa physique d'arcade. Elle n'est plus accessible depuis l'interface ; la retirer est un nettoyage à part.
+- **Échelles HO / N** : les trains restent en dimensions et vitesses réelles quelle que soit l'échelle, comme aujourd'hui. La physique n'est juste qu'en 1:1.
 
 ## Hors périmètre
 
-- Import OSM, fond de carte, projection
-- Trains dessinés par niveau : les trains sont tracés après tout le réseau, donc un train qui passe **sous** un pont apparaîtra par-dessus le tablier. Corriger ça demande d'entrelacer réseau et trains niveau par niveau dans `Canvas.tsx` : chantier à part
-- Contrôle de cohérence des rampes (une voie de niveau 1 raccordée directement à du niveau 0 est acceptée telle quelle)
-- Raccourci clavier pour monter / descendre
+- Dévers et vitesse limite en courbe : plan dédié ci-dessous
+- Vitesse imposée (régulateur de vitesse du TGV), répartition frein électrique / frein à disques, rail mouillé
+- Raccordement vertical arrondi au pied et au sommet d'une rampe
+- Pilotage depuis un téléphone (voir « Idées notées »)
+- Mise à l'échelle des trains en HO / N ; retrait de l'ancienne `Locomotive`
+
+---
+
+# Ensuite — Dévers et vitesse limite en courbe (plan dédié)
+
+À faire après la physique de conduite. Recherche faite le 2026-10-05 (`tasks/recherche-devers.md`). Ébauche à détailler et à valider le moment venu.
+
+## Principe
+
+- Le dévers ne change pas la vitesse du train : il fixe la vitesse à laquelle une courbe peut être prise. `V_max = √((dévers + insuffisance admise) × R / 11,8)` (km/h, mm, m).
+- Il dépend de la ligne : il faut d'abord une **vitesse limite par section de voie** (héritée d'une vitesse de ligne du projet) et un **type de ligne** (classique ou LGV).
+- Le dévers de chaque courbe est **calculé automatiquement** à partir du rayon et de la vitesse de la ligne (règle SNCF : environ la moitié du dévers d'équilibre sur ligne classique, 70 % sur LGV, plafonné à 160 ou 180 mm), et l'utilisateur peut le corriger.
+- En conduite : accélération transversale non compensée calculée à chaque instant, puis trois niveaux — inconfort, danger, renversement.
+
+## Étapes prévues
+
+- [ ] 1. Données : vitesse limite et type de ligne par section (`sectionMeta`), vitesse de ligne du projet, dévers optionnel par segment courbe, insuffisance admise par matériel ; sauvegarde
+- [ ] 2. Domaine : dévers d'équilibre, règle de calcul automatique, vitesse maximale d'une courbe, limite effective d'une section (la plus basse des deux), rampe de dévers aux extrémités de l'arc
+- [ ] 3. Conduite : insuffisance et accélération transversale sous chaque véhicule (à partir de l'accélération `v²/R` exposée par la physique), seuils inconfort / danger / renversement, déraillement
+- [ ] 4. Diagnostic d'édition : courbe trop serrée pour la vitesse de sa section, signalée comme une pente trop forte
+- [ ] 5. Interface : vitesse limite dans le panneau de section, dévers et vitesse maximale dans le panneau du segment, vitesse limite et survitesse dans le HUD
+- [ ] 6. Tests sur les cas réels : Eckwersheim (945 m, 163 mm : limite 160 km/h, renversement vers 235 km/h), LGV Sud-Est (4 000 m à 300 km/h), ligne classique (1 000 m à 160 km/h)
+
+## Points à trancher au moment du plan
+
+- Modèles de voies miniatures (HO / N) : les courbes de catalogue sont bien plus serrées que la réalité (730 mm en HO ≈ 28 km/h réels) ; la contrainte devra y être désactivée ou seulement indicative
+- Courbes de raccordement : absentes du tracé ; règle minimale proposée par la recherche (dévers qui monte sur une longueur dépendant de la vitesse, à cheval sur le point de tangence)
+- Seuil de renversement : calé sur un seul accident et un seul matériel, à laisser réglable
+
+---
+
+# À faire
+
+- [ ] Contrôle dans le navigateur des raccourcis clavier réassignables (section des paramètres : capture d'une touche, conflit, lettres AZERTY)
+- [ ] Contrôle dans le navigateur des rames TGV articulées (sélecteur de modèle, rendu en contour)
+- [ ] Traiter la branche `feature/curve-angle-rotation-gizmo` (conflits attendus sur `gizmo.ts` et `ToolBar.tsx`)
+- [ ] Arrêt net au butoir (de la vitesse courante à 0) : choix à faire par l'utilisateur
+
+## Idées notées (pas encore planifiées)
+
+- **Piloter son train depuis son téléphone** (demandé le 2026-10-05, à faire après la physique de conduite). Le téléphone ouvre une page simple (manette : traction, frein avec pression, inverseur, urgence, vitesse) et se connecte au navigateur qui fait tourner la simulation, par exemple en scannant un QR code affiché à l'écran. Points à trancher au moment du plan :
+  - le site est statique (GitHub Pages), donc pas de serveur à nous : soit une liaison directe entre les deux navigateurs (WebRTC, avec un petit service public pour la mise en relation), soit un relais WebSocket à héberger ;
+  - le navigateur de bureau reste le seul à simuler ; le téléphone n'envoie que des commandes et reçoit la télémétrie ;
+  - retour haptique (vibration) et capteurs du téléphone pour l'immersion, si le navigateur mobile le permet.
+
+Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été vérifié dans le navigateur à ce jour : il n'y a pas de test d'interface.
+
+---
+
+# Défauts connus (non traités)
+
+## Pose et édition des voies
+
+- Ciseaux sur un nœud : segment détaché arbitraire, et priorité du nœud sur le segment à faible zoom
+- Fermeture de boucle sur un nœud existant : l'aperçu diffère de la pose
+- `turnoutRadius` non branché
+- Mode catalogue Kato inatteignable ; arrondi 0,1 m non adapté aux échelles modélisme
+- Chevauchement partiel de deux courbes non fusionné ; réconciliation limitée à 40 opérations par appel
+- Anciens aiguillages dessinés à la main entre 15° et 45° devenus infranchissables
+- `findPath` / `reachableFrom` faux sur les doubles croisements (sans appelant hors tests)
+- Gabarits non branchés à l'interface (liaison croisée, évitement, boucle de retournement — cette dernière infranchissable)
+
+## Trains
+
+- Couper un rail sous un train retire les véhicules posés dessus (annulable)
+- Une pose libre au milieu d'un train peut le chevaucher
+- Pas de collision entre les deux voies d'une traversée ni au gabarit d'un aiguillage ; pas d'auto-collision sur une boucle plus courte que le train
+- Un scénario où `notify()` redéfinit les rôles des branches sous un train le décale de 5 m, à examiner
+- En pose aimantée le sens `R` est relatif au train, en pose libre il est relatif au segment
+- Rames articulées : bout libre d'une remorque sans porte-à-faux (le bogie dépasse de 1,35 m) ; fantôme d'une remorque posée contre une motrice dessiné sans son extension ; cotes TGV M en grande partie estimées
+- Contrôle du raccord d'arrivée de l'outil courbe (`checkCurveJoins`) couvert seulement par les tests de l'agent qui l'a écrit
+
+## Pilotage et interface
+
+- Pas d'indication « aiguille occupée » sur le canevas ; pictogramme d'aiguillage dans le HUD non fait
+- Faisceau debug en marche arrière : part du premier véhicule et non de la queue
+- Boutons de la barre d'outils cliquables en conduite ; raccourcis globaux actifs quand la fenêtre des paramètres est ouverte (hors capture)
+- Réseaux déjà enregistrés : gardent le nom « Untitled Network »
+- Thème clair des éléments flottants et styles de boutons non unifiés
+
+## Niveaux et pentes
+
+- Un clic sur une voie sélectionne toute la section : le compteur de niveau lève tous ses nœuds ensemble ; pour n'en lever qu'une partie il faut la sélectionner seule
+- Une soudure ou une découpe entre deux hauteurs distantes de moins d'un demi-niveau aligne la voie sur le nœud conservé : sa pente change sans avertissement
+- Changer d'échelle remet la hauteur d'un niveau et la pente maximale aux valeurs de l'échelle (comme l'entraxe) ; la fenêtre des paramètres marque le projet modifié à chaque enregistrement
+- En vue à plusieurs niveaux, `renderNetwork` (et `computeTrackSections`) tourne une fois par niveau visible plus une : coût à mesurer sur un grand réseau
+- Pointillés du tunnel repris à zéro à chaque morceau de rail ; en vue simplifiée le tunnel n'a pas de style ; pas des traverses légèrement différent de part et d'autre d'une coupe dans le SVG
+- `detectCrossings` ne voit pas un croisement sans nœud qui tombe exactement sur un sommet de la polyligne d'une courbe (défaut ancien, aussi sur des voies à plat)
+- Debug des trains possiblement masqué par un pont ; tablier calé sur la constante `GAUGE`, comme les rails
+- `NodePanel` change la sélection avant d'appeler le store (comme sa suppression) : une méthode dédiée serait plus propre ; `heightBand` / `segmentLevelPieces` auraient leur place dans le domaine
+- Figeage de la barre au survol et élargissement des valeurs sans test automatique
+
+## Code à retirer ou à brancher
+
+- Ancienne `Locomotive` (rendu compris), `TrainBuilderPalette`, repli glisser au pointeur dans `Canvas.tsx`, Tab et `[` `]` en courbe
+- Extraction des outils de `Canvas.tsx` vers `IToolStrategy`
+
+---
+
+# Table d'itinéraires par nœud
+
+Validé le 2026-10-05 (plan : `~/.claude/plans/swirling-foraging-planet.md`, état des lieux : `tasks/audit-construction-circulation.md`). Travail fait dans un worktree, branche `feature/node-route-table`. Pas de commit tant que l'utilisateur ne le demande pas.
+
+## Plan
+
+- [x] 1. Modèle : `Junction` = table d'itinéraires (`passages`, `positions`, `active`), lue par `turnoutView`
+- [x] 2. `models/routing.ts` : une seule réponse à « ce train peut-il passer de ce rail à celui-là » pour les trains, la recherche de chemin et le dessin
+- [x] 3. Trains (`locomotive.ts`), recherche de chemin (`pathfinding.ts`), dessin, export SVG, panneau latéral, menu contextuel : lecture par la table
+- [x] 4. Stabilité : `syncJunctions` ne redevine plus un aiguillage qui a ses rails ; `replaceJunctionRail` aux coupes, fusions et doublons
+- [x] 5. L'outil aiguillage déclare son aiguillage (`declareBranchOff`)
+- [x] 6. Sauvegarde version 2, lecture des fichiers version 1, compteur d'identifiants resynchronisé avant la réconciliation
+- [x] 7. Tests, `npm test`, `npm run typecheck`, `npm run build`
+- [ ] 8. Contrôle dans le navigateur
+- [ ] 9. Fusion avec le chantier « niveaux » non commité (conflits attendus : `junction.ts`, `network.ts`, `reconcile.ts`, `crossing.ts`, `persistence.ts`, `constructionTemplates.ts`)
+
+## Revue
+
+- `vitest` : 711 tests verts (39 fichiers) ; `tsc --noEmit` et `npm run build` verts.
+- Relecture indépendante faite, avec comparaison de l'ancien et du nouveau routage sur 28 formes de nœud : aucune forme où un train qui passait est bloqué ou dévié. Ses sept constats sont corrigés et couverts par un test chacun.
+- Écarts par rapport au plan :
+  - une branche tordue au-delà de 15° perd sa place dans la table (et l'aiguillage disparaît s'il ne reste qu'une branche), au lieu de garder une position morte qui coupait la voie principale ;
+  - un rail qui prolonge une branche à travers la pointe fait du nœud un croisement de deux voies : la table est retirée ;
+  - une fourche est proposée dès qu'un seul rail a deux ou trois continuations, même si d'autres rails ne font que croiser le nœud ;
+  - `syncJunctions` est resté dans `junction.ts` (pas de fichier `junctionSync.ts`).
+- Changements visibles : plus d'« aiguillage incomplet » sur une fourche sans tige ; `placeTurnout` ne déclare rien sans tige.
+- Non fait : contrôle dans le navigateur ; aiguilles couplées et appareils à deux tiges (le modèle les permet, aucun outil ne les pose).
+- Restes connus : recul à travers une aiguille fermée (R6), wagons supprimés en coupant sous un train (R5), collisions sur traversée (R15) ; `findJunctionAtNode` linéaire en nombre de tables.

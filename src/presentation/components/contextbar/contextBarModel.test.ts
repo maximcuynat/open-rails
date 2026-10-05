@@ -1,7 +1,8 @@
+import { computeTrackSections } from '@domain/models/sections'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorStore, JUNCTION_OCCUPIED_REFUSED } from '@application/state/editorStore'
-import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
-import { findJunctionAtNode } from '@domain/models/junction'
+import { addNode, addSegment, resetIdCounter, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
+import { findJunctionAtNode, activeBranchOf } from '@domain/models/junction'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { showToast } from '../common/Toast'
 import { buildContextBar, type ContextBarItem } from './contextBarModel'
@@ -10,6 +11,7 @@ vi.mock('../common/Toast', () => ({ showToast: vi.fn() }))
 
 type Action = Extract<ContextBarItem, { kind: 'action' }>
 type Value = Extract<ContextBarItem, { kind: 'value' }>
+type Stepper = Extract<ContextBarItem, { kind: 'stepper' }>
 
 const bar = (store: EditorStore): ContextBarItem[] => {
   const items = buildContextBar(store)
@@ -28,6 +30,12 @@ const action = (items: ContextBarItem[], id: string): Action => {
 const value = (items: ContextBarItem[], id: string): Value => {
   const found = items.find((i): i is Value => i.kind === 'value' && i.id === id)
   if (!found) throw new Error(`no value "${id}" in the bar`)
+  return found
+}
+
+const stepper = (items: ContextBarItem[], id: string): Stepper => {
+  const found = items.find((i): i is Stepper => i.kind === 'stepper' && i.id === id)
+  if (!found) throw new Error(`no stepper "${id}" in the bar`)
   return found
 }
 
@@ -79,7 +87,11 @@ describe('contextual bar — select tool', () => {
 
     const items = bar(store)
     expect(label(items)).toBe('Nœud')
-    expect(actionLabels(items)).toEqual(['Prolonger', 'Supprimer'])
+    // Voie double cannot double a lone node: it is greyed out, not removed, so Supprimer stays put
+    expect(actionLabels(items)).toEqual(['Prolonger', 'Voie double', 'Supprimer'])
+    // The level of the node, after the actions of the node itself; no slope action without a rail
+    expect(items.map((i) => i.kind)).toEqual(['label', 'action', 'stepper', 'action', 'action'])
+    expect(action(items, 'parallel').disabled).toBe(true)
     expect(action(items, 'delete').tone).toBe('danger')
 
     action(items, 'extend').run()
@@ -94,11 +106,11 @@ describe('contextual bar — select tool', () => {
     store.setSelection({ nodes: new Set([apex.id]), segments: new Set() })
 
     const items = bar(store)
-    expect(actionLabels(items)).toEqual(['Prolonger', 'Aiguiller', 'Inverser D/G', 'Supprimer'])
+    expect(actionLabels(items)).toEqual(['Prolonger', 'Aiguiller', 'Inverser D/G', 'Voie double', 'Supprimer'])
 
-    const before = junction.activeBranch
+    const before = activeBranchOf(junction)
     action(items, 'toggle-junction').run()
-    expect(findJunctionAtNode(store.network, apex.id)!.activeBranch).not.toBe(before)
+    expect(activeBranchOf(findJunctionAtNode(store.network, apex.id)!)).not.toBe(before)
     expect(showToast).not.toHaveBeenCalled()
   })
 
@@ -123,6 +135,7 @@ describe('contextual bar — select tool', () => {
     const items = bar(store)
     expect(label(items)).toBe('2 nœuds')
     expect(actionLabels(items)).toEqual(['Voie double', 'Supprimer'])
+    expect(action(items, 'parallel').disabled).toBe(false)
   })
 
   it('a rail: « Voie », Scinder, Voie double, Supprimer — each one acts on the network', () => {
@@ -131,7 +144,8 @@ describe('contextual bar — select tool', () => {
 
     const items = bar(store)
     expect(label(items)).toBe('Voie')
-    expect(actionLabels(items)).toEqual(['Scinder', 'Voie double', 'Supprimer'])
+    expect(items.map((i) => i.kind)).toEqual(['label', 'stepper', 'action', 'action', 'action', 'action', 'action'])
+    expect(actionLabels(items)).toEqual(['Sens ↔', 'Lisser la pente', 'Scinder', 'Voie double', 'Supprimer'])
 
     action(items, 'parallel').run()
     expect(store.network.segments.size).toBe(2)
@@ -144,6 +158,244 @@ describe('contextual bar — select tool', () => {
     expect(label(bar(store))).toBe('3 voies')
     action(bar(store), 'delete').run()
     expect(store.network.segments.size).toBe(0)
+  })
+})
+
+describe('contextual bar — track levels', () => {
+  it('the level stepper shifts the selected rails by one level, on a multiple selection too', () => {
+    const { store, b, seg } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 })
+    const next = addSegment(store.network, b.id, c.id)!
+    const shift = vi.spyOn(store, 'shiftSelectionLevel')
+
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    stepper(bar(store), 'level').increase.run()
+    expect(shift).toHaveBeenLastCalledWith(1)
+    stepper(bar(store), 'level').decrease.run()
+    expect(shift).toHaveBeenLastCalledWith(-1)
+
+    // A bridge is several rails: the same stepper on the whole selection
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
+    const items = bar(store)
+    expect(label(items)).toBe('2 voies')
+    stepper(items, 'level').increase.run()
+    expect(shift).toHaveBeenLastCalledWith(1)
+    expect(shift).toHaveBeenCalledTimes(3)
+    // The selection is what the store acts on
+    expect([...store.selection.segments]).toEqual([seg.id, next.id])
+  })
+
+  it('a track picked with its nodes (a click on a track) gets the stepper too, for its rails', () => {
+    const { store, seg } = storeWithTrack()
+    const shift = vi.spyOn(store, 'shiftSelectionLevel')
+
+    store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set([seg.id]) })
+    stepper(bar(store), 'level').increase.run()
+    expect(shift).toHaveBeenLastCalledWith(1)
+  })
+
+  it('nodes alone get the stepper too: it shows their heights and shifts them', () => {
+    const { store, a, b } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 }, 2)
+    addSegment(store.network, b.id, c.id)
+
+    // One node: its own height, not that of the rails around it
+    store.setSelection({ nodes: new Set([b.id]), segments: new Set() })
+    expect(stepper(bar(store), 'level')).toMatchObject({ caption: 'Niveau', text: 'Sol' })
+    store.setSelection({ nodes: new Set([c.id]), segments: new Set() })
+    expect(stepper(bar(store), 'level').text).toBe('Pont +2')
+
+    // Several nodes: the span of their heights
+    store.setSelection({ nodes: new Set([a.id, c.id]), segments: new Set() })
+    expect(stepper(bar(store), 'level').text).toBe('0 à +2')
+
+    // The stepper moves the node: its two rails become ramps, the selection is kept
+    store.setSelection({ nodes: new Set([b.id]), segments: new Set() })
+    stepper(bar(store), 'level').increase.run()
+    expect(store.network.nodes.get(b.id)!.level).toBe(1)
+    expect(store.network.nodes.get(a.id)!.level).toBeUndefined()
+    expect([...store.selection.nodes]).toEqual([b.id])
+    expect(stepper(bar(store), 'level').text).toBe('Pont +1')
+    stepper(bar(store), 'level').decrease.run()
+    expect(stepper(bar(store), 'level').text).toBe('Sol')
+
+    // Bounds, on the nodes selected
+    setNodesLevel(store.network, [b.id], MAX_LEVEL)
+    expect(stepper(bar(store), 'level').increase.disabled).toBe(true)
+    expect(stepper(bar(store), 'level').decrease.disabled).toBe(false)
+    setNodesLevel(store.network, [b.id], MIN_LEVEL)
+    expect(stepper(bar(store), 'level').decrease.disabled).toBe(true)
+  })
+
+  it('the bar of a node keeps its shape while its level changes', () => {
+    const { store, b } = storeWithTrack()
+    store.setSelection({ nodes: new Set([b.id]), segments: new Set() })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const onTheGround = shape()
+    for (const level of [1, MAX_LEVEL, -1, MIN_LEVEL, 0.5]) {
+      setNodesLevel(store.network, [b.id], level)
+      expect(shape()).toEqual(onTheGround)
+    }
+  })
+
+  it('« Sens »: next to the level, steps the traffic direction of the selected track in one undo step', () => {
+    const { store, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set([seg.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.id : i.kind))
+    const before = shape()
+    expect(before.indexOf('direction')).toBe(before.indexOf('stepper') + 1)
+    const directionOf = () => computeTrackSections(store.network, store.sectionMeta)[0].direction
+
+    expect(action(bar(store), 'direction')).toMatchObject({ label: 'Sens ↔', active: false, disabled: false })
+    action(bar(store), 'direction').run()
+    expect(directionOf()).toBe('forward')
+    expect(action(bar(store), 'direction')).toMatchObject({ label: 'Sens →', active: true })
+    action(bar(store), 'direction').run()
+    expect(directionOf()).toBe('backward')
+    expect(action(bar(store), 'direction').label).toBe('Sens ←')
+    // Same buttons at the same places whatever the direction
+    expect(shape()).toEqual(before)
+
+    store.undo()
+    expect(directionOf()).toBe('forward')
+    // Undo clears the selection
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    action(bar(store), 'direction').run()
+    action(bar(store), 'direction').run()
+    expect(directionOf()).toBe('two_way')
+
+    // Nodes alone have no direction to set
+    store.setSelection({ nodes: new Set([seg.from]), segments: new Set() })
+    expect(shape()).not.toContain('direction')
+  })
+
+  it('« Lisser la pente »: always there for rails, greyed out when there is nothing to even out', () => {
+    const { store, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const can = vi.spyOn(store, 'canSpreadSelectionGradient', 'get')
+    const spread = vi.spyOn(store, 'spreadSelectionGradient').mockReturnValue(true)
+
+    can.mockReturnValue(false)
+    const greyed = shape()
+    expect(action(bar(store), 'spread-gradient')).toMatchObject({ label: 'Lisser la pente', disabled: true })
+
+    can.mockReturnValue(true)
+    expect(action(bar(store), 'spread-gradient').disabled).toBe(false)
+    // Same items, same order: only the state of the button changed
+    expect(shape()).toEqual(greyed)
+    expect(greyed.indexOf('Lisser la pente')).toBe(greyed.indexOf('stepper') + 2)
+
+    action(bar(store), 'spread-gradient').run()
+    expect(spread).toHaveBeenCalledTimes(1)
+
+    // With the nodes of the track in the selection as well (a click on a track)
+    store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set([seg.id]) })
+    expect(action(bar(store), 'spread-gradient').disabled).toBe(false)
+    can.mockReturnValue(false)
+    expect(action(bar(store), 'spread-gradient').disabled).toBe(true)
+
+    // Nodes alone: no rail to even out, no button
+    store.setSelection({ nodes: new Set([seg.from]), segments: new Set() })
+    expect(actions(bar(store)).some((a) => a.id === 'spread-gradient')).toBe(false)
+  })
+
+  it('« Lisser la pente » on an uneven run of three rails: active, then greyed out once it has run', () => {
+    const { store, a, b, seg } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 }, 1)
+    const d = addNode(store.network, { x: 600, y: 0 }, 1)
+    const second = addSegment(store.network, b.id, c.id)!
+    const third = addSegment(store.network, c.id, d.id)!
+    // Heights 0, 0, 1, 1: the whole climb is on the middle rail
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, second.id, third.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const before = shape()
+    expect(action(bar(store), 'spread-gradient').disabled).toBe(false)
+
+    action(bar(store), 'spread-gradient').run()
+    const heights = [a, b, c, d].map((n) => store.network.nodes.get(n.id)!.level ?? 0)
+    expect(heights[0]).toBe(0)
+    expect(heights[1]).toBeCloseTo(1 / 3)
+    expect(heights[2]).toBeCloseTo(2 / 3)
+    expect(heights[3]).toBe(1)
+    expect(action(bar(store), 'spread-gradient').disabled).toBe(true)
+    expect(shape()).toEqual(before)
+    expect(stepper(bar(store), 'level').text).toBe('0 à +1')
+  })
+
+  /** Put a rail flat at `level`: both its nodes */
+  const setRailLevel = (store: EditorStore, seg: { from: string; to: string }, level: number) =>
+    setNodesLevel(store.network, [seg.from, seg.to], level)
+
+  it('the bar keeps the same items, in the same order, whatever the level: nothing moves between two clicks', () => {
+    const { store, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const onTheGround = shape()
+
+    expect(stepper(bar(store), 'level')).toMatchObject({ caption: 'Niveau', text: 'Sol' })
+    for (const level of [1, 2, MAX_LEVEL, -1, MIN_LEVEL]) {
+      setRailLevel(store, seg, level)
+      expect(shape()).toEqual(onTheGround)
+    }
+    setRailLevel(store, seg, 1)
+    expect(stepper(bar(store), 'level').text).toBe('Pont +1')
+    setRailLevel(store, seg, -2)
+    expect(stepper(bar(store), 'level').text).toBe('Tunnel −2')
+  })
+
+  it('a ramp shows the heights of its two ends, in a short form', () => {
+    const { store, a, b, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const onTheGround = shape()
+
+    setNodesLevel(store.network, [b.id], 1)
+    expect(stepper(bar(store), 'level').text).toBe('0 à +1')
+    expect(shape()).toEqual(onTheGround)
+    setNodesLevel(store.network, [a.id], -1)
+    expect(stepper(bar(store), 'level').text).toBe('−1 à +1')
+    // A node left by a cut half-way up
+    setNodesLevel(store.network, [a.id], 0.5)
+    expect(stepper(bar(store), 'level').text).toBe('+0,5 à +1')
+    setNodesLevel(store.network, [b.id], 0.5)
+    expect(stepper(bar(store), 'level').text).toBe('Pont +0,5')
+  })
+
+  it('a selection across several levels shows the span, in a short form', () => {
+    const { store, a, b, seg } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 }, 1)
+    const d = addNode(store.network, { x: 600, y: 0 }, 1)
+    addSegment(store.network, b.id, c.id)
+    const bridge = addSegment(store.network, c.id, d.id)!
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, bridge.id]) })
+    expect(stepper(bar(store), 'level').text).toBe('0 à +1')
+    setNodesLevel(store.network, [a.id, b.id], MIN_LEVEL)
+    setNodesLevel(store.network, [c.id, d.id], MAX_LEVEL)
+    expect(stepper(bar(store), 'level').text).toBe('−5 à +5')
+  })
+
+  it('+ is disabled at the top level and − at the bottom one', () => {
+    const { store, b, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    const disabled = () => {
+      const level = stepper(bar(store), 'level')
+      return { up: !!level.increase.disabled, down: !!level.decrease.disabled }
+    }
+    expect(disabled()).toEqual({ up: false, down: false })
+
+    setRailLevel(store, seg, MAX_LEVEL)
+    expect(disabled()).toEqual({ up: true, down: false })
+    setRailLevel(store, seg, MIN_LEVEL)
+    expect(disabled()).toEqual({ up: false, down: true })
+
+    // Mixed selection: a button stays available as long as one node can still move
+    const c = addNode(store.network, { x: 400, y: 0 })
+    const next = addSegment(store.network, b.id, c.id)!
+    setRailLevel(store, seg, MAX_LEVEL)
+    setNodesLevel(store.network, [c.id], 0)
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
+    expect(disabled()).toEqual({ up: false, down: false })
   })
 })
 

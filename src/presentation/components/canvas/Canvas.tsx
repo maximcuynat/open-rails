@@ -3,7 +3,7 @@ import { clampScale, screenToWorld, type Camera } from '@infrastructure/render/c
 import {
   renderGrid,
   renderBaseboard,
-  renderNetwork,
+  renderNetworkWithTrains,
   renderScaleBar,
   renderDetailedCurveRails,
   renderDetailedRailLines,
@@ -15,11 +15,17 @@ import {
   pickSpacing,
   SIMPLIFY_THRESHOLD,
   GAUGE,
+  TUNNEL_VEHICLE_ALPHA,
+  inLevelBand,
+  vehicleLevel,
+  type LevelBand,
+  type RenderNetworkOptions,
 } from '@infrastructure/render/renderer'
 import {
   addNode,
   addSegment,
   addCurveChain,
+  nodeLevel,
   hitNode,
   hitSegment,
   snapToGrid,
@@ -341,17 +347,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       : null
     const pendingNodeId = pendingPlacementNodeId(store)
 
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, {
+    const networkOptions: RenderNetworkOptions = {
       tool: store.tool,
       gauge: store.gauge,
+      gradient: { levelHeight: store.levelHeight, maxGradient: store.maxGradient },
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
       quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
-    })
+    }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
-    if (store.isPlayMode) {
+    const drawDrivingRoute = (): void => {
+      if (!store.isPlayMode) return
       const driven = store.selectedTrain
       const loco = store.trains.length === 0 ? store.locomotive : null
       if (driven) {
@@ -366,44 +374,62 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    // Render trains on top of the track network
-    if (store.trains.length > 0) {
-      for (const t of store.trains) {
-        const isSelected = store.isTrainSelected && t.id === store.selectedTrainId
-        const deleteVehicleId = (store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle?.train.id === t.id)
-          ? store.hoveredTrainDeleteVehicle.vehicleId
-          : null
-        renderTrainSet(
-          ctx,
-          cam,
-          rect.width,
-          rect.height,
-          store.network,
-          t,
-          isSelected,
-          false,
-          store.showTrainDebug,
-          {
-            speed: t.currentSpeed,
-            maxSpeed: t.maxSpeed,
-            ...trainDriveTelemetry(t),
-            debugOptions: store.trainDebugOptions,
-          },
-          isSelected ? store.selectedTrainVehicleId : null,
-          deleteVehicleId,
-        )
+    // Trains on top of the track network. With `band` (bridges or tunnels in view): only the
+    // vehicles standing on those track levels, so that the next level up can cover them.
+    const drawTrains = (band?: LevelBand): void => {
+      if (store.trains.length > 0) {
+        for (const t of store.trains) {
+          const isSelected = store.isTrainSelected && t.id === store.selectedTrainId
+          const deleteVehicleId = (store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle?.train.id === t.id)
+            ? store.hoveredTrainDeleteVehicle.vehicleId
+            : null
+          renderTrainSet(
+            ctx,
+            cam,
+            rect.width,
+            rect.height,
+            store.network,
+            t,
+            isSelected,
+            false,
+            store.showTrainDebug,
+            {
+              speed: t.currentSpeed,
+              maxSpeed: t.maxSpeed,
+              ...trainDriveTelemetry(t),
+              debugOptions: store.trainDebugOptions,
+            },
+            isSelected ? store.selectedTrainVehicleId : null,
+            deleteVehicleId,
+            band,
+          )
+        }
+      } else if (store.locomotive) {
+        // The legacy consist is one block: it takes the level of the rail under its power car
+        const level = vehicleLevel(store.network, store.locomotive)
+        if (!inLevelBand(level, band)) return
+        if (level < 0) {
+          ctx.save()
+          ctx.globalAlpha = TUNNEL_VEHICLE_ALPHA
+        }
+        const isDeleteHovered = store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle !== null
+        renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected, {
+          speed: store.locomotiveCurrentSpeed,
+          maxSpeed: store.locomotiveMaxSpeed,
+          throttle: store.locomotiveThrottle,
+          acceleration: store.locomotiveAcceleration,
+          braking: store.locomotiveBraking,
+          debugOptions: store.trainDebugOptions,
+        }, isDeleteHovered)
+        if (level < 0) ctx.restore()
       }
-    } else if (store.locomotive) {
-      const isDeleteHovered = store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle !== null
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected, {
-        speed: store.locomotiveCurrentSpeed,
-        maxSpeed: store.locomotiveMaxSpeed,
-        throttle: store.locomotiveThrottle,
-        acceleration: store.locomotiveAcceleration,
-        braking: store.locomotiveBraking,
-        debugOptions: store.trainDebugOptions,
-      }, isDeleteHovered)
     }
+
+    // Network, driving route and trains: interleaved level by level when a bridge is in view
+    renderNetworkWithTrains(
+      ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta,
+      networkOptions, drawTrains, drawDrivingRoute,
+    )
 
     // Render coupler points in coupling mode
     if (store.tool === 'coupling') {
@@ -1202,9 +1228,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               endId = endJoin.nodeId
             } else if (endJoin?.segId) {
               const splitRes = splitSegment(store.network, endJoin.segId, endPos)
-              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos, nodeLevel(startNode)).id
             } else {
-              const endNode = addNode(store.network, endPos)
+              const endNode = addNode(store.network, endPos, nodeLevel(startNode))
               endId = endNode.id
               endsInOpenSpace = true
             }
@@ -1220,10 +1246,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const parPieces = pieces.map((p) => computeParallelCurve(p.start, p.via, p.end, store.parallelOffset))
               let secStartId = store.parallelLastNodeId
               if (!secStartId) {
-                const s2 = addNode(store.network, parPieces[0].start)
+                const s2 = addNode(store.network, parPieces[0].start, nodeLevel(startNode))
                 secStartId = s2.id
               }
-              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end)
+              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end, nodeLevel(store.network.nodes.get(endId)))
 
               addCurveChain(store.network, secStartId, endNode2.id, parPieces)
 
@@ -1278,7 +1304,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   const off = store.parallelOffset
 
                   // Voie principale : lastNodeId -> snappedWorld
-                  const endNode = addNode(store.network, snappedWorld)
+                  const endNode = addNode(store.network, snappedWorld, nodeLevel(startNode))
                   addSegment(store.network, store.lastNodeId, endNode.id)
 
                   // Voie secondaire : startNode+offset -> snappedWorld+offset
@@ -1287,10 +1313,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   // Creer ou recuperer le noeud de depart secondaire
                   let startNodeId2 = store.parallelLastNodeId
                   if (!startNodeId2) {
-                    const s2 = addNode(store.network, startPos2)
+                    const s2 = addNode(store.network, startPos2, nodeLevel(startNode))
                     startNodeId2 = s2.id
                   }
-                  const endNode2 = addNode(store.network, endPos2)
+                  const endNode2 = addNode(store.network, endPos2, nodeLevel(startNode))
                   addSegment(store.network, startNodeId2, endNode2.id)
 
                   store.parallelMode = true
@@ -1340,12 +1366,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   const off = store.parallelOffset
 
                   // Voie principale
-                  const endNode = addNode(store.network, snappedWorld)
+                  const endNode = addNode(store.network, snappedWorld, nodeLevel(mainStart))
                   addSegment(store.network, store.lastNodeId, endNode.id)
 
                   // Voie secondaire (meme direction, decalee)
                   const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
-                  const endNode2 = addNode(store.network, endPos2)
+                  const endNode2 = addNode(store.network, endPos2, nodeLevel(mainStart))
                   addSegment(store.network, store.parallelLastNodeId, endNode2.id)
 
                   store.lastNodeId = endNode.id
@@ -1446,9 +1472,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   ? store.hoverSegSteps.nearest
                   : endPos
                 const splitRes = splitSegment(store.network, hitSegId, targetEnd)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd, nodeLevel(startNode)).id
               } else {
-                const endNode = addNode(store.network, endPos)
+                const endNode = addNode(store.network, endPos, nodeLevel(startNode))
                 endId = endNode.id
                 endsInOpenSpace = true
               }
@@ -2331,9 +2357,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const hitSegId = hitSegment(store.network, endPos, hitTol)
               if (hitSegId) {
                 const splitRes = splitSegment(store.network, hitSegId, endPos)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos, nodeLevel(startNode)).id
               } else {
-                const endNode = addNode(store.network, endPos)
+                const endNode = addNode(store.network, endPos, nodeLevel(startNode))
                 endId = endNode.id
                 endsInOpenSpace = true
               }

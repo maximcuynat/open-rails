@@ -1,6 +1,7 @@
 import type { Network, NodeId, SegmentId, Point, Segment } from '../models/types'
 import { segmentTangentAt, MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import { placementThresholds } from '../geometry/scale'
+import { segmentEndLevels, segmentGradient } from '../models/network'
 
 export type KinematicIssueKind =
   | 'sharp_turn'          // Angle cassé (> MAX_TRANSITION_DEFLECTION_DEG) entre 2 rails sans continuité
@@ -8,6 +9,7 @@ export type KinematicIssueKind =
   | 'opposing_facing'     // 2 aiguillages face-à-face à contre-sens immédiat
   | 'dead_end_conflict'   // Voie menant à une butée sans transition fluide
   | 'track_gap'           // 2 extrémités de voie face à face, proches mais non raccordées
+  | 'steep_gradient'      // Rampe plus raide que la pente maximale du projet
 
 export interface KinematicIssue {
   id: string
@@ -17,6 +19,8 @@ export interface KinematicIssue {
   angleDeg?: number
   /** For 'track_gap': distance in meters between the two rail ends */
   gapMeters?: number
+  /** For 'steep_gradient': slope of the rail in ‰ (always positive) */
+  gradientPermille?: number
   message: string
   involvedSegmentIds: SegmentId[]
 }
@@ -129,12 +133,44 @@ function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
   return issues
 }
 
+/** A slope in ‰ as shown to the user: one decimal at most, with a decimal comma */
+const formatPermille = (permille: number): string => String(Math.round(permille * 10) / 10).replace('.', ',')
+
+/** One issue per ramp steeper than the limit, reported at its lower end */
+function detectSteepGradients(net: Network, limits: GradientLimits): KinematicIssue[] {
+  const issues: KinematicIssue[] = []
+  for (const seg of net.segments.values()) {
+    const permille = Math.abs(segmentGradient(net, seg, limits.levelHeight))
+    if (permille <= limits.maxGradient + 1e-6) continue
+    const ends = segmentEndLevels(net, seg)
+    issues.push({
+      id: `steep-${seg.id}`,
+      nodeId: ends.from <= ends.to ? seg.from : seg.to,
+      kind: 'steep_gradient',
+      severity: 'warning',
+      // One decimal: a slope just over the limit must not read as the limit itself
+      gradientPermille: Math.round(permille * 10) / 10,
+      message: `Pente de ${formatPermille(permille)} ‰, au-delà du maximum de ${formatPermille(limits.maxGradient)} ‰`,
+      involvedSegmentIds: [seg.id],
+    })
+  }
+  return issues
+}
+
+/** What a slope is measured against: the height of one level (world metres) and the steepest slope allowed (‰) */
+export interface GradientLimits {
+  levelHeight: number
+  maxGradient: number
+}
+
 /**
  * Scan the network and detect all kinematic and directional issues.
  * `gauge` scales the distance under which two facing rail ends are reported as a gap.
+ * `gradient` turns on the report of ramps steeper than the project allows.
  */
-export function analyzeKinematics(net: Network, gauge?: number): KinematicIssue[] {
+export function analyzeKinematics(net: Network, gauge?: number, gradient?: GradientLimits): KinematicIssue[] {
   const issues: KinematicIssue[] = detectTrackGaps(net, gauge)
+  if (gradient) issues.push(...detectSteepGradients(net, gradient))
   const maxDeflection = MAX_TRANSITION_DEFLECTION_DEG + 1e-6
 
   for (const node of net.nodes.values()) {

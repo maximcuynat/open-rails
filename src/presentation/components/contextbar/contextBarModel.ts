@@ -1,8 +1,11 @@
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { findJunctionAtNode } from '@domain/models/junction'
+import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatAngle } from '@domain/models/units'
+import { computeTrackSections, findSectionBySegment, type SectionDirection } from '@domain/models/sections'
 import { showToast } from '../common/Toast'
+import { levelRange, levelRangeLabel, nodeLevelRange } from '../common/trackLevel'
 import { getGizmoAnchor } from '../canvas/gizmo'
 import {
   describeCurve,
@@ -24,6 +27,11 @@ export type ContextBarItem =
   | { kind: 'label'; text: string }
   /** A live value (length, radius, typed number, refusal reason…) */
   | { kind: 'value'; id: string; text: string; caption?: string; tone?: ContextBarTone }
+  /**
+   * A value stepped down and up by two buttons that never move: the value sits between them in a
+   * slot of constant width, so the same button can be clicked again and again.
+   */
+  | { kind: 'stepper'; id: string; caption: string; text: string; decrease: ContextBarStep; increase: ContextBarStep }
   /** A button. `title` is its tooltip: the action and its shortcut */
   | {
       kind: 'action'
@@ -36,6 +44,22 @@ export type ContextBarItem =
       active?: boolean
       disabled?: boolean
     }
+
+/** One of the two buttons of a stepper. `title` is its tooltip */
+export interface ContextBarStep {
+  title: string
+  run: () => void
+  disabled?: boolean
+}
+
+/** The traffic direction button steps through the settings in this order */
+const DIRECTION_CYCLE: Record<SectionDirection, SectionDirection> = { two_way: 'forward', forward: 'backward', backward: 'two_way' }
+const DIRECTION_ARROW: Record<SectionDirection, string> = { two_way: '↔', forward: '→', backward: '←' }
+const DIRECTION_NAME: Record<SectionDirection, string> = {
+  two_way: 'double sens',
+  forward: 'sens unique, dans le sens de pose',
+  backward: 'sens unique, à contresens de la pose',
+}
 
 const VEHICLE_LABEL = { tgv_loco: 'Motrice TGV', tgv_wagon: 'Voiture' } as const
 
@@ -95,7 +119,62 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
     id: 'parallel',
     label: 'Voie double',
     title: `Créer une voie parallèle à la sélection${store.shortcutHint('edit.parallelTrack')}`,
+    // Greyed out rather than removed: the buttons after it keep their place
+    disabled: !store.canCreateParallelTrack,
     run: () => { store.createParallelTrackFromSelection() },
+  }
+
+  // Track level (bridge / tunnel): the heights of the nodes of the selected rails, or of the
+  // selected nodes when no rail is selected (what `shiftSelectionLevel` acts on). Each node moves
+  // from its own height, so a whole bridge (several rails) goes up in one click. Always shown,
+  // « Sol » included: nothing appears or goes away between two clicks.
+  const range =
+    (segments.size > 0 ? levelRange(store.network, segments) : nodeLevelRange(store.network, nodes)) ?? { min: 0, max: 0 }
+  const level: ContextBarItem = {
+    kind: 'stepper',
+    id: 'level',
+    caption: 'Niveau',
+    text: levelRangeLabel(range),
+    decrease: {
+      title: 'Descendre la sélection d’un niveau : elle passe sous les autres voies (tunnel)',
+      disabled: range.max <= MIN_LEVEL,
+      run: () => { store.shiftSelectionLevel(-1) },
+    },
+    increase: {
+      title: 'Monter la sélection d’un niveau : elle passe au-dessus des autres voies (pont)',
+      disabled: range.min >= MAX_LEVEL,
+      run: () => { store.shiftSelectionLevel(1) },
+    },
+  }
+
+  // Traffic direction of the sections the selected rails belong to. One button that steps through
+  // the three settings; its label has the same width in each, so the buttons after it stay put.
+  const sections = segments.size > 0 ? computeTrackSections(store.network, store.sectionMeta) : []
+  const selectedSections = [
+    ...new Set([...segments].map((sid) => findSectionBySegment(sections, sid)).filter((sec) => sec !== null)),
+  ]
+  const directions = new Set(selectedSections.map((sec) => sec.direction))
+  const currentDirection = directions.size === 1 ? [...directions][0] : null
+  const nextDirection = currentDirection ? DIRECTION_CYCLE[currentDirection] : 'two_way'
+  const direction: ContextBarItem = {
+    kind: 'action',
+    id: 'direction',
+    label: `Sens ${currentDirection ? DIRECTION_ARROW[currentDirection] : '…'}`,
+    title: `Sens de circulation : ${currentDirection ? DIRECTION_NAME[currentDirection] : 'différent selon les voies'}. Cliquer pour passer en ${DIRECTION_NAME[nextDirection]}`,
+    active: currentDirection !== null && currentDirection !== 'two_way',
+    disabled: selectedSections.length === 0,
+    run: () => { store.setSectionsMeta(selectedSections.map((sec) => sec.id), { direction: nextDirection }) },
+  }
+
+  // Even out the slope along a run of rails. Always there when rails are selected, greyed out
+  // when there is nothing to even out: the buttons after it keep their place
+  const spread: ContextBarItem = {
+    kind: 'action',
+    id: 'spread-gradient',
+    label: 'Lisser la pente',
+    title: 'Répartir le dénivelé sur les voies sélectionnées : la même pente d’un bout à l’autre',
+    disabled: !store.canSpreadSelectionGradient,
+    run: () => { store.spreadSelectionGradient() },
   }
 
   if (nodes.size > 0) {
@@ -140,12 +219,16 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
         )
       }
     }
-    if (store.canCreateParallelTrack) items.push(parallel)
-    items.push(remove)
+    // A click on a track selects its nodes along with its rails: the level applies to those rails.
+    // Nodes alone: to the nodes themselves
+    items.push(level)
+    if (segments.size > 0) items.push(direction, spread)
+    items.push(parallel, remove)
     return items
   }
 
   items.push({ kind: 'label', text: segments.size === 1 ? 'Voie' : `${segments.size} voies` })
+  items.push(level, direction, spread)
   items.push({
     kind: 'action',
     id: 'split',

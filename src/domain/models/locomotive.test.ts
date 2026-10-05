@@ -6,7 +6,7 @@ import {
   addCurveSegment,
   resetIdCounter
 } from './network'
-import { addJunction } from './junction'
+import { addJunction, activeBranchOf } from './junction'
 import {
   positionOnSegment,
   createLocomotive,
@@ -175,11 +175,11 @@ describe('locomotive', () => {
     
     // Test steer right
     steerJunction(net, loco!, 'right')
-    expect(junc.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junc)).toBe('diverging')
 
     // Test steer left
     steerJunction(net, loco!, 'left')
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
   })
 
   it('steerJunction steps by 1 on 3-way turnout (left <-> straight <-> right)', () => {
@@ -213,27 +213,27 @@ describe('locomotive', () => {
 
     // Initially straight. Steer left shifts to 'left'
     steerJunction(net, loco!, 'left')
-    expect(junc.activeBranch).toBe('left')
+    expect(activeBranchOf(junc)).toBe('left')
 
     // Steer left again stays at left (limit)
     steerJunction(net, loco!, 'left')
-    expect(junc.activeBranch).toBe('left')
+    expect(activeBranchOf(junc)).toBe('left')
 
     // Steer right shifts by 1 -> straight
     steerJunction(net, loco!, 'right')
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
 
     // Steer right again shifts by 1 -> right
     steerJunction(net, loco!, 'right')
-    expect(junc.activeBranch).toBe('right')
+    expect(activeBranchOf(junc)).toBe('right')
 
     // Steer right again stays at right (limit)
     steerJunction(net, loco!, 'right')
-    expect(junc.activeBranch).toBe('right')
+    expect(activeBranchOf(junc)).toBe('right')
 
     // Steer left shifts back by 1 -> straight
     steerJunction(net, loco!, 'left')
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
   })
 
   describe('findJunctionAhead', () => {
@@ -325,9 +325,9 @@ describe('locomotive', () => {
 
       const loco = createLocomotive(net, sStart.id, 0.5, 20, 10)!
       steerJunction(net, loco, 'right')
-      expect(junction.activeBranch).toBe('diverging')
+      expect(activeBranchOf(junction)).toBe('diverging')
       steerJunction(net, loco, 'left')
-      expect(junction.activeBranch).toBe('straight')
+      expect(activeBranchOf(junction)).toBe('straight')
     })
   })
 

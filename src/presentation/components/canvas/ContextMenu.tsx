@@ -3,6 +3,7 @@ import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } 
 import type { ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../common/Toast'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
+import { turnoutView } from '@domain/models/junction'
 
 interface ContextMenuProps {
   store: EditorStore
@@ -72,7 +73,8 @@ export function ContextMenu({ store }: ContextMenuProps) {
     const junction = target.type === 'junction' && target.id ? store.network.junctions.get(target.id) : null
     if (junction) {
       // Removing a turnout = removing its diverging branch at the points; the main line stays
-      const branches = [junction.divergingSegmentId, junction.divergingRightSegmentId].filter(
+      const turnout = turnoutView(store.network, junction)
+      const branches = [turnout?.divergingSegmentId, turnout?.divergingRightSegmentId].filter(
         (sid): sid is string => !!sid && store.network.segments.has(sid),
       )
       store.selection = { nodes: new Set(), segments: new Set(branches) }

@@ -15,7 +15,10 @@ import {
   weldNodes,
   toggleTurnoutHand,
   turnoutHandFlipSegments,
+  activeBranchOf,
+  turnoutView,
 } from './junction'
+import { openExit } from './routing'
 
 describe('TURNOUT_SPECS', () => {
   it('defines #6 and #4 Kato turnout specs', () => {
@@ -32,9 +35,11 @@ describe('TURNOUT_SPECS', () => {
 describe('addJunction and toggling', () => {
   it('registers and toggles active branch', () => {
     const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
     const apex = addNode(net, { x: 0, y: 0 })
     const straight = addNode(net, { x: 246, y: 0 })
     const div = addNode(net, { x: 240, y: 40 })
+    addSegment(net, stem.id, apex.id)
     const s1 = addSegment(net, apex.id, straight.id)!
     const s2 = addSegment(net, apex.id, div.id)!
 
@@ -49,16 +54,16 @@ describe('addJunction and toggling', () => {
     })
 
     expect(net.junctions.size).toBe(1)
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
 
     toggleJunction(junc)
-    expect(junc.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junc)).toBe('diverging')
 
     toggleJunction(junc)
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
 
     setJunctionBranch(junc, 'diverging')
-    expect(junc.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junc)).toBe('diverging')
 
     expect(findJunctionAtNode(net, apex.id)).toBe(junc)
     expect(findJunctionBySegment(net, s1.id)).toBe(junc)
@@ -72,21 +77,38 @@ describe('addJunction and toggling', () => {
 describe('placeTurnout', () => {
   it('places a Kato #6 turnout with straight and curved branches', () => {
     const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const stemSeg = addSegment(net, stem.id, apex.id)!
     const res = placeTurnout(net, {
-      startPos: { x: 0, y: 0 },
+      startPos: apex.pos,
       direction: { x: 1, y: 0 },
       frogNumber: 6,
       hand: 'left',
+      stemNodeId: apex.id,
     })
 
-    expect(res.junction).toBeDefined()
     expect(res.straightNode.pos.x).toBeCloseTo(246, 1)
     expect(res.straightNode.pos.y).toBeCloseTo(0, 1)
     // Diverging curve turns left (positive y)
     expect(res.divergingNode.pos.y).toBeGreaterThan(0)
-    expect(net.segments.size).toBe(2)
-    expect(net.nodes.size).toBe(3)
+    expect(net.segments.size).toBe(3)
+    expect(net.nodes.size).toBe(4)
     expect(net.junctions.size).toBe(1)
+    const view = turnoutView(net, res.junction)!
+    expect(view.stemSegmentId).toBe(stemSeg.id)
+    expect(view.straightNodeId).toBe(res.straightNode.id)
+    expect(view.divergingNodeId).toBe(res.divergingNode.id)
+    expect(view.hand).toBe('left')
+    expect(view.frogNumber).toBe(6)
+  })
+
+  it('declares nothing when the apex has no rail to be the stem', () => {
+    const net = createNetwork()
+    const res = placeTurnout(net, { startPos: { x: 0, y: 0 }, direction: { x: 1, y: 0 }, frogNumber: 6, hand: 'left' })
+    expect(res.junction).toBeNull()
+    expect(net.segments.size).toBe(2)
+    expect(net.junctions.size).toBe(0)
   })
 })
 
@@ -145,22 +167,28 @@ describe('weldNodes and toggleTurnoutHand', () => {
 
   it('toggles turnout hand left to right by mirroring diverging branch', () => {
     const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    addSegment(net, stem.id, apex.id)
     const res = placeTurnout(net, {
-      startPos: { x: 0, y: 0 },
+      startPos: apex.pos,
       direction: { x: 1, y: 0 },
       frogNumber: 6,
       hand: 'left',
+      stemNodeId: apex.id,
     })
+    const junction = res.junction!
 
     const initialY = res.divergingNode.pos.y
     expect(initialY).toBeGreaterThan(0) // left side (positive y in our math)
+    expect(turnoutView(net, junction)!.hand).toBe('left')
 
-    toggleTurnoutHand(net, res.junction.id)
-    expect(res.junction.hand).toBe('right')
+    toggleTurnoutHand(net, junction.id)
+    expect(turnoutView(net, junction)!.hand).toBe('right')
     expect(res.divergingNode.pos.y).toBeCloseTo(-initialY, 1)
 
-    toggleTurnoutHand(net, res.junction.id)
-    expect(res.junction.hand).toBe('left')
+    toggleTurnoutHand(net, junction.id)
+    expect(turnoutView(net, junction)!.hand).toBe('left')
     expect(res.divergingNode.pos.y).toBeCloseTo(initialY, 1)
   })
 })
@@ -185,11 +213,11 @@ describe('autoDetectJunctions', () => {
 
     const junc = detected[0]
     expect(junc.nodeId).toBe(apex.id)
-    expect(junc.stemNodeId).toBe(stem.id)
-    expect(junc.straightNodeId).toBe(straight.id)
-    expect(junc.divergingNodeId).toBe(div.id)
-    expect(junc.hand).toBe('left')
-    expect(junc.activeBranch).toBe('straight')
+    expect(turnoutView(net, junc)!.stemNodeId).toBe(stem.id)
+    expect(turnoutView(net, junc)!.straightNodeId).toBe(straight.id)
+    expect(turnoutView(net, junc)!.divergingNodeId).toBe(div.id)
+    expect(turnoutView(net, junc)!.hand).toBe('left')
+    expect(activeBranchOf(junc)).toBe('straight')
   })
 
   it('detects a right-hand turnout correctly', () => {
@@ -205,7 +233,7 @@ describe('autoDetectJunctions', () => {
 
     const detected = autoDetectJunctions(net)
     expect(detected.length).toBe(1)
-    expect(detected[0].hand).toBe('right')
+    expect(turnoutView(net, detected[0])!.hand).toBe('right')
   })
 
   it('removes the junction when degree drops below 3', () => {
@@ -233,7 +261,7 @@ describe('autoDetectJunctions', () => {
     expect(net.junctions.size).toBe(0)
   })
 
-  it('detects an incomplete 2-rail turnout apex and upgrades it when stem is added', () => {
+  it('gives no table to two rails forking without a stem, and a turnout once the stem is laid', () => {
     const net = createNetwork()
     const apex = addNode(net, { x: 0, y: 0 })
     const straight = addNode(net, { x: 246, y: 0 })
@@ -242,12 +270,8 @@ describe('autoDetectJunctions', () => {
     addSegment(net, apex.id, straight.id)
     addSegment(net, apex.id, div.id)
 
-    // 1. Incomplete turnout (apex + 2 co-directional branches, no stem)
-    const detected = autoDetectJunctions(net)
-    expect(detected.length).toBe(1)
-    expect(detected[0].nodeId).toBe(apex.id)
-    expect(detected[0].stemNodeId).toBeUndefined()
-    expect(detected[0].hand).toBe('left')
+    // 1. No stem: no train can pass from one branch to the other, there is nothing to choose
+    expect(autoDetectJunctions(net)).toHaveLength(0)
 
     // 2. Add stem from left
     const stem = addNode(net, { x: -100, y: 0 })
@@ -255,7 +279,9 @@ describe('autoDetectJunctions', () => {
 
     const upgraded = autoDetectJunctions(net)
     expect(upgraded.length).toBe(1)
-    expect(upgraded[0].stemNodeId).toBe(stem.id)
+    expect(turnoutView(net, upgraded[0])!.stemNodeId).toBe(stem.id)
+    expect(turnoutView(net, upgraded[0])!.straightNodeId).toBe(straight.id)
+    expect(turnoutView(net, upgraded[0])!.hand).toBe('left')
   })
 
   it('detects a 3-way turnout with 1 stem and 3 diverging branches and cycles branches', () => {
@@ -274,12 +300,12 @@ describe('autoDetectJunctions', () => {
     const detected = autoDetectJunctions(net)
     expect(detected.length).toBe(1)
     const junc = detected[0]
-    expect(junc.hand).toBe('three_way')
+    expect(turnoutView(net, junc)!.hand).toBe('three_way')
     expect(junc.nodeId).toBe(apex.id)
-    expect(junc.stemNodeId).toBe(stem.id)
-    expect(junc.straightNodeId).toBe(straight.id)
-    expect(junc.divergingNodeId).toBe(left.id)
-    expect(junc.divergingRightNodeId).toBe(right.id)
+    expect(turnoutView(net, junc)!.stemNodeId).toBe(stem.id)
+    expect(turnoutView(net, junc)!.straightNodeId).toBe(straight.id)
+    expect(turnoutView(net, junc)!.divergingNodeId).toBe(left.id)
+    expect(turnoutView(net, junc)!.divergingRightNodeId).toBe(right.id)
 
     // findJunctionBySegment works for all 3 branches
     expect(findJunctionBySegment(net, sStraight.id)?.id).toBe(junc.id)
@@ -287,16 +313,16 @@ describe('autoDetectJunctions', () => {
     expect(findJunctionBySegment(net, sRight.id)?.id).toBe(junc.id)
 
     // Branch toggling cycles: straight -> left -> right -> straight
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
     expect(toggleJunction(junc)).toBe('left')
-    expect(junc.activeBranch).toBe('left')
+    expect(activeBranchOf(junc)).toBe('left')
     expect(toggleJunction(junc)).toBe('right')
-    expect(junc.activeBranch).toBe('right')
+    expect(activeBranchOf(junc)).toBe('right')
     expect(toggleJunction(junc)).toBe('straight')
-    expect(junc.activeBranch).toBe('straight')
+    expect(activeBranchOf(junc)).toBe('straight')
   })
 
-  it('detects an incomplete 3-way turnout (3 branches at apex, no stem) and upgrades when stem is added', () => {
+  it('gives no table to three rails fanning out without a stem, and a 3-way once the stem is laid', () => {
     const net = createNetwork()
     const apex = addNode(net, { x: 0, y: 0 })
     const straight = addNode(net, { x: 100, y: 0 })
@@ -307,23 +333,19 @@ describe('autoDetectJunctions', () => {
     addSegment(net, apex.id, left.id)
     addSegment(net, apex.id, right.id)
 
-    // 1. Incomplete 3-way turnout
-    const detected = autoDetectJunctions(net)
-    expect(detected.length).toBe(1)
-    expect(detected[0].hand).toBe('three_way')
-    expect(detected[0].stemNodeId).toBeUndefined()
-    expect(detected[0].straightNodeId).toBe(straight.id)
-    expect(detected[0].divergingNodeId).toBe(left.id)
-    expect(detected[0].divergingRightNodeId).toBe(right.id)
+    expect(autoDetectJunctions(net)).toHaveLength(0)
 
-    // 2. Add stem
     const stem = addNode(net, { x: -100, y: 0 })
     addSegment(net, stem.id, apex.id)
 
     const upgraded = autoDetectJunctions(net)
     expect(upgraded.length).toBe(1)
-    expect(upgraded[0].hand).toBe('three_way')
-    expect(upgraded[0].stemNodeId).toBe(stem.id)
+    const view = turnoutView(net, upgraded[0])!
+    expect(view.hand).toBe('three_way')
+    expect(view.stemNodeId).toBe(stem.id)
+    expect(view.straightNodeId).toBe(straight.id)
+    expect(view.divergingNodeId).toBe(left.id)
+    expect(view.divergingRightNodeId).toBe(right.id)
   })
 })
 
@@ -355,14 +377,17 @@ describe('autoDetectJunctions and the transition deflection limit', () => {
     expect(autoDetectJunctions(mainLineWithBranch(45))).toHaveLength(0)
   })
 
-  it('drops a junction whose branch is bent into a corner', () => {
+  it('drops a junction whose branch is bent into a corner, whatever it was set to', () => {
     const net = mainLineWithBranch(10)
-    autoDetectJunctions(net)
-    expect(net.junctions.size).toBe(1)
+    const [junc] = autoDetectJunctions(net)
+    setJunctionBranch(junc, 'diverging')
+    const view = turnoutView(net, junc)!
     const branchEnd = [...net.nodes.values()][3]
     branchEnd.pos = { x: 0, y: 200 }
     autoDetectJunctions(net)
     expect(net.junctions.size).toBe(0)
+    // The main line is a plain track again
+    expect(openExit(net, junc.nodeId, view.stemSegmentId)).toBe(view.straightSegmentId)
   })
 
   it('still detects the catalog turnouts, whose diverging branch leaves tangent to the stem', () => {
@@ -378,9 +403,9 @@ describe('autoDetectJunctions and the transition deflection limit', () => {
         const detected = autoDetectJunctions(net)
         expect(detected).toHaveLength(1)
         expect(detected[0].nodeId).toBe(apex.id)
-        expect(detected[0].stemNodeId).toBe(stem.id)
-        expect(detected[0].divergingNodeId).toBe(t.divergingNode.id)
-        expect(detected[0].straightNodeId).toBe(t.straightNode.id)
+        expect(turnoutView(net, detected[0])!.stemNodeId).toBe(stem.id)
+        expect(turnoutView(net, detected[0])!.divergingNodeId).toBe(t.divergingNode.id)
+        expect(turnoutView(net, detected[0])!.straightNodeId).toBe(t.straightNode.id)
       }
     }
   })
@@ -407,9 +432,9 @@ describe('turnoutHandFlipSegments', () => {
       const shape = () =>
         new Map([...net.segments.values()].map((s) => [s.id, JSON.stringify([net.nodes.get(s.from)!.pos, s.via ?? null, net.nodes.get(s.to)!.pos])]))
       const before = shape()
-      const named = turnoutHandFlipSegments(net, t.junction)
+      const named = turnoutHandFlipSegments(net, t.junction!)
 
-      expect(toggleTurnoutHand(net, t.junction.id)).toBe(true)
+      expect(toggleTurnoutHand(net, t.junction!.id)).toBe(true)
 
       const after = shape()
       const changed = [...before.keys()].filter((id) => before.get(id) !== after.get(id))

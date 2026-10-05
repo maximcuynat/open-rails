@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
-import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
+import { findJunctionAtNode, findJunctionBySegment, turnoutView } from '@domain/models/junction'
+import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
@@ -16,6 +17,7 @@ import {
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { levelRange, levelRangeLabel, rampSummary } from '../common/trackLevel'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>
@@ -27,6 +29,60 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
       <span className="sp-field-label">{label}</span>
       <span className="sp-field-value">{value}</span>
     </div>
+  )
+}
+
+/**
+ * Heights of the selected rail (of its two nodes) or node, with − / + to send it under or over the
+ * other tracks. `onStep` acts through the store: by default on the current selection.
+ */
+function LevelField({
+  store,
+  range,
+  onStep = (delta) => { store.shiftSelectionLevel(delta) },
+}: {
+  store: EditorStore
+  range: { min: number; max: number }
+  onStep?: (delta: 1 | -1) => void
+}) {
+  const stepButton = (delta: 1 | -1, disabled: boolean) => (
+    <button
+      type="button"
+      style={{
+        width: '22px',
+        height: '22px',
+        padding: 0,
+        fontSize: '13px',
+        fontWeight: 700,
+        lineHeight: 1,
+        borderRadius: '4px',
+        border: '1px solid var(--border)',
+        background: 'var(--paper)',
+        color: 'var(--ink)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.4 : 1,
+      }}
+      disabled={disabled}
+      onClick={() => onStep(delta)}
+      title={delta > 0 ? 'Monter d’un niveau (pont)' : 'Descendre d’un niveau (tunnel)'}
+      aria-label={delta > 0 ? 'Monter d’un niveau' : 'Descendre d’un niveau'}
+    >
+      {delta > 0 ? '+' : '−'}
+    </button>
+  )
+  return (
+    <Field
+      label="Niveau"
+      value={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          {stepButton(-1, range.max <= MIN_LEVEL)}
+          <span style={{ minWidth: '64px', textAlign: 'center', color: range.min === 0 && range.max === 0 ? undefined : 'var(--accent)' }}>
+            {levelRangeLabel(range)}
+          </span>
+          {stepButton(1, range.min >= MAX_LEVEL)}
+        </span>
+      }
+    />
   )
 }
 
@@ -204,7 +260,8 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     .map((sid) => store.network.segments.get(sid))
     .filter((s): s is NonNullable<typeof s> => !!s)
 
-  const junction = findJunctionAtNode(store.network, nodeId)
+  const turnout = turnoutView(store.network, findJunctionAtNode(store.network, nodeId))
+  const junction = turnout ? findJunctionAtNode(store.network, nodeId) : undefined
   const crossing = detectCrossings(store.network).find((c) => c.nodeId === nodeId)
 
   const [x, setX] = useState(node.pos.x)
@@ -237,8 +294,17 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     store.deleteSelection()
   }
 
+  // The panel shows one node, whatever else is selected with it: the level acts on that node alone
+  const shiftNodeLevel = (delta: 1 | -1) => {
+    store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+    store.shiftSelectionLevel(delta)
+  }
+
   const isDeadEnd = adj.length === 1
-  const kinematicIssues = analyzeKinematics(store.network, store.gauge).filter((i) => i.nodeId === nodeId)
+  const kinematicIssues = analyzeKinematics(store.network, store.gauge, {
+    levelHeight: store.levelHeight,
+    maxGradient: store.maxGradient,
+  }).filter((i) => i.nodeId === nodeId)
 
   return (
     <>
@@ -288,10 +354,10 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             }}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" fill="#dc2626" />
-              <rect x="5" y="10" width="14" height="4" rx="1.5" fill="#ffffff" />
+              <path d="M3 9 H14 M3 15 H14" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+              <rect x="15" y="4" width="4" height="16" rx="1" fill="#dc2626" />
             </svg>
-            <span>Fin de voie — Impasse (sens interdit, aucun prolongement)</span>
+            <span>Fin de voie — heurtoir : les trains s’y arrêtent. Point d’accroche pour prolonger la voie.</span>
           </div>
         )}
         <label className="sp-input-row">
@@ -314,26 +380,27 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             onBlur={(e) => applyY(parseFloat(e.target.value) || 0)}
           />
         </label>
+        <LevelField store={store} range={{ min: nodeLevel(node), max: nodeLevel(node) }} onStep={shiftNodeLevel} />
       </div>
 
       {junction && (
         <>
           <div className="sp-subheader">
-            {junction.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${junction.frogNumber ?? 6}`}
+            {turnout?.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${turnout?.frogNumber ?? 6}`}
           </div>
           <div className="sp-section">
             <Field
               label="Déviation"
-              value={junction.hand === 'three_way' ? 'Triple (G / Directe / D)' : junction.hand === 'left' ? 'Gauche' : 'Droite'}
+              value={turnout?.hand === 'three_way' ? 'Triple (G / Directe / D)' : turnout?.hand === 'left' ? 'Gauche' : 'Droite'}
             />
             <Field
               label="Voie active"
               value={
-                junction.activeBranch === 'straight'
+                turnout?.activeBranch === 'straight'
                   ? 'Directe (centre)'
-                  : junction.activeBranch === 'left'
+                  : turnout?.activeBranch === 'left'
                     ? 'Gauche'
-                    : junction.activeBranch === 'right'
+                    : turnout?.activeBranch === 'right'
                       ? 'Droite'
                       : 'Déviée'
               }
@@ -358,7 +425,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             >
               Aiguiller{store.shortcutHint('edit.toggleJunction')}
             </button>
-            {junction.hand !== 'three_way' && (
+            {turnout?.hand !== 'three_way' && (
               <button
                 className="sp-btn-compact"
                 style={{
@@ -377,7 +444,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                 }}
                 title="Inverser le côté de déviation"
               >
-                Inverser {junction.hand === 'left' ? 'D' : 'G'}
+                Inverser {turnout?.hand === 'left' ? 'D' : 'G'}
               </button>
             )}
           </div>
@@ -453,17 +520,18 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   const b = store.network.nodes.get(seg.to)
   if (!a || !b) return <NetworkPanel store={store} />
 
-  const junction = findJunctionBySegment(store.network, segId)
-  const isStraightBranch = junction?.straightSegmentId === segId
-  const isLeftBranch = junction?.divergingSegmentId === segId
-  const isRightBranch = junction?.divergingRightSegmentId === segId
+  const turnout = turnoutView(store.network, findJunctionBySegment(store.network, segId))
+  const junction = turnout ? findJunctionBySegment(store.network, segId) : undefined
+  const isStraightBranch = turnout?.straightSegmentId === segId
+  const isLeftBranch = turnout?.divergingSegmentId === segId
+  const isRightBranch = turnout?.divergingRightSegmentId === segId
   const isBranchActive = junction
-    ? junction.hand === 'three_way'
-      ? (isStraightBranch && junction.activeBranch === 'straight') ||
-        (isLeftBranch && (junction.activeBranch === 'left' || junction.activeBranch === 'diverging')) ||
-        (isRightBranch && junction.activeBranch === 'right')
-      : (isStraightBranch && junction.activeBranch === 'straight') ||
-        (!isStraightBranch && junction.activeBranch === 'diverging')
+    ? turnout?.hand === 'three_way'
+      ? (isStraightBranch && turnout?.activeBranch === 'straight') ||
+        (isLeftBranch && (turnout?.activeBranch === 'left' || turnout?.activeBranch === 'diverging')) ||
+        (isRightBranch && turnout?.activeBranch === 'right')
+      : (isStraightBranch && turnout?.activeBranch === 'straight') ||
+        (!isStraightBranch && turnout?.activeBranch === 'diverging')
     : true
 
   let len = 0
@@ -489,6 +557,13 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   } else {
     len = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
   }
+
+  // Null for a flat rail: nothing more than its level is shown
+  const ramp = rampSummary(store.network, seg, {
+    levelHeight: store.levelHeight,
+    maxGradient: store.maxGradient,
+    unit: store.unit,
+  })
 
   const selectNode = (id: string) => {
     store.setSelection({ nodes: new Set([id]), segments: new Set() })
@@ -559,6 +634,25 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
+        <LevelField store={store} range={levelRange(store.network, [seg.id]) ?? { min: 0, max: 0 }} />
+        {ramp && (
+          <>
+            <Field label="Niveau de départ" value={ramp.from} />
+            <Field label="Niveau d’arrivée" value={ramp.to} />
+            <Field label="Dénivelé" value={ramp.rise} />
+            <Field
+              label="Pente"
+              value={
+                <span
+                  style={ramp.tooSteep ? { color: '#dc2626', fontWeight: 700 } : undefined}
+                  title={ramp.tooSteep ? `Au-delà de la pente maximale (${Math.round(store.maxGradient)} ‰)` : undefined}
+                >
+                  {ramp.gradient}
+                </span>
+              }
+            />
+          </>
+        )}
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
@@ -572,7 +666,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
             <Field
               label="Aiguillage"
               value={
-                junction.hand === 'three_way'
+                turnout?.hand === 'three_way'
                   ? isStraightBranch
                     ? 'Branche directe (centre)'
                     : isLeftBranch
@@ -713,10 +807,10 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
             }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" fill="#dc2626" />
-              <rect x="5" y="10.2" width="14" height="3.6" rx="1" fill="#ffffff" />
+              <path d="M3 9 H14 M3 15 H14" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+              <rect x="15" y="4" width="4" height="16" rx="1" fill="#dc2626" />
             </svg>
-            <span>Fin de voie : voie en impasse (sens interdit)</span>
+            <span>Fin de voie : voie en impasse, fermée par un heurtoir</span>
           </div>
         )}
 
