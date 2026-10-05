@@ -213,6 +213,55 @@ Branche `feature/driving-physics`, pas encore commité. Les crans B1…B5 retir�
 
 ---
 
+# À valider — Niveaux de détail au dézoom (plan du 2026-10-05)
+
+Demande : plus on dézoome, plus le dessin se simplifie, comme une carte en ligne. La vue rapprochée ne change pas.
+
+## Constat
+
+- Le seul palier existant (`SIMPLIFY_THRESHOLD`) ne s'active que sous 0,05 px/m. Entre 0,05 et environ 1,5 px/m, les deux files de rail sont à moins de 2 px l'une de l'autre : on voit un seul trait, mais on paie quatre tracés par rail, les raccords à chaque nœud, un rond par nœud et un heurtoir par bout de voie.
+- Tous les seuils (0,05 ; 0,8 ; 0,9 ; 1,0 ; 3,0) sont en px/m, réglés pour le 1:1. En HO (350 px/m par défaut) ils ne se déclenchent jamais.
+- Les ronds de nœud gardent leur taille à l'écran : en vue d'ensemble ils couvrent la voie.
+- Les trains n'ont aucun palier : bogies et détails sont tracés quelle que soit leur taille à l'écran.
+
+## Principe
+
+Le palier dépend de l'écartement **à l'écran** (`écartement × échelle`, en pixels), pas de l'échelle brute : il vaut donc pour toutes les échelles de modélisme. Une seule fonction pure `trackLod(cam, gauge)` dans `render/lod.ts` ; tous les seuils au même endroit.
+
+| Palier | Écartement à l'écran | Voies | Par-dessus |
+|---|---|---|---|
+| Détail | ≥ 3 px | comme aujourd'hui, inchangé | comme aujourd'hui |
+| Ligne | 0,5 à 3 px | un trait par rail, de la largeur qu'occupaient les deux files (pas de saut visible au passage), tracés regroupés par style, plus de raccords | nœuds : seulement les sélectionnés et les bouts de voie ; heurtoirs masqués ; une flèche de sens par section |
+| Schéma | < 0,5 px | une polyligne par section, points à moins d'un pixel fusionnés, courbes plates tracées droites : le coût suit le nombre de sections, plus le nombre de rails | aucun nœud ; diagnostics regroupés en pastilles avec un compteur ; badges des sections renommées ou sélectionnées seulement |
+
+Dans tous les paliers : un badge qui en recouvrirait un autre n'est pas dessiné (priorité : sélectionné, renommé, puis le plus long).
+
+## Étapes
+
+- [ ] 0. Banc de mesure gardé dans le dépôt (hors de `npm test`) : temps par image à cinq zooms sur 1 000 et 4 000 rails, avec le détail par couche ; relevé de départ
+- [ ] 1. `render/lod.ts` : `trackLod`, seuils en pixels, tests à 1:1 et en HO ; remplacer les comparaisons à `cam.scale` de `renderNetwork` par ce palier (sans changer ce qui s'affiche en 1:1 au zoom par défaut)
+- [ ] 2. Palier Ligne : trait unique par rail, regroupé par style (normal, sélectionné, branche fermée, tunnel), halo de pont ; tests du nombre de tracés
+- [ ] 3. Palier Ligne, par-dessus : nœuds, heurtoirs, flèches de sens
+- [ ] 4. Palier Schéma : polylignes de section calculées une fois dans `networkDerived`, simplifiées selon le zoom ; tests
+- [ ] 5. Badges sans recouvrement ; pastilles de diagnostics regroupés
+- [ ] 6. Trains : silhouette sans bogies au palier Ligne, repère au palier Schéma ; vérifier qu'un train hors champ n'est pas tracé
+- [ ] 7. Mesure finale, `npm test`, `npm run typecheck`, `npm run build`, contrôle dans le navigateur à chaque palier en 1:1 et en HO, captures avant/après aux seuils
+
+Chaque étape est indépendante et peut être commitée seule ; 2 et 4 portent l'essentiel du gain.
+
+## Points à trancher
+
+- Couleur du trait au palier Ligne : couleur du rail (continuité avec la vue rapprochée, proposé) ou couleur de la section (comme le palier simplifié actuel) ? Au palier Schéma : couleur de la section.
+- Nœuds masqués au dézoom : restent-ils cliquables ? Proposé : non, on ne saisit que ce qu'on voit ; la sélection par voie reste possible.
+- Les rails sont tracés avec la constante `GAUGE` (1,435 m) et non l'écartement du projet : à vérifier en HO avant l'étape 1, le palier doit lire le même écartement que le tracé.
+
+## Hors périmètre
+
+- Index spatial pour le tri des rails visibles (utile seulement en vue rapprochée sur un très grand réseau)
+- Tuiles ou image du réseau gardée en cache entre deux images
+
+---
+
 # Fait — Performance du rendu des voies et des sections (2026-10-05)
 
 Demande : optimiser le rendu, sans rien changer à l'aspect (deux files de rail, pas de ballast ni de traverses). Modifications faites sur `feature/driving-physics`, à séparer au commit.
@@ -248,6 +297,14 @@ C'est le premier morceau du pan « signalisation » : il pose la brique commune 
 - En conduite, le HUD affiche la **limite en cours** et la **prochaine limite plus basse avec sa distance**, comme les panneaux réels : annonce en noir sur blanc, limite en vigueur en blanc sur noir.
 - Règle réelle reprise telle quelle : la vitesse basse doit être atteinte quand la **tête** entre dans la zone ; on ne réaccélère que quand la **queue** en est sortie.
 - Courbe prise trop vite : inconfort, danger, puis **déraillement**, avec un bouton **« Remettre sur la voie »**.
+
+## Barre d'outils de gauche : un mode « Signalisation »
+
+Demande de l'utilisateur (2026-10-05). La barre de gauche a déjà deux contenus : les outils de voie, et un mode « train » qui remplace ses boutons (sélection, motrice, voiture, suppression — `isTrainMode` dans `ToolBar.tsx`, sous-modes `trainToolSubMode` du store). Les limites de vitesse puis les signaux prennent la même forme : un troisième contenu, « Signalisation », ouvert par un bouton de la barre.
+
+- Dans ce plan, il contient : Sélection, Limite de vitesse, Supprimer.
+- Il recevra ensuite les signaux, sans changer de place ni de logique : signal de block et signal de trajectoire au niveau simple, sémaphore, carré et repère de LGV au niveau réaliste (voir la feuille de route).
+- Un seul sous-mode actif à la fois ; Échap revient à la sélection puis aux outils de voie, comme pour le mode train.
 
 ## Limite applicable en un point
 
@@ -344,6 +401,7 @@ Rapport entre vitesse de renversement et vitesse limite attendu : environ 1,5 su
 
 ### Phase 2 — Agent B : outil, canevas, panneaux, HUD
 
+- [ ] B0. Mode « Signalisation » de la barre de gauche, sur le modèle du mode train : bouton d'entrée, sous-modes (sélection, limite de vitesse, suppression), retour par Échap ; les zones ne sont sélectionnables et modifiables que dans ce mode, et restent visibles en dehors
 - [ ] B1. Outil « Limite de vitesse » à deux clics, sur le modèle de la mesure : aimant sur la voie, aperçu du trajet et de sa longueur au survol, vitesse réglable dans la barre contextuelle (pas de 10 km/h), Échap en deux temps, raccourci, refus signalé hors voie ou sans chemin
 - [ ] B2. Dessin sobre, dans l'esprit des pentes : un liseré le long de la portion limitée (passe des rails, pour suivre ponts et tunnels) et, à ses deux bouts, la vitesse et les lettres Z / R des pancartes réelles ; masqué au zoom lointain
 - [ ] B3. Sélection d'une zone au clic, panneau latéral (vitesse, longueur, zones chevauchées, supprimer), suppression au clavier, une étape d'annulation par action ; alerte de chevauchement à la pose et marqueur de diagnostic sur la portion commune
@@ -428,20 +486,82 @@ Marqueurs sur le cadran : un repère plein à la limite en cours, un repère cre
 
 ---
 
-# Ensuite — Signalisation (feuille de route, à détailler)
+# Ensuite — Signalisation : un moteur, deux niveaux (feuille de route, à valider)
 
-Recherche faite le 2026-10-05 : `tasks/recherche-signalisation.md` (états de l'art, règles, dessin des signaux). Construit sur la brique « objet attaché à la voie » du plan précédent : un signal est une position sur la voie avec un sens de lecture. Cantons et indications sont **calculés**, seuls les signaux posés et les itinéraires demandés sont stockés.
+Recherches du 2026-10-05 : `tasks/recherche-signalisation.md` (signalisation française réelle, règles, dessin) et `tasks/recherche-signalisation-niveaux.md` (monde simple, deux niveaux, palette). Rien n'est codé. Vient après le plan des limites de vitesse, dont il réutilise la brique « objet attaché à la voie » et le mode « Signalisation » de la barre de gauche.
 
-| Étape | Contenu | Apporte |
+## Choix proposé : un seul moteur, deux niveaux au choix du projet
+
+Demande de l'utilisateur : un **monde simple** (signal de block et signal de trajectoire aux intersections) ou un **monde réaliste** (vrais signaux français, pour un public professionnel ou passionné).
+
+Les deux reposent sur le même calcul : des signaux attachés à la voie, des cantons déduits, l'occupation par les trains, la réservation du trajet. Le signal de block est un sémaphore, le signal de trajectoire est un carré avec son itinéraire. Le niveau simple n'est donc pas un second système : c'est le même, avec moins d'objets, un autre dessin et sans les règles de conduite françaises.
+
+| | Niveau simple | Niveau réaliste |
 |---|---|---|
-| a. Block automatique | signaux posés sur la voie, cantons déduits, occupation par les trains, trois indications (voie libre, avertissement, sémaphore), prochain signal dans le HUD | l'espacement des trains |
-| b. Protection et itinéraires | carrés devant les aiguilles, itinéraires formés et verrouillés, libération au passage de la queue | la sécurité aux aiguilles, les mouvements en gare |
-| d. Vitesse en cabine (LGV) | repères de canton sans feux, afficheur de vitesse-consigne dans le HUD, séquence d'arrêt sur plusieurs cantons | les LGV, donc le matériel TGV actuel |
-| c. Ralentissements | signaux de ralentissement et de rappel pour les voies déviées, vitesses d'aiguillage | le réalisme des entrées en gare |
+| Objets posés | signal de block, signal de trajectoire | sémaphore, carré, repère de LGV ; plus tard les signaux de ralentissement |
+| États affichés | vert, jaune, rouge | les indications françaises (voie libre, avertissement, sémaphore, carré, puis clignotants et ralentissements) |
+| Règles de conduite | tout rouge est un arrêt | sémaphore franchissable en marche à vue après arrêt, carré jamais ; 30 km/h à l'approche d'un signal annoncé fermé ; vitesse en cabine sur LGV |
+| Dessin | un mât et un feu | cibles, plaques, repères réels |
 
-L'étape d passe avant c : elle réutilise le calcul de cantons et ne demande aucun dessin de feux. Chaque étape est jouable seule.
+Le niveau est un **réglage du projet**, modifiable à tout moment et sans conversion : le même signal stocké est relu par l'autre jeu de règles. Les réglages propres au réaliste restent en mémoire quand on repasse en simple.
 
-À trancher au moment du plan : contrôle de vitesse et freinage automatique au franchissement d'un signal fermé, annonce des limites par panneaux le long de la voie, trains pilotés par le jeu.
+Aucun logiciel trouvé ne présente un même réseau en « signaux de jeu » ou en « signaux d'un pays » : cette bascule est une extrapolation à partir d'outils voisins (OSRD de SNCF Réseau, OpenTTD JGR). Elle devra être testée par un aller-retour sur un projet type.
+
+## Point dur : conduire à la main dans un monde simple
+
+Dans les jeux à signalisation simple, les trains sont automatiques. Ici le joueur conduit une rame qui met 3 km à s'arrêter depuis 300 km/h : un signal à deux états, sans annonce, est inconduisible. Le niveau simple a donc dès le départ :
+
+- un troisième état « attention » **calculé** (le signal suivant est fermé) ;
+- dans le HUD, le prochain signal, et le premier signal fermé sur le trajet **quelle que soit sa distance** ;
+- une alerte de freinage quand cette distance approche la distance d'arrêt ;
+- la réservation du trajet prolongée devant le train du joueur jusqu'à sa distance d'arrêt ;
+- un freinage d'urgence au franchissement d'un signal fermé (réglable).
+
+Le train du joueur n'a pas de destination : son trajet est celui que donnent les aiguilles devant lui. Une aiguille prise dans une réservation ne se manœuvre plus.
+
+## Palette du mode « Signalisation »
+
+| Niveau simple | Niveau réaliste |
+|---|---|
+| Sélection | Sélection |
+| Signal de block | Sémaphore (panneau de block) |
+| Signal de trajectoire | Carré |
+| Limite de vitesse | Repère de LGV |
+| Supprimer | Limite de vitesse |
+| | Supprimer |
+
+Commun aux deux : un clic pose un signal du côté de la voie où se trouve le curseur ; une touche inverse son sens ; glisser le long de la voie pose en série avec un espacement réglable ; glisser un signal le déplace. Deux affichages à cocher : cantons colorés, réservations. Au plus trois indications à la pose (aperçu du signal, flèche de sens, couleur des deux cantons créés).
+
+## Ordre de construction
+
+| Rang | Contenu | Jouable |
+|---|---|---|
+| 1 | Signal attaché à la voie : pose avec aperçu et flèche de sens, retournement, suppression ; cantons déduits et colorés quand l'outil est actif | pose seulement |
+| 2 | Occupation et règle de block à trois états ; dessin simple ; HUD (prochain signal, premier signal fermé, alerte de freinage) ; freinage d'urgence au franchissement | **oui : espacement, niveau simple** |
+| 3 | Dessin et règles réalistes de la même règle de block : cible à trois feux, plaque, marche à vue ; réglage du projet et bascule | **oui : block réaliste** |
+| 4 | Réservation de trajets ; signal de trajectoire et carré ; aiguilles immobilisées ; affichage des réservations | oui : intersections et gares |
+| 5 | Pose en série, déplacement d'un signal, rapport de contrôle (cantons trop courts ou trop longs, aiguille sans protection) | confort |
+| 6 | Réaliste seulement : vitesse en cabine des LGV, puis ralentissements pour les voies déviées, puis indications clignotantes | LGV, entrées en gare |
+
+Les rangs 2 et 3 partagent tout le calcul. Chaque rang fera l'objet d'un plan détaillé au moment de le lancer.
+
+## Risques
+
+- **Deux jeux de règles qui divergent** : un seul calcul d'état ; chaque niveau ne fournit qu'une table « état → dessin » et ses règles de conduite ; tests communs.
+- **Canton « toutes branches »** : sans signal de trajectoire devant une aiguille, un seul train bloque toute la bifurcation ; le rapport de contrôle signale les aiguilles sans protection.
+- **Dérive du réaliste** (block manuel, voies de service, manœuvres) : s'en tenir au block automatique, aux carrés, à la vitesse en cabine et aux ralentissements.
+- **Attentes du public professionnel** : aucune enquête trouvée, cette partie de la recherche est une estimation.
+
+## À trancher par l'utilisateur
+
+1. **Un moteur et deux niveaux** (proposé), ou un seul des deux mondes.
+2. **Niveau par défaut d'un nouveau projet** : simple (proposé, plus accessible) ou réaliste.
+3. **Franchissement d'un signal fermé** : freinage d'urgence automatique (proposé, réglable) ou simple alerte.
+4. **Signal à double sens** : deux signaux dos à dos (proposé, c'est aussi le cas réel) ou un seul objet à deux faces.
+
+## Reporté à plus tard
+
+Trains pilotés par le jeu, contrôle de vitesse par balises, panneaux d'annonce des limites le long de la voie, vitesse des aiguillages en voie déviée (avec le rang 6), block manuel, voies de service.
 
 ---
 
