@@ -120,6 +120,14 @@ export interface SerializedProject {
 }
 
 /**
+ * Own copy of the section settings. A saved project (and so every undo step) must not share them
+ * with the editor, which changes them in place.
+ */
+function copySectionMeta(meta: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(meta).map(([id, value]) => [id, { ...value }]))
+}
+
+/**
  * Serialize a railway network into a pure JSON-friendly data structure.
  */
 export function serializeNetwork(
@@ -224,7 +232,7 @@ export function serializeNetwork(
           scale: camera.scale,
         }
       : undefined,
-    sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
+    sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? copySectionMeta(sectionMeta) : undefined,
     gridMode,
     gridSpacing,
     sections: serializedSections,
@@ -433,7 +441,7 @@ export function deserializeNetwork(data: SerializedProject): {
     network: net,
     projectName: typeof data.name === 'string' ? data.name : undefined,
     camera,
-    sectionMeta: data.sectionMeta && typeof data.sectionMeta === 'object' ? data.sectionMeta : undefined,
+    sectionMeta: data.sectionMeta && typeof data.sectionMeta === 'object' ? copySectionMeta(data.sectionMeta) : undefined,
     gridMode: data.gridMode === 'auto' || data.gridMode === 'fixed' ? data.gridMode : undefined,
     gridSpacing: typeof data.gridSpacing === 'number' && data.gridSpacing > 0 ? data.gridSpacing : undefined,
     unit: data.unit,
