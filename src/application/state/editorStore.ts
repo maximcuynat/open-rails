@@ -15,7 +15,15 @@ import {
   serializeNetwork,
   type SerializedProject,
 } from '@infrastructure/persistence/persistence'
-import { loadKeyPreferences, saveKeyPreferences } from '@infrastructure/persistence/preferences'
+import {
+  loadConsolePreference,
+  loadKeyPreferences,
+  loadRemoteHostPreference,
+  saveConsolePreference,
+  saveKeyPreferences,
+  saveRemoteHostPreference,
+} from '@infrastructure/persistence/preferences'
+import { isConsolePreference, type ConsolePreference } from '@application/console/consolePreference'
 import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
 import type { Junction, JunctionId, Network, Point, Selection, Segment } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
@@ -103,6 +111,9 @@ export function trainImpactMessage(speed: number): string {
 }
 
 export type ThemeMode = 'light' | 'dark' | 'auto'
+
+/** Who holds the brake handle of the driven train: this screen and its keyboard, or the phone desk */
+export type BrakeSource = 'local' | 'remote'
 
 export interface CurveState {
   phase: 0 | 1
@@ -513,6 +524,13 @@ export class EditorStore {
 
   // --- UI-facing state ---
   theme: ThemeMode = 'auto'
+  /** Driving console asked for in Affichage; `auto` picks one from the size of the window */
+  consolePreference: ConsolePreference = 'auto'
+  /** Address of this PC on the local network, typed by the user for the phone desk; empty when none */
+  remoteDeskHost = ''
+  /** What each side holds the brake handle on (see `setSelectedTrainBrakeCommand`), and on which train */
+  private brakeHolds: Record<BrakeSource, BrakeCommand> = { local: 'hold', remote: 'hold' }
+  private brakeHoldTrainId: string | null = null
   projectName = DEFAULT_PROJECT_NAME
   dirty = false
 
@@ -599,6 +617,9 @@ export class EditorStore {
 
   constructor() {
     this.loadKeyPreferences()
+    const savedConsole = loadConsolePreference()
+    if (isConsolePreference(savedConsole)) this.consolePreference = savedConsole
+    this.remoteDeskHost = loadRemoteHostPreference()
     this.loadPersistedState()
     this.pushHistorySnapshot()
   }
@@ -1088,6 +1109,22 @@ export class EditorStore {
 
   setTheme = (t: ThemeMode): void => {
     this.theme = t
+    this.notify()
+  }
+
+  /** Choose the driving console; the choice follows the user across projects */
+  setConsolePreference = (preference: ConsolePreference): void => {
+    if (this.consolePreference === preference) return
+    this.consolePreference = preference
+    saveConsolePreference(preference)
+    this.notify()
+  }
+
+  /** Kept as typed: whoever builds the pairing address validates it */
+  setRemoteDeskHost = (host: string): void => {
+    if (this.remoteDeskHost === host) return
+    this.remoteDeskHost = host
+    saveRemoteHostPreference(host)
     this.notify()
   }
 
@@ -2065,6 +2102,7 @@ export class EditorStore {
   togglePlayMode = (): void => {
     if (!this.locomotive && this.trains.length === 0) return
     this.isPlayMode = !this.isPlayMode
+    this.forgetBrakeHolds(null)
     if (this.isPlayMode) {
       // Switch away from any tool interaction
       this.lastNodeId = null
@@ -2609,13 +2647,41 @@ export class EditorStore {
   /**
    * Move the selected train's brake handle: `apply` and `release` act for as long as they are
    * held, `hold` keeps the pressure where it is.
+   *
+   * Two sides can hold the one handle: this screen and its keyboard (`local`) and the phone desk
+   * (`remote`). The last one to push it wins, and one side letting go (`hold`) only centres the
+   * handle when the other is not still holding it.
    */
-  setSelectedTrainBrakeCommand = (command: BrakeCommand): void => {
+  setSelectedTrainBrakeCommand = (command: BrakeCommand, source: BrakeSource = 'local'): void => {
     const train = this.selectedTrain
-    if (!train || train.brakeCommand === command) return
-    setBrakeCommand(train, command)
+    if (!train) return
+    // What was held on another train, or before this driving session, is forgotten
+    if (this.brakeHoldTrainId !== train.id) this.forgetBrakeHolds(train.id)
+    this.brakeHolds[source] = command
+    const wanted = command === 'hold' ? this.brakeHolds[source === 'local' ? 'remote' : 'local'] : command
+    if (train.brakeCommand === wanted) return
+    setBrakeCommand(train, wanted)
     // The domain refuses the handle while the emergency brake is latched
-    if (train.brakeCommand === command) this.notify()
+    if (train.brakeCommand === wanted) this.notify()
+  }
+
+  /** What one side currently holds the brake handle of the selected train on */
+  heldBrakeCommand = (source: BrakeSource): BrakeCommand =>
+    this.brakeHoldTrainId !== null && this.brakeHoldTrainId === this.selectedTrainId ? this.brakeHolds[source] : 'hold'
+
+  /** Nobody holds the brake handle of the selected train any more: it goes back to `hold` */
+  centreSelectedTrainBrake = (): void => {
+    this.forgetBrakeHolds(null)
+    const train = this.selectedTrain
+    const held = train?.brakeCommand ?? 'hold'
+    if (!train || held === 'hold') return
+    setBrakeCommand(train, 'hold')
+    if (train.brakeCommand !== held) this.notify()
+  }
+
+  private forgetBrakeHolds(trainId: string | null): void {
+    this.brakeHoldTrainId = trainId
+    this.brakeHolds = { local: 'hold', remote: 'hold' }
   }
 
   /** Set the selected train's reverser (refused while moving or in traction) */

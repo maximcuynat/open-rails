@@ -1,0 +1,353 @@
+<title>Console de conduite Open Rails</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: one column; each proposal is a scaled 1280×680 view of the editor with the console in place, then its trade-offs */
+:root {
+  --bg: #f3f4f1; --surface: #ffffff; --fg: #15191f; --muted: #5d6672; --line: #d9dcd6; --accent: #1d5fd0;
+  --canvas: #fafafa; --canvas-grid: #e4e6e2; --rail: #9aa3ad;
+  /* The console keeps one dark look in both themes, as in the app */
+  --hud: #0c1220; --hud-2: #161e30; --hud-line: #2a3550; --hud-fg: #f4f6fa; --hud-dim: #93a0b8;
+  --blue: #38bdf8; --green: #2fc46a; --amber: #f5a524; --red: #ef4444; --violet: #a78bfa;
+  --dmi: #031122; --dmi-grey: #c3c3c3; --dmi-dark: #555b66; --dmi-yellow: #dfdf00;
+  --sans: 'Archivo', system-ui, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #101318; --surface: #181c23; --fg: #eceff3; --muted: #9aa4b2; --line: #2b313b; --accent: #7fb0ff; --canvas: #14171c; --canvas-grid: #232831; --rail: #6b7684; color-scheme: dark }
+}
+:root[data-theme="dark"] { --bg: #101318; --surface: #181c23; --fg: #eceff3; --muted: #9aa4b2; --line: #2b313b; --accent: #7fb0ff; --canvas: #14171c; --canvas-grid: #232831; --rail: #6b7684; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.page { max-width: 1100px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 56px; display: flex; flex-direction: column; gap: 40px; }
+h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+h2 { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lead { color: var(--muted); margin-top: 8px; }
+.proposal { display: flex; flex-direction: column; gap: 14px; }
+.head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.letter { font-family: var(--mono); font-weight: 600; font-size: 13px; color: var(--accent); border: 1px solid currentColor; border-radius: 4px; padding: 1px 7px; }
+.source { color: var(--muted); font-size: 13px; }
+.frame { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--canvas); }
+.stage { position: relative; width: 1280px; height: 680px; overflow: hidden; font-family: var(--sans);
+  background-color: var(--canvas);
+  background-image: linear-gradient(var(--canvas-grid) 1px, transparent 1px), linear-gradient(90deg, var(--canvas-grid) 1px, transparent 1px);
+  background-size: 64px 64px; }
+.stage > svg.track { position: absolute; inset: 0; }
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 28px; }
+.notes h3 { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+.notes ul { margin: 0; padding-left: 18px; }
+.notes li { margin-bottom: 3px; }
+.size { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.tablewrap { overflow-x: auto; }
+a { color: var(--accent); }
+
+/* ---- shared console parts ---- */
+.hud { position: absolute; color: var(--hud-fg); font-variant-numeric: tabular-nums; user-select: none; }
+.hud svg text { font-family: var(--sans); }
+.key { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--hud-fg); background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 0 5px; line-height: 17px; display: inline-block; }
+.lbl { font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--hud-dim); }
+
+/* ---- A: bandeau pupitre ---- */
+.a { left: 150px; right: 150px; bottom: 16px; height: 176px; background: var(--hud); border: 1px solid var(--hud-line); border-radius: 14px; box-shadow: 0 12px 36px rgba(0,0,0,0.35); display: grid; grid-template-columns: 290px 1fr 290px; }
+.a .zone { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.a .zone + .zone { border-left: 1px solid var(--hud-line); }
+.a .zhead { display: flex; align-items: center; justify-content: space-between; }
+.pill { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 5px; padding: 2px 9px; border: 1px solid var(--green); color: var(--green); background: rgba(47,196,106,0.14); }
+.a .gauges { display: flex; gap: 18px; justify-content: center; }
+.a .gauges svg { width: 100px; height: 64px; flex: none; }
+.a .hold { display: flex; gap: 8px; }
+.a .hold .btn { flex: 1; padding: 5px 9px; }
+.btn { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 13px; font-weight: 700; border-radius: 7px; padding: 7px 9px; border: 1px solid; }
+.btn.g { color: var(--green); border-color: var(--green); background: rgba(47,196,106,0.13); }
+.btn.o { color: var(--amber); border-color: var(--amber); background: rgba(245,165,36,0.13); }
+.btn.r { color: #fff; border-color: var(--red); background: rgba(239,68,68,0.28); justify-content: center; }
+.a .mid { align-items: center; gap: 2px; padding-top: 6px; position: relative; }
+.a .mid svg { width: 300px; height: 118px; }
+.a .speed { position: absolute; top: 46px; left: 0; right: 0; text-align: center; font-size: 54px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
+.a .speed small { display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; color: var(--hud-dim); margin-top: 2px; }
+.rev { display: flex; border: 1px solid var(--hud-line); border-radius: 7px; overflow: hidden; font-size: 12px; font-weight: 700; }
+.rev span { padding: 3px 14px; color: var(--hud-dim); }
+.rev span.on { background: rgba(167,139,250,0.3); color: #efeaff; }
+.a .side { position: absolute; top: 14px; font-size: 12px; color: var(--hud-dim); line-height: 1.5; }
+.a .side b { color: var(--hud-fg); font-weight: 700; display: block; font-size: 15px; }
+.notches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.notches span { text-align: center; font-size: 13px; font-weight: 800; padding: 9px 0; border-radius: 5px; background: var(--hud-2); color: var(--hud-dim); border: 1px solid var(--hud-line); }
+.notches span.fill { background: rgba(47,196,106,0.3); color: #dfffe9; border-color: rgba(47,196,106,0.5); }
+.notches span.on { background: var(--green); color: #04220f; border-color: var(--green); }
+.bar { height: 7px; border-radius: 4px; background: var(--hud-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--green); border-radius: 4px; }
+.a .row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--hud-dim); }
+.a .row b { color: var(--hud-fg); }
+
+/* ---- B: écran type ETCS ---- */
+.b { right: 16px; bottom: 16px; width: 470px; height: 468px; background: var(--dmi); border: 1px solid #1c3555; border-radius: 6px; box-shadow: 0 12px 36px rgba(0,0,0,0.4); display: grid; grid-template-columns: 62px 1fr 96px; grid-template-rows: 30px 1fr 62px 54px; color: var(--dmi-grey); }
+.b > div { border: 1px solid #0b2742; }
+.b .top { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 13px; font-weight: 600; }
+.b .dist { display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 4px; }
+.b .dist svg { flex: 1; width: 46px; }
+.b .dist b { font-size: 15px; color: #fff; font-weight: 700; }
+.b .dial { position: relative; display: flex; align-items: center; justify-content: center; }
+.b .dial svg { width: 300px; height: 300px; }
+.b .press { display: flex; gap: 6px; padding: 8px 8px 6px; }
+.b .press div { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; }
+.b .press svg { flex: 1; width: 34px; }
+.b .press b { font-size: 15px; color: #fff; }
+.b .info { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, 1fr); }
+.b .info div { padding: 7px 10px; border-right: 1px solid #0b2742; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.b .info b { display: block; font-size: 19px; color: #fff; letter-spacing: 0; text-transform: none; }
+.b .keys { grid-column: 1 / -1; display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: 6px; padding: 8px; }
+.soft { display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid var(--dmi-dark); background: #0a2238; font-size: 12px; font-weight: 700; color: #fff; border-radius: 3px; line-height: 1.25; }
+.soft small { font-family: var(--mono); font-size: 10px; color: var(--dmi-grey); font-weight: 500; }
+.soft.red { background: #7d0a0c; border-color: #bf0002; }
+.soft.rv { flex-direction: row; gap: 0; padding: 0; overflow: hidden; }
+.soft.rv span { flex: 1; text-align: center; padding: 10px 0; color: var(--dmi-grey); }
+.soft.rv span.on { background: var(--dmi-grey); color: var(--dmi); }
+
+/* ---- C: deux manettes ---- */
+.c-speed { left: 50%; transform: translateX(-50%); bottom: 18px; background: rgba(12,18,32,0.9); border: 1px solid var(--hud-line); border-radius: 16px; padding: 10px 22px 12px; display: flex; align-items: center; gap: 22px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+.c-speed .num { font-size: 60px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
+.c-speed .unit { font-size: 12px; font-weight: 600; color: var(--hud-dim); letter-spacing: 0.06em; }
+.c-speed .tape { width: 250px; }
+.c-speed .tape svg { width: 250px; height: 34px; display: block; }
+.c-speed .stats { display: grid; grid-template-columns: auto auto; gap: 1px 12px; font-size: 13px; color: var(--hud-dim); }
+.c-speed .stats b { color: var(--hud-fg); text-align: right; }
+.c-levers { right: 16px; bottom: 18px; display: flex; gap: 10px; align-items: flex-end; }
+.lever { width: 96px; background: rgba(12,18,32,0.9); border: 1px solid var(--hud-line); border-radius: 16px; padding: 10px 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+.lever svg { width: 80px; height: 290px; }
+.lever .val { font-size: 20px; font-weight: 800; white-space: nowrap; }
+.lever.wide { width: 136px; }
+.lever.wide svg { width: 120px; }
+.lever .keys { display: flex; gap: 4px; }
+.c-estop { width: 62px; height: 62px; border-radius: 50%; background: var(--red); border: 4px solid #7f1d1d; color: #fff; font-size: 10px; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; text-align: center; box-shadow: 0 6px 18px rgba(239,68,68,0.45); }
+.c-rev { right: 16px; bottom: 420px; }
+</style>
+
+<div class="page">
+  <header>
+    <h1>Trois directions pour la console de conduite</h1>
+    <p class="lead">Chaque vue montre l'éditeur dans une fenêtre de 1280 × 680 px avec la console à sa place et à sa taille réelle. Même situation partout : TGV Duplex à 187 km/h, cran P3, frein desserré, rampe de 4 ‰. La console actuelle fait 220 px de large.</p>
+  </header>
+
+  <section class="proposal">
+    <div class="head"><span class="letter">A</span><h2>Bandeau pupitre</h2><span class="source">Inspiré du pupitre TGV : frein à gauche, traction à droite</span></div>
+    <div class="frame"><div class="stage" data-stage>
+      <svg class="track" viewBox="0 0 1280 680"><path d="M-20 300 C 300 300, 420 180, 700 190 S 1100 320, 1300 300" fill="none" stroke="var(--rail)" stroke-width="5"/><rect x="560" y="181" width="150" height="12" rx="6" fill="var(--blue)" transform="rotate(-2 635 187)"/></svg>
+      <div class="hud a">
+        <div class="zone">
+          <div class="zhead"><span class="lbl">Frein</span><span class="pill">Desserré</span></div>
+          <div class="gauges">
+            <svg data-gauge="5,0,5,3.5|4.5|5,blue,CG" viewBox="0 0 96 62"></svg>
+            <svg data-gauge="0,0,4,0|3.8,red,CF" viewBox="0 0 96 62"></svg>
+          </div>
+          <div class="hold">
+            <div class="btn g"><span>Desserrer</span><span class="key">Q</span></div>
+            <div class="btn o"><span>Serrer</span><span class="key">E</span></div>
+          </div>
+        </div>
+        <div class="zone mid">
+          <div class="side" style="left:16px">Accél.<b>+0,21 m/s²</b>Pente<b>+4 ‰</b></div>
+          <div class="side" style="right:16px;text-align:right">Arrêt en<b>1 240 m</b>2M · 8V<b>Train 1/2</b></div>
+          <svg data-half viewBox="0 0 300 118"></svg>
+          <div class="speed">187<small>KM/H</small></div>
+          <div class="rev"><span>AR</span><span>N</span><span class="on">AV</span></div>
+        </div>
+        <div class="zone">
+          <div class="zhead"><span class="lbl">Traction</span><span style="font-size:13px;font-weight:700">P3 · 62 %</span></div>
+          <div class="notches"><span class="fill">N</span><span class="fill">P1</span><span class="fill">P2</span><span class="on">P3</span><span>P4</span><span>P5</span></div>
+          <div class="bar"><i style="width:62%"></i></div>
+          <div class="row"><span class="key">D</span> − <b>cran</b> + <span class="key">A</span><span style="flex:1"></span><div class="btn r" style="padding:6px 12px">Urgence <span class="key">⌫</span></div></div>
+        </div>
+      </div>
+    </div></div>
+    <div class="notes">
+      <div><h3>Ce que ça apporte</h3><ul><li>Vitesse très grande, au centre, lisible sans chercher.</li><li>Frein et traction séparés de chaque côté, comme sur un vrai pupitre.</li><li>Peu haut : tient sur un petit écran sans défilement.</li></ul></div>
+      <div><h3>Ce que ça coûte</h3><ul><li>Occupe toute la largeur du bas de l'écran : la voie sous le train est masquée si la caméra le suit de près.</li><li>La barre d'échelle et la mini-carte doivent remonter.</li></ul></div>
+      <div><h3>Taille</h3><p class="size">980 × 176 px (s'adapte à la largeur)</p><p>Les rappels de touches sont sur les boutons eux-mêmes : le panneau de raccourcis séparé disparaît.</p></div>
+    </div>
+  </section>
+
+  <section class="proposal">
+    <div class="head"><span class="letter">B</span><h2>Écran de bord</h2><span class="source">Inspiré de l'écran ETCS des trains réels : cadran central, zones fixes</span></div>
+    <div class="frame"><div class="stage" data-stage>
+      <svg class="track" viewBox="0 0 1280 680"><path d="M-20 420 C 260 420, 380 260, 640 270 S 900 380, 1300 200" fill="none" stroke="var(--rail)" stroke-width="5"/><rect x="330" y="296" width="150" height="12" rx="6" fill="var(--blue)" transform="rotate(-24 405 302)"/></svg>
+      <div class="hud b">
+        <div class="top"><span>TGV Duplex · 2M 8V</span><span>◀ 1/2 ▶ &nbsp; ✕</span></div>
+        <div class="dist"><span style="font-size:10px;font-weight:700">ARRÊT</span><svg data-dist viewBox="0 0 46 250" preserveAspectRatio="none"></svg><b>1240</b><span style="font-size:10px">m</span></div>
+        <div class="dial"><svg data-round viewBox="0 0 300 300"></svg></div>
+        <div class="press">
+          <div><span>CG</span><svg data-vbar="5,0,5,3.5|4.5|5,dmi-grey" viewBox="0 0 34 220" preserveAspectRatio="none"></svg><b>5,0</b></div>
+          <div><span>CF</span><svg data-vbar="0,0,4,3.8,red" viewBox="0 0 34 220" preserveAspectRatio="none"></svg><b>0,0</b></div>
+        </div>
+        <div class="info">
+          <div>Traction<b>P3 · 62 %</b></div><div>Frein<b style="color:var(--green)">Desserré</b></div><div>Accél.<b>+0,21</b></div><div>Pente<b>+4 ‰</b></div>
+        </div>
+        <div class="keys">
+          <div class="soft rv"><span>AR</span><span>N</span><span class="on">AV</span></div>
+          <div class="soft">Desserrer<small>Q</small></div>
+          <div class="soft">Serrer<small>E</small></div>
+          <div class="soft red">Urgence<small>⌫</small></div>
+        </div>
+      </div>
+    </div></div>
+    <div class="notes">
+      <div><h3>Ce que ça apporte</h3><ul><li>Vrai cadran à aiguille, deux fois plus grand qu'aujourd'hui.</li><li>La distance d'arrêt et les pressions deviennent des barres qu'on lit d'un coup d'œil.</li><li>Reste dans le coin : la voie reste dégagée, rien d'autre ne bouge dans l'interface.</li></ul></div>
+      <div><h3>Ce que ça coûte</h3><ul><li>Le plus haut des trois : sur une fenêtre de moins de 520 px de haut il faudra le réduire.</li><li>Aspect technique et dense, moins « jeu ».</li></ul></div>
+      <div><h3>Taille</h3><p class="size">470 × 468 px</p><p>Plus tard, la barre de distance pourra afficher le prochain signal ou la prochaine limite de vitesse.</p></div>
+    </div>
+  </section>
+
+  <section class="proposal">
+    <div class="head"><span class="letter">C</span><h2>Deux manettes</h2><span class="source">Inspiré des simulateurs grand public : leviers à l'écran, affichage minimal</span></div>
+    <div class="frame"><div class="stage" data-stage>
+      <svg class="track" viewBox="0 0 1280 680"><path d="M-20 260 C 300 260, 420 400, 700 380 S 1000 200, 1300 240" fill="none" stroke="var(--rail)" stroke-width="5"/><rect x="520" y="382" width="150" height="12" rx="6" fill="var(--blue)" transform="rotate(4 595 388)"/></svg>
+      <div class="hud c-speed">
+        <div><div class="num">187</div><div class="unit">KM/H · MAX 320</div></div>
+        <div class="tape"><svg data-tape viewBox="0 0 250 34"></svg><div class="rev" style="margin-top:8px;width:max-content"><span>AR</span><span>N</span><span class="on">AV</span></div></div>
+        <div class="stats"><span>Accél.</span><b>+0,21 m/s²</b><span>Pente</span><b>+4 ‰</b><span>Arrêt</span><b>1 240 m</b></div>
+      </div>
+      <div class="hud c-levers">
+        <div class="c-estop">ARRÊT<br>URGENCE</div>
+        <div class="lever wide"><span class="lbl">Frein</span><svg data-brake viewBox="-40 0 120 290"></svg><span class="val" style="font-size:14px">CG 5,0 · CF 0,0</span><span class="keys"><span class="key">Q</span><span class="key">E</span></span></div>
+        <div class="lever"><span class="lbl">Traction</span><svg data-throttle viewBox="0 0 80 290"></svg><span class="val">P3 · 62 %</span><span class="keys"><span class="key">D</span><span class="key">A</span></span></div>
+      </div>
+    </div></div>
+    <div class="notes">
+      <div><h3>Ce que ça apporte</h3><ul><li>Le plus agréable à la souris : on tire les leviers au lieu de cliquer des boutons.</li><li>Le levier de frein revient au centre tout seul, comme les touches maintenues.</li><li>Laisse le plus de place à la voie.</li></ul></div>
+      <div><h3>Ce que ça coûte</h3><ul><li>Pas de manomètres : les pressions ne sont que des chiffres.</li><li>Le plus long à réaliser (glisser un levier, crans, retour au centre).</li><li>Deux blocs séparés à l'écran au lieu d'un.</li></ul></div>
+      <div><h3>Taille</h3><p class="size">Vitesse 620 × 96 px · leviers 136 et 96 × 390 px</p></div>
+    </div>
+  </section>
+
+  <section class="proposal">
+    <h2>En résumé</h2>
+    <div class="tablewrap"><table>
+      <tr><th></th><th>A · Bandeau pupitre</th><th>B · Écran de bord</th><th>C · Deux manettes</th></tr>
+      <tr><td>Lisibilité de la vitesse</td><td>Très bonne</td><td>Très bonne (aiguille)</td><td>Bonne (chiffre seul)</td></tr>
+      <tr><td>Place prise sur la voie</td><td>Tout le bas</td><td>Un coin</td><td>Un coin et un bandeau court</td></tr>
+      <tr><td>Petits écrans</td><td>Tient toujours</td><td>À réduire sous 520 px de haut</td><td>Tient toujours</td></tr>
+      <tr><td>Travail</td><td>Moyen</td><td>Moyen</td><td>Le plus long</td></tr>
+    </table></div>
+    <p class="source">Références : <a href="https://www.strc.ch/2016/Emery.pdf">zones de l'écran ETCS</a>, <a href="https://docrail.fr/tgv-001/">disposition du pupitre TGV</a>, <a href="https://open-rails.readthedocs.io/en/unstable/driving.html">affichage de conduite d'un simulateur</a>.</p>
+  </section>
+</div>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg'
+const V = (name) => `var(--${name})`
+function el(parent, tag, attrs, text) {
+  const e = document.createElementNS(NS, tag)
+  for (const k in attrs) e.setAttribute(k, attrs[k])
+  if (text !== undefined) e.textContent = text
+  parent.appendChild(e)
+  return e
+}
+const pt = (cx, cy, r, deg) => [cx + r * Math.cos(deg * Math.PI / 180), cy + r * Math.sin(deg * Math.PI / 180)]
+function arc(cx, cy, r, a0, a1) {
+  const [x0, y0] = pt(cx, cy, r, a0), [x1, y1] = pt(cx, cy, r, a1)
+  return `M ${x0} ${y0} A ${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1}`
+}
+const fr = (n) => String(n).replace('.', ',')
+const SPEED = 187, MAX = 320
+
+// A: half pressure gauges
+document.querySelectorAll('[data-gauge]').forEach((svg) => {
+  const [value, min, max, marks, color, name] = svg.dataset.gauge.split(',')
+  const cx = 48, cy = 50, r = 36, ratio = (v) => 180 + 180 * (v - min) / (max - min)
+  el(svg, 'path', { d: arc(cx, cy, r, 180, 360), fill: 'none', stroke: V('hud-line'), 'stroke-width': 6, 'stroke-linecap': 'round' })
+  if (+value > +min) el(svg, 'path', { d: arc(cx, cy, r, 180, ratio(value)), fill: 'none', stroke: V(color), 'stroke-width': 6, 'stroke-linecap': 'round' })
+  marks.split('|').forEach((m) => {
+    const [x0, y0] = pt(cx, cy, r - 6, ratio(m)), [x1, y1] = pt(cx, cy, r + 5, ratio(m))
+    el(svg, 'line', { x1: x0, y1: y0, x2: x1, y2: y1, stroke: V('hud-fg'), 'stroke-width': 1.5 })
+  })
+  el(svg, 'text', { x: cx, y: 40, 'text-anchor': 'middle', 'font-size': 19, 'font-weight': 800, fill: V('hud-fg') }, fr((+value).toFixed(1)))
+  el(svg, 'text', { x: cx, y: 54, 'text-anchor': 'middle', 'font-size': 10, 'font-weight': 700, fill: V('hud-dim') }, `${name} · bar`)
+})
+
+// A: half speed dial
+document.querySelectorAll('[data-half]').forEach((svg) => {
+  const cx = 150, cy = 112, r = 98, at = (kmh) => 180 + 180 * kmh / MAX
+  el(svg, 'path', { d: arc(cx, cy, r, 180, 360), fill: 'none', stroke: V('hud-line'), 'stroke-width': 10, 'stroke-linecap': 'round' })
+  el(svg, 'path', { d: arc(cx, cy, r, 180, at(SPEED)), fill: 'none', stroke: V('blue'), 'stroke-width': 10, 'stroke-linecap': 'round' })
+  for (let k = 0; k <= MAX; k += 40) {
+    const [x0, y0] = pt(cx, cy, r - 12, at(k)), [x1, y1] = pt(cx, cy, r - 6, at(k)), [tx, ty] = pt(cx, cy, r - 24, at(k))
+    el(svg, 'line', { x1: x0, y1: y0, x2: x1, y2: y1, stroke: V('hud-dim'), 'stroke-width': 1.5 })
+    if (k % 80 === 0) el(svg, 'text', { x: tx, y: ty + 4, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, fill: V('hud-dim') }, k)
+  }
+  const [mx, my] = pt(cx, cy, r, 360)
+  el(svg, 'circle', { cx: mx, cy: my, r: 5, fill: V('red') })
+})
+
+// B: round dial with a needle
+document.querySelectorAll('[data-round]').forEach((svg) => {
+  const cx = 150, cy = 150, r = 130, a0 = 126, sweep = 288, at = (kmh) => a0 + sweep * kmh / MAX
+  el(svg, 'path', { d: arc(cx, cy, r + 8, a0, a0 + sweep), fill: 'none', stroke: V('dmi-dark'), 'stroke-width': 7 })
+  el(svg, 'path', { d: arc(cx, cy, r + 8, a0, at(SPEED)), fill: 'none', stroke: V('dmi-grey'), 'stroke-width': 7 })
+  for (let k = 0; k <= MAX; k += 10) {
+    const long = k % 40 === 0
+    const [x0, y0] = pt(cx, cy, r - (long ? 16 : 8), at(k)), [x1, y1] = pt(cx, cy, r, at(k))
+    el(svg, 'line', { x1: x0, y1: y0, x2: x1, y2: y1, stroke: '#fff', 'stroke-width': long ? 2 : 1 })
+    if (long) { const [tx, ty] = pt(cx, cy, r - 32, at(k)); el(svg, 'text', { x: tx, y: ty + 5, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 600, fill: '#fff' }, k) }
+  }
+  const g = el(svg, 'g', { transform: `rotate(${at(SPEED) + 90} ${cx} ${cy})` })
+  el(g, 'path', { d: `M ${cx - 4.5} ${cy} L ${cx - 4.5} ${cy - 70} L ${cx - 1.5} ${cy - 78} L ${cx - 1.5} ${cy - 122} L ${cx + 1.5} ${cy - 122} L ${cx + 1.5} ${cy - 78} L ${cx + 4.5} ${cy - 70} L ${cx + 4.5} ${cy} Z`, fill: V('dmi-grey') })
+  el(svg, 'circle', { cx, cy, r: 34, fill: V('dmi-grey') })
+  el(svg, 'text', { x: cx, y: cy + 11, 'text-anchor': 'middle', 'font-size': 31, 'font-weight': 800, fill: V('dmi') }, SPEED)
+  el(svg, 'text', { x: cx, y: 262, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 600, fill: V('dmi-grey') }, 'km/h')
+})
+
+// B: stopping-distance bar (taller = further)
+document.querySelectorAll('[data-dist]').forEach((svg) => {
+  const top = 6, bottom = 244, scale = [0, 500, 1000, 2000, 4000], y = (m) => bottom - (bottom - top) * Math.sqrt(m / 4000)
+  scale.forEach((m) => { el(svg, 'line', { x1: 0, y1: y(m), x2: 14, y2: y(m), stroke: V('dmi-grey'), 'stroke-width': 1 }) })
+  el(svg, 'rect', { x: 20, y: y(1240), width: 16, height: bottom - y(1240), fill: V('dmi-grey') })
+})
+
+// B: vertical pressure bars
+document.querySelectorAll('[data-vbar]').forEach((svg) => {
+  const [value, min, max, marks, color] = svg.dataset.vbar.split(',')
+  const top = 6, bottom = 214, y = (v) => bottom - (bottom - top) * (v - min) / (max - min)
+  el(svg, 'rect', { x: 12, y: top, width: 14, height: bottom - top, fill: 'none', stroke: V('dmi-dark'), 'stroke-width': 1 })
+  el(svg, 'rect', { x: 12, y: y(value), width: 14, height: Math.max(bottom - y(value), 2), fill: V(color) })
+  marks.split('|').forEach((m) => { el(svg, 'line', { x1: 2, y1: y(m), x2: 12, y2: y(m), stroke: '#fff', 'stroke-width': 1.5 }) })
+})
+
+// C: linear speed tape
+document.querySelectorAll('[data-tape]').forEach((svg) => {
+  const x = (kmh) => 4 + 242 * kmh / MAX
+  el(svg, 'rect', { x: 4, y: 4, width: 242, height: 8, rx: 4, fill: V('hud-line') })
+  el(svg, 'rect', { x: 4, y: 4, width: x(SPEED) - 4, height: 8, rx: 4, fill: V('blue') })
+  for (let k = 0; k <= MAX; k += 80) {
+    el(svg, 'line', { x1: x(k), y1: 15, x2: x(k), y2: 20, stroke: V('hud-dim'), 'stroke-width': 1 })
+    el(svg, 'text', { x: x(k), y: 32, 'text-anchor': k === 0 ? 'start' : k === MAX ? 'end' : 'middle', 'font-size': 10, 'font-weight': 600, fill: V('hud-dim') }, k)
+  }
+})
+
+// C: levers
+function lever(svg, stops, active, color, knobLabel) {
+  const top = 22, bottom = 268, y = (i) => bottom - (bottom - top) * i / (stops.length - 1)
+  el(svg, 'rect', { x: 46, y: top - 8, width: 12, height: bottom - top + 16, rx: 6, fill: V('hud-2'), stroke: V('hud-line') })
+  stops.forEach((s, i) => {
+    el(svg, 'line', { x1: 34, y1: y(i), x2: 44, y2: y(i), stroke: V('hud-dim'), 'stroke-width': 1.5 })
+    el(svg, 'text', { x: 30, y: y(i) + 4, 'text-anchor': 'end', 'font-size': 12, 'font-weight': i === active ? 800 : 600, fill: i === active ? V('hud-fg') : V('hud-dim') }, s)
+  })
+  if (knobLabel === undefined) el(svg, 'rect', { x: 48, y: y(active), width: 8, height: bottom - y(active) + 6, rx: 4, fill: V(color) })
+  el(svg, 'rect', { x: 36, y: y(active) - 13, width: 32, height: 26, rx: 8, fill: V(color), stroke: '#fff', 'stroke-width': 2 })
+  for (const d of [-4, 0, 4]) el(svg, 'line', { x1: 44, y1: y(active) + d, x2: 60, y2: y(active) + d, stroke: 'rgba(0,0,0,0.45)', 'stroke-width': 1.5 })
+}
+document.querySelectorAll('[data-throttle]').forEach((svg) => lever(svg, ['N', 'P1', 'P2', 'P3', 'P4', 'P5'], 3, 'green'))
+document.querySelectorAll('[data-brake]').forEach((svg) => {
+  lever(svg, ['Serrer', '', 'Neutre', '', 'Desserrer'], 2, 'amber', '')
+})
+
+// Each stage is drawn at 1280 px and shrunk to the width available
+function fit() {
+  document.querySelectorAll('[data-stage]').forEach((stage) => {
+    stage.style.zoom = Math.min(1, stage.parentElement.clientWidth / 1280)
+  })
+}
+fit()
+addEventListener('resize', fit)
+</script>

@@ -4,7 +4,8 @@ import * as trainModel from '@domain/models/train'
 import * as trainDynamicsModel from '@domain/models/trainDynamics'
 import { addNode, addSegment, addCurveSegment, resetIdCounter } from '@domain/models/network'
 import { applyNodeTransform, collectAffectedVias } from '@domain/geometry/nodeTransform'
-import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { getStorage, resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { CONSOLE_PREFERENCE_KEY } from '@infrastructure/persistence/preferences'
 
 describe('EditorStore persistence', () => {
   beforeEach(() => {
@@ -750,5 +751,40 @@ describe('EditorStore tool switching', () => {
     store.selection = { nodes: new Set([a.id]), segments: new Set() }
     store.setTool('place')
     expect(store.selection.nodes.has(a.id)).toBe(true)
+  })
+})
+
+describe('EditorStore driving console preference', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+  })
+
+  it('is automatic by default and follows the user across reloads', () => {
+    const store = new EditorStore()
+    expect(store.consolePreference).toBe('auto')
+
+    let notified = 0
+    store.subscribe(() => notified++)
+    store.setConsolePreference('levers')
+    expect(store.consolePreference).toBe('levers')
+    expect(notified).toBe(1)
+    // Same choice again: nothing to redraw
+    store.setConsolePreference('levers')
+    expect(notified).toBe(1)
+
+    expect(new EditorStore().consolePreference).toBe('levers')
+  })
+
+  it('survives a new project, like the key bindings', () => {
+    const store = new EditorStore()
+    store.setConsolePreference('band')
+    store.newProject()
+    expect(store.consolePreference).toBe('band')
+    expect(new EditorStore().consolePreference).toBe('band')
+  })
+
+  it('ignores a saved value it does not know', () => {
+    getStorage()!.setItem(CONSOLE_PREFERENCE_KEY, 'hologram')
+    expect(new EditorStore().consolePreference).toBe('auto')
   })
 })

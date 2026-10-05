@@ -1769,6 +1769,8 @@ export function renderScaleBar(
   vh: number,
   /** Width in pixels reserved on the right of the canvas (an overlay sits there) */
   rightInset = 0,
+  /** Height in pixels reserved at the bottom of the canvas */
+  bottomInset = 0,
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const panel = getCanvasStyle(ctx.canvas, '--panel', '#f5f5f5')
@@ -1781,7 +1783,7 @@ export function renderScaleBar(
   const barH = 8
   const right = vw - rightInset
   const x = right - barPx - margin
-  const y = vh - margin
+  const y = vh - bottomInset - margin
 
   ctx.save()
 
@@ -1791,7 +1793,7 @@ export function renderScaleBar(
   const pillW = Math.max(barPx, labelW) + 16
   const pillH = barH + 24
   const pillX = right - pillW - margin / 2
-  const pillY = vh - pillH - margin / 2
+  const pillY = vh - bottomInset - pillH - margin / 2
   ctx.fillStyle = panel
   ctx.globalAlpha = 0.85
   roundRect(ctx, pillX, pillY, pillW, pillH, 6)
