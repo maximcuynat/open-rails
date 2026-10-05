@@ -57,7 +57,7 @@ Il n'y a pas de test d'interface : rien de ce qui touche `Canvas.tsx`, le clavie
 
 ## Par l'utilisateur
 
-- [ ] Branche `feature/curve-angle-rotation-gizmo` (conservée, non fusionnée) : son commit fait tourner la tangente d'une courbe avec la poignée « rotation », qui aujourd'hui fait pivoter la sélection. 16 zones de conflit sur 5 fichiers. Garder la poignée actuelle et ajouter une seconde poignée, ou abandonner cette fonction
+- [ ] Rotation de la tangente d'une courbe au gizmo : branche archivée (`archive/curve-angle-rotation-gizmo`), à refaire sur le code actuel si la fonction manque
 - [ ] Tracé groupé des rails en vue détaillée (un seul tracé par style au lieu de quatre par rail) : plus rapide, mais l'ordre de superposition change légèrement aux traversées
 - [ ] Code de ballast, traverses, éclisses et détails de traversée : écrit, appelé par aucun rendu — à retirer ou à garder
 
@@ -141,6 +141,7 @@ Liste reprise telle quelle des revues de chantier ; seuls les défauts marqués 
 
 ## Signalisation
 
+- **Un signal de trajectoire s'ouvre vers une aiguille orientée contre son train** et la verrouille : sur une voie unique avec évitement, deux rames peuvent se bloquer selon leur ordre d'arrivée. Deux tests en échec attendu (`signalling.pointsAgainst.test.ts`, dernier test de `examples.test.ts`). L'exemple « Voie unique avec évitement » est généré mais retiré du menu en attendant
 - Voie unique sans signal de protection aux entrées : deux rames opposées peuvent se retrouver arrêtées face à face (blocage sans collision) ; le rapport de contrôle signale ces aiguilles
 - Rame en marche arrière à travers une aiguille prise en talon mal orientée : non testé
 - Ancienne `Locomotive` : ignorée par la signalisation
