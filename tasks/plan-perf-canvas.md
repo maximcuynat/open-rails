@@ -151,7 +151,7 @@ Quatre paliers, selon l'écart des rails à l'écran (`lod.ts`) :
 
 | Palier | Écart des rails | Échelle à 1:1 | Voies | Repères |
 |---|---|---|---|---|
-| `schematic` | < 0,5 px | < 0,35 px/m | une ligne par section | sélection seule ; ni bande ni pancarte de zone |
+| `schematic` | < 0,5 px | < 0,35 px/m | une ligne par section, d'une seule couleur, assez large pour toucher la voie voisine : une gare est un trait épais qui s'affine en s'éloignant | sélection seule ; ni bande ni pancarte de zone |
 | `line` | 0,5 – 3 px | 0,35 – 2,1 px/m | une ligne par voie | fins de voie ; bandes de zone ; aucune pancarte ; pastilles des seules sections longues (≥ 240 px), nommées ou sélectionnées ; diagnostics regroupés |
 | `rails` | 3 – 5 px | 2,1 – 3,5 px/m | deux rails en quelques tracés (liseré), bande de section par couleur | tous les nœuds (deux remplissages) ; heurtoirs ; pastilles et pancartes des seuls éléments longs (≥ 240 px) |
 | `detail` | ≥ 5 px | ≥ 3,5 px/m | rail par rail, joints, champignon | tout |
