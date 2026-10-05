@@ -1,10 +1,20 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorStore } from './editorStore'
 import { addNode, addSegment, removeSegment, resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { COUPLING_GAP, setNotch, setReverser, vehicleFrontEndPos, vehicleRearEndPos, createVehicle, makeTrainSet, advanceTrainSet } from '@domain/models/train'
 import { placeTurnout, activeBranchOf, turnoutView, splitSegment } from '@domain/models/junction'
 import { positionOnSegment } from '@domain/models/locomotive'
+import * as trainModel from '@domain/models/train'
+
+/**
+ * Stand-in for the driving physics: every train simply runs at the speed it is given. These tests
+ * are about what the store does around a drive (saving, undo, obstacles), not about the forces.
+ */
+function runAtConstantSpeed(): void {
+  vi.spyOn(trainModel, 'tickTrainSet').mockImplementation((net, train, dt, others, occupancy) =>
+    train.currentSpeed <= 0 || advanceTrainSet(net, train, train.currentSpeed * dt, others, occupancy))
+}
 
 /** Store with one straight track from x=0 to x=`length` and the train tool armed in place mode */
 function storeWithStraightTrack(length = 1000): { store: EditorStore; segId: string } {
@@ -24,6 +34,10 @@ describe('EditorStore trains', () => {
   beforeEach(() => {
     resetIdCounter(0)
     resetMemoryStorage()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   describe('single placement path', () => {
@@ -117,7 +131,7 @@ describe('EditorStore trains', () => {
       expect(store.trainChainId).toBe(store.trains[1].id)
     })
 
-    it('Escape first ends the train in progress (train select mode), then leaves the train tool', () => {
+    it('Escape first ends the train in progress (train select mode), then releases it, then leaves the train tool', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
 
@@ -126,6 +140,12 @@ describe('EditorStore trains', () => {
       expect(store.trainToolSubMode).toBe('select')
       expect(store.trainChainId).toBeNull()
       expect(store.trainPlacementPreview).toBeNull()
+      // The train just built stays selected, ready to be driven
+      expect(store.isTrainSelected).toBe(true)
+
+      store.cancelInteraction()
+      expect(store.tool).toBe('locomotive')
+      expect(store.isTrainSelected).toBe(false)
 
       store.cancelInteraction()
       expect(store.tool).toBe('select')
@@ -282,12 +302,16 @@ describe('EditorStore trains', () => {
       store.placeTrainItem({ x: 60, y: 0 })
 
       // Drive a little, then leave driving: the new position is what gets saved
+      runAtConstantSpeed()
+      const parkedT = store.trains[0].vehicles[0].front.t
       store.togglePlayMode()
       store.setSelectedTrainReverser('forward')
       store.setSelectedTrainNotch(5)
+      store.trains[0].currentSpeed = 20
       store.tickAllTrains(0.1)
       store.tickAllTrains(0.1)
       const drivenT = store.trains[0].vehicles[0].front.t
+      expect(drivenT).toBeGreaterThan(parkedT)
       store.togglePlayMode()
 
       const reloaded = new EditorStore()
@@ -304,10 +328,13 @@ describe('EditorStore trains', () => {
     it('does not restore a train as moving when the page closes while driving', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
+      runAtConstantSpeed()
       store.togglePlayMode()
       store.setSelectedTrainReverser('forward')
       store.setSelectedTrainNotch(5)
+      store.trains[0].currentSpeed = 20
       store.tickAllTrains(0.1)
+      expect(store.trains[0].currentSpeed).toBe(20)
       store.savePersistedState()
 
       const reloaded = new EditorStore()
@@ -424,9 +451,10 @@ describe('EditorStore trains', () => {
       store.placeTrainItem({ x: 100, y: 0 })
       const before = store.trains[0].vehicles[0].front.t
 
+      runAtConstantSpeed()
       store.togglePlayMode()
       store.setSelectedTrainReverser('forward')
-      store.setSelectedTrainNotch(5)
+      store.trains[0].currentSpeed = 20
       for (let i = 0; i < 5; i++) store.tickAllTrains(0.1)
       store.togglePlayMode()
       expect(store.trains[0].vehicles[0].front.t).toBeGreaterThan(before)
@@ -491,9 +519,11 @@ describe('EditorStore trains', () => {
       const [driven, parked] = store.trains
       const parkedBefore = JSON.stringify(parked.vehicles)
       store.selectTrainById(driven.id)
+      runAtConstantSpeed()
       store.togglePlayMode()
       setReverser(driven, 'forward')
       setNotch(driven, 5)
+      driven.currentSpeed = 20
 
       for (let i = 0; i < 60 * 20; i++) store.tickAllTrains(1 / 60)
 
@@ -501,10 +531,11 @@ describe('EditorStore trains', () => {
       const tail = vehicleRearEndPos(store.network, parked.vehicles[parked.vehicles.length - 1])!
       expect(tail.x - nose.x).toBeCloseTo(COUPLING_GAP, 6)
       expect(JSON.stringify(parked.vehicles)).toBe(parkedBefore)
-      // Traction is cut as at an end of track
+      // Bringing the train to rest against the obstacle is the domain's business: the store forces nothing
+      expect(driven.notch).toBe(5)
+      store.togglePlayMode()
       expect(driven.currentSpeed).toBe(0)
       expect(driven.notch).toBe(0)
-      store.togglePlayMode()
     })
 
     it('refuses to throw a junction while a train stands over its points', () => {
@@ -788,5 +819,78 @@ describe('EditorStore route tables', () => {
     store.redo()
     store.redo()
     expect(state()).toEqual(thrown)
+  })
+})
+
+describe('EditorStore train tool default sub-mode', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetIdCounter()
+  })
+
+  it('opens the train tool on selection, so a click on the canvas never places a vehicle by accident', () => {
+    const store = new EditorStore()
+    expect(store.trainToolSubMode).toBe('select')
+    store.setTool('locomotive')
+    expect(store.trainToolSubMode).toBe('select')
+  })
+
+  it('arms placement only when a vehicle kind is chosen, and comes back to selection after leaving', () => {
+    const store = new EditorStore()
+    store.setTrainPlacementKind('tgv_loco')
+    expect(store.tool).toBe('locomotive')
+    expect(store.trainToolSubMode).toBe('place')
+
+    store.exitTrainMode()
+    expect(store.tool).toBe('select')
+    store.setTool('locomotive')
+    expect(store.trainToolSubMode).toBe('select')
+
+    store.setTrainPlacementKind('tgv_wagon')
+    store.cancelInteraction() // placement → train selection
+    store.cancelInteraction() // train selection → select tool
+    expect(store.tool).toBe('select')
+    store.setTool('locomotive')
+    expect(store.trainToolSubMode).toBe('select')
+  })
+})
+
+describe('EditorStore Escape on a selected train', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetIdCounter()
+  })
+
+  it('releases the selected train first, then leaves the train tool', () => {
+    const { store } = storeWithStraightTrack()
+    expect(store.placeTrainItem({ x: 500, y: 0 })).toBe(true)
+    const train = store.trains[0]
+
+    store.cancelInteraction() // placement → train selection
+    store.selectTrainById(train.id)
+    expect(store.isTrainSelected).toBe(true)
+
+    store.cancelInteraction() // the train loses the focus, the train tool stays
+    expect(store.tool).toBe('locomotive')
+    expect(store.isTrainSelected).toBe(false)
+    expect(store.selectedTrain).toBeNull()
+    expect(store.selectedTrainVehicleId).toBeNull()
+    expect(store.trains).toHaveLength(1)
+
+    store.cancelInteraction() // nothing selected any more → back to the select tool
+    expect(store.tool).toBe('select')
+  })
+
+  it('releases a train that stays selected in the select tool', () => {
+    const { store } = storeWithStraightTrack()
+    store.placeTrainItem({ x: 500, y: 0 })
+    store.exitTrainMode()
+    store.selectTrainById(store.trains[0].id)
+    expect(store.tool).toBe('select')
+
+    store.cancelInteraction()
+    expect(store.tool).toBe('select')
+    expect(store.isTrainSelected).toBe(false)
+    expect(store.selectedTrain).toBeNull()
   })
 })

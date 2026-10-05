@@ -9,6 +9,7 @@ import {
   renderDetailedRailLines,
   renderLocomotive,
   renderTrainSet,
+  trainSetTelemetry,
   renderDrivingRoute,
   renderCouplerPoints,
   renderCouplerSnapIndicator,
@@ -49,7 +50,7 @@ import {
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
-import { trainDriveTelemetry, trainRouteStart } from '@domain/models/train'
+import { trainRouteStart } from '@domain/models/train'
 import {
   renderStraightDimension,
   renderCurveDimension,
@@ -318,7 +319,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isModifierDownRef = useRef(false)
 
-  const draw = useCallback(() => {
+  const paint = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -393,12 +394,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             isSelected,
             false,
             store.showTrainDebug,
-            {
-              speed: t.currentSpeed,
-              maxSpeed: t.maxSpeed,
-              ...trainDriveTelemetry(t),
-              debugOptions: store.trainDebugOptions,
-            },
+            // The physics is only asked when its figures are drawn
+            store.showTrainDebug
+              ? { ...trainSetTelemetry(store.network, t, store.drivingEnvironment), debugOptions: store.trainDebugOptions }
+              : { speed: t.currentSpeed, maxSpeed: t.maxSpeed, debugOptions: store.trainDebugOptions },
             isSelected ? store.selectedTrainVehicleId : null,
             deleteVehicleId,
             band,
@@ -840,9 +839,26 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       )
     }
 
-    // While driving, the console sits in the bottom-right corner: the scale bar moves left of it
-    renderScaleBar(ctx, cam, rect.width, rect.height, store.isPlayMode ? DRIVING_HUD_FOOTPRINT : 0)
+    // The console and the debug panel sit in the bottom-right corner: the scale bar moves left of them
+    renderScaleBar(ctx, cam, rect.width, rect.height, store.isPlayMode || store.showTrainDebug ? DRIVING_HUD_FOOTPRINT : 0)
   }, [store])
+
+  // Every tool asks for a redraw after each change, often several times for one event (`redraw`
+  // draws, then its notification draws again): the requests of a frame are merged into one paint.
+  const pendingFrameRef = useRef<number | null>(null)
+  const draw = useCallback(() => {
+    if (pendingFrameRef.current !== null) return
+    pendingFrameRef.current = requestAnimationFrame(() => {
+      pendingFrameRef.current = null
+      paint()
+    })
+  }, [paint])
+  useEffect(() => {
+    return () => {
+      if (pendingFrameRef.current !== null) cancelAnimationFrame(pendingFrameRef.current)
+      pendingFrameRef.current = null
+    }
+  }, [])
 
   const getWorldPos = useCallback(
     (clientX: number, clientY: number) => {
@@ -898,7 +914,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       canvas.height = Math.round(rect.height * dpr)
       const ctx = canvas.getContext('2d')
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      draw()
+      // Resizing clears the canvas: painted at once, a frame of delay would show as a flash
+      paint()
       store.setViewport(rect.width, rect.height)
       onViewport?.(rect.width, rect.height)
     }
@@ -906,9 +923,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
     return () => ro.disconnect()
-  }, [draw, onViewport])
+  }, [paint, onViewport])
 
-  // Subscribe to store notifications so external changes immediately redraw the canvas
+  // Subscribe to store notifications so external changes redraw the canvas
   useEffect(() => {
     return store.subscribe(draw)
   }, [store, draw])
@@ -1594,7 +1611,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           if (hitVehicle) {
             store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
             store.selectTrain(true)
-            store.setTool('locomotive')
+            // Clicking a train only selects it: never arm placement from a click on the canvas
+            store.setTrainToolSubMode('select')
             redraw()
             return
           }

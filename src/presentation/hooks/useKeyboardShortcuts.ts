@@ -3,6 +3,9 @@ import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/
 import { findAction, type ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../components/common/Toast'
 
+/** Brake handle position held by each of the two brake keys */
+const HELD_BRAKE_COMMAND = { 'drive.brakeApply': 'apply', 'drive.brakeRelease': 'release' } as const
+
 /** Run a rebindable action. The caller has already checked that it is live in the current context. */
 function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void {
   switch (action) {
@@ -19,6 +22,12 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
       }
       return
     }
+    case 'drive.brakeApply':
+    case 'drive.brakeRelease':
+      e.preventDefault()
+      // Held: the brake pipe empties or fills until the key is released (see handleKeyUp)
+      store.setSelectedTrainBrakeCommand(HELD_BRAKE_COMMAND[action])
+      return
     case 'drive.reverserForward':
     case 'drive.reverserBackward':
       e.preventDefault()
@@ -221,8 +230,16 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
 
 export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
   if (!store.isPlayMode) return
-  // Legacy locomotive: releasing the key that holds the throttle lets it coast
   const action = findAction(store.keybindings, 'drive', { code: e.code, key: e.key, shiftKey: false })
+  if (action === 'drive.brakeApply' || action === 'drive.brakeRelease') {
+    // Releasing a brake key leaves the pressure where it is, unless the other key has taken over
+    if (store.selectedTrain?.brakeCommand === HELD_BRAKE_COMMAND[action]) {
+      e.preventDefault()
+      store.setSelectedTrainBrakeCommand('hold')
+    }
+    return
+  }
+  // Legacy locomotive: releasing the key that holds the throttle lets it coast
   if (action === 'drive.notchUp' && store.locomotiveThrottle === 1) {
     e.preventDefault()
     store.setLocomotiveThrottle(0)
@@ -230,6 +247,13 @@ export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
     e.preventDefault()
     store.setLocomotiveThrottle(0)
   }
+}
+
+/** The window lost the focus: no key release will come, so nothing stays held */
+export function handleWindowBlur(store: EditorStore): void {
+  if (!store.isPlayMode) return
+  if (store.locomotiveThrottle !== 0) store.setLocomotiveThrottle(0)
+  store.setSelectedTrainBrakeCommand('hold')
 }
 
 /** Characters of the user's layout by key position, where the browser exposes them (Chromium) */
@@ -253,11 +277,7 @@ export function useKeyboardShortcuts(store: EditorStore): void {
 
     const onKeyUp = (e: KeyboardEvent) => handleKeyUp(store, e)
 
-    const onBlur = () => {
-      if (store.isPlayMode && store.locomotiveThrottle !== 0) {
-        store.setLocomotiveThrottle(0)
-      }
-    }
+    const onBlur = () => handleWindowBlur(store)
 
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)

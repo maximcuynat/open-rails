@@ -39,8 +39,10 @@ const EDIT: readonly KeyContext[] = ['edit']
 const BOTH: readonly KeyContext[] = ['drive', 'edit']
 
 export const ACTIONS = [
-  { id: 'drive.notchUp', label: 'Manipulateur : un cran vers la traction', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyA' }, { code: 'ArrowUp' }] },
-  { id: 'drive.notchDown', label: 'Manipulateur : un cran vers le frein', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyD' }, { code: 'ArrowDown' }] },
+  { id: 'drive.notchUp', label: 'Manipulateur : un cran de plus', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyA' }, { code: 'ArrowUp' }] },
+  { id: 'drive.notchDown', label: 'Manipulateur : un cran de moins', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyD' }, { code: 'ArrowDown' }] },
+  { id: 'drive.brakeApply', label: 'Serrer le frein (maintenir)', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyE' }, null] },
+  { id: 'drive.brakeRelease', label: 'Desserrer le frein (maintenir)', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyQ' }, null] },
   { id: 'drive.reverserForward', label: 'Inverseur vers l’avant', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyW' }, { code: 'ArrowUp', shift: true }] },
   { id: 'drive.reverserBackward', label: 'Inverseur vers l’arrière', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyS' }, { code: 'ArrowDown', shift: true }] },
   { id: 'drive.emergencyBrake', label: 'Freinage d’urgence', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'Backspace' }, null] },
@@ -99,13 +101,28 @@ function parseChord(raw: unknown): KeyChord | null {
   return null
 }
 
-/** Saved bindings laid over the defaults: unknown actions are dropped, new actions keep their defaults */
+/**
+ * Saved bindings laid over the defaults: unknown actions are dropped, new actions keep their
+ * defaults, except a default key that the user has already given to another action of the same
+ * context (an action added after the bindings were saved must not take a key away).
+ */
 export function mergeWithDefaults(saved: unknown): Keybindings {
   const out = defaultKeybindings()
   if (!saved || typeof saved !== 'object') return out
+  const savedActions: ActionDef[] = []
   for (const a of ACTIONS) {
     const slots = (saved as Record<string, unknown>)[a.id]
-    if (Array.isArray(slots)) out[a.id] = [parseChord(slots[0]), parseChord(slots[1])]
+    if (!Array.isArray(slots)) continue
+    out[a.id] = [parseChord(slots[0]), parseChord(slots[1])]
+    savedActions.push(a)
+  }
+  if (savedActions.length === 0) return out
+  for (const a of ACTIONS) {
+    if (savedActions.includes(a)) continue
+    const taken = (chord: KeyChord | null): boolean => chord !== null && savedActions.some((other) =>
+      other.contexts.some((c) => a.contexts.includes(c))
+      && out[other.id as ActionId].some((c) => c !== null && JSON.stringify(c) === JSON.stringify(chord)))
+    out[a.id] = out[a.id].map((chord) => (taken(chord) ? null : chord)) as KeySlots
   }
   return out
 }

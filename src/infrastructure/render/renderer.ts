@@ -6,8 +6,9 @@ import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@doma
 import { bezierDerivative1, bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
-import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
-import { analyzeKinematics, type GradientLimits, type KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
+import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import { networkDerived } from './networkDerived'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
   deckAbutments,
@@ -752,7 +753,13 @@ export function renderNetwork(
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
-  const trackSections = computeTrackSections(net, sectionMeta)
+  const derived = networkDerived(net, sectionMeta)
+  const trackSections = derived.sections
+  const selectedSections = new Set<TrackSection>()
+  for (const sid of selection.segments) {
+    const sec = derived.sectionOfSegment.get(sid)
+    if (sec) selectedSections.add(sec)
+  }
   const visibleSegments = segmentsInBounds(net, bounds)
 
   // Rails are drawn level by level, lowest first, so that a bridge covers what runs below it.
@@ -767,9 +774,10 @@ export function renderNetwork(
     // Draw simplified single-line representation for low zoom levels
     const lineW = Math.max(2.5, 0.8 * cam.scale)
     // A rail above ground gets an edging in the background colour: it reads as passing over
+    const paper = level > 0 ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
     const halo = (): void => {
       if (level <= 0) return
-      ctx.strokeStyle = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
+      ctx.strokeStyle = paper
       ctx.lineWidth = lineW + 4
       ctx.lineCap = 'butt'
       ctx.stroke()
@@ -781,7 +789,7 @@ export function renderNetwork(
       if (!a || !b) continue
 
       const selected = selection.segments.has(seg.id)
-      const sec = findSectionBySegment(trackSections, seg.id)
+      const sec = derived.sectionOfSegment.get(seg.id)
       const secColor = selected ? accent : (sec?.color ?? ink)
       const intervals = pieceRenderIntervals(net, piece, a.pos, b.pos)
 
@@ -840,9 +848,9 @@ export function renderNetwork(
         const line = pieceGeometry(net, piece)
         if (!line) continue
 
-        const sec = findSectionBySegment(trackSections, seg.id)
+        const sec = derived.sectionOfSegment.get(seg.id)
         const secColor = sec?.color ?? '#94a3b8'
-        const isSecSelected = sec && sec.segmentIds.some((sid) => selection.segments.has(sid))
+        const isSecSelected = sec !== undefined && selectedSections.has(sec)
 
         ctx.save()
         ctx.strokeStyle = secColor
@@ -916,7 +924,7 @@ export function renderNetwork(
     const showAllBadges = cam.scale >= 1.0
     for (const sec of options?.hideSectionBadges ? [] : trackSections) {
       if (sec.segmentIds.length === 0) continue
-      const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
+      const isSecSelected = selectedSections.has(sec)
 
       if (onlyRenamedSectionBadges) {
         // En mode déplacement / vue épurée : uniquement les voies renommées par l'utilisateur
@@ -1149,8 +1157,7 @@ export function renderNetwork(
 
   // 7. DIRECTION CONFLICTS / SENS INTERDIT (Panneau sens interdit en cas d'incohérence -> <-)
   if (!hideConstructionNodes) {
-    const conflicts = detectDirectionConflicts(net, trackSections)
-    for (const conf of conflicts) {
+    for (const conf of derived.conflicts) {
       if (!isPointInBounds(conf.pos, bounds)) continue
       const sx = (conf.pos.x - cam.x) * cam.scale + vw / 2
       const sy = (conf.pos.y - cam.y) * cam.scale + vh / 2
@@ -1202,8 +1209,7 @@ export function renderNetwork(
 
   // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
   if (!hideConstructionNodes) {
-    const kinematicIssues = analyzeKinematics(net, options?.gauge, options?.gradient)
-    for (const issue of kinematicIssues) {
+    for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
       if (options?.quietNodeIds?.has(issue.nodeId)) continue
       const node = net.nodes.get(issue.nodeId)
       if (!node || !isPointInBounds(node.pos, bounds)) continue
@@ -2660,17 +2666,69 @@ import {
   type TGVFullTrain,
 } from '@domain/models/locomotive'
 import type { TrainSet, CouplerPoint } from '@domain/models/train'
-import { getTrainSetVisuals, trainDriveTelemetry, MAX_COUPLE_DISTANCE } from '@domain/models/train'
+import { getTrainSetVisuals, MAX_COUPLE_DISTANCE } from '@domain/models/train'
+import { trainDynamics, type DrivingEnvironment } from '@domain/models/trainDynamics'
 
 import type { TrainDebugOptions } from '@application/state/editorStore'
 
 export interface TrainTelemetry {
   speed?: number
   maxSpeed?: number
+  /** What the train is doing: 1 = traction, -1 = braking, 0 = neither */
   throttle?: 1 | 0 | -1
+  /** Legacy locomotive: acceleration (m/s²) while `throttle` is 1 */
   acceleration?: number
+  /** Legacy locomotive: deceleration (m/s²) while `throttle` is -1, also used for its stopping distance */
   braking?: number
+  /** Acceleration the physics really gives, m/s², signed along the motion. Replaces the legacy estimate. */
+  realAcceleration?: number
+  /** Distance (m) the physics needs to stop the train. Replaces the legacy estimate. */
+  stoppingDistance?: number
   debugOptions?: Partial<TrainDebugOptions>
+}
+
+/** Brake cylinder pressure (bar) from which a train is shown as braking */
+const BRAKING_SHOWN_FROM_BAR = 0.05
+
+/** Telemetry of a TrainSet for the debug overlay, read from the physics rather than from the controls */
+export function trainSetTelemetry(net: Network, train: TrainSet, env?: DrivingEnvironment): TrainTelemetry {
+  const dynamics = trainDynamics(net, train, env)
+  return {
+    speed: train.currentSpeed,
+    maxSpeed: train.maxSpeed,
+    throttle: dynamics.brakeCylinderBar > BRAKING_SHOWN_FROM_BAR || dynamics.electricBrakeForce > 0
+      ? -1
+      : dynamics.tractionEffort > 0 ? 1 : 0,
+    realAcceleration: dynamics.acceleration,
+    stoppingDistance: dynamics.stoppingDistance,
+  }
+}
+
+/** Samples along the stopping distance tape (sampleForwardTrack gives up after 150 steps) */
+const STOP_TAPE_SAMPLES = 140
+/** Longest stopping distance tape drawn, m */
+const STOP_TAPE_MAX_LENGTH = 20000
+
+/** Deceleration (m/s²) assumed for the legacy locomotive when it gives none */
+const LEGACY_DEFAULT_BRAKING = 10.0
+
+/**
+ * Acceleration (m/s², signed along the motion) and stopping distance (m) the overlay shows.
+ * A TrainSet brings both from the physics; the legacy locomotive has them rebuilt from its controls.
+ */
+export function telemetryKinematics(telemetry: TrainTelemetry | undefined): { acceleration: number; stoppingDistance: number } {
+  const speed = telemetry?.speed ?? 0
+  const throttle = telemetry?.throttle ?? 0
+  // `||`, not `??`: a braking of 0 would make the stopping distance infinite
+  const braking = telemetry?.braking || LEGACY_DEFAULT_BRAKING
+  const acceleration = telemetry?.realAcceleration
+    ?? (throttle === 1 ? (telemetry?.acceleration ?? 5.5) : throttle === -1 ? -braking : speed > 0.05 ? -0.5 : 0)
+  const stoppingDistance = telemetry?.stoppingDistance ?? (speed * speed) / (2 * braking)
+  return {
+    acceleration: Number.isFinite(acceleration) ? acceleration : 0,
+    // +Infinity is kept: it is the physics saying that the brake does not hold the train on this slope
+    stoppingDistance: Number.isNaN(stoppingDistance) ? 0 : Math.max(stoppingDistance, 0),
+  }
 }
 
 /**
@@ -3906,22 +3964,17 @@ export function renderTrainDynamicVectors(
     ? leadHeading
     : { x: -leadHeading.x, y: -leadHeading.y }
 
-  const currentAccel = throttle === 1
-    ? (telemetry?.acceleration ?? 5.5)
-    : throttle === -1
-    ? -(telemetry?.braking ?? 10.0)
-    : speedMs > 0.05
-    ? -0.5
-    : 0
+  const { acceleration: currentAccel, stoppingDistance: dStop } = telemetryKinematics(telemetry)
 
   // ─── 1 à 4 : Vecteurs physiques dynamiques (activables/désactivables) ───
   if (showVectors) {
     // 1. Ruban de distance d'arrêt de sécurité projetée (Stopping distance tape)
+    // A real stopping distance runs to kilometres: the sampling step grows with it so that the
+    // tape reaches its end within the number of steps sampleForwardTrack allows
     if (net && leadPos && speedMs > 0.5) {
-      const brakeDecel = telemetry?.braking ?? 10.0
-      const dStop = (speedMs * speedMs) / (2 * brakeDecel)
       if (dStop > 0.8) {
-        const stopPts = sampleForwardTrack(net, leadPos, travelDirection, dStop, 1.0)
+        const tapeLength = Math.min(dStop, STOP_TAPE_MAX_LENGTH)
+        const stopPts = sampleForwardTrack(net, leadPos, travelDirection, tapeLength, Math.max(1.0, tapeLength / STOP_TAPE_SAMPLES))
         if (stopPts.length >= 2) {
           ctx.save()
           // Ruban avertisseur projeté sur les rails
@@ -3961,7 +4014,7 @@ export function renderTrainDynamicVectors(
           ctx.stroke()
 
           // Badge au point d'arrêt
-          const stopBadgeText = `🛑 Arrêt d'urgence : ${dStop.toFixed(1)} m`
+          const stopBadgeText = `🛑 Distance d'arrêt : ${Number.isFinite(dStop) ? `${dStop.toFixed(1)} m` : '∞'}`
           drawVectorBadge(toSx(lastP), toSy(lastP) - 16, stopBadgeText, '#fca5a5', 'rgba(153, 27, 27, 0.92)', fontSize)
           ctx.restore()
         }
@@ -4117,8 +4170,6 @@ export function renderTrainDynamicVectors(
         ctx.lineWidth = Math.max(1.8, 2.5 * Math.sqrt(cam.scale))
         ctx.stroke()
 
-        const brakeDecel = telemetry?.braking ?? 10.0
-        const dStop = (speedMs * speedMs) / (2 * brakeDecel)
         const isCollisionRisk = speedMs > 0.5 && dStop >= totalDist
         const alertText = isCollisionRisk
           ? `🚨 COLLISION HEURTOIR D'ICI ${totalDist.toFixed(1)} m !`
@@ -4752,11 +4803,7 @@ export function renderTrainSet(
       leadNosePt,
       leadHeading,
       train.direction,
-      telemetry ?? {
-        speed: train.currentSpeed,
-        maxSpeed: train.maxSpeed,
-        ...trainDriveTelemetry(train),
-      },
+      telemetry ?? trainSetTelemetry(net, train),
       leadPos,
     )
   }

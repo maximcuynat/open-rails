@@ -1,28 +1,58 @@
-import type { CSSProperties } from 'react'
-import type { EditorStore, TrainDebugOptions } from '@application/state/editorStore'
+import { useEffect, type CSSProperties } from 'react'
+import { trainImpactMessage, type EditorStore } from '@application/state/editorStore'
 import type { Reverser, TrainSet } from '@domain/models/train'
-import { MAX_NOTCH, commandedAcceleration, isTrainStopped, stoppingDistance } from '@domain/models/train'
-import { formatDistance } from '@domain/models/units'
+import { MAX_NOTCH, MIN_NOTCH, isTrainStopped } from '@domain/models/train'
+import type { BrakeCommand, TrainDynamics } from '@domain/models/trainDynamics'
 import type { ActionId } from '@application/keybindings/keybindings'
+import { showToast } from '../common/Toast'
+import {
+  BRAKE_CYLINDER_GAUGE,
+  BRAKE_PIPE_GAUGE,
+  accelerationLabel,
+  brakeStatus,
+  decimal,
+  effortPercent,
+  gaugeRatio,
+  gradientLabel,
+  handleEffort,
+  isBrakeHolding,
+  notchLabel,
+  speedDialTicks,
+  type BrakeTone,
+  type GaugeSpec,
+  stoppingDistanceLabel,
+} from './drivingHudModel'
 
 interface DrivingHUDProps {
   store: EditorStore
 }
 
-const HUD_WIDTH = 220
+/** The console is laid out at this width, in its own pixels, then magnified as a whole */
+const HUD_BASE_WIDTH = 220
+const HUD_SCALE = 1.4
+const HUD_WIDTH = HUD_BASE_WIDTH * HUD_SCALE
 const HUD_MARGIN = 12
-/** Width the console takes at the bottom-right of the canvas: what is drawn there moves left of it. */
+/** Width the dock (console, debug panel) takes at the bottom-right of the canvas: what is drawn there moves left of it. */
 export const DRIVING_HUD_FOOTPRINT = HUD_WIDTH + HUD_MARGIN
 
 const GREEN = '#22c55e'
 const RED = '#ef4444'
-const MUTED = '#64748b'
+const AMBER = '#f59e0b'
+
+const BRAKE_TONE_COLOR: Record<BrakeTone, string> = {
+  released: GREEN,
+  releasing: AMBER,
+  applying: AMBER,
+  applied: RED,
+  emergency: RED,
+}
 
 const REVERSER_ORDER: Reverser[] = ['reverse', 'neutral', 'forward']
 const REVERSER_LABEL: Record<Reverser, string> = { forward: '▲ AV', neutral: 'N', reverse: '▼ AR' }
 
 const TRAIN_COMMANDS: [actions: ActionId[], label: string][] = [
-  [['drive.notchUp', 'drive.notchDown'], 'Cran'],
+  [['drive.notchUp', 'drive.notchDown'], 'Manipulateur'],
+  [['drive.brakeRelease', 'drive.brakeApply'], 'Frein −/+'],
   [['drive.reverserForward', 'drive.reverserBackward'], 'Inverseur'],
   [['drive.emergencyBrake'], 'Urgence'],
   [['drive.steerLeft', 'drive.steerRight'], 'Aiguillage'],
@@ -46,7 +76,6 @@ const DIAL_CY = 92
 const DIAL_R = 78
 const DIAL_START = 160
 const DIAL_SWEEP = 220
-const DIAL_TICKS = 5
 
 function dialPoint(ratio: number, radius: number): { x: number; y: number } {
   const a = ((DIAL_START + DIAL_SWEEP * ratio) * Math.PI) / 180
@@ -90,21 +119,133 @@ const kbd: CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-/** Text and colour of the single handle field: P1..P5, N, B1..B5 or URG */
-function handleField(train: TrainSet): { label: string; color: string; fill: number } {
-  if (train.emergencyBrake) return { label: 'URG', color: RED, fill: 1 }
-  const fill = Math.abs(train.notch) / MAX_NOTCH
-  if (train.notch > 0) return { label: `P${train.notch}`, color: GREEN, fill }
-  if (train.notch < 0) return { label: `B${-train.notch}`, color: RED, fill }
-  return { label: 'N', color: '#94a3b8', fill: 0 }
+/** Text and colour of the handle field: B5..B1, N, P1..P5 with the effort really applied */
+function handleField(
+  train: TrainSet,
+  dynamics: Pick<TrainDynamics, 'tractionEffort' | 'electricBrakeEffort'>,
+): { label: string; color: string; fill: number } {
+  const label = `${notchLabel(train.notch)} · ${effortPercent(handleEffort(train.notch, dynamics))} %`
+  if (train.notch > 0) return { label, color: GREEN, fill: train.notch / MAX_NOTCH }
+  if (train.notch < 0) return { label, color: AMBER, fill: train.notch / MIN_NOTCH }
+  return { label, color: '#94a3b8', fill: 0 }
+}
+
+// Pressure gauge geometry (SVG user units): a half dial, 0 on the left
+const GAUGE_W = 92
+const GAUGE_H = 54
+const GAUGE_CX = 46
+const GAUGE_CY = 46
+const GAUGE_R = 34
+
+function gaugePoint(ratio: number, radius: number): { x: number; y: number } {
+  const a = Math.PI * (1 + ratio)
+  return { x: GAUGE_CX + radius * Math.cos(a), y: GAUGE_CY + radius * Math.sin(a) }
+}
+
+function gaugeArc(ratio: number): string {
+  const from = gaugePoint(0, GAUGE_R)
+  const to = gaugePoint(ratio, GAUGE_R)
+  return `M ${from.x} ${from.y} A ${GAUGE_R} ${GAUGE_R} 0 0 1 ${to.x} ${to.y}`
+}
+
+/** A sober pressure gauge: scale with its marks, needle, value in bar and a caption */
+function PressureGauge({ value, spec, caption, title, color }: {
+  value: number
+  spec: GaugeSpec
+  caption: string
+  title: string
+  color: string
+}) {
+  const ratio = gaugeRatio(value, spec)
+  const needle = gaugePoint(ratio, GAUGE_R - 7)
+  return (
+    <div style={{ flex: 1, minWidth: 0, textAlign: 'center' }} title={title}>
+      <svg viewBox={`0 0 ${GAUGE_W} ${GAUGE_H}`} style={{ display: 'block', width: '100%' }}>
+        <path d={gaugeArc(1)} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth={4} strokeLinecap="round" />
+        {ratio > 0.005 && <path d={gaugeArc(ratio)} fill="none" stroke={color} strokeWidth={4} strokeLinecap="round" />}
+        {spec.marks.map((mark) => {
+          const r = gaugeRatio(mark, spec)
+          const inner = gaugePoint(r, GAUGE_R - 6)
+          const outer = gaugePoint(r, GAUGE_R + 3)
+          const label = gaugePoint(r, GAUGE_R + 9)
+          return (
+            <g key={mark}>
+              <line x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke="#cbd5e1" strokeWidth={1} />
+              <text x={label.x} y={label.y} fill="#94a3b8" fontSize={7} textAnchor="middle" dominantBaseline="middle">
+                {decimal(mark, Number.isInteger(mark) ? 0 : 1)}
+              </text>
+            </g>
+          )
+        })}
+        <line x1={GAUGE_CX} y1={GAUGE_CY} x2={needle.x} y2={needle.y} stroke="#f8fafc" strokeWidth={1.5} strokeLinecap="round" />
+        <circle cx={GAUGE_CX} cy={GAUGE_CY} r={2.5} fill="#f8fafc" />
+        <text x={GAUGE_CX} y={GAUGE_CY - 12} fill="#f8fafc" fontSize={11} fontWeight={700} textAnchor="middle">
+          {decimal(value, 1)}
+        </text>
+      </svg>
+      <div style={{ fontSize: '8px', color: '#94a3b8', whiteSpace: 'nowrap' }}>{caption} · bar</div>
+    </div>
+  )
+}
+
+/** A button that acts for as long as it is pressed, like the key it doubles */
+function HoldButton({ label, title, color, active, disabled, onHold, onRelease }: {
+  label: string
+  title: string
+  color: string
+  active: boolean
+  disabled: boolean
+  onHold: () => void
+  onRelease: () => void
+}) {
+  return (
+    <button
+      disabled={disabled}
+      // The pointer is captured: sliding off the button does not drop the handle, releasing does
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        onHold()
+      }}
+      onPointerUp={onRelease}
+      onPointerCancel={onRelease}
+      onLostPointerCapture={onRelease}
+      style={{
+        flex: 1,
+        background: active ? color : `${color}26`,
+        border: `1px solid ${color}`,
+        borderRadius: '6px',
+        color: active ? '#fff' : color,
+        fontSize: '10px',
+        fontWeight: 700,
+        padding: '5px 0',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        fontFamily: 'monospace',
+        touchAction: 'none',
+      }}
+      title={title}
+    >
+      {label}
+    </button>
+  )
 }
 
 /**
  * DrivingHUD — compact piloting panel shown bottom-right in play mode: keyboard
- * commands on top, then a speed dial with the reverser, the handle notch and
- * the emergency brake.
+ * commands on top, then a speed dial with the reverser, the traction handle, the
+ * air brake with its two gauges, what the physics does to the train and the
+ * emergency brake.
  */
 export function DrivingHUD({ store }: DrivingHUDProps) {
+  // A train that runs into a buffer stop or another train says so on screen
+  useEffect(() => {
+    store.onTrainImpact = (_train, speed) => showToast(trainImpactMessage(speed), 'warning')
+    return () => {
+      store.onTrainImpact = null
+    }
+  }, [store])
+
   const train = store.selectedTrain
   if (!store.isPlayMode) return null
 
@@ -113,21 +254,26 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
   const kmh = Math.round(speed * 3.6)
   const maxKmh = Math.round(maxSpeed * 3.6)
   const speedRatio = Math.min(speed / Math.max(maxSpeed, 1e-6), 1)
+  const dynamics = train ? store.selectedTrainDynamics : null
+  const brake = train && dynamics ? brakeStatus(train, dynamics) : null
 
   const locoCount = train?.vehicles.filter(v => v.kind === 'loco').length ?? 1
   const wagonCount = train ? train.vehicles.filter(v => v.kind === 'wagon').length : (store.locomotive?.wagonCount ?? 0)
 
   const legacyThrottle = store.locomotiveThrottle
   const field = train
-    ? handleField(train)
+    ? handleField(train, dynamics ?? { tractionEffort: 0, electricBrakeEffort: 0 })
     : legacyThrottle === 1
     ? { label: 'ACCÉL.', color: GREEN, fill: 1 }
     : legacyThrottle === -1
     ? { label: 'FREIN', color: RED, fill: 1 }
     : { label: 'INERTIE', color: '#94a3b8', fill: 0 }
 
-  const accel = train ? commandedAcceleration(train) : 0
-  const reverserLocked = train ? !isTrainStopped(train) || train.notch > 0 : false
+  /** Let go of a brake button: the handle only comes back if this button still holds it */
+  const releaseBrakeButton = (held: BrakeCommand) => {
+    if (store.selectedTrain?.brakeCommand === held) store.setSelectedTrainBrakeCommand('hold')
+  }
+  const reverserLocked = train ? !isTrainStopped(train) || train.notch !== 0 : false
   const emergencyReleasable = train ? train.emergencyBrake && isTrainStopped(train) : false
   // Traction asked for with the reverser in neutral: flag the reverser, nothing will move
   const reverserNeeded = train ? train.notch > 0 && train.reverser === 'neutral' : false
@@ -143,19 +289,14 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
   return (
     <div
       style={{
-        // Bottom-right corner of the canvas area (its parent), below menus and dialogs
-        position: 'absolute',
-        bottom: `${HUD_MARGIN}px`,
-        right: `${HUD_MARGIN}px`,
-        width: `${HUD_WIDTH}px`,
-        maxHeight: `calc(100% - ${2 * HUD_MARGIN}px)`,
-        overflowY: 'auto',
+        // Placed by the `.hud-dock` it sits in (bottom-right corner of the canvas area)
+        flexShrink: 0,
+        zoom: HUD_SCALE,
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
         color: '#f8fafc',
         fontFamily: 'monospace',
-        zIndex: 'var(--z-driving)',
         userSelect: 'none',
       }}
     >
@@ -236,16 +377,16 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
             {speedRatio > 0.001 && (
               <path d={dialArc(speedRatio)} fill="none" stroke="#38bdf8" strokeWidth={6} strokeLinecap="round" />
             )}
-            {Array.from({ length: DIAL_TICKS + 1 }, (_, i) => {
-              const ratio = i / DIAL_TICKS
+            {speedDialTicks(maxKmh).map((tickKmh) => {
+              const ratio = tickKmh / Math.max(maxKmh, 1)
               const inner = dialPoint(ratio, DIAL_R - 9)
               const outer = dialPoint(ratio, DIAL_R - 5)
               const label = dialPoint(ratio, DIAL_R - 18)
               return (
-                <g key={i}>
+                <g key={tickKmh}>
                   <line x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke="#64748b" strokeWidth={1} />
                   <text x={label.x} y={label.y} fill="#64748b" fontSize={8} textAnchor="middle" dominantBaseline="middle">
-                    {Math.round(maxKmh * ratio)}
+                    {tickKmh}
                   </text>
                 </g>
               )
@@ -295,10 +436,10 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
           </div>
         </div>
 
-        {/* Handle notch — single field */}
+        {/* Traction and electric brake handle (legacy locomotive: throttle state) */}
         <div style={{ display: 'flex', gap: '4px', marginTop: '6px' }}>
           {train && (
-            <button onClick={() => store.stepSelectedTrainNotch(-1)} style={stepButton} title={`Un cran vers le frein${store.shortcutHint('drive.notchDown')}`}>
+            <button onClick={() => store.stepSelectedTrainNotch(-1)} style={stepButton} title={`Un cran de moins : moins de traction, puis frein électrique sous N${store.shortcutHint('drive.notchDown')}`}>
               −
             </button>
           )}
@@ -315,28 +456,102 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
               background: `${field.color}${Math.round(field.fill * 0.6 * 255).toString(16).padStart(2, '0')}`,
               color: field.fill > 0.7 ? '#fff' : field.color,
             }}
-            title="Manipulateur traction / frein"
+            title={train ? 'Cran du manipulateur (P : traction, B : frein électrique) et effort réellement appliqué' : 'Commande de la locomotive'}
           >
             {field.label}
           </div>
           {train && (
-            <button onClick={() => store.stepSelectedTrainNotch(1)} style={stepButton} title={`Un cran vers la traction${store.shortcutHint('drive.notchUp')}`}>
+            <button onClick={() => store.stepSelectedTrainNotch(1)} style={stepButton} title={`Un cran de plus : moins de frein électrique, puis traction au-dessus de N${store.shortcutHint('drive.notchUp')}`}>
               +
             </button>
           )}
         </div>
 
-        {train && (
+        {train && dynamics && brake && (
           <>
+            {/* Air brake: state at a glance, brake pipe and brake cylinder gauges, held handle */}
+            <div
+              style={{
+                marginTop: '6px',
+                textAlign: 'center',
+                fontSize: '11px',
+                fontWeight: 800,
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+                padding: '3px 0',
+                borderRadius: '6px',
+                border: `1px solid ${BRAKE_TONE_COLOR[brake.tone]}`,
+                background: `${BRAKE_TONE_COLOR[brake.tone]}${isBrakeHolding(brake) || brake.tone === 'emergency' ? '59' : '1f'}`,
+                color: isBrakeHolding(brake) || brake.tone === 'emergency' ? '#fff' : BRAKE_TONE_COLOR[brake.tone],
+              }}
+              title="État du frein à air"
+            >
+              {brake.label}
+            </div>
+            {isBrakeHolding(brake) && isTrainStopped(train) && (
+              <div style={{ marginTop: '3px', fontSize: '9px', color: AMBER, textAlign: 'center' }}>
+                Maintenir <span style={kbd}>{store.shortcutLabel('drive.brakeRelease') || 'Desserrer'}</span> pour desserrer et partir
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+              <PressureGauge
+                value={dynamics.brakePipeBar}
+                spec={BRAKE_PIPE_GAUGE}
+                caption="Cond. générale"
+                title="Conduite générale : 5 bar frein desserré, 4,5 bar à la première dépression, 3,5 bar au serrage maximal, 0 en urgence"
+                color="#38bdf8"
+              />
+              <PressureGauge
+                value={dynamics.brakeCylinderBar}
+                spec={BRAKE_CYLINDER_GAUGE}
+                caption="Cyl. de frein"
+                title="Cylindres de frein : 0 bar frein desserré, 3,8 bar au serrage maximal"
+                color={RED}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+              <HoldButton
+                label="◀ Desserrer"
+                title={`Desserrer le frein, tant que le bouton est maintenu${store.shortcutHint('drive.brakeRelease')}`}
+                color={GREEN}
+                active={train.brakeCommand === 'release'}
+                disabled={train.emergencyBrake}
+                onHold={() => store.setSelectedTrainBrakeCommand('release')}
+                onRelease={() => releaseBrakeButton('release')}
+              />
+              <HoldButton
+                label="Serrer ▶"
+                title={`Serrer le frein, tant que le bouton est maintenu${store.shortcutHint('drive.brakeApply')}`}
+                color={AMBER}
+                active={train.brakeCommand === 'apply'}
+                disabled={train.emergencyBrake}
+                onHold={() => store.setSelectedTrainBrakeCommand('apply')}
+                onRelease={() => releaseBrakeButton('apply')}
+              />
+            </div>
+
+            {/* What the physics does to the train */}
             <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginTop: '5px',
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: '6px',
+              rowGap: '1px',
+              marginTop: '6px',
               fontSize: '9px',
               color: '#94a3b8',
             }}>
-              <span>{accel > 0 ? '+' : ''}{accel.toFixed(1)} m/s²</span>
-              <span title="Distance d’arrêt au frein maximal">arrêt {formatDistance(stoppingDistance(train), 'm', 0)}</span>
+              <span>accél.</span>
+              <span style={{ textAlign: 'right', color: '#e2e8f0' }} title="Accélération réelle de la rame (négative : elle ralentit)">
+                {accelerationLabel(dynamics.acceleration)}
+              </span>
+              <span>pente</span>
+              <span style={{ textAlign: 'right', color: '#e2e8f0' }} title="Pente moyenne sous la rame, dans le sens de la marche">
+                {gradientLabel(dynamics.gradientPermille)}
+              </span>
+              <span>arrêt</span>
+              <span style={{ textAlign: 'right', color: '#e2e8f0' }} title="Distance d’arrêt au serrage maximal de service, sur la pente actuelle">
+                {stoppingDistanceLabel(dynamics.stoppingDistance)}
+              </span>
             </div>
 
             {/* Emergency brake */}
@@ -360,47 +575,6 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
               {!train.emergencyBrake ? '⛔ ARRÊT D’URGENCE' : emergencyReleasable ? 'RÉARMER' : 'URGENCE EN COURS…'}
             </button>
           </>
-        )}
-
-        {/* Sous-options du mode debug */}
-        {store.showTrainDebug && (
-          <div style={{
-            marginTop: '6px',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '3px',
-          }}>
-            {[
-              { key: 'vectors', label: '↗ Vecteurs', title: 'Vitesse V, accélération a, centrifuge ac, ruban d’arrêt' },
-              { key: 'yawAngles', label: '∠ Angles Δθ', title: 'Angles de lacet bogies et articulation inter-caisses' },
-              { key: 'gauge', label: '📐 Gabarit', title: 'Gabarit cinématique de libre passage et balayage' },
-              { key: 'lookahead', label: '🔭 Trajet 50m', title: 'Projection anticipée et détection heurtoir / fin de voie' },
-              { key: 'xray', label: '🩻 Rayons X', title: 'Carrosserie transparente laissant voir les essieux' },
-            ].map(({ key, label, title }) => {
-              const active = store.trainDebugOptions[key as keyof TrainDebugOptions]
-              return (
-                <button
-                  key={key}
-                  onClick={() => store.toggleTrainDebugOption(key as keyof TrainDebugOptions)}
-                  style={{
-                    background: active ? 'rgba(56, 189, 248, 0.25)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${active ? '#38bdf8' : 'rgba(255, 255, 255, 0.08)'}`,
-                    borderRadius: '4px',
-                    color: active ? '#e0f2fe' : MUTED,
-                    fontSize: '9px',
-                    fontWeight: active ? 600 : 400,
-                    padding: '3px 2px',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={title}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
         )}
       </div>
     </div>
