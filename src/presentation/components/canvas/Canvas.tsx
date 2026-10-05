@@ -3,23 +3,30 @@ import { clampScale, screenToWorld, type Camera } from '@infrastructure/render/c
 import {
   renderGrid,
   renderBaseboard,
-  renderNetwork,
+  renderNetworkWithTrains,
   renderScaleBar,
   renderDetailedCurveRails,
   renderDetailedRailLines,
   renderLocomotive,
   renderTrainSet,
+  trainSetTelemetry,
   renderDrivingRoute,
   renderCouplerPoints,
   renderCouplerSnapIndicator,
   pickSpacing,
   SIMPLIFY_THRESHOLD,
   GAUGE,
+  TUNNEL_VEHICLE_ALPHA,
+  inLevelBand,
+  vehicleLevel,
+  type LevelBand,
+  type RenderNetworkOptions,
 } from '@infrastructure/render/renderer'
 import {
   addNode,
   addSegment,
   addCurveChain,
+  nodeLevel,
   hitNode,
   hitSegment,
   snapToGrid,
@@ -36,14 +43,15 @@ import {
   findJunctionAtNode,
   findJunctionBySegment,
 } from '@domain/models/junction'
-import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
+import { networkDerived } from '@infrastructure/render/networkDerived'
+import { findSectionBySegment } from '@domain/models/sections'
 import {
   computeFreeformParallelTurnout,
   applyFreeformParallelTurnout,
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
-import { trainDriveTelemetry, trainRouteStart } from '@domain/models/train'
+import { trainRouteStart } from '@domain/models/train'
 import {
   renderStraightDimension,
   renderCurveDimension,
@@ -56,7 +64,7 @@ import {
   getGizmoAnchor,
   gizmoFootprint,
 } from './gizmo'
-import { DRIVING_HUD_FOOTPRINT } from '../hud/DrivingHUD'
+import { arrangeConsole } from '../console/consoleLayout'
 import { wheelIntent } from './wheelIntent'
 import {
   findNearestNode,
@@ -65,9 +73,17 @@ import {
   resolvePlaceTool,
   describeCurve,
   pendingPlacementNodeId,
+  resolveSpeedZoneTool,
+  speedZoneAim,
 } from './placementPreview'
-import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
+import { positionOnSegment } from '@domain/models/locomotive'
+import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
+import { renderSignalToolPreview } from './signalToolPreview'
+import { commitSignalGesture } from '../common/signalActions'
+import { hitShownNode } from './nodePicking'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -312,7 +328,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isModifierDownRef = useRef(false)
 
-  const draw = useCallback(() => {
+  const paint = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -341,17 +357,42 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       : null
     const pendingNodeId = pendingPlacementNodeId(store)
 
-    renderNetwork(ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta, {
+    const networkOptions: RenderNetworkOptions = {
       tool: store.tool,
       gauge: store.gauge,
+      gradient: { levelHeight: store.levelHeight, maxGradient: store.maxGradient },
+      // Cant and slopes marked on the track: part of it, so they stay while driving
+      inclination: store.showInclination ? { line: store.lineSettings } : undefined,
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
       quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
-    })
+      // Zones are only picked in the signalling mode; in its delete sub-mode the hovered one turns red
+      speedZones: store.tool === 'signal' && !store.isPlayMode
+        ? {
+            selectedId: store.selectedSpeedZone?.id ?? null,
+            // A signal under the cursor is what the click removes: the zone below it stays plain
+            dangerId: store.signalToolSubMode === 'delete' && !store.hoveredSignalId ? store.hoveredSpeedZoneId : null,
+          }
+        : undefined,
+      // Signals show everywhere; they are only picked, moved or removed in the signalling mode
+      signals: {
+        level: store.signallingLevel,
+        gauge: store.gauge,
+        line: store.lineSettings,
+        state: store.isPlayMode ? store.signalling : null,
+        selectedId: store.selectedSignal?.id ?? null,
+        dangerId: store.tool === 'signal' && store.signalToolSubMode === 'delete' ? store.hoveredSignalId : null,
+        showBlocks: store.signalBlocksVisible,
+        showReservations: store.signalReservationsVisible,
+        // Construction view only, and not with a signal tool in hand: the preview says enough then
+        report: !store.isPlayMode && store.tool !== 'pan' && store.signalPlacementMode === null,
+      },
+    }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
-    if (store.isPlayMode) {
+    const drawDrivingRoute = (): void => {
+      if (!store.isPlayMode) return
       const driven = store.selectedTrain
       const loco = store.trains.length === 0 ? store.locomotive : null
       if (driven) {
@@ -366,44 +407,63 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
     }
 
-    // Render trains on top of the track network
-    if (store.trains.length > 0) {
-      for (const t of store.trains) {
-        const isSelected = store.isTrainSelected && t.id === store.selectedTrainId
-        const deleteVehicleId = (store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle?.train.id === t.id)
-          ? store.hoveredTrainDeleteVehicle.vehicleId
-          : null
-        renderTrainSet(
-          ctx,
-          cam,
-          rect.width,
-          rect.height,
-          store.network,
-          t,
-          isSelected,
-          false,
-          store.showTrainDebug,
-          {
-            speed: t.currentSpeed,
-            maxSpeed: t.maxSpeed,
-            ...trainDriveTelemetry(t),
-            debugOptions: store.trainDebugOptions,
-          },
-          isSelected ? store.selectedTrainVehicleId : null,
-          deleteVehicleId,
-        )
+    // Trains on top of the track network. With `band` (bridges or tunnels in view): only the
+    // vehicles standing on those track levels, so that the next level up can cover them.
+    const lineSettings = store.lineSettings
+    const drawTrains = (band?: LevelBand): void => {
+      if (store.trains.length > 0) {
+        for (const t of store.trains) {
+          const isSelected = store.isTrainSelected && t.id === store.selectedTrainId
+          const deleteVehicleId = (store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle?.train.id === t.id)
+            ? store.hoveredTrainDeleteVehicle.vehicleId
+            : null
+          renderTrainSet(
+            ctx,
+            cam,
+            rect.width,
+            rect.height,
+            store.network,
+            t,
+            isSelected,
+            false,
+            store.showTrainDebug,
+            // The physics is only asked when its figures are drawn
+            store.showTrainDebug
+              ? { ...trainSetTelemetry(store.network, t, store.drivingEnvironment), debugOptions: store.trainDebugOptions }
+              : { speed: t.currentSpeed, maxSpeed: t.maxSpeed, debugOptions: store.trainDebugOptions },
+            isSelected ? store.selectedTrainVehicleId : null,
+            deleteVehicleId,
+            band,
+            // The bodies lean with the cant and the speed (full size only)
+            lineSettings,
+          )
+        }
+      } else if (store.locomotive) {
+        // The legacy consist is one block: it takes the level of the rail under its power car
+        const level = vehicleLevel(store.network, store.locomotive)
+        if (!inLevelBand(level, band)) return
+        if (level < 0) {
+          ctx.save()
+          ctx.globalAlpha = TUNNEL_VEHICLE_ALPHA
+        }
+        const isDeleteHovered = store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle !== null
+        renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected, {
+          speed: store.locomotiveCurrentSpeed,
+          maxSpeed: store.locomotiveMaxSpeed,
+          throttle: store.locomotiveThrottle,
+          acceleration: store.locomotiveAcceleration,
+          braking: store.locomotiveBraking,
+          debugOptions: store.trainDebugOptions,
+        }, isDeleteHovered)
+        if (level < 0) ctx.restore()
       }
-    } else if (store.locomotive) {
-      const isDeleteHovered = store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle !== null
-      renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected, {
-        speed: store.locomotiveCurrentSpeed,
-        maxSpeed: store.locomotiveMaxSpeed,
-        throttle: store.locomotiveThrottle,
-        acceleration: store.locomotiveAcceleration,
-        braking: store.locomotiveBraking,
-        debugOptions: store.trainDebugOptions,
-      }, isDeleteHovered)
     }
+
+    // Network, driving route and trains: interleaved level by level when a bridge is in view
+    renderNetworkWithTrains(
+      ctx, cam, rect.width, rect.height, store.network, store.selection, store.sectionMeta,
+      networkOptions, drawTrains, drawDrivingRoute,
+    )
 
     // Render coupler points in coupling mode
     if (store.tool === 'coupling') {
@@ -422,7 +482,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.trainPlacementPreview,
           false,
           true, // isGhost
-          store.showTrainDebug
+          store.showTrainDebug,
+          undefined,
+          null,
+          null,
+          undefined,
+          // Leaning as the vehicle will once it is laid there
+          store.lineSettings,
         )
       }
       if (store.couplerSnapTarget) {
@@ -466,7 +532,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       store.tool === 'curve' ||
       store.tool === 'turnout' ||
       store.tool === 'split' ||
-      store.tool === 'measure'
+      store.tool === 'measure' ||
+      store.isSpeedZoneTool
     if (isSnapTool) {
       const isNode = store.hoverNodeId !== null
       if (isNode || store.snap) {
@@ -506,7 +573,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
       // The label only shows before the first click: once a placement is under way the single
       // text near the cursor is its dimension. Turnout and scissors draw their own hover label.
-      if (!store.hasPendingPlacement && store.tool !== 'turnout' && store.tool !== 'split') {
+      if (!store.hasPendingPlacement && !store.speedZoneStart && store.tool !== 'turnout' && store.tool !== 'split') {
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
         ctx.fillStyle = accent
         ctx.globalAlpha = 0.95
@@ -797,6 +864,59 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.restore()
     }
 
+    // 7. Speed limit tool preview: the start, the way to the cursor and its length (or why not)
+    const zonePreview = store.isPlayMode ? null : resolveSpeedZoneTool(store)
+    if (zonePreview) {
+      const toScreen = (p: Point): Point => ({
+        x: (p.x - cam.x) * cam.scale + rect.width / 2,
+        y: (p.y - cam.y) * cam.scale + rect.height / 2,
+      })
+      const startWorld = positionOnSegment(store.network, zonePreview.start.segId, zonePreview.start.t)
+      ctx.save()
+      if (zonePreview.path) {
+        ctx.strokeStyle = SPEED_ZONE_COLOR
+        ctx.globalAlpha = 0.75
+        ctx.lineWidth = 4
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.setLineDash([8, 6])
+        ctx.beginPath()
+        traceTrackSpans(ctx, cam, rect.width, rect.height, store.network, zonePreview.path.spans)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.globalAlpha = 1
+      }
+      if (startWorld) {
+        const start = toScreen(startWorld)
+        ctx.fillStyle = SPEED_ZONE_COLOR
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(start.x, start.y, 5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+      // One text near the cursor: the zone it would lay, or why the click would be refused
+      const at = toScreen(store.hoverNodeId !== null || store.hoverSegSteps?.nearest ? store.snappedCursor : store.cursorWorld)
+      const labelText = zonePreview.path
+        ? `${zoneSpeedLabel(store.speedZoneToolSpeed)} · ${formatDistance(zonePreview.path.length, store.unit)}`
+        : zonePreview.end ? 'Aucun chemin' : 'Hors voie'
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const lw = ctx.measureText(labelText).width
+      ctx.fillStyle = zonePreview.path ? 'rgba(15, 23, 42, 0.92)' : 'rgba(220, 38, 38, 0.92)'
+      ctx.beginPath()
+      ctx.roundRect(at.x - lw / 2 - 6, at.y - 34, lw + 12, 18, 4)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(labelText, at.x, at.y - 24)
+      ctx.restore()
+    }
+
+    // 8. Signal tool preview: the signal under the cursor with its arrow and its two blocks, or the row being drawn
+    renderSignalToolPreview(ctx, cam, rect.width, rect.height, store)
+
     // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
     if (gizmoScreen) {
       renderTranslationGizmo(
@@ -814,9 +934,27 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       )
     }
 
-    // While driving, the console sits in the bottom-right corner: the scale bar moves left of it
-    renderScaleBar(ctx, cam, rect.width, rect.height, store.isPlayMode ? DRIVING_HUD_FOOTPRINT : 0)
+    // The scale bar keeps clear of the driving console and of the debug panel
+    const { scaleBar } = arrangeConsole(rect.width, rect.height, store.consolePreference, store.isPlayMode, store.showTrainDebug).placement
+    renderScaleBar(ctx, cam, rect.width, rect.height, scaleBar.right, scaleBar.bottom)
   }, [store])
+
+  // Every tool asks for a redraw after each change, often several times for one event (`redraw`
+  // draws, then its notification draws again): the requests of a frame are merged into one paint.
+  const pendingFrameRef = useRef<number | null>(null)
+  const draw = useCallback(() => {
+    if (pendingFrameRef.current !== null) return
+    pendingFrameRef.current = requestAnimationFrame(() => {
+      pendingFrameRef.current = null
+      paint()
+    })
+  }, [paint])
+  useEffect(() => {
+    return () => {
+      if (pendingFrameRef.current !== null) cancelAnimationFrame(pendingFrameRef.current)
+      pendingFrameRef.current = null
+    }
+  }, [])
 
   const getWorldPos = useCallback(
     (clientX: number, clientY: number) => {
@@ -872,7 +1010,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       canvas.height = Math.round(rect.height * dpr)
       const ctx = canvas.getContext('2d')
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      draw()
+      // Resizing clears the canvas: painted at once, a frame of delay would show as a flash
+      paint()
       store.setViewport(rect.width, rect.height)
       onViewport?.(rect.width, rect.height)
     }
@@ -880,9 +1019,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
     return () => ro.disconnect()
-  }, [draw, onViewport])
+  }, [paint, onViewport])
 
-  // Subscribe to store notifications so external changes immediately redraw the canvas
+  // Subscribe to store notifications so external changes redraw the canvas
   useEffect(() => {
     return store.subscribe(draw)
   }, [store, draw])
@@ -1202,9 +1341,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               endId = endJoin.nodeId
             } else if (endJoin?.segId) {
               const splitRes = splitSegment(store.network, endJoin.segId, endPos)
-              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos, nodeLevel(startNode)).id
             } else {
-              const endNode = addNode(store.network, endPos)
+              const endNode = addNode(store.network, endPos, nodeLevel(startNode))
               endId = endNode.id
               endsInOpenSpace = true
             }
@@ -1220,10 +1359,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const parPieces = pieces.map((p) => computeParallelCurve(p.start, p.via, p.end, store.parallelOffset))
               let secStartId = store.parallelLastNodeId
               if (!secStartId) {
-                const s2 = addNode(store.network, parPieces[0].start)
+                const s2 = addNode(store.network, parPieces[0].start, nodeLevel(startNode))
                 secStartId = s2.id
               }
-              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end)
+              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end, nodeLevel(store.network.nodes.get(endId)))
 
               addCurveChain(store.network, secStartId, endNode2.id, parPieces)
 
@@ -1278,7 +1417,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   const off = store.parallelOffset
 
                   // Voie principale : lastNodeId -> snappedWorld
-                  const endNode = addNode(store.network, snappedWorld)
+                  const endNode = addNode(store.network, snappedWorld, nodeLevel(startNode))
                   addSegment(store.network, store.lastNodeId, endNode.id)
 
                   // Voie secondaire : startNode+offset -> snappedWorld+offset
@@ -1287,10 +1426,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   // Creer ou recuperer le noeud de depart secondaire
                   let startNodeId2 = store.parallelLastNodeId
                   if (!startNodeId2) {
-                    const s2 = addNode(store.network, startPos2)
+                    const s2 = addNode(store.network, startPos2, nodeLevel(startNode))
                     startNodeId2 = s2.id
                   }
-                  const endNode2 = addNode(store.network, endPos2)
+                  const endNode2 = addNode(store.network, endPos2, nodeLevel(startNode))
                   addSegment(store.network, startNodeId2, endNode2.id)
 
                   store.parallelMode = true
@@ -1340,12 +1479,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   const off = store.parallelOffset
 
                   // Voie principale
-                  const endNode = addNode(store.network, snappedWorld)
+                  const endNode = addNode(store.network, snappedWorld, nodeLevel(mainStart))
                   addSegment(store.network, store.lastNodeId, endNode.id)
 
                   // Voie secondaire (meme direction, decalee)
                   const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
-                  const endNode2 = addNode(store.network, endPos2)
+                  const endNode2 = addNode(store.network, endPos2, nodeLevel(mainStart))
                   addSegment(store.network, store.parallelLastNodeId, endNode2.id)
 
                   store.lastNodeId = endNode.id
@@ -1446,9 +1585,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   ? store.hoverSegSteps.nearest
                   : endPos
                 const splitRes = splitSegment(store.network, hitSegId, targetEnd)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd, nodeLevel(startNode)).id
               } else {
-                const endNode = addNode(store.network, endPos)
+                const endNode = addNode(store.network, endPos, nodeLevel(startNode))
                 endId = endNode.id
                 endsInOpenSpace = true
               }
@@ -1561,6 +1700,72 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      // Signalling mode: the speed limit tool lays a zone in two clicks; the two other sub-modes
+      // pick or remove the zone under the cursor, and a click on nothing drags the view
+      if (e.button === 0 && store.tool === 'signal' && !store.isPlayMode) {
+        const world = getWorldPos(e.clientX, e.clientY)
+        if (store.signalToolSubMode === 'speedZone') {
+          store.cursorWorld = world
+          clickSpeedZoneTool(store, speedZoneAim(store))
+          redraw()
+          return
+        }
+        // A signal tool: the button goes down on the track, a click lays one signal and a drag
+        // along the track a row; off the track the drag moves the view
+        if (store.signalPlacementMode) {
+          store.cursorWorld = world
+          if (store.beginSignalGesture(world)) {
+            canvas.setPointerCapture(e.pointerId)
+            stopEdgePan()
+            redraw()
+            return
+          }
+          store.panning = true
+          lastX = e.clientX
+          lastY = e.clientY
+          store.moved = false
+          canvas.setPointerCapture(e.pointerId)
+          canvas.style.cursor = 'grabbing'
+          stopEdgePan()
+          redraw()
+          return
+        }
+        // Signals come before the zones they stand on
+        const signal = store.signalAt(world)
+        if (signal) {
+          if (store.signalToolSubMode === 'delete') {
+            store.deleteSignal(signal.id)
+          } else {
+            store.selectSignal(signal.id)
+            // Holding the button and moving slides it along the track
+            if (store.beginSignalDrag(signal.id)) canvas.setPointerCapture(e.pointerId)
+          }
+          store.updateSignalHover(world)
+          stopEdgePan()
+          redraw()
+          return
+        }
+        const zone = store.speedZoneAt(world)
+        if (store.signalToolSubMode === 'delete') {
+          if (zone) store.deleteSpeedZone(zone.id)
+        } else {
+          if (!zone) store.selectSignal(null)
+          store.selectSpeedZone(zone?.id ?? null)
+        }
+        store.updateSpeedZoneHover(world)
+        if (!zone) {
+          store.panning = true
+          lastX = e.clientX
+          lastY = e.clientY
+          store.moved = false
+          canvas.setPointerCapture(e.pointerId)
+          canvas.style.cursor = 'grabbing'
+          stopEdgePan()
+        }
+        redraw()
+        return
+      }
+
       if (e.button === 0 && (store.trains.length > 0 || store.locomotive)) {
         const world = getWorldPos(e.clientX, e.clientY)
         if (store.trains.length > 0) {
@@ -1568,7 +1773,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           if (hitVehicle) {
             store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
             store.selectTrain(true)
-            store.setTool('locomotive')
+            // Clicking a train only selects it: never arm placement from a click on the canvas
+            store.setTrainToolSubMode('select')
             redraw()
             return
           }
@@ -1586,11 +1792,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
-        const nodeId = hitNode(store.network, world, hitTol)
+        const nodeId = hitShownNode(store.network, store.selection, world, hitTol, store.camera.scale)
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
           if (existingJunc && store.selection.nodes.has(nodeId) && !isMulti) {
-            if (!store.toggleActiveJunction(existingJunc.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+            if (!store.toggleActiveJunction(existingJunc.id, world)) showToast(store.junctionRefusalMessage, 'warning')
           }
           if (isMulti) {
             const newNodes = new Set(store.selection.nodes)
@@ -1623,7 +1829,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
         const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
-          const sections = computeTrackSections(store.network, store.sectionMeta)
+          const sections = networkDerived(store.network, store.sectionMeta).sections
           const clickedSection = findSectionBySegment(sections, segId)
 
           if (clickedSection) {
@@ -1706,7 +1912,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         cam.x -= dx / cam.scale
         cam.y -= dy / cam.scale
         draw()
-        store.notify()
+        // Only the camera moved: no panel has anything new to show
+        store.notifyView()
         return
       }
 
@@ -1868,6 +2075,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         draw()
       }
 
+      // Signalling mode: a row of signals being drawn, or a signal being slid along the track
+      if (store.signalRowStart) {
+        store.updateSignalGesture(rawWorld)
+        draw()
+        store.notify()
+        return
+      }
+      if (store.signalDrag) {
+        store.dragSignalTo(rawWorld)
+        canvas.style.cursor = 'grabbing'
+        draw()
+        store.notify()
+        return
+      }
+
       // Dragging selected nodes in select tool
       if (store.isDraggingNode && store.dragStartWorld) {
         dragSelectedNodes(rawWorld, store.dragStartWorld)
@@ -1881,7 +2103,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.tool === 'curve' ||
         store.tool === 'turnout' ||
         store.tool === 'split' ||
-        store.tool === 'measure'
+        store.tool === 'measure' ||
+        store.isSpeedZoneTool
 
       if (!isConstructionTool) {
         // En mode sélection (V) ou déplacement de vue (H) : aucun point de pose/snap de construction
@@ -1889,10 +2112,22 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.hoverNodeId = null
         store.snappedCursor = rawWorld
 
+        // Signalling mode, select and delete sub-modes: the zone under the cursor can be clicked
+        if (store.tool === 'signal' && !store.isPlayMode && !store.panning) {
+          const signalChanged = store.updateSignalHover(rawWorld)
+          const changed = store.updateSpeedZoneHover(rawWorld) || signalChanged
+          canvas.style.cursor = store.signalPlacementMode
+            ? 'crosshair'
+            : store.hoveredSignalId
+              ? (store.signalToolSubMode === 'select' ? 'grab' : 'pointer')
+              : store.hoveredSpeedZoneId ? 'pointer' : isSpaceDown ? 'grab' : ''
+          if (changed) draw()
+        }
+
         // Feedback curseur survol sur les éléments sélectionnables
         if (store.tool === 'select' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis && !store.gizmoHoverAxis) {
           const hitTol = 14 / store.camera.scale
-          const hoveredNodeId = hitNode(store.network, rawWorld, hitTol)
+          const hoveredNodeId = hitShownNode(store.network, store.selection, rawWorld, hitTol, store.camera.scale)
           const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
           const hoveredVehicle = store.trains.length > 0 ? store.findVehicleAt(rawWorld) : null
           if (hoveredNodeId || hoveredSegId || hoveredVehicle) {
@@ -2001,6 +2236,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'turnout' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
+          store.isSpeedZoneTool ||
+          store.signalPlacementMode !== null ||
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
         ) {
@@ -2031,7 +2268,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       cam.x -= dx / cam.scale
       cam.y -= dy / cam.scale
       draw()
-      store.notify()
+      // Panning moves the camera alone; a train item dragged over the canvas is followed by the panels
+      if (store.draggingTrainItem) store.notify()
+      else store.notifyView()
     }
 
     const onUp = (e: PointerEvent) => {
@@ -2057,7 +2296,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (segId) {
             store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
           } else {
-            if (store.hasPendingPlacement || store.measureStart) {
+            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart || store.signalRowStart || store.signalDrag) {
               store.cancelInteraction()
             } else {
               store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })
@@ -2072,6 +2311,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (store.draggingTrainItem) {
         const rawWorld = getWorldPos(e.clientX, e.clientY)
         store.endTrainDrag(rawWorld)
+        redraw()
+        return
+      }
+
+      // Signalling mode: the button comes up on a signal tool (one signal, or a row) or on a dragged signal
+      if (store.signalRowStart || store.signalDrag) {
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
+        if (store.signalRowStart) commitSignalGesture(store)
+        else store.endSignalDrag()
+        canvas.style.cursor = isSpaceDown ? 'grab' : ''
         redraw()
         return
       }
@@ -2236,10 +2485,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         } else {
           store.updateLocomotivePreview(world)
         }
+        draw()
+        store.notify()
+        return
       }
 
+      // The camera and the snap point under the cursor, which only the canvas draws: no panel has
+      // anything new to show
       draw()
-      store.notify()
+      store.notifyView()
     }
 
     const onContextMenu = (e: Event) => e.preventDefault()
@@ -2249,7 +2503,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const hitTol = 14 / store.camera.scale
       const segId = hitSegment(store.network, world, hitTol)
       if (segId) {
-        const sections = computeTrackSections(store.network, store.sectionMeta)
+        const sections = networkDerived(store.network, store.sectionMeta).sections
         const clickedSection = findSectionBySegment(sections, segId)
         if (clickedSection) {
           const rect = canvas.getBoundingClientRect()
@@ -2331,9 +2585,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const hitSegId = hitSegment(store.network, endPos, hitTol)
               if (hitSegId) {
                 const splitRes = splitSegment(store.network, hitSegId, endPos)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos, nodeLevel(startNode)).id
               } else {
-                const endNode = addNode(store.network, endPos)
+                const endNode = addNode(store.network, endPos, nodeLevel(startNode))
                 endId = endNode.id
                 endsInOpenSpace = true
               }
@@ -2388,7 +2642,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     <div className="canvas-wrap" style={{ position: 'relative' }}>
       <canvas
         ref={canvasRef}
-        className={`tool-${store.tool}`}
+        className={`tool-${store.tool}${store.tool === 'signal' ? ` signal-${store.signalToolSubMode}` : ''}`}
         onDragOver={(e) => {
           e.preventDefault()
           e.dataTransfer.dropEffect = 'copy'

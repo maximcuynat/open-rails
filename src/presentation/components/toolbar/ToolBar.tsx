@@ -1,13 +1,17 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react'
-import type { EditorStore, Tool } from '@application/state/editorStore'
+import type { EditorStore, SignalSubMode, Tool } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
 import { ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import type { SignallingLevel } from '@domain/models/signals'
+import { signalPalette } from './signalPalette'
 
 interface ToolDef {
   id: Tool
   label: string
   icon: ReactNode
   group: number
+  /** Key shown in the tooltip. Absent: the action `tool.<id>`; null: the tool has no key of its own */
+  shortcut?: ActionId | null
 }
 
 const TOOLS: ToolDef[] = [
@@ -109,7 +113,108 @@ const TOOLS: ToolDef[] = [
       </svg>
     ),
   },
+  {
+    id: 'signal',
+    label: 'Signalisation (signaux et limites de vitesse)',
+    group: 4,
+    // The keys go to the tools inside the mode
+    shortcut: null,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="8" y="2" width="8" height="14" rx="3" />
+        <circle cx="12" cy="6.5" r="1.4" fill="currentColor" />
+        <circle cx="12" cy="11.5" r="1.4" />
+        <path d="M12 16v6M8 22h8" />
+      </svg>
+    ),
+  },
 ]
+
+const SIGNAL_ICON_PROPS = {
+  viewBox: '0 0 24 24',
+  width: 18,
+  height: 18,
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2.2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const
+
+/** Icons of the tools of the signalling mode (see `signalPalette` for the tools themselves) */
+const SIGNAL_ICONS: Record<SignallingLevel, Partial<Record<SignalSubMode, ReactNode>>> & { common: Record<'select' | 'speedZone' | 'delete', ReactNode> } = {
+  common: {
+    select: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <path d="M3 3l7 18 3-7 7-3z" />
+      </svg>
+    ),
+    speedZone: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M8.5 15.5v-7M12.5 9.5a1.5 1.5 0 0 1 3 0v5a1.5 1.5 0 0 1-3 0z" strokeWidth="1.8" />
+      </svg>
+    ),
+    delete: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <line x1="10" y1="11" x2="10" y2="17" />
+        <line x1="14" y1="11" x2="14" y2="17" />
+      </svg>
+    ),
+  },
+  standard: {
+    // A mast and a round lamp
+    blockSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <circle cx="12" cy="7" r="4.5" />
+        <circle cx="12" cy="7" r="1.3" fill="currentColor" />
+        <path d="M12 11.5V21M8 21h8" />
+      </svg>
+    ),
+    // A mast and a diamond
+    pathSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <path d="M12 2l5.5 5.5L12 13 6.5 7.5z" />
+        <circle cx="12" cy="7.5" r="1.3" fill="currentColor" />
+        <path d="M12 13v8M8 21h8" />
+      </svg>
+    ),
+  },
+  pro: {
+    // Target with one lamp and its plate
+    blockSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <rect x="8" y="2" width="8" height="11" rx="4" />
+        <circle cx="12" cy="7.5" r="1.5" fill="currentColor" />
+        <path d="M12 13v8M9 17h6" />
+      </svg>
+    ),
+    // Target with two lamps
+    pathSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <rect x="8" y="2" width="8" height="13" rx="4" />
+        <circle cx="12" cy="6" r="1.4" fill="currentColor" />
+        <circle cx="12" cy="11" r="1.4" fill="currentColor" />
+        <path d="M12 15v6M9 21h6" />
+      </svg>
+    ),
+    // Square board with a triangle
+    cabMarker: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <rect x="5" y="3" width="14" height="14" rx="1" />
+        <path d="M9 13l3-6 3 6z" fill="currentColor" />
+        <path d="M12 17v4" />
+      </svg>
+    ),
+  },
+}
+
+function signalIcon(level: SignallingLevel, mode: SignalSubMode): ReactNode {
+  if (mode === 'select' || mode === 'speedZone' || mode === 'delete') return SIGNAL_ICONS.common[mode]
+  return SIGNAL_ICONS[level][mode] ?? SIGNAL_ICONS.pro[mode]
+}
 
 export function ToolBar({ store }: { store: EditorStore }) {
   const kbd = (action: ActionId) => {
@@ -139,6 +244,8 @@ export function ToolBar({ store }: { store: EditorStore }) {
   }, [showGridMenu])
 
   const isTrainMode = store.tool === 'locomotive' || store.tool === 'coupling'
+  const isSignalMode = store.tool === 'signal'
+  const palette = signalPalette(store.signallingLevel)
 
   const handleDragStart = (e: React.DragEvent, itemType: 'tgv_loco' | 'tgv_wagon') => {
     e.dataTransfer.setData('application/open-rails-train', itemType)
@@ -174,12 +281,69 @@ export function ToolBar({ store }: { store: EditorStore }) {
         {hoverId === t.id && (
           <div className="tb-tooltip">
             {t.label}
-            {kbd(`tool.${t.id}` as ActionId)}
+            {t.shortcut !== null && kbd(t.shortcut ?? (`tool.${t.id}` as ActionId))}
           </div>
         )}
       </div>,
     )
   }
+
+  // Undo / redo: the same two buttons close each of the three panels
+  const historyButtons = (
+    <>
+      {/* Undo */}
+      <div
+        className="tb-btn-wrap"
+        onMouseEnter={() => setHoverId('undo')}
+        onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}
+      >
+        <button
+          className="tb-btn"
+          disabled={!store.canUndo}
+          onClick={() => store.undo()}
+          aria-label="Annuler"
+          style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 7v6h6" />
+            <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
+          </svg>
+        </button>
+        {hoverId === 'undo' && (
+          <div className="tb-tooltip">
+            Annuler
+            <kbd>Ctrl+Z</kbd>
+          </div>
+        )}
+      </div>
+
+      {/* Redo */}
+      <div
+        className="tb-btn-wrap"
+        onMouseEnter={() => setHoverId('redo')}
+        onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}
+      >
+        <button
+          className="tb-btn"
+          disabled={!store.canRedo}
+          onClick={() => store.redo()}
+          aria-label="Rétablir"
+          style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 7v6h-6" />
+            <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
+          </svg>
+        </button>
+        {hoverId === 'redo' && (
+          <div className="tb-tooltip">
+            Rétablir
+            <kbd>Ctrl+Y</kbd>
+          </div>
+        )}
+      </div>
+    </>
+  )
 
   // Driving: clean view, the toolbar is reduced to the stop control
   if (store.isPlayMode) {
@@ -213,7 +377,132 @@ export function ToolBar({ store }: { store: EditorStore }) {
   return (
     <div className="toolbar-container">
       <div className="toolbar-switch-wrapper">
-        {isTrainMode ? (
+        {isSignalMode ? (
+          /* ─── Mode Signalisation ─── */
+          <div
+            className={`toolbar-island toolbar-train toolbar-panel-enter${palette.badge ? ' toolbar-signal-pro' : ''}`}
+            key={`signal-toolbar-${palette.level}`}
+            aria-label={palette.title}
+          >
+            {palette.badge && (
+              <div className="tb-level-badge" title={palette.title}>{palette.badge}</div>
+            )}
+            <div
+              className="tb-btn-wrap"
+              onMouseEnter={() => setHoverId('back-rails')}
+              onMouseLeave={() => setHoverId((h) => (h === 'back-rails' ? null : h))}
+            >
+              <button
+                className="tb-back-btn"
+                onClick={() => store.exitSignalMode()}
+                aria-label="Retour au tracé des voies"
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5M12 19l-7-7 7-7" />
+                </svg>
+              </button>
+              {hoverId === 'back-rails' && (
+                <div className="tb-tooltip">
+                  Retour au tracé des voies
+                  <kbd>Échap</kbd>
+                </div>
+              )}
+            </div>
+
+            <div className="tb-sep" />
+
+            {palette.tools.map((t) => {
+              const id = `signal-${t.mode}`
+              const active = store.signalToolSubMode === t.mode
+              return (
+                <div
+                  key={id}
+                  className="tb-btn-wrap"
+                  onMouseEnter={() => setHoverId(id)}
+                  onMouseLeave={() => setHoverId((h) => (h === id ? null : h))}
+                >
+                  <button
+                    className={`tb-train-btn${active ? (t.danger ? ' active-danger' : ' active') : ''}`}
+                    // A second click on a tool goes back to the selection, like the train deletion
+                    onClick={() => store.setSignalToolSubMode(active ? 'select' : t.mode)}
+                    aria-label={t.label}
+                    aria-pressed={active}
+                  >
+                    {signalIcon(palette.level, t.mode)}
+                  </button>
+                  {hoverId === id && (
+                    <div className="tb-tooltip">
+                      {t.label}
+                      <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>{t.hint}</span>
+                      {t.shortcut && kbd(t.shortcut)}
+                      {t.fixedKey && <kbd>{t.fixedKey}</kbd>}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+
+            <div className="tb-sep" />
+
+            {/* Displays: blocks, and the track held for each train while driving */}
+            {([
+              {
+                id: 'signal-blocks',
+                label: 'Afficher les cantons',
+                hint: 'Chaque canton d’une couleur, du côté de son sens de marche · affichés pendant la pose d’un signal, sauf si la case est décochée',
+                active: store.signalBlocksVisible,
+                toggle: store.toggleSignalBlocks,
+                icon: (
+                  <svg {...SIGNAL_ICON_PROPS}>
+                    <path d="M3 8h7" />
+                    <path d="M14 8h7" opacity="0.55" />
+                    <path d="M3 16h4" opacity="0.55" />
+                    <path d="M11 16h10" />
+                  </svg>
+                ),
+              },
+              {
+                id: 'signal-reservations',
+                label: 'Afficher les réservations',
+                hint: 'En conduite : la voie réservée pour chaque rame',
+                active: store.showSignalReservations,
+                toggle: store.toggleSignalReservations,
+                icon: (
+                  <svg {...SIGNAL_ICON_PROPS}>
+                    <rect x="3" y="9" width="8" height="6" rx="1" />
+                    <path d="M13 12h8M18 9l3 3-3 3" />
+                  </svg>
+                ),
+              },
+            ] as const).map((d) => (
+              <div
+                key={d.id}
+                className="tb-btn-wrap"
+                onMouseEnter={() => setHoverId(d.id)}
+                onMouseLeave={() => setHoverId((h) => (h === d.id ? null : h))}
+              >
+                <button
+                  className={`tb-train-btn tb-display-btn${d.active ? ' active' : ''}`}
+                  onClick={() => d.toggle()}
+                  aria-label={d.label}
+                  aria-pressed={d.active}
+                >
+                  {d.icon}
+                </button>
+                {hoverId === d.id && (
+                  <div className="tb-tooltip">
+                    {d.label}
+                    <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>{d.hint}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div className="tb-sep" />
+
+            {historyButtons}
+          </div>
+        ) : isTrainMode ? (
           /* ─── Mode Train Sidebar ─── */
           <div className="toolbar-island toolbar-train toolbar-panel-enter" key="train-toolbar">
             {/* Bouton Retour aux Voies */}
@@ -534,57 +823,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
 
             <div className="tb-sep" />
 
-            {/* Undo */}
-            <div
-              className="tb-btn-wrap"
-              onMouseEnter={() => setHoverId('undo')}
-              onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}
-            >
-              <button
-                className="tb-btn"
-                disabled={!store.canUndo}
-                onClick={() => store.undo()}
-                aria-label="Annuler"
-                style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 7v6h6" />
-                  <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
-                </svg>
-              </button>
-              {hoverId === 'undo' && (
-                <div className="tb-tooltip">
-                  Annuler
-                  <kbd>Ctrl+Z</kbd>
-                </div>
-              )}
-            </div>
-
-            {/* Redo */}
-            <div
-              className="tb-btn-wrap"
-              onMouseEnter={() => setHoverId('redo')}
-              onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}
-            >
-              <button
-                className="tb-btn"
-                disabled={!store.canRedo}
-                onClick={() => store.redo()}
-                aria-label="Rétablir"
-                style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 7v6h-6" />
-                  <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
-                </svg>
-              </button>
-              {hoverId === 'redo' && (
-                <div className="tb-tooltip">
-                  Rétablir
-                  <kbd>Ctrl+Y</kbd>
-                </div>
-              )}
-            </div>
+            {historyButtons}
           </div>
         ) : (
           /* ─── Mode Rails Toolbar ─── */
@@ -593,57 +832,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
 
             <div className="tb-sep" />
 
-            {/* Undo */}
-            <div
-              className="tb-btn-wrap"
-              onMouseEnter={() => setHoverId('undo')}
-              onMouseLeave={() => setHoverId((h) => (h === 'undo' ? null : h))}
-            >
-              <button
-                className="tb-btn"
-                disabled={!store.canUndo}
-                onClick={() => store.undo()}
-                aria-label="Annuler"
-                style={{ opacity: store.canUndo ? 1 : 0.4, cursor: store.canUndo ? 'pointer' : 'not-allowed' }}
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 7v6h6" />
-                  <path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13" />
-                </svg>
-              </button>
-              {hoverId === 'undo' && (
-                <div className="tb-tooltip">
-                  Annuler
-                  <kbd>Ctrl+Z</kbd>
-                </div>
-              )}
-            </div>
-
-            {/* Redo */}
-            <div
-              className="tb-btn-wrap"
-              onMouseEnter={() => setHoverId('redo')}
-              onMouseLeave={() => setHoverId((h) => (h === 'redo' ? null : h))}
-            >
-              <button
-                className="tb-btn"
-                disabled={!store.canRedo}
-                onClick={() => store.redo()}
-                aria-label="Rétablir"
-                style={{ opacity: store.canRedo ? 1 : 0.4, cursor: store.canRedo ? 'pointer' : 'not-allowed' }}
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 7v6h-6" />
-                  <path d="M3 17a9 9 0 019-9 9 9 0 016 2.3L21 13" />
-                </svg>
-              </button>
-              {hoverId === 'redo' && (
-                <div className="tb-tooltip">
-                  Rétablir
-                  <kbd>Ctrl+Y</kbd>
-                </div>
-              )}
-            </div>
+            {historyButtons}
 
             {/* Badge Voie double si actif */}
             {store.parallelMode && (

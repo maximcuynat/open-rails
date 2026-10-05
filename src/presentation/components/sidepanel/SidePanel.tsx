@@ -1,21 +1,31 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
-import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
+import { doubleSlipView, findJunctionAtNode, findJunctionBySegment, turnoutView, type DoubleSlipSide } from '@domain/models/junction'
+import { leaveDirection } from '@domain/models/routing'
+import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
-import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
-  computeTrackSections,
   findSectionBySegment,
-  detectDirectionConflicts,
   type TrackSection,
   type SectionType,
   type SectionDirection,
   SECTION_COLORS,
 } from '@domain/models/sections'
-import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
-import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { networkDerived } from '@infrastructure/render/networkDerived'
+import type { EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedLimits'
+import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
+import { speedZoneLength } from '@domain/services/speedZoneLayout'
+import { formatDistance, formatRadius } from '@domain/models/units'
+import type { Signal, SpeedZone } from '@domain/models/types'
+import { signalBlock } from '@domain/models/signalBlocks'
+import { signalReport } from '@domain/models/signalReport'
+import { defaultSignalStatus, signalAspect } from '@domain/models/signalling'
+import { SIGNAL_ONE_WAY_TITLE, flipSignal, otherSignalRole, signalRoleLabel, signalTypeLabel } from '../common/signalActions'
+import { canLowerZoneSpeed, canRaiseZoneSpeed, changeZoneSpeed, zoneSpeedLabel, zoneSpeedChoices } from '../common/speedZoneActions'
+import { levelRange, levelRangeLabel, rampSummary } from '../common/trackLevel'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>
@@ -27,6 +37,342 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
       <span className="sp-field-label">{label}</span>
       <span className="sp-field-value">{value}</span>
     </div>
+  )
+}
+
+/** One of the two buttons of a stepped value: − or + */
+function StepButton({ sign, disabled, onClick, title, label }: {
+  sign: 1 | -1
+  disabled: boolean
+  onClick: () => void
+  title: string
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      style={{
+        width: '22px',
+        height: '22px',
+        padding: 0,
+        fontSize: '13px',
+        fontWeight: 700,
+        lineHeight: 1,
+        borderRadius: '4px',
+        border: '1px solid var(--border)',
+        background: 'var(--paper)',
+        color: 'var(--ink)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.4 : 1,
+      }}
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      aria-label={label}
+    >
+      {sign > 0 ? '+' : '−'}
+    </button>
+  )
+}
+
+/**
+ * Heights of the selected rail (of its two nodes) or node, with − / + to send it under or over the
+ * other tracks. `onStep` acts through the store: by default on the current selection.
+ */
+function LevelField({
+  store,
+  range,
+  onStep = (delta) => { store.shiftSelectionLevel(delta) },
+}: {
+  store: EditorStore
+  range: { min: number; max: number }
+  onStep?: (delta: 1 | -1) => void
+}) {
+  const stepButton = (delta: 1 | -1, disabled: boolean) => (
+    <StepButton
+      sign={delta}
+      disabled={disabled}
+      onClick={() => onStep(delta)}
+      title={delta > 0 ? 'Monter d’un niveau (pont)' : 'Descendre d’un niveau (tunnel)'}
+      label={delta > 0 ? 'Monter d’un niveau' : 'Descendre d’un niveau'}
+    />
+  )
+  return (
+    <Field
+      label="Niveau"
+      value={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          {stepButton(-1, range.max <= MIN_LEVEL)}
+          <span style={{ minWidth: '64px', textAlign: 'center', color: range.min === 0 && range.max === 0 ? undefined : 'var(--accent)' }}>
+            {levelRangeLabel(range)}
+          </span>
+          {stepButton(1, range.min >= MAX_LEVEL)}
+        </span>
+      }
+    />
+  )
+}
+
+/** A speed zone picked in the signalling mode: its speed, its length, the zones it overlaps */
+function SpeedZonePanel({ store, zone }: { store: EditorStore; zone: SpeedZone }) {
+  const overlaps = overlapsOfZone(store.network, zone.id)
+  const setSpeed = (speed: number) => changeZoneSpeed(store, zone.id, speed)
+  return (
+    <>
+      <PanelHeader>Limite de vitesse</PanelHeader>
+      <div className="sp-section">
+        <Field
+          label="Vitesse"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <StepButton
+                sign={-1}
+                disabled={!canLowerZoneSpeed(zone.speed)}
+                onClick={() => setSpeed(zone.speed - SPEED_ZONE_STEP)}
+                title={`Baisser la vitesse de ${SPEED_ZONE_STEP} km/h`}
+                label="Baisser la vitesse de la zone"
+              />
+              <select
+                className="settings-input"
+                style={{ width: '104px', fontWeight: 700 }}
+                aria-label="Vitesse de la zone"
+                value={zone.speed}
+                onChange={(e) => setSpeed(Number(e.target.value))}
+              >
+                {zoneSpeedChoices().map((speed) => (
+                  <option key={speed} value={speed}>{zoneSpeedLabel(speed)}</option>
+                ))}
+              </select>
+              <StepButton
+                sign={1}
+                disabled={!canRaiseZoneSpeed(zone.speed)}
+                onClick={() => setSpeed(zone.speed + SPEED_ZONE_STEP)}
+                title={`Relever la vitesse de ${SPEED_ZONE_STEP} km/h`}
+                label="Relever la vitesse de la zone"
+              />
+            </span>
+          }
+        />
+        <Field label="Longueur" value={formatDistance(speedZoneLength(store.network, zone), store.unit)} />
+        <Field label="Sens" value="Les deux sens" />
+      </div>
+
+      <div className="sp-subheader">Chevauchements</div>
+      {overlaps.length === 0 ? (
+        <div className="sp-hint">Cette zone n’en chevauche aucune autre.</div>
+      ) : (
+        <>
+          <div className="sp-list">
+            {overlaps.map((overlap) => {
+              const other = overlap.a.id === zone.id ? overlap.b : overlap.a
+              return (
+                <button
+                  key={other.id}
+                  className="sp-list-item"
+                  onClick={() => store.selectSpeedZone(other.id)}
+                  title="Sélectionner cette zone"
+                >
+                  <span className="sp-tag to">{zoneSpeedLabel(other.speed)}</span>
+                  sur {formatDistance(overlap.length, store.unit)}
+                </button>
+              )
+            })}
+          </div>
+          <div className="sp-hint">Sur la portion commune, la limite la plus basse s’applique.</div>
+        </>
+      )}
+
+      <button className="sp-danger" onClick={() => store.deleteSpeedZone(zone.id)}>
+        Supprimer la limite
+      </button>
+    </>
+  )
+}
+
+/** A signal picked in the signalling mode: its type, its direction, its block, what the report says of it */
+function SignalPanel({ store, signal }: { store: EditorStore; signal: Signal }) {
+  const level = store.signallingLevel
+  const pro = level === 'pro'
+  const block = signalBlock(store.network, signal.id)
+  const other = otherSignalRole(signal.role)
+  const aspect = signalAspect(signal, defaultSignalStatus(signal).state, level)
+  const entries = signalReport(store.network, { level, line: store.lineSettings }).filter((entry) => entry.signalId === signal.id)
+  const seg = store.network.segments.get(signal.segId)
+  const towards = seg ? (signal.forward ? seg.to : seg.from) : null
+  return (
+    <>
+      <PanelHeader>{signalTypeLabel(signal, level)}</PanelHeader>
+      <div className="sp-section">
+        <Field
+          label="Type"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {signalRoleLabel(signal.role, level)}
+              <button
+                className="sp-btn-compact"
+                onClick={() => store.changeSignalRole(signal.id, other)}
+                title={`Changer le type du signal : ${signalRoleLabel(other, level).toLowerCase()}`}
+              >
+                → {signalRoleLabel(other, level)}
+              </button>
+            </span>
+          }
+        />
+        <Field
+          label="Sens"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {towards ? `vers ${towards}` : '—'}
+              <button
+                className="sp-btn-compact"
+                onClick={() => flipSignal(store, signal.id)}
+                title="Retourner le signal : il s’adresse à l’autre sens de marche et passe de l’autre côté de la voie (R)"
+              >
+                Inverser
+              </button>
+            </span>
+          }
+        />
+        {pro && <Field label="Plaque" value={aspect.plate ?? '—'} />}
+        <Field label="Au repos" value={aspect.lit ? aspect.label : 'Sans feu'} />
+        {pro && (
+          <label className="settings-checkbox-row" style={{ marginTop: '6px' }}>
+            <input
+              type="checkbox"
+              checked={!!signal.cabMarker}
+              onChange={(e) => store.setSignalCabMarker(signal.id, e.target.checked)}
+            />
+            <span className="settings-checkbox-text">Repère de LGV (signalisation en cabine, sans feu)</span>
+          </label>
+        )}
+        {/* Always there, greyed out on a block signal: the option only means something on a path signal */}
+        <label
+          className="settings-checkbox-row"
+          style={{ marginTop: '6px', opacity: signal.role === 'protection' ? 1 : 0.5 }}
+          title={SIGNAL_ONE_WAY_TITLE[signal.role]}
+        >
+          <input
+            type="checkbox"
+            checked={signal.role === 'protection' && !!signal.oneWay}
+            disabled={signal.role !== 'protection'}
+            onChange={(e) => store.setSignalOneWay(signal.id, e.target.checked)}
+          />
+          <span className="settings-checkbox-text">Sens unique (infranchissable par l’arrière)</span>
+        </label>
+      </div>
+
+      <div className="sp-subheader">Canton</div>
+      <div className="sp-section">
+        {block ? (
+          <>
+            <Field label="Longueur" value={formatDistance(block.length, store.unit)} />
+            {block.maxLength - block.minLength > 1e-6 && (
+              <Field
+                label="Jusqu’au signal suivant"
+                value={`${formatDistance(block.minLength, store.unit)} à ${formatDistance(block.maxLength, store.unit)}`}
+              />
+            )}
+            <Field label="Aiguilles et croisements" value={String(block.nodes.length)} />
+            <Field label="Se termine sur" value={blockEndsLabel(block.boundingSignals.length, block.trackEnds)} />
+          </>
+        ) : (
+          <div className="sp-hint">Canton indisponible.</div>
+        )}
+      </div>
+
+      <div className="sp-subheader">Contrôle</div>
+      {entries.length === 0 ? (
+        <div className="sp-hint">Rien à signaler pour ce signal.</div>
+      ) : (
+        <div className="sp-list">
+          {entries.map((entry, i) => (
+            <div key={`${entry.type}-${i}`} className="sp-list-item" style={{ cursor: 'default' }}>
+              <span className="sp-tag to">!</span>
+              {entry.message}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button className="sp-danger" onClick={() => store.deleteSignal(signal.id)}>
+        Supprimer le signal
+      </button>
+    </>
+  )
+}
+
+/** « 2 signaux et 1 fin de voie » */
+function blockEndsLabel(signals: number, trackEnds: number): string {
+  const parts: string[] = []
+  if (signals > 0) parts.push(`${signals} signal${signals > 1 ? 'aux' : ''}`)
+  if (trackEnds > 0) parts.push(`${trackEnds} fin${trackEnds > 1 ? 's' : ''} de voie`)
+  return parts.length > 0 ? parts.join(' et ') : '—'
+}
+
+/** Cant of a curved rail: automatic or set by hand, and the speed the curve allows with it */
+function CurveCantFields({ store, cant }: { store: EditorStore; cant: CurveCant }) {
+  const [draft, setDraft] = useState(String(Math.round(cant.cant)))
+  // The cant follows the line speed, the zones and the undo history: the field follows it
+  useEffect(() => setDraft(String(Math.round(cant.cant))), [cant.cant])
+  const apply = (text: string) => {
+    const value = parseFloat(text.replace(',', '.'))
+    if (Number.isFinite(value) && value >= 0 && Math.round(value) !== Math.round(cant.cant)) store.setSelectionCant(Math.round(value))
+    else setDraft(String(Math.round(cant.cant)))
+  }
+  const curveLimits = cant.maxSpeed < cant.appliedSpeed
+  return (
+    <>
+      <div className="sp-subheader">Dévers</div>
+      <div className="sp-section">
+        <Field label="Rayon de la courbe" value={formatRadius(cant.radius, store.unit)} />
+        <Field label="Dévers" value={`${Math.round(cant.cant)} mm · ${cant.automatic ? 'automatique' : 'corrigé'}`} />
+        <label className="sp-input-row">
+          <span style={{ width: 'auto' }}>Corriger (mm)</span>
+          <input
+            type="number"
+            min="0"
+            step="5"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={(e) => apply(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+          />
+        </label>
+        <button
+          type="button"
+          className="sp-btn-compact"
+          style={{
+            margin: '6px 0',
+            padding: '4px 8px',
+            fontSize: '11px',
+            fontWeight: 600,
+            borderRadius: '4px',
+            border: '1px solid var(--border)',
+            background: 'var(--panel-2)',
+            color: 'var(--ink)',
+            cursor: cant.automatic ? 'not-allowed' : 'pointer',
+            opacity: cant.automatic ? 0.5 : 1,
+          }}
+          disabled={cant.automatic}
+          onClick={() => store.setSelectionCant(null)}
+          title="Revenir au dévers calculé d’après le rayon et la vitesse de la voie"
+        >
+          Revenir au dévers automatique
+        </button>
+        <Field
+          label="Vitesse max. de la courbe"
+          value={
+            <span
+              style={curveLimits ? { color: '#d97706', fontWeight: 700 } : undefined}
+              title={curveLimits ? `La courbe impose sa vitesse, plus basse que la limite de la voie (${Math.round(cant.appliedSpeed)} km/h)` : undefined}
+            >
+              {Math.round(cant.maxSpeed)} km/h
+            </span>
+          }
+        />
+        <Field label="Limite de la voie" value={`${Math.round(cant.appliedSpeed)} km/h`} />
+      </div>
+    </>
   )
 }
 
@@ -54,9 +400,11 @@ function NetworkPanel({ store }: { store: EditorStore }) {
       ? `${(totalLen / 1000).toFixed(2)} m`
       : `${totalLen.toFixed(0)} mm`
 
-  const deadEnds = detectDeadEnds(net).length
-  const loops = detectLoops(net).length
-  const components = detectConnectedComponents(net).length
+  // Kept with the network: none of the three is worked out again while the track does not change
+  const derived = networkDerived(net, store.sectionMeta)
+  const deadEnds = derived.deadEnds().length
+  const loops = derived.loops().length
+  const components = derived.components().length
 
   return (
     <>
@@ -204,7 +552,17 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     .map((sid) => store.network.segments.get(sid))
     .filter((s): s is NonNullable<typeof s> => !!s)
 
-  const junction = findJunctionAtNode(store.network, nodeId)
+  const turnout = turnoutView(store.network, findJunctionAtNode(store.network, nodeId))
+  const junction = turnout ? findJunctionAtNode(store.network, nodeId) : undefined
+  const slipJunction = turnout ? undefined : findJunctionAtNode(store.network, nodeId)
+  const slip = doubleSlipView(slipJunction)
+  /** Arrow pointing the way the rails of a side of the double slip leave the node, as seen on screen */
+  const slipSideArrow = (side: DoubleSlipSide): string => {
+    const seg = slip ? store.network.segments.get(slip.sides[side][0]) : undefined
+    if (!seg) return ''
+    const ray = leaveDirection(store.network, seg, nodeId)
+    return Math.abs(ray.x) >= Math.abs(ray.y) ? (ray.x > 0 ? '→' : '←') : ray.y > 0 ? '↓' : '↑'
+  }
   const crossing = detectCrossings(store.network).find((c) => c.nodeId === nodeId)
 
   const [x, setX] = useState(node.pos.x)
@@ -237,8 +595,17 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     store.deleteSelection()
   }
 
+  // The panel shows one node, whatever else is selected with it: the level acts on that node alone
+  const shiftNodeLevel = (delta: 1 | -1) => {
+    store.selection = { nodes: new Set([nodeId]), segments: new Set() }
+    store.shiftSelectionLevel(delta)
+  }
+
   const isDeadEnd = adj.length === 1
-  const kinematicIssues = analyzeKinematics(store.network, store.gauge).filter((i) => i.nodeId === nodeId)
+  const kinematicIssues = networkDerived(store.network, store.sectionMeta).kinematicIssues(store.gauge, {
+    levelHeight: store.levelHeight,
+    maxGradient: store.maxGradient,
+  }).filter((i) => i.nodeId === nodeId)
 
   return (
     <>
@@ -288,10 +655,10 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             }}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" fill="#dc2626" />
-              <rect x="5" y="10" width="14" height="4" rx="1.5" fill="#ffffff" />
+              <path d="M3 9 H14 M3 15 H14" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+              <rect x="15" y="4" width="4" height="16" rx="1" fill="#dc2626" />
             </svg>
-            <span>Fin de voie — Impasse (sens interdit, aucun prolongement)</span>
+            <span>Fin de voie — heurtoir : les trains s’y arrêtent. Point d’accroche pour prolonger la voie.</span>
           </div>
         )}
         <label className="sp-input-row">
@@ -314,26 +681,27 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             onBlur={(e) => applyY(parseFloat(e.target.value) || 0)}
           />
         </label>
+        <LevelField store={store} range={{ min: nodeLevel(node), max: nodeLevel(node) }} onStep={shiftNodeLevel} />
       </div>
 
       {junction && (
         <>
           <div className="sp-subheader">
-            {junction.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${junction.frogNumber ?? 6}`}
+            {turnout?.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${turnout?.frogNumber ?? 6}`}
           </div>
           <div className="sp-section">
             <Field
               label="Déviation"
-              value={junction.hand === 'three_way' ? 'Triple (G / Directe / D)' : junction.hand === 'left' ? 'Gauche' : 'Droite'}
+              value={turnout?.hand === 'three_way' ? 'Triple (G / Directe / D)' : turnout?.hand === 'left' ? 'Gauche' : 'Droite'}
             />
             <Field
               label="Voie active"
               value={
-                junction.activeBranch === 'straight'
+                turnout?.activeBranch === 'straight'
                   ? 'Directe (centre)'
-                  : junction.activeBranch === 'left'
+                  : turnout?.activeBranch === 'left'
                     ? 'Gauche'
-                    : junction.activeBranch === 'right'
+                    : turnout?.activeBranch === 'right'
                       ? 'Droite'
                       : 'Déviée'
               }
@@ -353,12 +721,12 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                 color: 'var(--ink)',
                 cursor: 'pointer',
               }}
-              onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning') }}
+              onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(store.junctionRefusalMessage, 'warning') }}
               title={`Basculer l'aiguillage${store.shortcutHint('edit.toggleJunction')}`}
             >
               Aiguiller{store.shortcutHint('edit.toggleJunction')}
             </button>
-            {junction.hand !== 'three_way' && (
+            {turnout?.hand !== 'three_way' && (
               <button
                 className="sp-btn-compact"
                 style={{
@@ -373,13 +741,52 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                   cursor: 'pointer',
                 }}
                 onClick={() => {
-                  if (!store.toggleTurnoutHandAtSelection(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+                  if (!store.toggleTurnoutHandAtSelection(junction.id)) showToast(store.junctionRefusalMessage, 'warning')
                 }}
                 title="Inverser le côté de déviation"
               >
-                Inverser {junction.hand === 'left' ? 'D' : 'G'}
+                Inverser {turnout?.hand === 'left' ? 'D' : 'G'}
               </button>
             )}
+          </div>
+        </>
+      )}
+      {slipJunction && slip && (
+        <>
+          <div className="sp-subheader">Traversée-jonction</div>
+          <div className="sp-section">
+            {([0, 1] as const).map((side) => (
+              <Field
+                key={side}
+                label={`Pointes ${slipSideArrow(side)}`}
+                value={slip.active[side] === 0 ? 'Voie directe' : 'Voie déviée'}
+              />
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '6px', padding: '0 14px 10px' }}>
+            {([0, 1] as const).map((side) => (
+              <button
+                key={side}
+                className="sp-btn-compact"
+                style={{
+                  flex: 1,
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--panel-2)',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  if (!store.throwDoubleSlipSide(slipJunction.id, side)) showToast(store.junctionRefusalMessage, 'warning')
+                }}
+                title="Basculer les pointes de ce côté du nœud"
+              >
+                Aiguiller {slipSideArrow(side)}
+              </button>
+            ))}
           </div>
         </>
       )}
@@ -399,7 +806,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             <Field label="P4 (Ouest)" value={`(${crossing.frogs.p4.x.toFixed(1)}, ${crossing.frogs.p4.y.toFixed(1)})`} />
           </div>
           {(() => {
-            const trackSections = computeTrackSections(store.network, store.sectionMeta)
+            const trackSections = networkDerived(store.network, store.sectionMeta).sections
             const crossingSecs = trackSections.filter((s) => s.nodeIds.includes(nodeId))
             if (crossingSecs.length >= 2) {
               return (
@@ -453,17 +860,18 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   const b = store.network.nodes.get(seg.to)
   if (!a || !b) return <NetworkPanel store={store} />
 
-  const junction = findJunctionBySegment(store.network, segId)
-  const isStraightBranch = junction?.straightSegmentId === segId
-  const isLeftBranch = junction?.divergingSegmentId === segId
-  const isRightBranch = junction?.divergingRightSegmentId === segId
+  const turnout = turnoutView(store.network, findJunctionBySegment(store.network, segId))
+  const junction = turnout ? findJunctionBySegment(store.network, segId) : undefined
+  const isStraightBranch = turnout?.straightSegmentId === segId
+  const isLeftBranch = turnout?.divergingSegmentId === segId
+  const isRightBranch = turnout?.divergingRightSegmentId === segId
   const isBranchActive = junction
-    ? junction.hand === 'three_way'
-      ? (isStraightBranch && junction.activeBranch === 'straight') ||
-        (isLeftBranch && (junction.activeBranch === 'left' || junction.activeBranch === 'diverging')) ||
-        (isRightBranch && junction.activeBranch === 'right')
-      : (isStraightBranch && junction.activeBranch === 'straight') ||
-        (!isStraightBranch && junction.activeBranch === 'diverging')
+    ? turnout?.hand === 'three_way'
+      ? (isStraightBranch && turnout?.activeBranch === 'straight') ||
+        (isLeftBranch && (turnout?.activeBranch === 'left' || turnout?.activeBranch === 'diverging')) ||
+        (isRightBranch && turnout?.activeBranch === 'right')
+      : (isStraightBranch && turnout?.activeBranch === 'straight') ||
+        (!isStraightBranch && turnout?.activeBranch === 'diverging')
     : true
 
   let len = 0
@@ -490,6 +898,13 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     len = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
   }
 
+  // Null for a flat rail: nothing more than its level is shown
+  const ramp = rampSummary(store.network, seg, {
+    levelHeight: store.levelHeight,
+    maxGradient: store.maxGradient,
+    unit: store.unit,
+  })
+
   const selectNode = (id: string) => {
     store.setSelection({ nodes: new Set([id]), segments: new Set() })
   }
@@ -499,8 +914,10 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     store.deleteSelection()
   }
 
-  const allSections = computeTrackSections(store.network, store.sectionMeta)
+  const allSections = networkDerived(store.network, store.sectionMeta).sections
   const currentSection = findSectionBySegment(allSections, segId)
+  // Null for a straight rail: nothing more is shown
+  const cant = curveCant(store.network, seg, store.lineSettings)
 
   return (
     <>
@@ -559,6 +976,25 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
+        <LevelField store={store} range={levelRange(store.network, [seg.id]) ?? { min: 0, max: 0 }} />
+        {ramp && (
+          <>
+            <Field label="Niveau de départ" value={ramp.from} />
+            <Field label="Niveau d’arrivée" value={ramp.to} />
+            <Field label="Dénivelé" value={ramp.rise} />
+            <Field
+              label="Pente"
+              value={
+                <span
+                  style={ramp.tooSteep ? { color: '#dc2626', fontWeight: 700 } : undefined}
+                  title={ramp.tooSteep ? `Au-delà de la pente maximale (${Math.round(store.maxGradient)} ‰)` : undefined}
+                >
+                  {ramp.gradient}
+                </span>
+              }
+            />
+          </>
+        )}
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
@@ -572,7 +1008,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
             <Field
               label="Aiguillage"
               value={
-                junction.hand === 'three_way'
+                turnout?.hand === 'three_way'
                   ? isStraightBranch
                     ? 'Branche directe (centre)'
                     : isLeftBranch
@@ -591,6 +1027,8 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         )}
       </div>
 
+      {cant && <CurveCantFields store={store} cant={cant} />}
+
       {junction && (
         <div style={{ padding: '0 14px 10px' }}>
           <button
@@ -605,7 +1043,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
               color: 'var(--ink)',
               cursor: 'pointer',
             }}
-            onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning') }}
+            onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(store.junctionRefusalMessage, 'warning') }}
             title={`Basculer l'aiguillage${store.shortcutHint('edit.toggleJunction')}`}
           >
             Aiguiller{store.shortcutHint('edit.toggleJunction')}
@@ -662,8 +1100,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
     store.setSectionMeta(section.id, { color: col })
   }
 
-  const allSections = computeTrackSections(store.network, store.sectionMeta)
-  const conflicts = detectDirectionConflicts(store.network, allSections)
+  const { conflicts } = networkDerived(store.network, store.sectionMeta)
   const myConflict = conflicts.find((c) => c.sectionA.id === section.id || c.sectionB.id === section.id)
 
   return (
@@ -713,10 +1150,10 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
             }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" fill="#dc2626" />
-              <rect x="5" y="10.2" width="14" height="3.6" rx="1" fill="#ffffff" />
+              <path d="M3 9 H14 M3 15 H14" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+              <rect x="15" y="4" width="4" height="16" rx="1" fill="#dc2626" />
             </svg>
-            <span>Fin de voie : voie en impasse (sens interdit)</span>
+            <span>Fin de voie : voie en impasse, fermée par un heurtoir</span>
           </div>
         )}
 
@@ -1136,10 +1573,10 @@ function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStor
 }
 
 
-export function SidePanel({ store }: { store: EditorStore }) {
-  const isOpen = store.isSidePanelOpen
+/** What the inspector shows for the current selection */
+function InspectorContent({ store }: { store: EditorStore }) {
   const sel = store.selection
-  const allSections = computeTrackSections(store.network, store.sectionMeta)
+  const allSections = networkDerived(store.network, store.sectionMeta).sections
 
   // Check if selection matches an entire track section
   const matchingSection = allSections.find((sec) => {
@@ -1153,8 +1590,16 @@ export function SidePanel({ store }: { store: EditorStore }) {
     : null
 
   let content: ReactNode
-  // If 2 nodes are selected: special panel allowing direct double track creation / connection
-  if (sel.nodes.size === 2 && sel.segments.size === 0) {
+  const speedZone = store.selectedSpeedZone
+  const signal = store.selectedSignal
+  if (signal) {
+    // Signalling mode: the picked signal comes before anything else
+    content = <SignalPanel key={signal.id} store={store} signal={signal} />
+  } else if (speedZone) {
+    // Signalling mode: the picked zone comes before anything else
+    content = <SpeedZonePanel key={speedZone.id} store={store} zone={speedZone} />
+  } else if (sel.nodes.size === 2 && sel.segments.size === 0) {
+    // If 2 nodes are selected: special panel allowing direct double track creation / connection
     const [idA, idB] = [...sel.nodes]
     content = <TwoNodesSelectionPanel key={`${idA}-${idB}`} store={store} nodeAId={idA} nodeBId={idB} />
   } else if (sel.segments.size === 1 && sel.nodes.size === 0) {
@@ -1170,7 +1615,16 @@ export function SidePanel({ store }: { store: EditorStore }) {
   } else {
     content = <NetworkPanel store={store} />
   }
+  return content
+}
 
+export function SidePanel({ store }: { store: EditorStore }) {
+  const isOpen = store.isSidePanelOpen
+  // A closed inspector is off screen: its content is left as it was when it closed, so that it
+  // slides away unchanged, and nothing is worked out for it until it opens again. React skips an
+  // element it is handed a second time.
+  const content = useRef<ReactNode>(null)
+  if (isOpen) content.current = <InspectorContent store={store} />
 
   return (
     <>
@@ -1207,7 +1661,7 @@ export function SidePanel({ store }: { store: EditorStore }) {
             </svg>
           </button>
         </div>
-        <div className="sp-content">{content}</div>
+        <div className="sp-content">{content.current}</div>
       </div>
     </>
   )

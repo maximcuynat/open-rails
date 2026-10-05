@@ -106,8 +106,21 @@ export function MiniMap({ store, viewportW = 800, viewportH = 600 }: MiniMapProp
     }
 
     draw()
-    const unsub = store.subscribe(draw)
-    return unsub
+    // The store notifies several times between two frames (a wheel turn, a pointer move, a tick of
+    // the simulation): the map is drawn once for all of them, with the frame
+    let frame = 0
+    const schedule = () => {
+      if (frame !== 0) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        draw()
+      })
+    }
+    const unsub = store.subscribe(schedule)
+    return () => {
+      unsub()
+      if (frame !== 0) cancelAnimationFrame(frame)
+    }
   }, [store, viewportW, viewportH])
 
   // Click/drag to navigate

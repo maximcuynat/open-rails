@@ -1,0 +1,712 @@
+/* ===== Phone desk =====
+ * The page opened with ?pupitre=CODE. It keeps the dark look of the driving consoles in both
+ * themes and reuses their instruments (classes `console-*` of styles.css); everything here is
+ * scoped under .phone-desk.
+ */
+
+html.phone-desk-page,
+html.phone-desk-page body {
+  background: #070b14;
+  overscroll-behavior: none;
+}
+
+.phone-desk {
+  --hud: #0c1220;
+  --hud-2: #161e30;
+  --hud-line: #2a3550;
+  --hud-fg: #f4f6fa;
+  --hud-dim: #93a0b8;
+  --hud-blue: #38bdf8;
+  --hud-green: #2fc46a;
+  --hud-amber: #f5a524;
+  --hud-red: #ef4444;
+  --phone-gap: 8px;
+
+  position: fixed;
+  inset: 0;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--phone-gap);
+  padding:
+    max(8px, env(safe-area-inset-top))
+    max(8px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
+  overflow: hidden;
+  background: #070b14;
+  color: var(--hud-fg);
+  font-family: var(--font-family);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  /* A desk, not a document: nothing scrolls, zooms, gets selected or opens a long-press menu */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* :where — no weight, so every button class below sets its own type */
+:where(.phone-desk) button {
+  font: inherit;
+  color: inherit;
+  touch-action: manipulation;
+}
+
+/* --- Buttons --- */
+.phone-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--hud-2);
+  border: 1px solid var(--hud-line);
+  border-radius: 10px;
+}
+
+.phone-btn:active:not(:disabled) { background: #22304d; }
+.phone-btn:disabled { opacity: 0.4; }
+.phone-desk .phone-btn.is-primary { color: #06101f; background: var(--hud-blue); border-color: var(--hud-blue); }
+.phone-desk .phone-btn.is-danger { color: #fecaca; border-color: rgba(239, 68, 68, 0.55); background: rgba(239, 68, 68, 0.14); }
+.phone-desk .phone-btn.is-on { color: #06101f; background: var(--hud-blue); border-color: var(--hud-blue); }
+.phone-desk button:focus-visible { outline: 2px solid var(--hud-blue); outline-offset: 1px; }
+
+/* --- Full-screen states: connecting, code, ended --- */
+.phone-status {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  text-align: center;
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+.phone-status h1 {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.phone-status p {
+  max-width: 34ch;
+  color: var(--hud-dim);
+}
+
+.phone-status > .phone-btn {
+  min-width: 200px;
+}
+
+.phone-code {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(100%, 340px);
+  margin-top: 6px;
+  text-align: left;
+}
+
+.phone-code label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--hud-dim);
+}
+
+.phone-code-row {
+  display: flex;
+  gap: 8px;
+}
+
+.phone-code input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  padding: 0 12px;
+  /* 16px at least: iOS zooms into a smaller field */
+  font: 700 20px/1 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--hud-fg);
+  background: var(--hud);
+  border: 1px solid var(--hud-line);
+  border-radius: 10px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.phone-code input::placeholder { color: #47536e; }
+.phone-code input:focus { outline: 2px solid var(--hud-blue); outline-offset: 1px; }
+
+.phone-spinner {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--hud-line);
+  border-top-color: var(--hud-blue);
+  border-radius: 50%;
+  animation: phone-spin 0.9s linear infinite;
+}
+
+.phone-spinner.is-small {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  border-color: rgba(0, 0, 0, 0.25);
+  border-top-color: #1a1205;
+}
+
+@keyframes phone-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phone-spinner { animation-duration: 3s; }
+}
+
+/* --- Link cut: a thin banner, everything under it dimmed and inert --- */
+.phone-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1a1205;
+  background: var(--hud-amber);
+  border-radius: 8px;
+}
+
+.phone-desk .is-cut {
+  pointer-events: none;
+}
+
+.phone-stage.is-cut .phone-stage-inner,
+.phone-fleet.is-cut .phone-trains,
+.phone-fleet.is-cut .phone-empty {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+}
+
+/* --- List of trains --- */
+.phone-fleet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.phone-fleet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 4px 0;
+}
+
+.phone-fleet-head h1 {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.phone-room {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  font: 700 13px/1.6 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  color: var(--hud-dim);
+  border: 1px solid var(--hud-line);
+  border-radius: 999px;
+}
+
+.phone-room i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hud-amber);
+}
+
+.phone-room i.is-on { background: var(--hud-green); }
+
+.phone-trains {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
+.phone-train {
+  width: 100%;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  text-align: left;
+  background: var(--hud);
+  border: 1px solid var(--hud-line);
+  border-radius: 14px;
+  touch-action: pan-y;
+}
+
+.phone-desk .phone-train { touch-action: pan-y; }
+.phone-train:active:not(:disabled) { background: var(--hud-2); }
+.phone-train.is-driven { border-color: var(--hud-blue); background: rgba(56, 189, 248, 0.1); }
+.phone-train.is-pending { border-color: var(--hud-green); }
+
+.phone-train-rank {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 800;
+  background: var(--hud-2);
+  border: 1px solid var(--hud-line);
+  border-radius: 50%;
+}
+
+.phone-train.is-driven .phone-train-rank { color: #06101f; background: var(--hud-blue); border-color: var(--hud-blue); }
+
+.phone-train-text,
+.phone-train-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.phone-train-side { align-items: flex-end; }
+
+.phone-train b {
+  font-size: 16px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-train small {
+  font-size: 13px;
+  color: var(--hud-dim);
+  white-space: nowrap;
+}
+
+.phone-train.is-driven .phone-train-side small { color: var(--hud-blue); font-weight: 700; }
+.phone-train.is-pending .phone-train-side small { color: var(--hud-green); font-weight: 700; }
+
+.phone-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+  border: 1px dashed var(--hud-line);
+  border-radius: 14px;
+}
+
+.phone-empty h2 { font-size: 19px; font-weight: 800; }
+.phone-empty p { color: var(--hud-dim); }
+
+.phone-fleet-foot {
+  flex: none;
+  padding: 0 4px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--hud-dim);
+}
+
+/* --- Bar above the desk: the ways out, the next turnout, the other cab --- */
+.phone-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--phone-gap);
+}
+
+.phone-bar.is-cut { opacity: 0.6; }
+
+.phone-bar-exit,
+.phone-bar-track {
+  display: flex;
+  align-items: center;
+  gap: var(--phone-gap);
+  min-width: 0;
+}
+
+.phone-bar-exit .phone-btn { flex: 1; padding: 0 8px; }
+
+.phone-turnout {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--hud-dim);
+  padding: 0 2px;
+}
+
+.phone-steer { flex: none; min-width: 92px; }
+.phone-steer .console-icon { width: 18px; height: 18px; }
+.phone-cab { flex: none; }
+
+.phone-desk.is-landscape .phone-bar {
+  flex-direction: row;
+  align-items: center;
+}
+
+.phone-desk.is-landscape .phone-bar-exit { flex: none; }
+.phone-desk.is-landscape .phone-bar-track { flex: 1; }
+.phone-desk.is-landscape .phone-btn { min-height: 42px; }
+.phone-desk.is-landscape .phone-steer { min-width: 80px; }
+
+@media (max-width: 720px) {
+  .phone-desk.is-landscape .phone-steer { min-width: 46px; }
+  .phone-desk.is-landscape .phone-steer span { display: none; }
+  .phone-desk.is-landscape .phone-btn { padding: 0 10px; font-size: 13px; }
+  .phone-desk.is-landscape .phone-turnout { font-size: 12px; }
+}
+
+@media (max-width: 380px) {
+  .phone-desk.is-portrait .phone-bar-exit .phone-btn { font-size: 13px; }
+  .phone-desk.is-portrait .phone-steer { min-width: 84px; }
+}
+
+
+/* --- Stage: the desk laid out at its design size and scaled to the room left --- */
+.phone-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.phone-stage-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+/* The stage does the scaling, and the whole of it takes the finger */
+.phone-desk .console-stage {
+  zoom: 1;
+  padding: 0;
+  z-index: auto;
+  pointer-events: auto;
+}
+
+/* The state comes ten times a second: ease between two of them instead of redrawing every frame */
+.phone-desk .console-arc { transition: d 120ms linear; }
+.phone-desk .console-bar i { transition: width 120ms linear; }
+
+/* A knob a thumb can find */
+.phone-desk .console-knob-body {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(1.2, 1.3);
+}
+
+.phone-panel {
+  background: var(--hud);
+  border: 1px solid var(--hud-line);
+  border-radius: 14px;
+}
+
+/* --- Upright: speed, gauges, then the two levers --- */
+.phone-portrait {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.phone-speed {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px 12px;
+}
+
+.phone-speed-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.phone-speed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.phone-speed-value {
+  font-size: 76px;
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+
+.phone-speed-unit {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--hud-dim);
+  white-space: nowrap;
+}
+
+.phone-speed .console-stats {
+  font-size: 15px;
+  gap: 2px 14px;
+}
+
+.phone-speed-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--hud-2);
+  overflow: hidden;
+}
+
+.phone-speed-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  background: var(--hud-blue);
+  transform-origin: 0 50%;
+  transform: scaleX(var(--phone-speed, 0));
+  transition: transform 120ms linear;
+}
+
+/* Colour of the speed: see the `speed-*` tones of the consoles */
+.phone-speed-bar[class*='speed-'] i {
+  background: var(--tone);
+}
+
+.phone-speed-scale {
+  position: relative;
+}
+
+/* Solid mark: limit in force. Hollow mark: next lower limit */
+.phone-limit-mark {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--hud-fg);
+  border: 2px solid var(--hud);
+}
+
+.phone-limit-mark.is-next {
+  background: var(--hud);
+  border-color: var(--hud-fg);
+}
+
+/* The signalling block, in the flow of the speed panel and as wide as it */
+.phone-speed > .console-signals {
+  width: auto;
+  background: var(--hud-2);
+  box-shadow: none;
+}
+
+.phone-speed > .console-signals .console-signals-main { font-size: 16px; }
+.phone-speed > .console-signals .console-signals-note { font-size: 13px; }
+
+/* Over the desk, without moving a lever */
+.phone-portrait > .console-derail {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  width: max-content;
+  margin: 0;
+  z-index: 2;
+}
+
+.phone-air {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.phone-air .console-gauges { gap: 6px; }
+.phone-air .console-gauge { width: 106px; height: 68px; }
+
+.phone-air-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.phone-air .console-rev { font-size: 15px; }
+.phone-air .console-rev button { padding: 8px 12px; }
+.phone-air .console-flip { align-self: center; padding: 9px 12px; font-size: 14px; }
+
+.phone-levers {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.phone-lever-box {
+  flex: 2 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px 4px;
+}
+
+/* The lever is as tall as the box allows and keeps the proportions of its drawing (never
+   letterboxed), so a position under the finger maps onto its travel exactly */
+.phone-lever-fit {
+  flex: 1 1 0;
+  min-height: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
+
+.phone-lever-fit .console-lever {
+  flex: none;
+  width: auto;
+  height: min(100cqh, 100cqw * 290 / 80);
+  aspect-ratio: 80 / 290;
+}
+
+.phone-lever-fit .console-lever.is-wide {
+  height: min(100cqh, 100cqw * 290 / 120);
+  aspect-ratio: 120 / 290;
+}
+
+.phone-lever-box.is-brake { flex-grow: 3; }
+
+.phone-levers-mid {
+  flex: none;
+  width: 98px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.phone-desk .phone-estop {
+  width: 92px;
+  height: 92px;
+  font-size: 13px;
+  border-width: 5px;
+  touch-action: manipulation;
+}
+
+.phone-portrait .phone-cab {
+  width: 100%;
+  min-height: 52px;
+  padding: 4px;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.phone-handle {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.phone-handle-value {
+  font-size: 19px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.phone-handle .console-bar { width: 100%; }
+
+/* --- On its side: the band of the PC, stretched over the height the screen leaves --- */
+.phone-desk .console-tools { display: none; }
+
+/* The tools are gone: the signalling block that rides above them takes their row, in the flow */
+.phone-desk .console-toolrow > .console-signals {
+  position: static;
+  transform: none;
+  width: 300px;
+  box-shadow: none;
+}
+
+.phone-desk .console-stage-band { justify-content: center; }
+
+.phone-desk .console-band {
+  flex: 1;
+  width: 100%;
+  height: auto;
+  min-height: 176px;
+  max-height: 420px;
+  box-shadow: none;
+}
+
+.phone-desk .console-band .console-zone { justify-content: space-between; }
+/* The dial and its figures are placed from the top of their zone: they stay there, and the
+   reverser goes down to the row of the buttons */
+.phone-desk .console-band .console-mid { justify-content: flex-start; }
+.phone-desk .console-band .console-mid .console-rev-row,
+.phone-desk .console-band .console-mid .console-flip { margin-top: auto; margin-bottom: 4px; }
+.phone-desk .console-band .console-gauges { gap: 14px; }
+.phone-desk .console-band .console-gauge { width: 118px; height: 76px; }
+
+/* The room gained goes to what the thumbs press */
+.phone-desk .console-band .console-hold { flex: 1; max-height: 130px; }
+.phone-desk .console-band .console-hold .console-btn { justify-content: center; font-size: 15px; }
+.phone-desk .console-band .console-notch { padding: 14px 0; font-size: 12px; }
+.phone-desk .console-band .console-row { flex: 1; max-height: 130px; align-items: stretch; }
+.phone-desk .console-band .console-row > b { align-self: center; }
+.phone-desk .console-band .console-step { height: auto; min-width: 54px; justify-content: center; font-size: 22px; }
+.phone-desk .console-band .console-emergency { flex: 1; font-size: 15px; }
+.phone-desk .console-band .console-rev button { padding: 12px 24px; font-size: 16px; }
+.phone-desk .console-band .console-flip { padding: 12px 18px; font-size: 15px; }

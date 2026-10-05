@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
+import { createNetwork, addNode, addSegment, addCurveSegment, nodeLevel, segmentGradient } from '@domain/models/network'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { turnoutView } from '@domain/models/junction'
 import { placementThresholds } from '@domain/geometry/scale'
 import {
   computeAutoConnectGeometry,
@@ -154,6 +155,44 @@ describe('constructionTemplates', () => {
       expect(net.segments.size).toBe(5)
     })
 
+    it('declares the turnout it lays out of a through track, and nothing out of a dead end', () => {
+      const net = createNetwork()
+      const west = addNode(net, { x: -100, y: 0 })
+      const mid = addNode(net, { x: 0, y: 0 })
+      const east = addNode(net, { x: 100, y: 0 })
+      const stem = addSegment(net, west.id, mid.id)!
+      const main = addSegment(net, mid.id, east.id)!
+      const geom = computeFreeformParallelTurnout(mid.pos, { x: 1, y: 0 }, { x: 35, y: 5.2 })!
+
+      const res = applyFreeformParallelTurnout(net, mid.id, geom)
+
+      expect([...net.junctions.values()]).toEqual([res.junction])
+      const view = turnoutView(net, res.junction)!
+      expect(view.stemSegmentId).toBe(stem.id)
+      expect(view.straightSegmentId).toBe(main.id)
+      expect(net.segments.get(view.divergingSegmentId)!.kind).toBe('curve')
+      expect(view.hand).toBe('left')
+      expect(view.activeBranch).toBe('straight')
+      // Mirrored, the same turnout is right-handed: the hand follows where the branch lies
+      const mirror = createNetwork()
+      const a = addNode(mirror, { x: -100, y: 0 })
+      const b = addNode(mirror, { x: 0, y: 0 })
+      const c = addNode(mirror, { x: 100, y: 0 })
+      addSegment(mirror, a.id, b.id)
+      addSegment(mirror, b.id, c.id)
+      const down = applyFreeformParallelTurnout(mirror, b.id, computeFreeformParallelTurnout(b.pos, { x: 1, y: 0 }, { x: 35, y: -5.2 })!)
+      expect(turnoutView(mirror, down.junction)!.hand).toBe('right')
+
+      // Out of the end of a track the curve only prolongs it: there is nothing to choose
+      const end = createNetwork()
+      const p = addNode(end, { x: -100, y: 0 })
+      const q = addNode(end, { x: 0, y: 0 })
+      addSegment(end, p.id, q.id)
+      const prolonged = applyFreeformParallelTurnout(end, q.id, computeFreeformParallelTurnout(q.pos, { x: 1, y: 0 }, { x: 35, y: 5.2 })!)
+      expect(prolonged.junction).toBeNull()
+      expect(end.junctions.size).toBe(0)
+    })
+
     it('flags a freeform parallel turnout tighter than the minimum radius as invalid', () => {
       // 4 m advance for 3 m offset: R = (16 + 9) / 12 ≈ 2.1 m
       const tight = computeFreeformParallelTurnout({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 4, y: 3 })
@@ -188,7 +227,65 @@ describe('constructionTemplates', () => {
     })
   })
 
+  describe('Passing siding on a ramp', () => {
+    it('leaves the main line on its slope and lets the siding climb evenly alongside it', () => {
+      const net = createNetwork()
+      const nA = addNode(net, { x: 0, y: 0 })
+      const nB = addNode(net, { x: 200, y: 0 }, 2)
+      const seg = addSegment(net, nA.id, nB.id)!
+      const slope = segmentGradient(net, seg, 6) // 60 ‰
+
+      const preview = computePassingSidingPreview(net, seg.id, { x: 100, y: 0 }, 80, 4.0)!
+      expect(applyPassingSiding(net, preview)).toBe(true)
+
+      // Every node of the main line sits on the original slope, the two turnouts included
+      const onMain = [...net.nodes.values()].filter((n) => Math.abs(n.pos.y) < 1e-9)
+      expect(onMain).toHaveLength(4)
+      for (const n of onMain) expect(nodeLevel(n)).toBeCloseTo(n.pos.x / 100, 9)
+      const main = [...net.segments.values()].filter((s) => Math.abs(net.nodes.get(s.from)!.pos.y) < 1e-9 && Math.abs(net.nodes.get(s.to)!.pos.y) < 1e-9)
+      expect(main).toHaveLength(3)
+      for (const s of main) expect(Math.abs(segmentGradient(net, s, 6))).toBeCloseTo(slope, 6)
+
+      // The five rails of the siding share one slope, a little under that of the main line
+      // (the siding is the longer way round)
+      const siding = [...net.segments.values()].filter((s) => !main.includes(s))
+      expect(siding).toHaveLength(5)
+      const slopes = siding.map((s) => Math.abs(segmentGradient(net, s, 6)))
+      for (const permille of slopes) expect(permille).toBeCloseTo(slopes[0], 6)
+      expect(slopes[0]).toBeLessThan(slope)
+      expect(slopes[0]).toBeGreaterThan(slope * 0.95)
+    })
+
+    it('on a flat bridge the whole siding is at the height of the bridge', () => {
+      const net = createNetwork()
+      const nA = addNode(net, { x: 0, y: 0 }, 1)
+      const nB = addNode(net, { x: 200, y: 0 }, 1)
+      const seg = addSegment(net, nA.id, nB.id)!
+      expect(applyPassingSiding(net, computePassingSidingPreview(net, seg.id, { x: 100, y: 0 }, 80, 4.0)!)).toBe(true)
+      for (const n of net.nodes.values()) expect(nodeLevel(n)).toBe(1)
+    })
+  })
+
   describe('Balloon Loop (Boucle de retournement)', () => {
+    it('is laid at the height of the end node it leaves from, and joined to it', () => {
+      for (const level of [1, -1, 0.5]) {
+        const net = createNetwork()
+        const n0 = addNode(net, { x: 0, y: 0 }, level)
+        const n1 = addNode(net, { x: 50, y: 0 }, level)
+        addSegment(net, n0.id, n1.id)
+
+        const preview = computeBalloonLoopPreview(net, n1.id, 30)!
+        expect(preview.level).toBe(level)
+        expect(applyBalloonLoop(net, preview)).toBe(true)
+
+        for (const n of net.nodes.values()) expect(nodeLevel(n)).toBe(level)
+        // Welded to the track: no second node left at the end of it, which now carries the loop
+        const atEnd = [...net.nodes.values()].filter((n) => Math.hypot(n.pos.x - 50, n.pos.y) < 1e-6)
+        expect(atEnd).toHaveLength(1)
+        expect(net.adjacency.get(atEnd[0].id)).toHaveLength(3)
+      }
+    })
+
     it('generates a loop reconnecting to the track endpoint', () => {
       const net = createNetwork()
       const n0 = addNode(net, { x: 0, y: 0 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ACTIONS,
   captureChord,
   chordLabel,
   defaultKeybindings,
@@ -10,6 +11,8 @@ import {
   shortcutLabel,
   withChord,
   withoutInput,
+  type ActionId,
+  type KeyContext,
   type KeyInput,
 } from './keybindings'
 
@@ -27,6 +30,34 @@ describe('keybindings — matching', () => {
     expect(findAction(bindings, 'drive', press('KeyS', 's'))).toBe('drive.reverserBackward')
   })
 
+  it('gives the brake its own two keys, by position', () => {
+    expect(findAction(bindings, 'drive', press('KeyE', 'e'))).toBe('drive.brakeApply')
+    // AZERTY: the key at the Q position prints A, and the one at the A position prints Q
+    expect(findAction(bindings, 'drive', press('KeyQ', 'a'))).toBe('drive.brakeRelease')
+    expect(findAction(bindings, 'drive', press('KeyA', 'q'))).toBe('drive.notchUp')
+    expect(findAction(bindings, 'edit', press('KeyE', 'e'))).toBeNull()
+  })
+
+  it('no default key triggers two actions in the same context', () => {
+    const actions: { id: ActionId; contexts: readonly KeyContext[] }[] = [...ACTIONS]
+    for (const context of ['drive', 'edit'] as const) {
+      const seen = new Set<string>()
+      for (const action of actions.filter((a) => a.contexts.includes(context))) {
+        for (const chord of bindings[action.id]) {
+          if (!chord) continue
+          const id = JSON.stringify(chord)
+          expect(seen.has(id), `${id} twice in ${context}`).toBe(false)
+          seen.add(id)
+        }
+      }
+    }
+    // A position and a letter cannot be compared as such: the brake keys print E and Q on QWERTY
+    // and E and A on AZERTY, none of which is a letter shortcut that stays live while driving
+    const liveLetters = actions.filter((a) => a.contexts.includes('drive'))
+      .flatMap((a) => bindings[a.id]).flatMap((c) => (c && 'key' in c ? [c.key] : []))
+    expect(liveLetters.some((k) => ['e', 'q', 'a'].includes(k))).toBe(false)
+  })
+
   it('keeps the arrows as secondary keys, Shift selecting the reverser', () => {
     expect(findAction(bindings, 'drive', press('ArrowUp', 'ArrowUp'))).toBe('drive.notchUp')
     expect(findAction(bindings, 'drive', press('ArrowUp', 'ArrowUp', true))).toBe('drive.reverserForward')
@@ -36,6 +67,14 @@ describe('keybindings — matching', () => {
   it('a key without a Shift chord still fires while Shift is held', () => {
     expect(findAction(bindings, 'drive', press('KeyA', 'A', true))).toBe('drive.notchUp')
     expect(findAction(bindings, 'edit', press('KeyV', 'V', true))).toBe('tool.select')
+  })
+
+  it('gives the speed limit tool the letter S, in the editor only', () => {
+    expect(bindings['tool.speedZone']).toEqual([{ key: 's' }, null])
+    expect(findAction(bindings, 'edit', press('KeyS', 's'))).toBe('tool.speedZone')
+    // While driving the same key position is the reverser
+    expect(findAction(bindings, 'drive', press('KeyS', 's'))).toBe('drive.reverserBackward')
+    expect(findConflict(bindings, 'tool.speedZone', press('KeyS', 's'))).toBeNull()
   })
 
   it('tool keys follow the printed letter, not the position', () => {
@@ -109,6 +148,11 @@ describe('keybindings — rebinding', () => {
     expect(merged['tool.select']).toEqual([{ key: 'b' }, null])
     expect(merged['drive.notchDown']).toEqual(defaultKeybindings()['drive.notchDown'])
     expect('gone.action' in merged).toBe(false)
+    // KeyE was given to the traction before the brake actions existed: the user keeps it,
+    // "apply the brake" starts without a key rather than taking it over
+    expect(merged['drive.brakeApply']).toEqual([null, null])
+    expect(merged['drive.brakeRelease']).toEqual(defaultKeybindings()['drive.brakeRelease'])
+    expect(findAction(merged, 'drive', press('KeyE', 'e'))).toBe('drive.notchUp')
     expect(mergeWithDefaults('garbage')).toEqual(defaultKeybindings())
   })
 })

@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { Menu, MenuBar, type MenuItem } from './Menu'
+import { MenuBar, type MenuDef } from './Menu'
+import { AboutModal, REPO_URL, RELEASE_NOTES_URL } from './AboutModal'
+import { ShortcutsModal } from './ShortcutsModal'
+import { RemoteDeskModal, remoteDeskUnavailable } from './RemoteDeskModal'
 import type { EditorStore, ThemeMode } from '@application/state/editorStore'
+import type { RemoteSession } from '@application/remote/remoteSession'
 import { exportSVG } from '@infrastructure/export/exportSvg'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
-import { chordLabel, type ActionId } from '@application/keybindings/keybindings'
-
-const REPO_URL = 'https://github.com/maximcuynat/open-rails'
+import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -18,26 +20,19 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 
 interface TopBarProps {
   store: EditorStore
+  /** The phone desk session, opened from the Simulation menu */
+  remote: RemoteSession
   onFitView: () => void
 }
 
-export function TopBar({ store, onFitView }: TopBarProps) {
-  /** Every key assigned to an action, for the shortcuts dialog */
-  const keys = (action: ActionId) => {
-    const chords = store.keybindings[action].filter((c) => c !== null)
-    if (chords.length === 0) return '—'
-    return chords.map((c, i) => (
-      <span key={i}>
-        {i > 0 && ' ou '}
-        <span className="shortcut-kbd">{chordLabel(c, store.keyLabels)}</span>
-      </span>
-    ))
-  }
+export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(store.projectName)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [pendingExample, setPendingExample] = useState<ExampleNetwork | null>(null)
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showAboutModal, setShowAboutModal] = useState(false)
+  const [showRemoteModal, setShowRemoteModal] = useState(false)
 
   const commitName = () => {
     setEditingName(false)
@@ -49,161 +44,256 @@ export function TopBar({ store, onFitView }: TopBarProps) {
     }
   }
 
-  const fileItems: MenuItem[] = [
-    { id: 'new', label: 'Nouveau réseau' },
-    { id: 'settings', label: 'Paramètres du réseau (Échelles, Unités)...', shortcut: 'Ctrl+,', separatorAfter: true },
-    { id: 'import-json', label: 'Importer JSON...' },
-    { id: 'export-json', label: 'Exporter JSON', separatorAfter: true },
-    { id: 'export-svg', label: 'Exporter SVG réaliste (1:87)' },
-    { id: 'export-png', label: 'Exporter PNG' },
-  ]
+  const hasSelection = store.selection.nodes.size > 0 || store.selection.segments.size > 0 || store.isTrainSelected
+  const hasTrain = store.locomotive !== null || store.trains.length > 0
 
-  const editItems: MenuItem[] = [
-    { id: 'undo', label: 'Annuler', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
-    { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Maj+Z', disabled: !store.canRedo, separatorAfter: true },
-    { id: 'delete', label: 'Supprimer', shortcut: 'Suppr' },
-    { id: 'duplicate', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack },
-    { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A', separatorAfter: true },
-    { id: 'reconcile', label: 'Réconcilier les jonctions & aiguillages', shortcut: 'R', separatorAfter: true },
-    { id: 'clear', label: 'Désélectionner tout' },
-  ]
-
-  const viewItems: MenuItem[] = [
-    { id: 'fit', label: 'Ajuster à la vue', shortcut: store.shortcutLabel('view.fit') },
-    { id: 'fit-board', label: 'Cadrer le plateau de réseau', disabled: !store.boardEnabled },
-    { id: 'zoom-100', label: 'Zoom par défaut', shortcut: 'Ctrl+0', separatorAfter: true },
-    { id: 'toggle-grid', label: store.showGrid ? 'Masquer la grille' : 'Afficher la grille' },
-    { id: 'toggle-snap', label: store.snap ? 'Désactiver l’aimantation' : 'Activer l’aimantation', shortcut: store.shortcutLabel('view.toggleSnap') },
-    { id: 'toggle-dimensions', label: store.showDimensions ? 'Masquer les cotes dynamiques' : 'Afficher les cotes dynamiques' },
-    { id: 'toggle-minimap', label: store.showMinimap ? 'Masquer la mini-carte' : 'Afficher la mini-carte' },
-    { id: 'toggle-inspector', label: store.isSidePanelOpen ? 'Masquer l’inspecteur' : 'Afficher l’inspecteur', shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
-    { id: 'open-settings', label: 'Paramètres & Échelles...', shortcut: 'Ctrl+,' },
-  ]
-
-  const helpItems: MenuItem[] = [
-    { id: 'shortcuts', label: 'Raccourcis clavier' },
-    { id: 'about', label: 'À propos et licence' },
-  ]
-
-  const onFileSelect = (id: string) => {
-    switch (id) {
-      case 'new':
-        if (store.network.nodes.size > 0 || store.network.segments.size > 0) {
-          setShowNewModal(true)
-        } else {
-          store.newProject()
-          showToast('Nouveau réseau créé', 'info')
-        }
-        break
-      case 'settings':
-        store.openSettings()
-        break
-      case 'import-json': {
-        const input = document.createElement('input')
-        input.type = 'file'
-        input.accept = '.json,application/json'
-        input.onchange = async () => {
-          const file = input.files?.[0]
-          if (!file) return
-          const text = await file.text()
-          try {
-            const data = JSON.parse(text)
-            store.loadFromData(data)
-            showToast('Réseau importé', 'success')
-          } catch {
-            showToast('Fichier JSON invalide', 'error')
+  // Shortcuts of rebindable actions come from the store; the others are fixed keys of useKeyboardShortcuts
+  const menus: MenuDef[] = [
+    {
+      label: 'Fichier',
+      items: [
+        { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
+        { id: 'import-json', label: 'Importer JSON…' },
+        {
+          id: 'examples',
+          label: 'Exemples',
+          submenu: EXAMPLES.map((example) => ({ id: `${EXAMPLE_ITEM_PREFIX}${example.id}`, label: example.label })),
+        },
+        {
+          id: 'export',
+          label: 'Exporter',
+          separatorAfter: true,
+          submenu: [
+            { id: 'export-json', label: 'JSON (réseau complet)' },
+            { id: 'export-svg', label: 'SVG réaliste (1:87)' },
+            { id: 'export-png', label: 'PNG (vue actuelle)' },
+          ],
+        },
+        { id: 'settings', label: 'Paramètres du réseau…', shortcut: 'Ctrl+,' },
+      ],
+      onSelect: (id) => {
+        if (id.startsWith(EXAMPLE_ITEM_PREFIX)) {
+          const example = EXAMPLES.find((e) => e.id === id.slice(EXAMPLE_ITEM_PREFIX.length))
+          if (!example) return
+          if (store.network.nodes.size > 0 || store.network.segments.size > 0) {
+            setPendingExample(example)
+          } else {
+            openExample(store, example, onFitView)
           }
+          return
         }
-        input.click()
-        break
-      }
-      case 'export-json':
-        exportJSON(store)
-        showToast('Export JSON téléchargé', 'success')
-        break
-      case 'export-svg':
-        exportSVG(store)
-        showToast('Plan SVG vectoriel exporté', 'success')
-        break
-      case 'export-png':
-        exportPNG(store)
-        showToast('Image PNG exportée', 'success')
-        break
-    }
-  }
-
-  const onEditSelect = (id: string) => {
-    switch (id) {
-      case 'undo':
-        store.undo()
-        break
-      case 'redo':
-        store.redo()
-        break
-      case 'reconcile':
-        store.reconcileTopology()
-        showToast('Topologie et aiguillages réconciliés', 'info')
-        break
-      case 'delete':
-        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }))
-        break
-      case 'duplicate':
-        if (!store.createParallelTrackFromSelection()) {
-          showToast('Sélectionnez une voie ou deux nœuds pour créer une voie parallèle', 'info')
+        switch (id) {
+          case 'new':
+            if (store.network.nodes.size > 0 || store.network.segments.size > 0) {
+              setShowNewModal(true)
+            } else {
+              store.newProject()
+              showToast('Nouveau réseau créé', 'info')
+            }
+            break
+          case 'import-json':
+            importJSON(store)
+            break
+          case 'export-json':
+            exportJSON(store)
+            showToast('Export JSON téléchargé', 'success')
+            break
+          case 'export-svg':
+            exportSVG(store)
+            showToast('Plan SVG vectoriel exporté', 'success')
+            break
+          case 'export-png':
+            exportPNG(store)
+            showToast('Image PNG exportée', 'success')
+            break
+          case 'settings':
+            store.openSettings()
+            break
         }
-        break
-      case 'select-all':
-        store.selectAll()
-        break
-      case 'clear':
-        // A pose in progress is cancelled properly (its lone start node goes with it)
-        if (store.hasPendingPlacement) store.cancelInteraction()
-        store.clearSelection()
-        break
-    }
-  }
-
-  const onViewSelect = (id: string) => {
-    switch (id) {
-      case 'fit':
-        onFitView()
-        break
-      case 'fit-board':
-        store.fitBoard()
-        showToast('Vue centrée sur le plateau de réseau', 'info')
-        break
-      case 'zoom-100':
-        store.resetZoom()
-        break
-      case 'toggle-grid':
-        store.toggleGrid()
-        break
-      case 'toggle-snap':
-        store.toggleSnap()
-        break
-      case 'toggle-dimensions':
-        store.toggleDimensions()
-        showToast(store.showDimensions ? 'Cotes dynamiques affichées' : 'Cotes dynamiques masquées', 'info')
-        break
-      case 'toggle-minimap':
-        store.toggleMinimap()
-        break
-      case 'toggle-inspector':
-        store.toggleSidePanel()
-        break
-      case 'open-settings':
-        store.openSettings()
-        break
-    }
-  }
-
-  const onHelpSelect = (id: string) => {
-    if (id === 'shortcuts') {
-      setShowShortcutsModal(true)
-    } else if (id === 'about') {
-      setShowAboutModal(true)
-    }
-  }
+      },
+    },
+    {
+      label: 'Édition',
+      items: [
+        { id: 'undo', label: 'Annuler', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
+        { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Maj+Z', disabled: !store.canRedo, separatorAfter: true },
+        { id: 'delete', label: 'Supprimer', shortcut: 'Suppr', disabled: !hasSelection || store.hasPendingPlacement },
+        { id: 'parallel', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack, separatorAfter: true },
+        { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A' },
+        { id: 'clear', label: 'Tout désélectionner', separatorAfter: true },
+        { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R' },
+      ],
+      onSelect: (id) => {
+        switch (id) {
+          case 'undo':
+            store.undo()
+            break
+          case 'redo':
+            store.redo()
+            break
+          case 'delete':
+            store.deleteSelection()
+            break
+          case 'parallel':
+            store.createParallelTrackFromSelection()
+            break
+          case 'select-all':
+            store.selectAll()
+            break
+          case 'clear':
+            // A pose in progress is cancelled properly (its lone start node goes with it)
+            if (store.hasPendingPlacement) store.cancelInteraction()
+            store.clearSelection()
+            break
+          case 'reconcile':
+            store.reconcileTopology()
+            showToast('Topologie et aiguillages réconciliés', 'info')
+            break
+        }
+      },
+    },
+    {
+      label: 'Affichage',
+      items: [
+        { id: 'fit', label: 'Ajuster à la vue', shortcut: store.shortcutLabel('view.fit') },
+        { id: 'fit-board', label: 'Cadrer le plateau de réseau', disabled: !store.boardEnabled },
+        { id: 'zoom-100', label: 'Zoom par défaut', shortcut: 'Ctrl+0', separatorAfter: true },
+        { id: 'toggle-grid', label: 'Grille', checked: store.showGrid },
+        { id: 'toggle-snap', label: 'Aimantation', checked: store.snap, shortcut: store.shortcutLabel('view.toggleSnap') },
+        { id: 'toggle-dimensions', label: 'Cotes dynamiques', checked: store.showDimensions },
+        { id: 'toggle-minimap', label: 'Mini-carte', checked: store.showMinimap },
+        { id: 'toggle-signal-blocks', label: 'Cantons', checked: store.signalBlocksVisible },
+        { id: 'toggle-signal-reservations', label: 'Réservations (en conduite)', checked: store.showSignalReservations },
+        { id: 'toggle-inclination', label: 'Dévers et pentes', checked: store.showInclination },
+        { id: 'toggle-inspector', label: 'Inspecteur', checked: store.isSidePanelOpen, shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
+        {
+          id: 'theme',
+          label: 'Thème',
+          submenu: [
+            { id: 'theme-auto', label: 'Automatique (système)', checked: store.theme === 'auto' },
+            { id: 'theme-light', label: 'Clair', checked: store.theme === 'light' },
+            { id: 'theme-dark', label: 'Sombre', checked: store.theme === 'dark' },
+          ],
+        },
+        {
+          id: 'console',
+          label: 'Console de conduite',
+          submenu: [
+            { id: 'console-auto', label: 'Automatique', checked: store.consolePreference === 'auto' },
+            { id: 'console-band', label: 'Bandeau', checked: store.consolePreference === 'band' },
+            { id: 'console-screen', label: 'Écran de bord', checked: store.consolePreference === 'screen' },
+            { id: 'console-levers', label: 'Manettes', checked: store.consolePreference === 'levers' },
+          ],
+        },
+      ],
+      onSelect: (id) => {
+        switch (id) {
+          case 'fit':
+            onFitView()
+            break
+          case 'fit-board':
+            store.fitBoard()
+            showToast('Vue centrée sur le plateau de réseau', 'info')
+            break
+          case 'zoom-100':
+            store.resetZoom()
+            break
+          case 'toggle-grid':
+            store.toggleGrid()
+            break
+          case 'toggle-snap':
+            store.toggleSnap()
+            break
+          case 'toggle-dimensions':
+            store.toggleDimensions()
+            break
+          case 'toggle-minimap':
+            store.toggleMinimap()
+            break
+          case 'toggle-signal-blocks':
+            store.toggleSignalBlocks()
+            break
+          case 'toggle-signal-reservations':
+            store.toggleSignalReservations()
+            break
+          case 'toggle-inclination':
+            store.toggleInclination()
+            break
+          case 'toggle-inspector':
+            store.toggleSidePanel()
+            break
+          case 'theme-auto':
+            store.setTheme('auto')
+            break
+          case 'theme-light':
+            store.setTheme('light')
+            break
+          case 'theme-dark':
+            store.setTheme('dark')
+            break
+          case 'console-auto':
+            store.setConsolePreference('auto')
+            break
+          case 'console-band':
+            store.setConsolePreference('band')
+            break
+          case 'console-screen':
+            store.setConsolePreference('screen')
+            break
+          case 'console-levers':
+            store.setConsolePreference('levers')
+            break
+        }
+      },
+    },
+    {
+      label: 'Simulation',
+      items: [
+        {
+          id: 'toggle-play',
+          label: store.isPlayMode ? 'Quitter la conduite' : 'Prendre les commandes',
+          shortcut: store.shortcutLabel('sim.togglePlay'),
+          disabled: !hasTrain,
+        },
+        { id: 'remote-desk', label: 'Pupitre sur téléphone…', separatorAfter: true },
+        { id: 'toggle-train-debug', label: 'Squelette des trains', checked: store.showTrainDebug, shortcut: store.shortcutLabel('train.debug') },
+      ],
+      onSelect: (id) => {
+        if (id === 'toggle-play') store.togglePlayMode()
+        else if (id === 'toggle-train-debug') store.toggleTrainDebug()
+        else if (id === 'remote-desk') {
+          // A new room each time the session is opened; an open one is shown again as it is
+          if (!remoteDeskUnavailable()) remote.open()
+          setShowRemoteModal(true)
+        }
+      },
+    },
+    {
+      label: 'Aide',
+      items: [
+        { id: 'shortcuts', label: 'Raccourcis clavier', separatorAfter: true },
+        { id: 'source', label: 'Code source sur GitHub' },
+        { id: 'release-notes', label: `Notes de version (v${__APP_VERSION__})`, separatorAfter: true },
+        { id: 'about', label: 'À propos et licence' },
+      ],
+      onSelect: (id) => {
+        switch (id) {
+          case 'shortcuts':
+            setShowShortcutsModal(true)
+            break
+          case 'source':
+            window.open(REPO_URL, '_blank', 'noopener,noreferrer')
+            break
+          case 'release-notes':
+            window.open(RELEASE_NOTES_URL, '_blank', 'noopener,noreferrer')
+            break
+          case 'about':
+            setShowAboutModal(true)
+            break
+        }
+      },
+    },
+  ]
 
   return (
     <>
@@ -243,67 +333,19 @@ export function TopBar({ store, onFitView }: TopBarProps) {
             </button>
           )}
         </div>
-        <MenuBar>
-          <Menu label="Fichier" items={fileItems} onSelect={onFileSelect} />
-          <Menu label="Édition" items={editItems} onSelect={onEditSelect} />
-          <Menu label="Affichage" items={viewItems} onSelect={onViewSelect} />
-          <Menu label="Aide" items={helpItems} onSelect={onHelpSelect} />
-        </MenuBar>
+        <MenuBar menus={menus} />
         <div className="tb-right">
           <button
+            className="tb-scale"
             onClick={store.openSettings}
-            title="Échelle et plateau actifs — Cliquer pour ouvrir les paramètres"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '3px 8px',
-              borderRadius: '4px',
-              background: 'var(--panel)',
-              border: '1px solid var(--border)',
-              color: 'var(--ink)',
-              fontSize: '11px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginRight: '2px',
-            }}
+            title="Échelle et plateau actifs — Cliquer pour ouvrir les paramètres (Ctrl+,)"
           >
             <span>{store.scalePreset}</span>
             {store.boardEnabled && (
-              <span style={{ opacity: 0.75, fontWeight: 400 }}>
+              <span className="tb-scale-board">
                 {formatDistance(store.boardWidth, store.unit)} × {formatDistance(store.boardHeight, store.unit)}
               </span>
             )}
-          </button>
-          <button
-            className="tb-version"
-            onClick={() => setShowAboutModal(true)}
-            title={`Open Rails v${__APP_VERSION__} — logiciel libre sous licence AGPL-3.0`}
-          >
-            v{__APP_VERSION__}
-          </button>
-          <a
-            className="tb-icon-btn"
-            href={REPO_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Code source sur GitHub"
-            aria-label="Code source sur GitHub"
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-              <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.76 0c2.19-1.49 3.15-1.18 3.15-1.18.63 1.58.24 2.75.12 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.68.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z" />
-            </svg>
-          </a>
-          <button
-            className="tb-icon-btn"
-            onClick={store.openSettings}
-            title="Paramètres du réseau & Échelles ferroviaires (Ctrl+,)"
-            aria-label="Paramètres"
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
           </button>
           <button
             className="tb-icon-btn"
@@ -332,7 +374,6 @@ export function TopBar({ store, onFitView }: TopBarProps) {
         </div>
       </div>
 
-      {/* Modal Nouveau Réseau (Figma Principle: Forgiveness) */}
       <Modal
         isOpen={showNewModal}
         title="Nouveau réseau ferroviaire"
@@ -346,131 +387,22 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       >
         <p>Voulez-vous réinitialiser le plan actuel ? Toutes les voies non exportées seront effacées.</p>
       </Modal>
-
-      {/* Modal Raccourcis Clavier (Figma Principle: Clarity & Discoverability) */}
       <Modal
-        isOpen={showAboutModal}
-        title="À propos d'Open Rails"
-        closeLabel="Fermer"
-        onClose={() => setShowAboutModal(false)}
+        isOpen={pendingExample !== null}
+        title={`Ouvrir l'exemple « ${pendingExample?.label ?? ''} »`}
+        confirmLabel="Ouvrir l'exemple"
+        confirmVariant="danger"
+        onClose={() => setPendingExample(null)}
+        onConfirm={() => {
+          if (pendingExample) openExample(store, pendingExample, onFitView)
+        }}
       >
-        <div className="about-body">
-          <p>
-            <strong>Open Rails v{__APP_VERSION__}</strong> — éditeur et simulateur de voies ferrées.
-          </p>
-          <p>Copyright © 2026 Maxim Cuynat.</p>
-          <p>
-            Open Rails est un <strong>logiciel libre</strong>, distribué sous licence{' '}
-            <a href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">
-              GNU Affero General Public License v3.0
-            </a>{' '}
-            (AGPL-3.0). Vous pouvez l'utiliser, l'étudier, le modifier et le redistribuer ; toute version modifiée
-            distribuée ou mise à disposition sur un réseau doit être publiée sous la même licence, avec son code source.
-          </p>
-          <p>Ce logiciel est fourni sans aucune garantie.</p>
-          <p>
-            <a href={REPO_URL} target="_blank" rel="noopener noreferrer">Code source sur GitHub</a>
-            {' · '}
-            <a href={`${REPO_URL}/releases/tag/v${__APP_VERSION__}`} target="_blank" rel="noopener noreferrer">
-              Notes de version
-            </a>
-          </p>
-        </div>
+        <p>{pendingExample?.description}</p>
+        <p>L'exemple remplace le plan actuel : toutes les voies non exportées seront effacées.</p>
       </Modal>
-      <Modal
-        isOpen={showShortcutsModal}
-        title="Raccourcis clavier Open Rails"
-        closeLabel="Fermer"
-        onClose={() => setShowShortcutsModal(false)}
-      >
-        <div className="shortcuts-grid">
-          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Outils</div>
-          <div>{keys('tool.select')}</div>
-          <div>Sélection et déplacement</div>
-          <div>{keys('tool.place')}</div>
-          <div>Voie droite</div>
-          <div>{keys('tool.curve')}</div>
-          <div>Voie courbe</div>
-          <div>{keys('tool.turnout')}</div>
-          <div>Aiguillage</div>
-          <div>{keys('tool.split')}</div>
-          <div>Ciseaux (scinder une voie)</div>
-          <div>{keys('tool.measure')}</div>
-          <div>Règle (mesurer)</div>
-          <div>{keys('tool.pan')}</div>
-          <div>Déplacer la vue</div>
-          <div>{keys('tool.locomotive')}</div>
-          <div>Trains (pose et sélection)</div>
-          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Pose des voies</div>
-          <div><span className="shortcut-kbd">0</span>–<span className="shortcut-kbd">9</span> puis <span className="shortcut-kbd">Entrée</span></div>
-          <div>Saisir la longueur exacte de la voie droite en cours</div>
-          <div><span className="shortcut-kbd">Tab</span></div>
-          <div>Continuer en courbe depuis le nœud de la voie droite en cours ; changer de côté (courbe, aiguillage)</div>
-          <div><span className="shortcut-kbd">Maj</span> + clic</div>
-          <div>Poser une voie double</div>
-          <div>{keys('edit.paramDecrease')} / {keys('edit.paramIncrease')}</div>
-          <div>Rayon précédent / suivant (courbe, aiguillage)</div>
-          <div>Clic droit</div>
-          <div>Terminer la pose en cours</div>
-          <div><span className="shortcut-kbd">Échap</span></div>
-          <div>Annuler la pose en cours, puis revenir à l’outil Sélection</div>
-          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Édition</div>
-          <div>{keys('edit.toggleJunction')}</div>
-          <div>Basculer l’aiguillage sélectionné</div>
-          <div>{keys('edit.parallelTrack')}</div>
-          <div>Créer une voie parallèle à la sélection</div>
-          <div><span className="shortcut-kbd">R</span></div>
-          <div>Réconcilier les jonctions et aiguillages</div>
-          <div><span className="shortcut-kbd">Suppr</span> ou <span className="shortcut-kbd">Retour arrière</span></div>
-          <div>Supprimer la sélection</div>
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">A</span></div>
-          <div>Tout sélectionner</div>
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Z</span></div>
-          <div>Annuler</div>
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Maj</span> + <span className="shortcut-kbd">Z</span> ou <span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">Y</span></div>
-          <div>Rétablir</div>
-          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Trains</div>
-          <div><span className="shortcut-kbd">R</span> ou <span className="shortcut-kbd">Tab</span></div>
-          <div>Inverser le sens du véhicule à poser</div>
-          <div><span className="shortcut-kbd">Suppr</span></div>
-          <div>Supprimer le véhicule sélectionné</div>
-          <div>{keys('train.debug')}</div>
-          <div>Afficher / masquer le squelette des trains</div>
-          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Affichage</div>
-          <div><span className="shortcut-kbd">Espace</span> + glisser</div>
-          <div>Déplacer la vue</div>
-          <div>{keys('view.fit')}</div>
-          <div>Ajuster tout le réseau à la vue</div>
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">0</span></div>
-          <div>Zoom par défaut</div>
-          <div>{keys('view.toggleSnap')}</div>
-          <div>Activer / désactiver l’aimantation</div>
-          <div>{keys('view.toggleInspector')}</div>
-          <div>Afficher / masquer l’inspecteur</div>
-          <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">,</span> ou <span className="shortcut-kbd">,</span></div>
-          <div>Paramètres du réseau (échelles, unités)</div>
-          <div className="shortcuts-section" style={{ gridColumn: '1 / -1', fontWeight: 700, marginTop: '6px' }}>Conduite</div>
-          <div>{keys('sim.togglePlay')}</div>
-          <div>Entrer en mode conduite / le quitter</div>
-          <div>{keys('drive.exit')} ou <span className="shortcut-kbd">Échap</span></div>
-          <div>Quitter la conduite</div>
-          <div>{keys('drive.notchUp')}</div>
-          <div>Manipulateur : un cran vers la traction</div>
-          <div>{keys('drive.notchDown')}</div>
-          <div>Manipulateur : un cran vers le frein</div>
-          <div>{keys('drive.reverserForward')}</div>
-          <div>Inverseur vers l’avant</div>
-          <div>{keys('drive.reverserBackward')}</div>
-          <div>Inverseur vers l’arrière</div>
-          <div>{keys('drive.emergencyBrake')}</div>
-          <div>Arrêt d’urgence</div>
-          <div>{keys('drive.steerLeft')} / {keys('drive.steerRight')}</div>
-          <div>Orienter le prochain aiguillage</div>
-          <div style={{ gridColumn: '1 / -1', marginTop: '6px', opacity: 0.8 }}>
-            Les touches de conduite et d’outils se modifient dans les paramètres (Ctrl + ,).
-          </div>
-        </div>
-      </Modal>
+      <AboutModal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} />
+      <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
+      <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
       <SettingsModal
         store={store}
         isOpen={store.isSettingsOpen}
@@ -480,7 +412,44 @@ export function TopBar({ store, onFitView }: TopBarProps) {
   )
 }
 
-// --- Export helpers (JSON / SVG / PNG) ---
+/** Menu ids of the example networks: this prefix, then the id of the example */
+const EXAMPLE_ITEM_PREFIX = 'example:'
+
+/**
+ * Replace the current network with an example. One that carries a camera opens on it — the train
+ * to drive, on a line too long to show whole; the others are framed.
+ */
+async function openExample(store: EditorStore, example: ExampleNetwork, onFitView: () => void): Promise<void> {
+  try {
+    const project = await loadExample(example)
+    store.loadFromData(project)
+    if (!project.camera) onFitView()
+    showToast(`Exemple « ${example.label} » ouvert`, 'success')
+  } catch {
+    showToast("Impossible de charger l'exemple", 'error')
+  }
+}
+
+// --- Import / export helpers (JSON / SVG / PNG) ---
+
+function importJSON(store: EditorStore): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json,application/json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    try {
+      const data = JSON.parse(text)
+      store.loadFromData(data)
+      showToast('Réseau importé', 'success')
+    } catch {
+      showToast('Fichier JSON invalide', 'error')
+    }
+  }
+  input.click()
+}
 
 function exportJSON(store: EditorStore): void {
   // Same payload as the autosave: one store method builds both

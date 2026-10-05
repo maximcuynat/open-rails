@@ -1,7 +1,11 @@
 import { useEffect } from 'react'
-import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
+import type { EditorStore } from '@application/state/editorStore'
 import { findAction, type ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../components/common/Toast'
+import { flipSelectedSignal } from '../components/common/signalActions'
+
+/** Brake handle position held by each of the two brake keys */
+const HELD_BRAKE_COMMAND = { 'drive.brakeApply': 'apply', 'drive.brakeRelease': 'release' } as const
 
 /** Run a rebindable action. The caller has already checked that it is live in the current context. */
 function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void {
@@ -19,6 +23,12 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
       }
       return
     }
+    case 'drive.brakeApply':
+    case 'drive.brakeRelease':
+      e.preventDefault()
+      // Held: the brake pipe empties or fills until the key is released (see handleKeyUp)
+      store.setSelectedTrainBrakeCommand(HELD_BRAKE_COMMAND[action])
+      return
     case 'drive.reverserForward':
     case 'drive.reverserBackward':
       e.preventDefault()
@@ -50,9 +60,12 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
     case 'tool.measure': store.setTool('measure'); return
     case 'tool.pan': store.setTool('pan'); return
     case 'tool.locomotive': store.setTool('locomotive'); return
+    case 'tool.speedZone': store.setSignalToolSubMode('speedZone'); return
+    case 'tool.signalBlock': store.setSignalToolSubMode('blockSignal'); return
+    case 'tool.signalPath': store.setSignalToolSubMode('pathSignal'); return
     case 'edit.toggleJunction':
       e.preventDefault()
-      if (!store.toggleActiveJunction()) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+      if (!store.toggleActiveJunction()) showToast(store.junctionRefusalMessage, 'warning')
       return
     case 'edit.parallelTrack':
       if (store.tool === 'select' && store.canCreateParallelTrack) {
@@ -101,7 +114,9 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
       return
     } else if (e.key === 'Tab') {
       e.preventDefault()
-      if (!store.selectedTrain) store.flipLocomotiveDirection()
+      // TrainSet: take the cab at the other end; legacy locomotive: turn around
+      if (store.selectedTrain) store.switchSelectedTrainCab()
+      else store.flipLocomotiveDirection()
       return
     }
     const action = hasModifier ? null : findAction(store.keybindings, 'drive', e)
@@ -204,11 +219,19 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
     } else if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
       e.preventDefault()
       store.flipTrainPlacementDirection()
+    } else if (store.signalPlacementMode) {
+      e.preventDefault()
+      store.flipSignalTool()
     }
   } else if (e.key === 'r' || e.key === 'R') {
     e.preventDefault()
     if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
       store.flipTrainPlacementDirection()
+    } else if (store.signalPlacementMode) {
+      // Signal tool in hand: the signal about to be laid speaks to the other direction
+      store.flipSignalTool()
+    } else if (store.selectedSignal) {
+      flipSelectedSignal(store)
     } else if (store.isTrainSelected || store.tool === 'coupling') {
       store.flipLocomotiveDirection()
     } else {
@@ -219,8 +242,16 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
 
 export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
   if (!store.isPlayMode) return
-  // Legacy locomotive: releasing the key that holds the throttle lets it coast
   const action = findAction(store.keybindings, 'drive', { code: e.code, key: e.key, shiftKey: false })
+  if (action === 'drive.brakeApply' || action === 'drive.brakeRelease') {
+    // Releasing a brake key leaves the pressure where it is, unless the other key has taken over
+    if (store.heldBrakeCommand('local') === HELD_BRAKE_COMMAND[action]) {
+      e.preventDefault()
+      store.setSelectedTrainBrakeCommand('hold')
+    }
+    return
+  }
+  // Legacy locomotive: releasing the key that holds the throttle lets it coast
   if (action === 'drive.notchUp' && store.locomotiveThrottle === 1) {
     e.preventDefault()
     store.setLocomotiveThrottle(0)
@@ -228,6 +259,13 @@ export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
     e.preventDefault()
     store.setLocomotiveThrottle(0)
   }
+}
+
+/** The window lost the focus: no key release will come, so nothing stays held */
+export function handleWindowBlur(store: EditorStore): void {
+  if (!store.isPlayMode) return
+  if (store.locomotiveThrottle !== 0) store.setLocomotiveThrottle(0)
+  store.setSelectedTrainBrakeCommand('hold')
 }
 
 /** Characters of the user's layout by key position, where the browser exposes them (Chromium) */
@@ -251,11 +289,7 @@ export function useKeyboardShortcuts(store: EditorStore): void {
 
     const onKeyUp = (e: KeyboardEvent) => handleKeyUp(store, e)
 
-    const onBlur = () => {
-      if (store.isPlayMode && store.locomotiveThrottle !== 0) {
-        store.setLocomotiveThrottle(0)
-      }
-    }
+    const onBlur = () => handleWindowBlur(store)
 
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)

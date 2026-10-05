@@ -21,14 +21,18 @@ import {
   setNotch,
   triggerEmergencyBrake,
   releaseEmergencyBrake,
-  commandedAcceleration,
-  stoppingDistance,
+  switchDrivingCab,
   MAX_NOTCH,
+  MIN_NOTCH,
   makeTrainSet,
   serializeTrains,
   deserializeTrains,
   pruneTrainsToNetwork,
   steerTrainSetJunction,
+  trainTurnoutAhead,
+  openRouteSide,
+  canSwitchDrivingCab,
+  trackLeftAhead,
   trainRouteStart,
   isJunctionOccupied,
   handleCouplingClick,
@@ -39,10 +43,17 @@ import {
   type VehicleKind,
 } from './train'
 import { walkForward, snapToNearestTrack, positionOnSegment, tangentOnSegment, findJunctionAhead } from './locomotive'
-import type { TrackPosition } from './locomotive'
+import type { JunctionAhead, TrackPosition } from './locomotive'
 import { removeSegment, addArcCurve } from './network'
-import { ROLLING_STOCK, type RollingStockModel } from './rollingStock'
-import { addJunction, placeTurnout, autoDetectJunctions } from './junction'
+import { ROLLING_STOCK, consistMass, consistResistance, type RollingStockModel } from './rollingStock'
+import {
+  BRAKE_PIPE_FIRST_REDUCTION,
+  BRAKE_PIPE_FULL_SERVICE,
+  BRAKE_PIPE_RELEASED,
+  setBrakeCommand,
+  trainDynamics,
+} from './trainDynamics'
+import { addJunction, placeTurnout, autoDetectJunctions, activeBranchOf, turnoutView, setJunctionBranch } from './junction'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 
@@ -156,77 +167,161 @@ describe('driving controls', () => {
     return { net, ts }
   }
 
-  it('starts at rest: neutral reverser, handle on N', () => {
+  /** Brake fully released, as after holding the release command for a few seconds */
+  function releaseBrake(ts: TrainSet) {
+    ts.brakePipe = BRAKE_PIPE_RELEASED
+    ts.brakeCylinder = 0
+  }
+
+  it('starts at rest: brakes applied, neutral reverser, handle on N', () => {
     const { ts } = makeTrain()
     expect(ts.reverser).toBe('neutral')
     expect(ts.notch).toBe(0)
     expect(ts.emergencyBrake).toBe(false)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(ts.brakeCylinder).toBe(1)
+    expect(ts.brakeCommand).toBe('hold')
+    expect(ts.tractionEffort).toBe(0)
+    expect(ts.electricBrakeEffort).toBe(0)
+    expect(ts.maxSpeed).toBeCloseTo(320 / 3.6, 9)
+  })
+
+  it('locks the reverser while the handle is on an electric brake notch', () => {
+    const { ts } = makeTrain()
+    setNotch(ts, -1)
+    expect(setReverser(ts, 'forward')).toBe(false)
+    setNotch(ts, 0)
+    expect(setReverser(ts, 'forward')).toBe(true)
+  })
+
+  it('the emergency brake takes the electric brake off and brings the handle back to N', () => {
+    const { ts } = makeTrain()
+    releaseBrake(ts)
+    ts.currentSpeed = 30
+    setNotch(ts, MIN_NOTCH)
+    ts.electricBrakeEffort = 1
+    triggerEmergencyBrake(ts)
+    expect(ts.notch).toBe(0)
+    expect(ts.electricBrakeEffort).toBe(0)
   })
 
   it('gives no traction while the reverser is in neutral', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     setNotch(ts, MAX_NOTCH)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBe(0)
-  })
-
-  it('accelerates proportionally to the traction notch', () => {
-    const { net, ts } = makeTrain()
-    setReverser(ts, 'forward')
-    setNotch(ts, 1)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(ts.acceleration / MAX_NOTCH, 5)
-
-    ts.currentSpeed = 0
-    setNotch(ts, MAX_NOTCH)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(ts.acceleration, 5)
-  })
-
-  it('brakes proportionally to the brake notch and never goes below zero', () => {
-    const { net, ts } = makeTrain()
-    setReverser(ts, 'forward')
-    ts.currentSpeed = 20
-    setNotch(ts, -2)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(20 - (2 / MAX_NOTCH) * ts.braking, 5)
-
-    setNotch(ts, -MAX_NOTCH)
     tickTrainSet(net, ts, 10)
     expect(ts.currentSpeed).toBe(0)
+    expect(ts.tractionEffort).toBe(0)
   })
 
-  it('coasts on N with the rolling resistance only', () => {
+  it('gives no traction while the brake is applied', () => {
     const { net, ts } = makeTrain()
     setReverser(ts, 'forward')
-    ts.currentSpeed = 10
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(10 - ts.coastingDecel, 5)
+    setNotch(ts, MAX_NOTCH)
+    tickTrainSet(net, ts, 10)
+    expect(ts.currentSpeed).toBe(0)
+    expect(ts.tractionEffort).toBe(0)
   })
 
-  it('stoppingDistance matches the distance actually covered at full service brake', () => {
+  it('pulls proportionally to the traction notch, the effort building up in 5 s', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
+    setReverser(ts, 'forward')
+    setNotch(ts, 1)
+    tickTrainSet(net, ts, 0.5)
+    expect(ts.tractionEffort).toBeCloseTo(0.1, 6)
+    tickTrainSet(net, ts, 4.5)
+    expect(ts.tractionEffort).toBeCloseTo(1 / MAX_NOTCH, 6)
+    const oneNotch = trainDynamics(net, ts)
+
+    setNotch(ts, MAX_NOTCH)
+    tickTrainSet(net, ts, 3.9)
+    expect(ts.tractionEffort).toBeLessThan(1)
+    tickTrainSet(net, ts, 0.2)
+    expect(ts.tractionEffort).toBe(1)
+    const full = trainDynamics(net, ts)
+
+    // A lone power car: 106 kN of starting effort
+    expect(full.tractionForce).toBeCloseTo(106_000, 0)
+    expect(oneNotch.tractionForce).toBeCloseTo(full.tractionForce / MAX_NOTCH, 0)
+    expect(full.acceleration).toBeGreaterThan(oneNotch.acceleration)
+  })
+
+  it('brakes harder as the brake pipe empties and stops exactly at zero', () => {
+    const { net, ts } = makeTrain()
+    releaseBrake(ts)
     setReverser(ts, 'forward')
     ts.currentSpeed = 20
-    expect(stoppingDistance(ts)).toBeCloseTo(20, 5) // 20² / (2 × 10)
 
-    setNotch(ts, -MAX_NOTCH)
-    const t0 = ts.vehicles[0].front.t
-    for (let i = 0; i < 4000; i++) tickTrainSet(net, ts, 0.001)
+    // A short pull on the handle: first reduction only, a light application
+    setBrakeCommand(ts, 'apply')
+    tickTrainSet(net, ts, 1 / 60)
+    setBrakeCommand(ts, 'hold')
+    tickTrainSet(net, ts, 4)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FIRST_REDUCTION)
+    const light = trainDynamics(net, ts)
+    expect(light.brakeForce).toBeGreaterThan(0)
+    expect(light.acceleration).toBeLessThan(0)
+
+    setBrakeCommand(ts, 'apply')
+    tickTrainSet(net, ts, 4)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    const full = trainDynamics(net, ts)
+    expect(full.brakeForce).toBeGreaterThan(4 * light.brakeForce)
+    expect(full.acceleration).toBeCloseTo(-1.1, 2) // full service below 170 km/h
+
+    tickTrainSet(net, ts, 20)
     expect(ts.currentSpeed).toBe(0)
-    expect((ts.vehicles[0].front.t - t0) * 2000).toBeCloseTo(20, 1)
+    expect(ts.direction).toBe(1)
   })
 
-  it('clamps the handle to ±MAX_NOTCH', () => {
+  it('coasts on N with the running resistance only', () => {
+    const { net, ts } = makeTrain()
+    releaseBrake(ts)
+    setReverser(ts, 'forward')
+    ts.currentSpeed = 10
+    const resistance = consistResistance(ts.vehicles, 10)
+    const dynamics = trainDynamics(net, ts)
+    expect(dynamics.resistanceForce).toBeCloseTo(resistance, 6)
+    expect(dynamics.acceleration).toBeCloseTo(-resistance / (1.04 * consistMass(ts.vehicles)), 9)
+    tickTrainSet(net, ts, 1)
+    expect(ts.currentSpeed).toBeCloseTo(10 + dynamics.acceleration, 3)
+    expect(ts.currentSpeed).toBeLessThan(10)
+  })
+
+  it('the stopping distance matches the distance actually covered at full service brake', () => {
+    const { net, ts } = makeTrain()
+    releaseBrake(ts)
+    setReverser(ts, 'forward')
+    ts.currentSpeed = 20
+    const predicted = trainDynamics(net, ts).stoppingDistance
+    // 2 s of equivalent application time at 20 m/s, then 1.1 m/s² down to rest
+    expect(predicted).toBeGreaterThan(20 * 20 / (2 * 1.1) + 30)
+    expect(predicted).toBeLessThan(20 * 20 / (2 * 1.1) + 45)
+
+    setBrakeCommand(ts, 'apply')
+    const t0 = ts.vehicles[0].front.t
+    for (let i = 0; i < 4000 && ts.currentSpeed > 0; i++) tickTrainSet(net, ts, 1 / 60)
+    expect(ts.currentSpeed).toBe(0)
+    const covered = (ts.vehicles[0].front.t - t0) * 2000
+    expect(Math.abs(covered - predicted) / predicted).toBeLessThan(0.005)
+    expect(trainDynamics(net, ts).stoppingDistance).toBe(0)
+  })
+
+  it('clamps the handle to MIN_NOTCH…MAX_NOTCH: B5 to P5', () => {
     const { ts } = makeTrain()
     setNotch(ts, 99)
     expect(ts.notch).toBe(MAX_NOTCH)
+    setNotch(ts, -2)
+    expect(ts.notch).toBe(-2)
     setNotch(ts, -99)
-    expect(ts.notch).toBe(-MAX_NOTCH)
+    expect(ts.notch).toBe(MIN_NOTCH)
+    expect(MIN_NOTCH).toBe(-5)
   })
 
   it('moves forward or backward according to the reverser', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     // Single segment laid along +x, so the lead bogie's t grows with x
     const frontX = () => ts.vehicles[0].front.t
 
@@ -235,6 +330,7 @@ describe('driving controls', () => {
     const x0 = frontX()
     tickTrainSet(net, ts, 1)
     expect(frontX()).toBeGreaterThan(x0)
+    expect(ts.direction).toBe(1)
 
     ts.currentSpeed = 0
     setNotch(ts, 0)
@@ -243,6 +339,7 @@ describe('driving controls', () => {
     const x1 = frontX()
     tickTrainSet(net, ts, 1)
     expect(frontX()).toBeLessThan(x1)
+    expect(ts.direction).toBe(-1)
   })
 
   it('reverses a multi-vehicle rake with every vehicle following', () => {
@@ -250,6 +347,7 @@ describe('driving controls', () => {
     const wagon = createTrainSet(net, { x: 900, y: 0 }, 'wagon')!
     ts.vehicles.push(...wagon.vehicles)
     advanceTrainSet(net, ts, 0) // settle the wagon behind the loco
+    releaseBrake(ts)
 
     const before = ts.vehicles.map(v => v.front.t)
     const gap = before[0] - before[1]
@@ -263,6 +361,7 @@ describe('driving controls', () => {
 
   it('reversing backs the train up without turning the loco body around', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     const body = () => getTrainSetVisuals(net, ts)!.vehicles[0].tgvDetails!.polygon
 
     setReverser(ts, 'forward')
@@ -302,30 +401,41 @@ describe('driving controls', () => {
     expect(shiftReverser(ts, -1)).toBe(false)
   })
 
-  it('emergency brake cuts traction, locks the handle and only releases at standstill', () => {
+  it('emergency brake vents the pipe, cuts traction, locks the controls and only releases at standstill', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     setReverser(ts, 'forward')
     setNotch(ts, MAX_NOTCH)
+    ts.tractionEffort = 1
     ts.currentSpeed = 30
 
     triggerEmergencyBrake(ts)
-    expect(commandedAcceleration(ts)).toBe(-ts.emergencyBraking)
-    expect(ts.emergencyBraking).toBeGreaterThan(ts.braking)
+    expect(ts.notch).toBe(0)
+    expect(ts.tractionEffort).toBe(0)
 
-    // Locked while moving
+    // Locked while moving: neither the handle, nor the brake valve, nor the release
     expect(setNotch(ts, MAX_NOTCH)).toBe(false)
     expect(releaseEmergencyBrake(ts)).toBe(false)
+    setBrakeCommand(ts, 'release')
+    expect(ts.brakeCommand).toBe('hold')
 
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(30 - ts.emergencyBraking, 5)
-    tickTrainSet(net, ts, 5)
+    tickTrainSet(net, ts, 4)
+    expect(ts.brakePipe).toBe(0)
+    expect(ts.brakeCylinder).toBe(1)
+    const emergency = trainDynamics(net, ts)
+    expect(emergency.tractionForce).toBe(0)
+    expect(emergency.acceleration).toBeLessThan(-1.25) // stronger than the 1.1 m/s² of full service
+    tickTrainSet(net, ts, 30)
     expect(ts.currentSpeed).toBe(0)
 
-    // Still latched after the stop, with the handle on full brake
+    // Still latched after the stop; released, the brake stays applied at full service
     expect(ts.emergencyBrake).toBe(true)
-    expect(ts.notch).toBe(-MAX_NOTCH)
     expect(releaseEmergencyBrake(ts)).toBe(true)
     expect(ts.emergencyBrake).toBe(false)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(ts.brakeCylinder).toBe(1)
+    setBrakeCommand(ts, 'release')
+    expect(ts.brakeCommand).toBe('release')
   })
 
   it('moving the handle at standstill releases the emergency brake', () => {
@@ -336,21 +446,55 @@ describe('driving controls', () => {
     expect(ts.notch).toBe(0)
   })
 
-  it('decoupled rear half is left with its controls at rest', () => {
+  it('decoupled rear half is left with its controls at rest and its brakes applied', () => {
     const { net, ts } = makeTrain()
     // Two trainsets coupled together: only a power car to power car joint can be split
     const second = createTrainSet(net, { x: 900, y: 0 }, 'loco')!
     const coupled = { ...ts, vehicles: [...ts.vehicles, ...second.vehicles] }
+    releaseBrake(coupled)
     setReverser(coupled, 'forward')
     setNotch(coupled, 3)
+    coupled.tractionEffort = 0.6
     coupled.currentSpeed = 12
 
     const [front, rear] = decoupleAt(coupled, 0)!
     expect(front.notch).toBe(3)
     expect(front.currentSpeed).toBe(12)
+    expect(front.brakePipe).toBe(BRAKE_PIPE_RELEASED)
     expect(rear.notch).toBe(0)
     expect(rear.reverser).toBe('neutral')
     expect(rear.currentSpeed).toBe(0)
+    expect(rear.tractionEffort).toBe(0)
+    expect(rear.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(rear.brakeCylinder).toBe(1)
+  })
+
+  it('a train coupled to a braked one is braked, and changing cab leaves the brakes applied', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = makeTrainSet('A', [createVehicle(net, segId, 0.5, 'loco')!])
+    const b = makeTrainSet('B', [{ ...createVehicle(net, segId, 0.4, 'loco')!, flipped: true }])
+    // Bring B's nose-less end up to A's tail
+    b.direction = 1
+    for (let i = 0; i < 400; i++) advanceTrainSet(net, b, 0.5, [a, b])
+    releaseBrake(a)
+
+    const [merged] = coupleTrains(net, [a, b], a.id, b.id)
+    expect(merged.vehicles).toHaveLength(2)
+    expect(merged.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(merged.brakeCylinder).toBe(1)
+
+    releaseBrake(merged)
+    merged.currentSpeed = 0.0005 // creeping, below the standstill threshold
+    const switched = switchDrivingCab(merged)!
+    expect(switched.currentSpeed).toBe(0)
+    expect(switched.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(switched.brakeCylinder).toBe(1)
+    merged.currentSpeed = 1
+    expect(switchDrivingCab(merged)).toBeNull()
+    expect(canSwitchDrivingCab(merged)).toBe(false)
+    expect(canSwitchDrivingCab(switched)).toBe(true)
+    // No power car at the other end
+    expect(canSwitchDrivingCab(a)).toBe(false)
   })
 })
 
@@ -719,9 +863,9 @@ describe('steerTrainSetJunction', () => {
     const train = makeTrainSet('t', [createVehicle(net, sStem.id, 0.5, 'loco', 1)!])
 
     expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
   })
 
   it('starts the route at the lead bogie running forward and at the last bogie in reverse', () => {
@@ -749,13 +893,54 @@ describe('steerTrainSetJunction', () => {
 
     // Running forward (towards -x) there is no facing turnout ahead
     expect(steerTrainSetJunction(net, train, 'right')).toBe(false)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
 
     setReverser(train, 'reverse')
     expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
+  })
+
+  it('tells the turnout ahead: its distance, the side of the open route, whether it is occupied', () => {
+    const { net, sStem, junction } = yNetwork()
+    // Nose towards the apex (+x), lead bogie somewhere before x = 300
+    const train = makeTrainSet('t', [createVehicle(net, sStem.id, 0.5, 'loco', 1)!])
+    const lead = positionOnSegment(net, train.vehicles[0].front.segId, train.vehicles[0].front.t)!
+
+    // The diverging branch goes to +y: on the right of a train heading +x (y grows downwards)
+    const ahead = trainTurnoutAhead(net, train)!
+    expect(ahead.distance).toBeCloseTo(300 - lead.x, 6)
+    expect(ahead).toMatchObject({ side: 'left', locked: false })
+
+    steerTrainSetJunction(net, train, 'right')
+    expect(activeBranchOf(junction)).toBe('diverging')
+    expect(trainTurnoutAhead(net, train)!.side).toBe('right')
+
+    // Another train standing over the points locks them
+    const other = makeTrainSet('o', [createVehicle(net, sStem.id, 0.99, 'loco', 1)!])
+    expect(trainTurnoutAhead(net, train, [train, other])!.locked).toBe(true)
+    expect(trainTurnoutAhead(net, train)!.locked).toBe(false)
+  })
+
+  it('gives no side for a turnout met by a branch, and nothing when the route reaches none', () => {
+    const { net, junction } = yNetwork()
+    const sStraight = turnoutView(net, junction)!.straightSegmentId
+    // On the straight branch, nose towards the apex (-x)
+    const trailing = makeTrainSet('t', [createVehicle(net, sStraight, 0.5, 'loco', -1)!])
+    expect(trainTurnoutAhead(net, trailing)).toMatchObject({ side: null, locked: false })
+    // Nose away from the apex: the route runs to the end of the track
+    const leaving = makeTrainSet('t', [createVehicle(net, sStraight, 0.5, 'loco', 1)!])
+    expect(trainTurnoutAhead(net, leaving)).toBeNull()
+    expect(trainTurnoutAhead(net, makeTrainSet('empty', []))).toBeNull()
+  })
+
+  it('gives no side for the middle route of a three-way turnout', () => {
+    const ahead = { facing: true, branches: ['left', 'straight', 'right'], activeBranch: 'straight' } as JunctionAhead
+    expect(openRouteSide(ahead)).toBeNull()
+    expect(openRouteSide({ ...ahead, activeBranch: 'left' })).toBe('left')
+    expect(openRouteSide({ ...ahead, activeBranch: 'right' })).toBe('right')
+    expect(openRouteSide({ ...ahead, facing: false, activeBranch: 'left' })).toBeNull()
   })
 
   it('does nothing for an empty train', () => {
@@ -784,7 +969,7 @@ const frontEnd = (net: Network, train: TrainSet) => vehicleFrontEndPos(net, trai
 const rearEnd = (net: Network, train: TrainSet) => vehicleRearEndPos(net, train.vehicles[train.vehicles.length - 1])!
 
 describe('advanceTrainSet is all-or-nothing', () => {
-  it('reversing into a buffer stop leaves the whole train where it was', () => {
+  it('reversing into a buffer stop brings the tail up to it, then leaves the whole train where it is', () => {
     const { net, segId } = makeStraightNetwork(600)
     const train = consist(net, segId, 0.5, 4) // nose towards +x, wagons towards the buffer at x=0
     const spacing = (pts: { x: number }[]) => pts.slice(1).map((p, i) => pts[i].x - p.x)
@@ -796,16 +981,34 @@ describe('advanceTrainSet is all-or-nothing', () => {
       const before = JSON.stringify(train.vehicles)
       if (!advanceTrainSet(net, train, 0.5)) {
         refused++
-        expect(JSON.stringify(train.vehicles)).toBe(before)
+        // The first refusal is the last, shortened step up to the buffer; after it nothing moves
+        if (refused > 1) expect(JSON.stringify(train.vehicles)).toBe(before)
       }
     }
 
     expect(refused).toBeGreaterThan(0)
     const after = bogiePoints(net, train)
     spacing(after).forEach((gap, i) => expect(gap).toBeCloseTo(laidOut[i], 6))
-    // The last bogie stands within one step of the buffer, never beyond it
-    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(0)
-    expect(after[after.length - 1].x).toBeLessThan(0.5)
+    // The tail of the train stands on the buffer, its last bogie never beyond it
+    expect(rearEnd(net, train).x).toBeCloseTo(0, 6)
+    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(-1e-9)
+  })
+
+  it('running forward, stops with its nose on the end of the track, not its leading bogie', () => {
+    const { net, segId } = makeStraightNetwork(600)
+    const train = consist(net, segId, 0.5, 2)
+    expect(trackLeftAhead(net, train, 50)).toBeNull()
+
+    let steps = 0
+    while (advanceTrainSet(net, train, 0.5) && steps < 2000) steps++
+
+    expect(frontEnd(net, train).x).toBeCloseTo(600, 6)
+    expect(bogiePoints(net, train)[0].x).toBeLessThan(599)
+    expect(trackLeftAhead(net, train, 50)).toBeCloseTo(0, 6)
+    // Nothing more to gain by insisting
+    const before = JSON.stringify(train.vehicles)
+    expect(advanceTrainSet(net, train, 0.5)).toBe(false)
+    expect(JSON.stringify(train.vehicles)).toBe(before)
   })
 
   it('does not move the lead when a follower has no track to stand on', () => {
@@ -896,14 +1099,28 @@ describe('collision between trains', () => {
     const { net, segId } = makeStraightNetwork(1000)
     const a = consist(net, segId, 0.3, 0, 1, 'A')
     const b = consist(net, segId, 0.36, 0, 1, 'B') // its tail is some 40 m ahead of A's nose
+    a.brakePipe = BRAKE_PIPE_RELEASED
+    a.brakeCylinder = 0
     setReverser(a, 'forward')
     setNotch(a, MAX_NOTCH)
 
     let stopped = false
-    for (let i = 0; i < 600 && !stopped; i++) stopped = !tickTrainSet(net, a, 1 / 60, [a, b])
+    for (let i = 0; i < 1200 && !stopped; i++) stopped = !tickTrainSet(net, a, 1 / 60, [a, b])
 
     expect(stopped).toBe(true)
     expect(rearEnd(net, b).x - frontEnd(net, a).x).toBeCloseTo(COUPLING_GAP, 6)
+    // Stopped dead by the contact, at the speed it had reached
+    expect(a.currentSpeed).toBe(0)
+    expect(a.impactSpeed).toBeGreaterThan(5)
+
+    // Still pulling against B: it stays where it is, without a new impact at every tick
+    const before = JSON.stringify(a.vehicles)
+    for (let i = 0; i < 60; i++) {
+      expect(tickTrainSet(net, a, 1 / 60, [a, b])).toBe(false)
+      expect(a.currentSpeed).toBe(0)
+      expect(a.impactSpeed).toBe(0)
+    }
+    expect(JSON.stringify(a.vehicles)).toBe(before)
   })
 })
 
@@ -920,7 +1137,7 @@ describe('junction under a train', () => {
     const straightExt = addSegment(net, t.straightNode.id, sEnd.id)!
     autoDetectJunctions(net)
     const junction = [...net.junctions.values()][0]
-    return { net, junction, stem, straightExt, straightSegId: junction.straightSegmentId }
+    return { net, junction, stem, straightExt, straightSegId: turnoutView(net, junction)!.straightSegmentId }
   }
 
   it('is occupied exactly while a vehicle stands over its points', () => {
@@ -950,10 +1167,10 @@ describe('junction under a train', () => {
 
     // The diverging branch leaves towards +y: the right-hand side when running towards +x
     expect(steerTrainSetJunction(net, driven, 'right', [driven, parked])).toBe(false)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
     // With the points clear the same command goes through
     expect(steerTrainSetJunction(net, driven, 'right', [driven])).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
   })
 
   it('keeps the vehicles on their branch if the points move under a trailing train anyway', () => {
@@ -964,14 +1181,14 @@ describe('junction under a train', () => {
     let biggestMove = 0
     for (let i = 0; i < 1200; i++) {
       // Thrown behind the store's back once the lead is 30 m past the points
-      if (prev[0].x < -30) junction.activeBranch = 'diverging'
+      if (prev[0].x < -30) setJunctionBranch(junction, 'diverging')
       expect(advanceTrainSet(net, train, 0.5)).toBe(true)
       const cur = bogiePoints(net, train)
       cur.forEach((p, k) => (biggestMove = Math.max(biggestMove, Math.hypot(p.x - prev[k].x, p.y - prev[k].y))))
       prev = cur
     }
 
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(biggestMove).toBeLessThanOrEqual(0.5 + 1e-6)
     expect(prev.every((p) => Math.abs(p.y) < 1e-6)).toBe(true)
   })
@@ -1005,13 +1222,15 @@ describe('sharp corners and crossings', () => {
       const { net, first, second } = corner(angle)
       const train = consist(net, first.id, 0.5, 0)
       for (let i = 0; i < 150; i++) advanceTrainSet(net, train, 0.5)
+      // The nose stops on the corner, the bogie under it short of it
       expect(train.vehicles[0].front.segId).toBe(first.id)
-      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeCloseTo(0, 6)
+      expect(frontEnd(net, train).x).toBeCloseTo(0, 6)
+      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeLessThan(-1)
 
       const back = consist(net, second.id, 0.5, 0, -1)
       for (let i = 0; i < 150; i++) advanceTrainSet(net, back, 0.5)
       expect(back.vehicles[0].front.segId).toBe(second.id)
-      expect(back.vehicles[0].front.t).toBeCloseTo(0, 6)
+      expect(Math.hypot(frontEnd(net, back).x, frontEnd(net, back).y)).toBeCloseTo(0, 6)
     }
   })
 
@@ -1030,7 +1249,7 @@ describe('sharp corners and crossings', () => {
     const fromStub = consist(net, stub.id, 0.5, 0, -1) // heading down to the main line
     for (let i = 0; i < 400; i++) advanceTrainSet(net, fromStub, 0.5)
     expect(fromStub.vehicles[0].front.segId).toBe(stub.id)
-    expect(bogiePoints(net, fromStub)[0].y).toBeCloseTo(0, 6)
+    expect(frontEnd(net, fromStub).y).toBeCloseTo(0, 6)
 
     const west = [...net.segments.values()].find((s) => s.id !== stub.id && (s.from === w.id || s.to === w.id))!
     const through = consist(net, west.id, 0.5, 0, west.from === w.id ? 1 : -1)
@@ -1343,14 +1562,14 @@ describe('articulated trainsets', () => {
       autoDetectJunctions(net)
       const junction = [...net.junctions.values()][0]
       // Extend the diverging branch along its end tangent
-      const via = net.segments.get(junction.divergingSegmentId)!.via!
+      const via = net.segments.get(turnoutView(net, junction)!.divergingSegmentId)!.via!
       const end = t.divergingNode.pos
       const len = Math.hypot(end.x - via.x, end.y - via.y)
       const far = addNode(net, { x: end.x + ((end.x - via.x) / len) * 400, y: end.y + ((end.y - via.y) / len) * 400 })
       const divergingExt = addSegment(net, t.divergingNode.id, far.id)!
 
       const train = buildRake(net, createVehicle(net, stem.id, 0.6, 'loco')!, ['wagon', 'wagon', 'wagon', 'wagon', 'loco'])
-      junction.activeBranch = 'diverging'
+      setJunctionBranch(junction, 'diverging')
 
       const pitch = ROLLING_STOCK.duplex.trailer.pitch
       let straddled = 0

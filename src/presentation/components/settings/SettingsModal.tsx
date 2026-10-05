@@ -13,6 +13,13 @@ import {
 import { showToast } from '../common/Toast'
 import { KeybindingsSection } from './KeybindingsSection'
 import type { Keybindings } from '@application/keybindings/keybindings'
+import { LINE_SPEED_RANGE, type LineType } from '@domain/models/speedLimits'
+import { LINE_CHOICES, applyLineChoice, lineChoiceId, parseLineSpeed } from './lineSettingsModel'
+import type { SignallingLevel } from '@domain/models/signals'
+import { SIGNALLING_LEVEL_CHOICES } from './signallingSettingsModel'
+
+/** A length as typed in a field of the modal: in the display unit, without float noise */
+const unitField = (meters: number, unit: Unit): string => Number(toUnitValue(meters, unit).toFixed(4)).toString()
 
 interface SettingsModalProps {
   store: EditorStore
@@ -29,6 +36,12 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   const [spacingVal, setSpacingVal] = useState<string>(
     toUnitValue(store.trackSpacing, store.unit).toString()
   )
+  const [levelHeightVal, setLevelHeightVal] = useState<string>(unitField(store.levelHeight, store.unit))
+  const [maxGradientVal, setMaxGradientVal] = useState<string>(store.maxGradient.toString())
+  const [lineType, setLineType] = useState<LineType>(store.lineSettings.lineType)
+  const [lineSpeedVal, setLineSpeedVal] = useState<string>(store.lineSettings.lineSpeed.toString())
+  const [signallingLevel, setSignallingLevel] = useState<SignallingLevel>(store.signallingLevel)
+  const [signalStopEnforced, setSignalStopEnforced] = useState<boolean>(store.signalStopEnforced)
   const [showDimensions, setShowDimensions] = useState<boolean>(store.showDimensions)
   const [boardEnabled, setBoardEnabled] = useState<boolean>(store.boardEnabled)
   const [boardWidthVal, setBoardWidthVal] = useState<string>(
@@ -46,13 +59,19 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSelectedUnit(store.unit)
       setGaugeVal(toUnitValue(store.gauge, store.unit).toString())
       setSpacingVal(toUnitValue(store.trackSpacing, store.unit).toString())
+      setLevelHeightVal(unitField(store.levelHeight, store.unit))
+      setMaxGradientVal(store.maxGradient.toString())
+      setLineType(store.lineSettings.lineType)
+      setLineSpeedVal(store.lineSettings.lineSpeed.toString())
+      setSignallingLevel(store.signallingLevel)
+      setSignalStopEnforced(store.signalStopEnforced)
       setShowDimensions(store.showDimensions)
       setBoardEnabled(store.boardEnabled)
       setBoardWidthVal(toUnitValue(store.boardWidth, store.unit).toString())
       setBoardHeightVal(toUnitValue(store.boardHeight, store.unit).toString())
       setDraftKeys(store.keybindings)
     }
-  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.levelHeight, store.maxGradient, store.lineSettings.lineType, store.lineSettings.lineSpeed, store.signallingLevel, store.signalStopEnforced, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
 
   // When changing scale preset in the modal
   const handleScaleChange = (presetId: ScalePresetId) => {
@@ -62,6 +81,8 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSelectedUnit(preset.defaultUnit)
       setGaugeVal(toUnitValue(preset.defaultGauge, preset.defaultUnit).toString())
       setSpacingVal(toUnitValue(preset.defaultTrackSpacing, preset.defaultUnit).toString())
+      setLevelHeightVal(unitField(preset.defaultLevelHeight, preset.defaultUnit))
+      setMaxGradientVal(preset.defaultMaxGradient.toString())
       if (preset.defaultBoardWidth && preset.defaultBoardHeight) {
         setBoardEnabled(true)
         setBoardWidthVal(toUnitValue(preset.defaultBoardWidth, preset.defaultUnit).toString())
@@ -76,11 +97,13 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   const handleUnitChange = (newUnit: Unit) => {
     const currentGaugeMeters = parseDistance(gaugeVal, selectedUnit)
     const currentSpacingMeters = parseDistance(spacingVal, selectedUnit)
+    const currentLevelHeightMeters = parseDistance(levelHeightVal, selectedUnit)
     const currentBWMeters = parseDistance(boardWidthVal, selectedUnit)
     const currentBHMeters = parseDistance(boardHeightVal, selectedUnit)
     setSelectedUnit(newUnit)
     setGaugeVal(toUnitValue(currentGaugeMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
     setSpacingVal(toUnitValue(currentSpacingMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
+    setLevelHeightVal(unitField(currentLevelHeightMeters, newUnit))
     setBoardWidthVal(toUnitValue(currentBWMeters, newUnit).toFixed(newUnit === 'mm' ? 0 : 2))
     setBoardHeightVal(toUnitValue(currentBHMeters, newUnit).toFixed(newUnit === 'mm' ? 0 : 2))
   }
@@ -89,8 +112,20 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
     const parsedGauge = parseDistance(gaugeVal, selectedUnit)
     const parsedSpacing = parseDistance(spacingVal, selectedUnit)
 
+    const parsedLevelHeight = parseDistance(levelHeightVal, selectedUnit)
+    const parsedMaxGradient = parseFloat(maxGradientVal.replace(',', '.'))
+
     if (parsedGauge <= 0 || parsedSpacing <= 0) {
       showToast('Valeurs de voie invalides', 'error')
+      return
+    }
+    if (!(parsedLevelHeight > 0) || !(parsedMaxGradient > 0)) {
+      showToast('Hauteur de niveau ou pente maximale invalide', 'error')
+      return
+    }
+    const parsedLineSpeed = parseLineSpeed(lineSpeedVal)
+    if (parsedLineSpeed === null) {
+      showToast(`Vitesse de ligne invalide : de ${LINE_SPEED_RANGE.min} à ${LINE_SPEED_RANGE.max} km/h`, 'error')
       return
     }
 
@@ -111,6 +146,18 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       store.setCustomGauge(parsedGauge)
       store.setCustomTrackSpacing(parsedSpacing)
     }
+
+    // After the scale: choosing a preset puts back its own slope settings
+    store.setGradientSettings({ levelHeight: parsedLevelHeight, maxGradient: parsedMaxGradient })
+
+    if (parsedLineSpeed !== store.lineSettings.lineSpeed || lineType !== store.lineSettings.lineType) {
+      store.setLineSettings({ lineSpeed: parsedLineSpeed, lineType })
+    }
+
+    // One undo step, and only when something changed. The signals themselves are left as they are
+    store.setSignallingSettings({ level: signallingLevel, stopEnforced: signalStopEnforced })
+    // The marker board tool only exists at the pro level
+    if (store.signallingLevel !== 'pro' && store.signalToolSubMode === 'cabMarker') store.setSignalToolSubMode('select')
 
     if (store.showDimensions !== showDimensions) {
       store.toggleDimensions()
@@ -193,7 +240,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
         <div className="settings-section">
           <label className="settings-label">
             Gabarit et géométrie de voie
-            <span className="settings-hint">Personnalisez l'écartement physique et l'entraxe entre voies parallèles</span>
+            <span className="settings-hint">Personnalisez l'écartement physique, l'entraxe entre voies parallèles, la hauteur d'un niveau (pont, tunnel) et la pente maximale des rampes</span>
           </label>
           <div className="settings-grid-2">
             <div className="settings-field">
@@ -230,7 +277,124 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
                 <span className="settings-input-unit">{selectedUnit}</span>
               </div>
             </div>
+            <div className="settings-field">
+              <label htmlFor="input-level-height" className="settings-sublabel">
+                Hauteur d'un niveau ({selectedUnit}) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-level-height"
+                  type="number"
+                  step="any"
+                  min="0"
+                  className="settings-input"
+                  value={levelHeightVal}
+                  onChange={(e) => setLevelHeightVal(e.target.value)}
+                />
+                <span className="settings-input-unit">{selectedUnit}</span>
+              </div>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="input-max-gradient" className="settings-sublabel">
+                Pente maximale (‰) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-max-gradient"
+                  type="number"
+                  step="any"
+                  min="1"
+                  className="settings-input"
+                  value={maxGradientVal}
+                  onChange={(e) => setMaxGradientVal(e.target.value)}
+                />
+                <span className="settings-input-unit">‰</span>
+              </div>
+            </div>
           </div>
+        </div>
+
+        {/* Line: the speed every rail without a speed zone runs at, and the rules its curves follow */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Ligne
+            <span className="settings-hint">Vitesse des voies sans limite posée, et règles de dévers des courbes</span>
+          </label>
+          <div className="settings-grid-2">
+            <div className="settings-field">
+              <label htmlFor="select-line-type" className="settings-sublabel">
+                Type de ligne :
+              </label>
+              <select
+                id="select-line-type"
+                className="settings-input"
+                value={lineChoiceId({ lineType, lineSpeed: parseLineSpeed(lineSpeedVal) ?? NaN })}
+                onChange={(e) => {
+                  const next = applyLineChoice(e.target.value, { lineType, lineSpeed: parseLineSpeed(lineSpeedVal) ?? store.lineSettings.lineSpeed })
+                  setLineType(next.lineType)
+                  setLineSpeedVal(next.lineSpeed.toString())
+                }}
+              >
+                {LINE_CHOICES.map((choice) => (
+                  <option key={choice.id} value={choice.id}>{choice.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="input-line-speed" className="settings-sublabel">
+                Vitesse de ligne (km/h) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-line-speed"
+                  type="number"
+                  step="10"
+                  min={LINE_SPEED_RANGE.min}
+                  max={LINE_SPEED_RANGE.max}
+                  className="settings-input"
+                  value={lineSpeedVal}
+                  onChange={(e) => setLineSpeedVal(e.target.value)}
+                />
+                <span className="settings-input-unit">km/h</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Signalling: the level the signals are read at, and what passing a closed one does */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Signalisation
+            <span className="settings-hint">Les mêmes signaux se lisent dans les deux niveaux : changer de niveau ne convertit ni ne supprime rien</span>
+          </label>
+          <div className="settings-field">
+            <label htmlFor="select-signalling-level" className="settings-sublabel">
+              Niveau de signalisation :
+            </label>
+            <select
+              id="select-signalling-level"
+              className="settings-input"
+              value={signallingLevel}
+              onChange={(e) => setSignallingLevel(e.target.value === 'pro' ? 'pro' : 'standard')}
+            >
+              {SIGNALLING_LEVEL_CHOICES.map((choice) => (
+                <option key={choice.id} value={choice.id}>{choice.label}</option>
+              ))}
+            </select>
+            <span className="settings-hint" style={{ display: 'block', marginTop: '0.35rem' }}>
+              {SIGNALLING_LEVEL_CHOICES.find((choice) => choice.id === signallingLevel)?.hint}
+            </span>
+          </div>
+          <label className="settings-checkbox-row" style={{ marginTop: '0.6rem' }}>
+            <input
+              type="checkbox"
+              checked={signalStopEnforced}
+              onChange={(e) => setSignalStopEnforced(e.target.checked)}
+            />
+            <span className="settings-checkbox-text">
+              Freinage d’urgence au franchissement d’un signal fermé
+            </span>
+          </label>
         </div>
 
         {/* Section 4 : Plateau / Table de modélisme (Baseboard) */}

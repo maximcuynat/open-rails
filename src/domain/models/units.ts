@@ -17,6 +17,8 @@ export interface ScalePreset {
   description: string
   defaultGauge: number // in world meters (e.g. 1.435m for 1:1, 0.0165m = 16.5mm for HO)
   defaultTrackSpacing: number // entraxe standard (e.g. 3.80m for 1:1, 0.050m = 50mm for HO)
+  defaultLevelHeight: number // height of one track level in world meters: 6 m at full size, divided by `ratio`
+  defaultMaxGradient: number // steepest slope allowed, in ‰
   defaultUnit: Unit
   minLength: number // min track segment length in world meters (e.g. 0.5m for 1:1, 0.020m = 20mm for HO)
   defaultBoardWidth?: number // in world meters (e.g. 2.40m for HO)
@@ -43,6 +45,15 @@ export const BOARD_PRESETS: BoardPreset[] = [
   { name: 'Grand Réseau O', width: 3.60, height: 1.80, description: 'Grande table échelle O (360 × 180 cm)', scale: 'O' },
 ]
 
+/** Height of one track level at full size (meters): the clearance a bridge leaves over a track */
+export const REAL_LEVEL_HEIGHT = 6
+/** Steepest slope allowed by default, in ‰ */
+export const DEFAULT_MAX_GRADIENT = 35
+
+/** Bounds of the two slope settings a project can be given (level height in world meters, slope in ‰) */
+export const LEVEL_HEIGHT_RANGE = { min: 0.001, max: 100 } as const
+export const MAX_GRADIENT_RANGE = { min: 1, max: 1000 } as const
+
 export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
   '1:1': {
     id: '1:1',
@@ -51,6 +62,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Réseau ferroviaire grandeur nature (SNCF / DB / UIC). Écartement standard 1435 mm.',
     defaultGauge: 1.435,
     defaultTrackSpacing: 3.80,
+    defaultLevelHeight: REAL_LEVEL_HEIGHT,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'm',
     minLength: 0.5,
     defaultCameraScale: 2.5,
@@ -62,6 +75,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Modélisme ferroviaire le plus populaire (16.5 mm). Roco, Märklin, Jouef, Hornby.',
     defaultGauge: 0.0165, // 16.5 mm
     defaultTrackSpacing: 0.050, // 50 mm standard NEM
+    defaultLevelHeight: REAL_LEVEL_HEIGHT / 87,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'mm',
     minLength: 0.020, // 20 mm
     defaultBoardWidth: 2.40,
@@ -75,6 +90,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Modélisme compact (9 mm). Kato, Fleischmann, Minitrix.',
     defaultGauge: 0.009, // 9 mm
     defaultTrackSpacing: 0.028, // 28 mm standard
+    defaultLevelHeight: REAL_LEVEL_HEIGHT / 160,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'mm',
     minLength: 0.015, // 15 mm
     defaultBoardWidth: 1.60,
@@ -88,6 +105,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Table Top intermédiaire (12 mm). Tillig.',
     defaultGauge: 0.012, // 12 mm
     defaultTrackSpacing: 0.034, // 34 mm
+    defaultLevelHeight: REAL_LEVEL_HEIGHT / 120,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'mm',
     minLength: 0.018,
     defaultBoardWidth: 2.00,
@@ -101,6 +120,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Grande échelle de modélisme (32 mm). Lenz, Brawa.',
     defaultGauge: 0.032, // 32 mm
     defaultTrackSpacing: 0.070, // 70 mm
+    defaultLevelHeight: REAL_LEVEL_HEIGHT / 45,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'mm',
     minLength: 0.030,
     defaultBoardWidth: 3.60,
@@ -114,6 +135,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Micro-modélisme (6.5 mm). Märklin mini-club.',
     defaultGauge: 0.0065, // 6.5 mm
     defaultTrackSpacing: 0.020, // 20 mm
+    defaultLevelHeight: REAL_LEVEL_HEIGHT / 220,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'mm',
     minLength: 0.010,
     defaultBoardWidth: 1.00,
@@ -127,6 +150,8 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
     description: 'Gabarit et écartement configurables librement.',
     defaultGauge: 1.435,
     defaultTrackSpacing: 3.80,
+    defaultLevelHeight: REAL_LEVEL_HEIGHT,
+    defaultMaxGradient: DEFAULT_MAX_GRADIENT,
     defaultUnit: 'm',
     minLength: 0.1,
     defaultBoardWidth: 2.40,

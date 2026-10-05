@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createNetwork, addNode, addSegment } from '../models/network'
+import { createNetwork, addNode, addSegment, addCurveSegment, segmentGradient } from '../models/network'
 import { analyzeKinematics, computeTransitionAngleDeg } from './kinematicDiagnostics'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import { placementThresholds } from '../geometry/scale'
@@ -293,5 +293,88 @@ describe('kinematicDiagnostics', () => {
       const reported = analyzeKinematics(net).some((i) => i.nodeId === c.id)
       expect(reported, `corner of ${angle}°`).toBe(!passable)
     }
+  })
+
+  describe('steep gradients', () => {
+    const limits = { levelHeight: 6, maxGradient: 35 }
+
+    /** One straight rail of `length` m from height `from` (at x = 0) to height `to` */
+    function ramp(length: number, from: number, to: number) {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 }, from)
+      const b = addNode(net, { x: length, y: 0 }, to)
+      return { net, a, b, seg: addSegment(net, a.id, b.id)! }
+    }
+    const steep = (net: Parameters<typeof analyzeKinematics>[0], l = limits) =>
+      analyzeKinematics(net, undefined, l).filter((i) => i.kind === 'steep_gradient')
+
+    it('reports a ramp steeper than the limit, with its slope, at its lower end', () => {
+      // One level (6 m) over 100 m: 60 ‰
+      const up = ramp(100, 0, 1)
+      const issues = steep(up.net)
+      expect(issues).toHaveLength(1)
+      expect(issues[0]).toMatchObject({
+        id: `steep-${up.seg.id}`,
+        nodeId: up.a.id,
+        severity: 'warning',
+        gradientPermille: 60,
+        involvedSegmentIds: [up.seg.id],
+      })
+      expect(issues[0].message).toBe('Pente de 60 ‰, au-delà du maximum de 35 ‰')
+
+      // Going down: same slope, still reported at the bottom, which is now the `to` end
+      const down = ramp(100, 1, 0)
+      expect(steep(down.net)[0]).toMatchObject({ nodeId: down.b.id, gradientPermille: 60 })
+      // A descent into a tunnel is a slope like any other
+      const tunnel = ramp(100, 0, -1)
+      expect(steep(tunnel.net)[0]).toMatchObject({ nodeId: tunnel.b.id, gradientPermille: 60 })
+    })
+
+    it('says nothing below the limit, nor exactly at it', () => {
+      expect(steep(ramp(200, 0, 1).net)).toHaveLength(0) // 30 ‰
+      // 6 m over 6 / 0.035 m is 35 ‰, the limit itself
+      const atLimit = ramp(6 / 0.035, 0, 1)
+      expect(segmentGradient(atLimit.net, atLimit.seg, 6)).toBeCloseTo(35, 9)
+      expect(steep(atLimit.net)).toHaveLength(0)
+      // Just above it, the slope shown is not rounded down to the limit
+      const above = steep(ramp(6 / 0.0354, 0, 1).net)
+      expect(above).toHaveLength(1)
+      expect(above[0].gradientPermille).toBe(35.4)
+      expect(above[0].message).toBe('Pente de 35,4 ‰, au-delà du maximum de 35 ‰')
+    })
+
+    it('says nothing about a flat track, on the ground or on a bridge', () => {
+      expect(steep(ramp(1, 0, 0).net)).toHaveLength(0)
+      expect(steep(ramp(1, 2, 2).net)).toHaveLength(0)
+    })
+
+    it('measures the slope against the height of a level and the limit it is given', () => {
+      // HO: a level is 6 m / 87, so the same 60 ‰ needs a ramp 87 times shorter
+      const ho = { levelHeight: 6 / 87, maxGradient: 35 }
+      expect(steep(ramp(100 / 87, 0, 1).net, ho)[0].gradientPermille).toBe(60)
+      expect(steep(ramp(2, 0, 1).net, ho)).toHaveLength(0) // 34.5 ‰
+      expect(steep(ramp(100, 0, 1).net, { levelHeight: 6, maxGradient: 80 })).toHaveLength(0)
+    })
+
+    it('measures a curved ramp along its arc, not along its chord', () => {
+      // Quarter turn of radius 100: chord 141.4 m, arc about 157 m
+      const net = createNetwork()
+      const a = addNode(net, { x: 100, y: 0 })
+      const b = addNode(net, { x: 0, y: 100 }, 1)
+      const curve = addCurveSegment(net, a.id, b.id, { x: 100, y: 100 })!
+      const permille = segmentGradient(net, curve, 6)
+      expect(permille).toBeLessThan((6 / Math.hypot(100, 100)) * 1000) // 42.4 ‰ along the chord
+      expect(permille).toBeGreaterThan(35)
+      const issues = steep(net)
+      expect(issues).toHaveLength(1)
+      expect(issues[0].nodeId).toBe(a.id)
+      expect(issues[0].gradientPermille).toBeCloseTo(permille, 1)
+      // Reported along the arc: a limit between the two values tells them apart
+      expect(steep(net, { levelHeight: 6, maxGradient: 40 })).toHaveLength(0)
+    })
+
+    it('is not looked for when no limit is given', () => {
+      expect(analyzeKinematics(ramp(10, 0, 1).net).filter((i) => i.kind === 'steep_gradient')).toHaveLength(0)
+    })
   })
 })

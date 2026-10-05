@@ -1,0 +1,228 @@
+{
+  "version": 2,
+  "name": "Premiers tours de roue",
+  "nodes": [
+    {
+      "id": "n_1",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "n_2",
+      "x": 5000,
+      "y": 0
+    }
+  ],
+  "segments": [
+    {
+      "id": "s_3",
+      "from": "n_1",
+      "to": "n_2",
+      "kind": "straight"
+    }
+  ],
+  "camera": {
+    "x": 160,
+    "y": 0,
+    "scale": 4
+  },
+  "sectionMeta": {
+    "s_3": {
+      "name": "Section A",
+      "type": "circulation",
+      "color": "#3b82f6",
+      "direction": "two_way",
+      "isCustomName": false
+    }
+  },
+  "gridMode": "fixed",
+  "gridSpacing": 5,
+  "sections": [
+    {
+      "id": "s_3",
+      "name": "Section A",
+      "type": "circulation",
+      "direction": "two_way",
+      "color": "#3b82f6",
+      "segmentIds": [
+        "s_3"
+      ],
+      "nodeIds": [
+        "n_1",
+        "n_2"
+      ],
+      "totalLength": 5000,
+      "hasDeadEnd": true,
+      "adjacentSectionIds": []
+    }
+  ],
+  "unit": "m",
+  "scalePreset": "1:1",
+  "gauge": 1.435,
+  "trackSpacing": 3.8,
+  "levelHeight": 6,
+  "maxGradient": 35,
+  "showDimensions": true,
+  "boardEnabled": false,
+  "boardWidth": 2.4,
+  "boardHeight": 1.2,
+  "trains": [
+    {
+      "id": "train_6",
+      "direction": 1,
+      "vehicles": [
+        {
+          "id": "veh_5",
+          "kind": "loco",
+          "front": {
+            "segId": "s_3",
+            "t": 0.052,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.0492,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_8",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.047942,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.044202,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_10",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.044202,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.040462,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_12",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.040462,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.036722,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_14",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.036722,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.032982,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_16",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.032982,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.029241999999999997,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_18",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.029241999999999997,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.025501999999999997,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_20",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.025501999999999997,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.021761999999999997,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_22",
+          "kind": "wagon",
+          "front": {
+            "segId": "s_3",
+            "t": 0.021761999999999997,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.018021999999999996,
+            "forward": true
+          },
+          "model": "duplex"
+        },
+        {
+          "id": "veh_24",
+          "kind": "loco",
+          "front": {
+            "segId": "s_3",
+            "t": 0.016763999999999998,
+            "forward": true
+          },
+          "rear": {
+            "segId": "s_3",
+            "t": 0.013963999999999997,
+            "forward": true
+          },
+          "flipped": true,
+          "model": "duplex"
+        }
+      ]
+    }
+  ]
+}

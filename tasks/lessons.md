@@ -11,3 +11,9 @@
 - **Correction reçue** : en déplaçant un nœud d'une voie, le train doit rester exactement où il est ; seul le rail change de dimension. Un premier correctif gardait la longueur du train mais le laissait glisser avec la voie.
 - **Cause** : les bogies sont stockés en fraction de segment (`t`). Le recalage partait du bogie de tête à `t` constant, donc le train suivait l'allongement du segment.
 - **Règle** : pour toute édition de la géométrie des rails, l'invariant est la position des trains dans le monde, pas leur `t`. Mémoriser la position monde avant l'édition (`pinTrains`), la reprojeter sur le rail après (`realignTrains`), et tester les coordonnées monde des bogies, pas seulement les distances entre eux.
+
+## 2026-10-05 — « Travailler sur le rendu » ne veut pas dire changer l'aspect
+
+- **Correction reçue** : j'avais proposé de brancher ballast et traverses ; réponse : optimiser les performances, garder l'aspect actuel (deux files de rail uniquement).
+- **Cause** : j'ai lu « rendu des voies » comme une demande visuelle et mis en avant le gain d'aspect.
+- **Règle** : sur le rendu, la performance d'abord et l'aspect ne bouge pas sans demande explicite. Ne pas proposer de rebrancher ballast, traverses ou éclisses. Toute optimisation qui déplace un pixel (ordre de superposition, regroupement de tracés) est signalée avant d'être faite.

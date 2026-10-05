@@ -2,7 +2,8 @@ import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from '../mo
 import { bezierPoint, bezierDerivative1, closestCurveParam, discretizeCurve } from './curve'
 import { isCrossingAngle } from '../models/crossing'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
-import { addNode, addSegment, addCurveSegment, removeSegment, removeDuplicateSegments } from '../models/network'
+import { splitReplacement } from '../models/trackObjects'
+import { addNode, addChildSegment, detachSegment, removeDuplicateSegments, replaceRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
 
 /**
  * Split an existing segment at an existing node that lies on it.
@@ -10,6 +11,8 @@ import { addNode, addSegment, addCurveSegment, removeSegment, removeDuplicateSeg
  * and maintains quadratic Bézier continuity via De Casteljau subdivision.
  * `at` is the parameter of the node on the segment when the caller knows it exactly
  * (a computed intersection); otherwise the node is projected onto the segment.
+ * A node that carries no rail yet takes the height of the segment at that place; a node that
+ * already carries rails keeps its own, and the two halves run to it.
  */
 export function splitSegmentAtNode(
   net: Network,
@@ -25,23 +28,28 @@ export function splitSegmentAtNode(
   const nodeA = net.nodes.get(seg.from)
   const nodeB = net.nodes.get(seg.to)
   if (!nodeA || !nodeB) return null
+  const adoptHeight = (t: number): void => {
+    if ((net.adjacency.get(nodeId) ?? []).length === 0) setNodesLevel(net, [nodeId], segmentHeightAt(net, seg, t))
+  }
 
   if (seg.kind === 'straight') {
     const dx = nodeB.pos.x - nodeA.pos.x
     const dy = nodeB.pos.y - nodeA.pos.y
     const lenSq = dx * dx + dy * dy
+    // A rail of no length is cut "in the middle": both halves are the same place
+    let t = 0.5
     if (lenSq > 0) {
-      const t = at ?? Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
+      t = at ?? Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
       node.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
+      adoptHeight(t)
+    } else {
+      adoptHeight(0)
     }
-    const ancestorId = seg.parentSegmentId ?? segmentId
-    removeSegment(net, segmentId, false)
+    detachSegment(net, segmentId)
     // A half that already exists (the node sits on a superimposed rail) is reused as it is
-    const known = new Set(net.segments.keys())
-    const seg1 = addSegment(net, nodeA.id, node.id)!
-    const seg2 = addSegment(net, node.id, nodeB.id)!
-    if (!known.has(seg1.id)) seg1.parentSegmentId = ancestorId
-    if (!known.has(seg2.id)) seg2.parentSegmentId = ancestorId
+    const seg1 = addChildSegment(net, seg, nodeA.id, node.id)!
+    const seg2 = addChildSegment(net, seg, node.id, nodeB.id)!
+    replaceRail(net, splitReplacement(seg, t, seg1, seg2))
     return { seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -62,14 +70,12 @@ export function splitSegmentAtNode(
       y: (1 - t) * q0.y + t * q1.y,
     }
     node.pos = bt
+    adoptHeight(t)
 
-    const ancestorId = seg.parentSegmentId ?? segmentId
-    removeSegment(net, segmentId, false)
-    const known = new Set(net.segments.keys())
-    const seg1 = addCurveSegment(net, nodeA.id, node.id, q0)!
-    const seg2 = addCurveSegment(net, node.id, nodeB.id, q1)!
-    if (!known.has(seg1.id)) seg1.parentSegmentId = ancestorId
-    if (!known.has(seg2.id)) seg2.parentSegmentId = ancestorId
+    detachSegment(net, segmentId)
+    const seg1 = addChildSegment(net, seg, nodeA.id, node.id, q0)!
+    const seg2 = addChildSegment(net, seg, node.id, nodeB.id, q1)!
+    replaceRail(net, splitReplacement(seg, t, seg1, seg2))
     return { seg1, seg2 }
   }
   return null
@@ -232,6 +238,34 @@ function findSegmentCrossings(
   return found.filter((c) => isCrossingAngle(evalSegment(s1, a1, b1, c.t1!).d, evalSegment(s2, a2, b2, c.t2!).d))
 }
 
+/** True when two rails are nowhere within LEVEL_CLEARANCE of each other, whatever the place */
+function heightsApart(net: Network, s1: Segment, s2: Segment): boolean {
+  const e1 = segmentEndLevels(net, s1)
+  const e2 = segmentEndLevels(net, s2)
+  const gap = Math.max(
+    Math.min(e1.from, e1.to) - Math.max(e2.from, e2.to),
+    Math.min(e2.from, e2.to) - Math.max(e1.from, e1.to),
+  )
+  return gap >= LEVEL_CLEARANCE
+}
+
+interface SegmentBox {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+/** Box holding a rail, null when one of its nodes is missing */
+function segmentBox(net: Network, seg: Segment): SegmentBox | null {
+  const a = net.nodes.get(seg.from)
+  const b = net.nodes.get(seg.to)
+  if (!a || !b) return null
+  const xs = seg.via ? [a.pos.x, b.pos.x, seg.via.x] : [a.pos.x, b.pos.x]
+  const ys = seg.via ? [a.pos.y, b.pos.y, seg.via.y] : [a.pos.y, b.pos.y]
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) }
+}
+
 interface ReconcileCandidate {
   type: 'weld' | 'split' | 'cross'
   nodeId?: NodeId
@@ -257,6 +291,12 @@ interface ReconcileCandidate {
  * 5. Leaves a single rail over any stretch of track: superimposed rails split and weld each
  *    other like any other rail, and the duplicates this produces are dropped (older one kept).
  * 6. Automatically detects all turnouts (degree 3) and crossings (degree 4).
+ *
+ * All of the above only applies where the two tracks are at the same height, i.e. where their
+ * heights differ by less than LEVEL_CLEARANCE at the place they meet (see `RailNode.level`): a rail
+ * passing over or under another one is left alone, two nodes stacked at a bridge stay apart, and a
+ * ramp crosses a ground track near its foot but passes over it near its top. A node without any
+ * rail is compatible with everything and takes the height of what it joins.
  */
 export function reconcileNetworkIntersections(
   net: Network,
@@ -274,10 +314,27 @@ export function reconcileNetworkIntersections(
     const nodeList = Array.from(net.nodes.values())
     const segList = Array.from(net.segments.values())
 
+    // Box of each rail (a curve lies inside the box of its control points), worked out once: most
+    // nodes and rails of a large network are far apart, and are set aside on it alone
+    const boxes = segList.map((seg) => segmentBox(net, seg))
+
     for (const node of nodeList) {
       if (!net.nodes.has(node.id)) continue
+      // A node only meets the rails at its height; a lone node has none yet and meets any
+      const lone = (net.adjacency.get(node.id) ?? []).length === 0
+      const height = nodeLevel(node)
+      const meets = (other: number): boolean => lone || levelsMeet(height, other)
 
-      for (const seg of segList) {
+      for (let k = 0; k < segList.length; k++) {
+        const seg = segList[k]
+        const box = boxes[k]
+        if (
+          box &&
+          (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
+            node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
+        ) {
+          continue
+        }
         if (!net.segments.has(seg.id)) continue
         if (seg.from === node.id || seg.to === node.id) continue
         // Sibling/adjacent branches of the same node diverge slowly near apex, do not split each other
@@ -292,21 +349,26 @@ export function reconcileNetworkIntersections(
         const distB = Math.hypot(node.pos.x - nodeB.pos.x, node.pos.y - nodeB.pos.y)
 
         if (distA <= tolerance) {
-          candidates.push({
-            type: 'weld',
-            nodeId: node.id,
-            weldNodeId: nodeA.id,
-            dist: distA,
-          })
+          // Stacked on the rail end without being at its height: neither welded nor wired in
+          if (meets(nodeLevel(nodeA))) {
+            candidates.push({
+              type: 'weld',
+              nodeId: node.id,
+              weldNodeId: nodeA.id,
+              dist: distA,
+            })
+          }
           continue
         }
         if (distB <= tolerance) {
-          candidates.push({
-            type: 'weld',
-            nodeId: node.id,
-            weldNodeId: nodeB.id,
-            dist: distB,
-          })
+          if (meets(nodeLevel(nodeB))) {
+            candidates.push({
+              type: 'weld',
+              nodeId: node.id,
+              weldNodeId: nodeB.id,
+              dist: distB,
+            })
+          }
           continue
         }
 
@@ -322,7 +384,7 @@ export function reconcileNetworkIntersections(
             const projX = nodeA.pos.x + t * dx
             const projY = nodeA.pos.y + t * dy
             const dist = Math.hypot(node.pos.x - projX, node.pos.y - projY)
-            if (dist <= tolerance) {
+            if (dist <= tolerance && meets(segmentHeightAt(net, seg, t))) {
               candidates.push({
                 type: 'split',
                 nodeId: node.id,
@@ -344,7 +406,7 @@ export function reconcileNetworkIntersections(
           const bestT = closestCurveParam(node.pos, nodeA.pos, seg.via, nodeB.pos)
           const onCurve = bezierPoint(bestT, nodeA.pos, seg.via, nodeB.pos)
           const dist = Math.hypot(onCurve.x - node.pos.x, onCurve.y - node.pos.y)
-          if (bestT > 0.01 && bestT < 0.99 && dist <= tolerance) {
+          if (bestT > 0.01 && bestT < 0.99 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
             candidates.push({
               type: 'split',
               nodeId: node.id,
@@ -361,7 +423,14 @@ export function reconcileNetworkIntersections(
       for (let j = i + 1; j < segList.length; j++) {
         const s1 = segList[i]
         const s2 = segList[j]
+        const box1 = boxes[i]
+        const box2 = boxes[j]
+        if (box1 && box2 && (box1.maxX < box2.minX || box1.minX > box2.maxX || box1.maxY < box2.minY || box1.minY > box2.maxY)) {
+          continue
+        }
         if (!net.segments.has(s1.id) || !net.segments.has(s2.id)) continue
+        // One passes clear over the other along its whole length: a bridge, not a crossing
+        if (heightsApart(net, s1, s2)) continue
         // Two straights out of a shared node cannot meet again; a curve can (it crosses a track twice)
         const shareNode = s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to
         if (shareNode && s1.kind === 'straight' && s2.kind === 'straight') continue
@@ -372,28 +441,17 @@ export function reconcileNetworkIntersections(
         const n2B = net.nodes.get(s2.to)
         if (!n1A || !n1B || !n2A || !n2B) continue
 
-        // Fast AABB pre-check
-        const s1MinX = Math.min(n1A.pos.x, n1B.pos.x, s1.via ? s1.via.x : Infinity)
-        const s1MaxX = Math.max(n1A.pos.x, n1B.pos.x, s1.via ? s1.via.x : -Infinity)
-        const s1MinY = Math.min(n1A.pos.y, n1B.pos.y, s1.via ? s1.via.y : Infinity)
-        const s1MaxY = Math.max(n1A.pos.y, n1B.pos.y, s1.via ? s1.via.y : -Infinity)
-
-        const s2MinX = Math.min(n2A.pos.x, n2B.pos.x, s2.via ? s2.via.x : Infinity)
-        const s2MaxX = Math.max(n2A.pos.x, n2B.pos.x, s2.via ? s2.via.x : -Infinity)
-        const s2MinY = Math.min(n2A.pos.y, n2B.pos.y, s2.via ? s2.via.y : Infinity)
-        const s2MaxY = Math.max(n2A.pos.y, n2B.pos.y, s2.via ? s2.via.y : -Infinity)
-
-        if (s1MaxX < s2MinX || s1MinX > s2MaxX || s1MaxY < s2MinY || s1MinY > s2MaxY) {
-          continue
-        }
-
         for (const res of findSegmentCrossings(s1, n1A.pos, n1B.pos, s2, n2A.pos, n2B.pos, shareNode)) {
           // A crossing at a rail end is a node-on-segment case (weld or split), handled above
           const d1A = Math.hypot(res.point.x - n1A.pos.x, res.point.y - n1A.pos.y)
           const d1B = Math.hypot(res.point.x - n1B.pos.x, res.point.y - n1B.pos.y)
           const d2A = Math.hypot(res.point.x - n2A.pos.x, res.point.y - n2A.pos.y)
           const d2B = Math.hypot(res.point.x - n2B.pos.x, res.point.y - n2B.pos.y)
-          if (d1A > tolerance && d1B > tolerance && d2A > tolerance && d2B > tolerance) {
+          if (
+            d1A > tolerance && d1B > tolerance && d2A > tolerance && d2B > tolerance &&
+            // Decided where they cross: a ramp meets a ground track near its foot only
+            levelsMeet(segmentHeightAt(net, s1, res.t1!), segmentHeightAt(net, s2, res.t2!))
+          ) {
             candidates.push({
               type: 'cross',
               segId: s1.id,
@@ -422,9 +480,14 @@ export function reconcileNetworkIntersections(
       splitSegmentAtNode(net, best.segId, best.nodeId)
       splitCount++
     } else if (best.type === 'cross' && best.segId && best.seg2Id && best.crossPoint) {
+      // The crossing node takes the height of the first rail cut, and the other one bends to it:
+      // a flat track is cut first, so that it stays flat and the ramp crossing it gives way
+      const first = net.segments.get(best.segId)
+      const second = net.segments.get(best.seg2Id)
+      const cuts: [SegmentId, number | undefined][] = [[best.segId, best.crossT1], [best.seg2Id, best.crossT2]]
+      if (first && second && isRamp(net, first) && !isRamp(net, second)) cuts.reverse()
       const crossNode = addNode(net, best.crossPoint)
-      splitSegmentAtNode(net, best.segId, crossNode.id, best.crossT1)
-      splitSegmentAtNode(net, best.seg2Id, crossNode.id, best.crossT2)
+      for (const [segId, at] of cuts) splitSegmentAtNode(net, segId, crossNode.id, at)
       splitCount += 2
     }
   }

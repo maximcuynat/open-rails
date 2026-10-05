@@ -1,0 +1,185 @@
+/* ===== Driving console: signalling =====
+ * The signalling block of the consoles (`signalParts.tsx`): the next signal seen from the front or
+ * the cab display, its distance and one note. It has a fixed size and rides above the console, out
+ * of the flow: nothing of the console moves when it shows, changes or raises an alert. Colours and
+ * fonts are those of `.console-stage` (styles.css).
+ */
+
+.console-toolrow {
+  position: relative;
+  flex: none;
+  display: flex;
+  justify-content: center;
+  max-width: 100%;
+}
+
+.console-signals {
+  --signal-green: #22c55e;
+  --signal-yellow: #facc15;
+  --signal-red: #ef4444;
+
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 232px;
+  height: 56px;
+  padding: 3px 11px 3px 9px;
+  color: var(--hud-fg);
+  background: rgba(12, 18, 32, 0.94);
+  border: 1px solid var(--hud-line);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+
+/* Above the row of tools (band and levers consoles), centred on it */
+.console-toolrow > .console-signals {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+}
+
+/* On the top-left corner of the on-board screen */
+.console-screen > .console-signals {
+  position: absolute;
+  left: -1px;
+  bottom: calc(100% + 6px);
+  color: #fff;
+  background: var(--dmi);
+  border: 1px solid #1c3555;
+  border-radius: 6px;
+}
+
+/* Brake now: the whole block says so */
+.console-signals.is-alert {
+  border-color: var(--signal-red);
+  animation: console-signals-alert 0.9s steps(2, jump-none) infinite;
+}
+
+@keyframes console-signals-alert {
+  from { box-shadow: 0 0 0 2px var(--signal-red), 0 6px 18px rgba(0, 0, 0, 0.3); background-color: #4a1014; }
+  to { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 6px 18px rgba(0, 0, 0, 0.3); }
+}
+
+.console-signals-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 48px;
+}
+
+.console-signal-head {
+  display: block;
+  width: 22px;
+  height: 48px;
+}
+
+.console-signal-target { fill: #05070b; stroke: #fff; stroke-width: 1; }
+.console-signal-mast { stroke: var(--hud-dim); stroke-width: 2; stroke-linecap: round; }
+/* A lamp that is out stays visible: where the lit one stands is part of the reading */
+.console-signal-lamp { fill: #2b303b; }
+.console-signal-lamp.is-on.lamp-green { fill: var(--signal-green); }
+.console-signal-lamp.is-on.lamp-yellow { fill: var(--signal-yellow); }
+.console-signal-lamp.is-on.lamp-red { fill: var(--signal-red); }
+.console-signal-plate { fill: #05070b; stroke: #fff; stroke-width: 0.8; }
+.console-stage svg .console-signal-plate-text { font-size: 7px; font-weight: 800; fill: #fff; }
+.console-signal-marker { fill: #1d4ed8; stroke: #fff; stroke-width: 1; }
+.console-signal-marker-arrow { fill: #facc15; }
+
+.console-signals-none {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--hud-line);
+  border-radius: 50%;
+}
+
+.console-signals-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.console-signals-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.console-signals-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+}
+
+.console-signals-label.signal-green { color: var(--signal-green); }
+.console-signals-label.signal-yellow { color: var(--signal-yellow); }
+.console-signals-label.signal-red { color: var(--signal-red); }
+.console-signals-label.is-empty { font-weight: 600; color: var(--hud-dim); }
+
+.console-signals-distance {
+  flex: none;
+  font-weight: 700;
+}
+
+.console-signals-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--hud-dim);
+}
+
+.console-signals-note.note-alert { font-weight: 800; color: #fff; }
+.console-signals-note.note-warning { font-weight: 700; color: var(--hud-amber); }
+.console-signals-note.note-info { color: var(--hud-fg); }
+
+/* Cab display: three figures whose colours tell what they ask */
+.console-cab {
+  box-sizing: border-box;
+  display: inline-block;
+  min-width: 48px;
+  padding: 0 5px;
+  font-family: var(--console-mono);
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 28px;
+  text-align: center;
+  border: 2px solid #fff;
+  border-radius: 4px;
+}
+
+/* Line speed: black on green */
+.console-cab.cab-line { color: #04130a; background: #2fc46a; border-color: #2fc46a; }
+/* Execution: white on black */
+.console-cab.cab-execute { color: #fff; background: #000; }
+/* Announcement of a lower speed: black on white */
+.console-cab.cab-announce { color: #000; background: #fff; border-color: #000; box-shadow: 0 0 0 1px #fff; }
+/* Stop, and running on sight: on red */
+.console-cab.cab-stop,
+.console-cab.cab-sight { color: #000; background: #ef4444; border-color: #ef4444; }
+
+.console-cab.is-flashing { animation: console-cab-flash 1s steps(2, jump-none) infinite; }
+/* The two yellow lamps of points to take at 60 km/h flash together (cadence not sourced: about 1 Hz) */
+.console-signal-lamp.is-on.is-flashing { animation: console-cab-flash 1s steps(2, jump-none) infinite; }
+
+@keyframes console-cab-flash {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-signals.is-alert { animation: none; box-shadow: 0 0 0 2px var(--signal-red); background-color: #4a1014; }
+  .console-cab.is-flashing { animation: none; outline: 2px dashed #fff; outline-offset: 1px; }
+  .console-signal-lamp.is-on.is-flashing { animation: none; stroke: #fff; stroke-width: 0.8; stroke-dasharray: 1.5 1; }
+}

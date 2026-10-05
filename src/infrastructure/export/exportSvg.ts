@@ -1,6 +1,8 @@
+import { turnoutView } from '@domain/models/junction'
 import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
 import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
+import { segmentHeightNear } from '@domain/models/network'
 import type { Camera } from '@infrastructure/render/camera'
 import { detectCrossings, lineLineIntersection } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
@@ -11,9 +13,41 @@ import {
   SLEEPER_WIDTH,
   BALLAST_WIDTH,
   RAIL_WIDTH,
+  DECK_WIDTH,
+  DECK_PARAPET_WIDTH,
+  TUNNEL_ALPHA,
   getNodeSegmentEnds,
+  subdivideCurve,
+  subdivideStraight,
   getConnectedEndPairs,
 } from '@infrastructure/render/renderer'
+import { deckAbutments, heightBand, nodeJointBand, segmentTrackPieces } from '@infrastructure/render/levelPieces'
+
+/**
+ * One drawing layer (ballast, sleepers, rails…) split by track level: an element lands on the
+ * level given by `currentLevel` when it is pushed, so that the levels can be stacked lowest first
+ * on output.
+ */
+class LeveledElements {
+  private readonly byLevel = new Map<number, string[]>()
+
+  constructor(private readonly currentLevel: () => number) {}
+
+  push(...elements: string[]): void {
+    const level = this.currentLevel()
+    const list = this.byLevel.get(level)
+    if (list) list.push(...elements)
+    else this.byLevel.set(level, [...elements])
+  }
+
+  on(level: number): string[] {
+    return this.byLevel.get(level) ?? []
+  }
+
+  levels(): number[] {
+    return [...this.byLevel.keys()]
+  }
+}
 
 /**
  * Generate a complete, high-fidelity HO 1:87 scale SVG drawing of the rail network.
@@ -24,6 +58,13 @@ import {
  * - Steel fishplates (éclisses) with bolts at 2-way track joints
  * - Turnouts with flared guard rails (contre-rails), frog point & wing rails,
  *   movable switch blades, stretcher bar, and switch machine.
+ *
+ * Track levels are stacked lowest first, as on the canvas: a level above ground gets a bridge deck
+ * under its track that hides what runs below, a level below ground is dimmed and dashed (tunnel).
+ * A ramp is cut where its height crosses a half level (`segmentTrackPieces`): each piece goes with
+ * the level it is really at, so that only its upper part is on a deck and only its lower part in a
+ * tunnel.
+ * A network that stays on the ground gives the same seven groups as ever.
  */
 export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): string {
   if (net.nodes.size === 0) {
@@ -58,11 +99,23 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
   const hsl = SLEEPER_LENGTH / 2
   const hsw = SLEEPER_WIDTH / 2
 
-  const ballastPaths: string[] = []
-  const sleeperRects: string[] = []
-  const railPaths: string[] = []
-  const turnoutElements: string[] = []
-  const crossingElements: string[] = []
+  // Track level of the elements being generated: set at the top of each loop below
+  let outputLevel = 0
+  const layer = (): LeveledElements => new LeveledElements(() => outputLevel)
+  const ballastPaths = layer()
+  const sleeperRects = layer()
+  const railPaths = layer()
+  const turnoutElements = layer()
+  const crossingElements = layer()
+  const deckParapets = layer()
+  const deckSlabs = layer()
+  const deckAbutmentPaths = layer()
+
+  /** Level of a rail at the place nearest to `at` */
+  const levelOfSegmentAt = (segId: string, at: Point): number => {
+    const seg = net.segments.get(segId)
+    return seg ? heightBand(segmentHeightNear(net, seg, at)) : 0
+  }
 
   // Helper to format float with 2 decimal places
   const f = (n: number) => Number(n.toFixed(2))
@@ -109,19 +162,59 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
   }
 
   // Detect diamond crossings across the network
-  const crossings = detectCrossings(net)
+  const allCrossings = detectCrossings(net)
 
-  // 2. Generate Ballast, Sleepers, and Rails for each segment
-  for (const seg of net.segments.values()) {
+  // 2. Generate Ballast, Sleepers, and Rails for each piece of rail (the whole rail unless it is
+  // a ramp that crosses a half level)
+  const trackPieces = [...net.segments.values()].flatMap((seg) => segmentTrackPieces(net, seg))
+  for (const piece of trackPieces) {
+    const seg = piece.seg
     const nodeA = net.nodes.get(seg.from)
     const nodeB = net.nodes.get(seg.to)
     if (!nodeA || !nodeB) continue
+    // Geometry of the piece: `subdivide…` hands back the rail itself when the piece is all of it
+    const line: { a: Point; b: Point; via?: Point } = seg.kind === 'curve' && seg.via
+      ? (({ p0, via, p2 }) => ({ a: p0, b: p2, via }))(subdivideCurve(nodeA.pos, seg.via, nodeB.pos, piece.t0, piece.t1))
+      : subdivideStraight(nodeA.pos, nodeB.pos, piece.t0, piece.t1)
 
-    if (seg.kind === 'curve' && seg.via) {
+    const level = piece.band
+    outputLevel = level
+    // Sleepers only make way for a crossing of their own level
+    const crossings = allCrossings.filter((c) => levelOfSegmentAt(c.seg1Id, c.center) === level)
+
+    if (level > 0) {
+      // Bridge deck along the centreline: the parapets as a full-width stroke, the slab over it
+      const { a, b } = line
+      const d = line.via
+        ? `M ${f(a.x)} ${f(a.y)} Q ${f(line.via.x)} ${f(line.via.y)} ${f(b.x)} ${f(b.y)}`
+        : `M ${f(a.x)} ${f(a.y)} L ${f(b.x)} ${f(b.y)}`
+      deckParapets.push(`<path d="${d}" class="bridge-parapet" />`)
+      deckSlabs.push(`<path d="${d}" class="bridge-deck" />`)
+
+      // Abutment where the deck starts: closing line and two wing walls
+      const halfDeck = DECK_WIDTH / 2
+      const wing = halfDeck * 0.6
+      for (const { pos, tangent, normal } of deckAbutments(net, piece)) {
+        const corner = (side: 1 | -1): Point => ({
+          x: pos.x + normal.x * halfDeck * side,
+          y: pos.y + normal.y * halfDeck * side,
+        })
+        const tip = (side: 1 | -1): Point => {
+          const c = corner(side)
+          return { x: c.x + (normal.x * side - tangent.x) * wing, y: c.y + (normal.y * side - tangent.y) * wing }
+        }
+        const pts = [tip(1), corner(1), corner(-1), tip(-1)]
+        deckAbutmentPaths.push(
+          `<path d="M ${pts.map((pt) => `${f(pt.x)} ${f(pt.y)}`).join(' L ')}" class="bridge-abutment" />`,
+        )
+      }
+    }
+
+    if (line.via) {
       // --- Curved segment ---
-      const p0 = nodeA.pos
-      const via = seg.via
-      const p2 = nodeB.pos
+      const p0 = line.a
+      const via = line.via
+      const p2 = line.b
       const len = curveLength(p0, via, p2, 24)
       const samples = Math.max(16, Math.round(len / 4))
       const pts = discretizeCurve(p0, via, p2, samples)
@@ -178,8 +271,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
       railPaths.push(`<path d="${rR}" class="rail-head" />`)
     } else {
       // --- Straight segment ---
-      const a = nodeA.pos
-      const b = nodeB.pos
+      const { a, b } = line
       const dx = b.x - a.x
       const dy = b.y - a.y
       const len = Math.hypot(dx, dy)
@@ -249,6 +341,8 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     const pairs = getConnectedEndPairs(node, ends, dummyCam, 0, 0)
 
     for (const p of pairs) {
+      // The level the two rails are drawn with where they meet
+      outputLevel = nodeJointBand(net, node.id, [p.e1.segId, p.e2.segId])
       // Seamless ballast quad / polygon
       ballastPaths.push(
         `<polygon points="${f(p.b1LW.x)},${f(p.b1LW.y)} ${f(p.bLeftW.x)},${f(p.bLeftW.y)} ${f(p.b2LW.x)},${f(p.b2LW.y)} ${f(p.b2RW.x)},${f(p.b2RW.y)} ${f(p.bRightW.x)},${f(p.bRightW.y)} ${f(p.b1RW.x)},${f(p.b1RW.y)}" class="joint-fill" />`,
@@ -278,10 +372,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
 
   // 4. Turnout dynamic mechanical details (guard rails, frog, blades, motor)
   for (const junc of net.junctions.values()) {
+    const turnout = turnoutView(net, junc)
+    if (!turnout) continue
     const apex = net.nodes.get(junc.nodeId)
-    const straightNode = net.nodes.get(junc.straightNodeId)
-    const divNode = net.nodes.get(junc.divergingNodeId)
+    const straightNode = net.nodes.get(turnout.straightNodeId)
+    const divNode = net.nodes.get(turnout.divergingNodeId)
     if (!apex || !straightNode || !divNode) continue
+    outputLevel = nodeJointBand(net, apex.id, [turnout.straightSegmentId])
 
     const dx = straightNode.pos.x - apex.pos.x
     const dy = straightNode.pos.y - apex.pos.y
@@ -292,9 +389,9 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     const uy = dy / straightLen
     const nx = -uy
     const ny = ux
-    const side: 1 | -1 = junc.hand === 'left' ? 1 : -1
+    const side: 1 | -1 = turnout.hand === 'left' ? 1 : -1
 
-    const specAngle = junc.frogNumber === 4 ? 15 : 10
+    const specAngle = turnout.frogNumber === 4 ? 15 : 10
     const thetaRad = (specAngle * Math.PI) / 180
     const frogDist = Math.min(straightLen * 0.75, GAUGE / Math.sin(thetaRad))
 
@@ -375,7 +472,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     // Blade tapers from ~0.15mm at toe (knife edge) to full RAIL_WIDTH at heel
     const bladeLen = 32
     const toeX = 6
-    const isStraight = junc.activeBranch === 'straight'
+    const isStraight = turnout.activeBranch === 'straight'
     const bladeTipHalf = 0.15 // Knife-edge half-width at toe
     const bladeHeelHalf = RAIL_WIDTH / 2 // Full rail width at heel
 
@@ -431,7 +528,8 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
   }
 
   // 5. Diamond Crossings (Croisements à niveau sans superposition)
-  for (const c of crossings) {
+  for (const c of allCrossings) {
+    outputLevel = levelOfSegmentAt(c.seg1Id, c.center)
     const u1 = c.track1Dir
     const u2 = c.track2Dir
     const n1 = { x: -u1.y, y: u1.x }
@@ -544,12 +642,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
   }
 
   // 6. Buffer stops on dead ends (arrêts de voie sur heurtoirs de type SNCF/UIC)
-  const bufferElements: string[] = []
+  const bufferElements = layer()
   for (const node of net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length === 1) {
       const seg = net.segments.get(adj[0])
       if (!seg) continue
+      outputLevel = nodeJointBand(net, node.id, [seg.id])
       let forwardDir: Point | null = null
       if (node.id === seg.to) {
         forwardDir = segmentTangentAt(net, seg, seg.to)
@@ -585,7 +684,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
   }
 
   // 7. Fishplates (eclisses de joint) at degree-2 track joints
-  const fishplateElements: string[] = []
+  const fishplateElements = layer()
   for (const node of net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length !== 2) continue
@@ -593,6 +692,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     const seg0 = net.segments.get(adj[0])
     const seg1 = net.segments.get(adj[1])
     if (!seg0 || !seg1) continue
+    outputLevel = nodeJointBand(net, node.id, [seg0.id, seg1.id])
 
     const getTanSvg = (seg: typeof seg0): Point => {
       const tan = segmentTangentAt(net, seg, node.id)
@@ -650,6 +750,50 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     }
   }
 
+  // The seven groups of one level. On the ground they keep their plain ids.
+  const levelGroups = (level: number): string => {
+    const suffix = level === 0 ? '' : `-l${level}`
+    return `<g id="ballast${suffix}">
+    ${ballastPaths.on(level).join('\n    ')}
+  </g>
+  <g id="sleepers${suffix}">
+    ${sleeperRects.on(level).join('\n    ')}
+  </g>
+  <g id="rails${suffix}">
+    ${railPaths.on(level).join('\n    ')}
+  </g>
+  <g id="crossings${suffix}">
+    ${crossingElements.on(level).join('\n    ')}
+  </g>
+  <g id="turnouts${suffix}">
+    ${turnoutElements.on(level).join('\n    ')}
+  </g>
+  <g id="fishplates${suffix}">
+    ${fishplateElements.on(level).join('\n    ')}
+  </g>
+  <g id="buffer-stops${suffix}">
+    ${bufferElements.on(level).join('\n    ')}
+  </g>`
+  }
+
+  const levels = [...new Set([...ballastPaths.levels(), ...railPaths.levels()])].sort((x, y) => x - y)
+  const onGroundOnly = levels.every((level) => level === 0)
+  const body = onGroundOnly
+    ? levelGroups(0)
+    : levels
+        .map((level) => {
+          const deck = level > 0
+            ? `<g id="bridge-deck-l${level}">
+    ${[...deckParapets.on(level), ...deckSlabs.on(level), ...deckAbutmentPaths.on(level)].join('\n    ')}
+  </g>
+  `
+            : ''
+          return `<g id="level-${level}"${level < 0 ? ' class="tunnel"' : ''}>
+  ${deck}${levelGroups(level)}
+  </g>`
+        })
+        .join('\n  ')
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX} ${vbY} ${vbW} ${vbH}" width="${vbW}mm" height="${vbH}mm">
   <title>${projectName}</title>
@@ -676,29 +820,14 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
       .buffer-beam { stroke: #dc2626; stroke-width: 3.5; stroke-linecap: butt; fill: none; }
       .buffer-target { fill: #ffffff; stroke: #dc2626; stroke-width: 0.8; }
       .buffer-pad { fill: #0f172a; stroke: #475569; stroke-width: 0.6; }
+      .bridge-parapet { stroke: #526071; stroke-width: ${f(DECK_WIDTH)}; fill: none; stroke-linecap: butt; }
+      .bridge-deck { stroke: #eceef1; stroke-width: ${f(DECK_WIDTH - 2 * DECK_PARAPET_WIDTH)}; fill: none; stroke-linecap: butt; }
+      .bridge-abutment { stroke: #526071; stroke-width: ${f(DECK_PARAPET_WIDTH * 1.5)}; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .tunnel { opacity: ${TUNNEL_ALPHA}; }
+      .tunnel .rail, .tunnel .rail-head { stroke-dasharray: 3 2.5; }
     </style>
   </defs>
-  <g id="ballast">
-    ${ballastPaths.join('\n    ')}
-  </g>
-  <g id="sleepers">
-    ${sleeperRects.join('\n    ')}
-  </g>
-  <g id="rails">
-    ${railPaths.join('\n    ')}
-  </g>
-  <g id="crossings">
-    ${crossingElements.join('\n    ')}
-  </g>
-  <g id="turnouts">
-    ${turnoutElements.join('\n    ')}
-  </g>
-  <g id="fishplates">
-    ${fishplateElements.join('\n    ')}
-  </g>
-  <g id="buffer-stops">
-    ${bufferElements.join('\n    ')}
-  </g>
+  ${body}
 </svg>`
 }
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment } from '../models/network'
-import { placeTurnout, toggleJunction } from '../models/junction'
-import type { Junction } from '../models/types'
+import { addJunction, placeTurnout, toggleJunction, setJunctionBranch } from '../models/junction'
 import {
   findPath,
   reachableFrom,
@@ -26,14 +25,16 @@ describe('findPath with junction constraints', () => {
     const net = createNetwork()
     // Stem -> Apex -> Straight and Diverging
     const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    addSegment(net, stem.id, apex.id)
     const res = placeTurnout(net, {
-      startPos: { x: 0, y: 0 },
+      startPos: apex.pos,
       direction: { x: 1, y: 0 },
       frogNumber: 6,
       hand: 'left',
+      stemNodeId: apex.id,
     })
-    addSegment(net, stem.id, res.apexNode.id)
-    res.junction.stemNodeId = stem.id
+    const junction = res.junction!
 
     // Straight branch is active by default
     const straightPath = findPath(net, stem.id, res.straightNode.id)
@@ -45,7 +46,7 @@ describe('findPath with junction constraints', () => {
     expect(divPath.found).toBe(false)
 
     // Now toggle junction to diverging
-    toggleJunction(res.junction)
+    toggleJunction(junction)
     const straightPath2 = findPath(net, stem.id, res.straightNode.id)
     expect(straightPath2.found).toBe(false)
 
@@ -57,14 +58,15 @@ describe('findPath with junction constraints', () => {
   it('can ignore switch orientation if respectSwitches is false', () => {
     const net = createNetwork()
     const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    addSegment(net, stem.id, apex.id)
     const res = placeTurnout(net, {
-      startPos: { x: 0, y: 0 },
+      startPos: apex.pos,
       direction: { x: 1, y: 0 },
       frogNumber: 6,
       hand: 'left',
+      stemNodeId: apex.id,
     })
-    addSegment(net, stem.id, res.apexNode.id)
-    res.junction.stemNodeId = stem.id
 
     // Switch is set to straight, but we allow traversing diverging
     const divPath = findPath(net, stem.id, res.divergingNode.id, { respectSwitches: false })
@@ -87,21 +89,23 @@ describe('reachableFrom', () => {
   it('returns reachable nodes and segments according to switch settings', () => {
     const net = createNetwork()
     const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    addSegment(net, stem.id, apex.id)
     const res = placeTurnout(net, {
-      startPos: { x: 0, y: 0 },
+      startPos: apex.pos,
       direction: { x: 1, y: 0 },
       frogNumber: 6,
       hand: 'left',
+      stemNodeId: apex.id,
     })
-    addSegment(net, stem.id, res.apexNode.id)
-    res.junction.stemNodeId = stem.id
+    const junction = res.junction!
 
     const reachable = reachableFrom(net, stem.id)
     expect(reachable.nodes.has(res.straightNode.id)).toBe(true)
     expect(reachable.nodes.has(res.divergingNode.id)).toBe(false)
 
     // Toggle switch
-    toggleJunction(res.junction)
+    toggleJunction(junction)
     const reachable2 = reachableFrom(net, stem.id)
     expect(reachable2.nodes.has(res.straightNode.id)).toBe(false)
     expect(reachable2.nodes.has(res.divergingNode.id)).toBe(true)
@@ -254,20 +258,13 @@ describe('diamond crossing and traffic direction routing constraints', () => {
     const sLeft = addSegment(net, apex.id, left.id)!
     const sRight = addSegment(net, apex.id, right.id)!
 
-    const junc: Junction = {
-      id: 'j_3way',
+    const junc = addJunction(net, {
       nodeId: apex.id,
       stemNodeId: stem.id,
-      straightNodeId: straight.id,
-      divergingNodeId: left.id,
-      divergingRightNodeId: right.id,
       straightSegmentId: sStraight.id,
       divergingSegmentId: sLeft.id,
       divergingRightSegmentId: sRight.id,
-      hand: 'three_way',
-      activeBranch: 'straight',
-    }
-    net.junctions.set(junc.id, junc)
+    })
 
     // 1. activeBranch = 'straight'
     expect(findPath(net, stem.id, straight.id).found).toBe(true)
@@ -275,13 +272,13 @@ describe('diamond crossing and traffic direction routing constraints', () => {
     expect(findPath(net, stem.id, right.id).found).toBe(false)
 
     // 2. activeBranch = 'left'
-    junc.activeBranch = 'left'
+    setJunctionBranch(junc, 'left')
     expect(findPath(net, stem.id, straight.id).found).toBe(false)
     expect(findPath(net, stem.id, left.id).found).toBe(true)
     expect(findPath(net, stem.id, right.id).found).toBe(false)
 
     // 3. activeBranch = 'right'
-    junc.activeBranch = 'right'
+    setJunctionBranch(junc, 'right')
     expect(findPath(net, stem.id, straight.id).found).toBe(false)
     expect(findPath(net, stem.id, left.id).found).toBe(false)
     expect(findPath(net, stem.id, right.id).found).toBe(true)

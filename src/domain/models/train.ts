@@ -8,7 +8,25 @@
  */
 
 import type { Junction, Network, Point, SegmentId } from './types'
+import type { Derailment } from './speedLimits'
+import type { CabOverspeed, SignalPassedAtDanger } from './trainSignalling'
+import { DEFAULT_LINE_SETTINGS, type LineSettings } from './speedLimits'
+import { leanedOutline, rakeLean } from './bodyLean'
+import { consistOverturningDeficiency } from './cant'
+import { cantDeficiencyIn, rakeSpeedLimitIn, trackProfile, type TrackProfile } from './trackSpeed'
+import {
+  BRAKE_PIPE_FULL_SERVICE,
+  DEFAULT_DRIVING_ENVIRONMENT,
+  applyParkedBrake,
+  ELECTRIC_BRAKE_NOTCHES,
+  PHYSICS_STEP,
+  TRACTION_NOTCHES,
+  stepTrainDynamics,
+  type BrakeCommand,
+  type DrivingEnvironment,
+} from './trainDynamics'
 import type {
+  JunctionAhead,
   Locomotive,
   TrackPosition,
   WalkTrace,
@@ -19,6 +37,7 @@ import type {
 } from './locomotive'
 import {
   steerJunction,
+  findJunctionAhead,
   findUpcomingJunction,
   segmentPartialLength,
   walkBackward,
@@ -33,11 +52,14 @@ import {
   projectOnSegment,
 } from './locomotive'
 import { generateId } from './network'
+import { rakeOccupancy } from './occupancy'
 import type { RollingStockModel, StockVehicle } from './rollingStock'
 import {
   UNIT_COUPLING_GAP,
+  bodyHeight,
   bodyWidth,
   bogieDistance,
+  consistMaxSpeed,
   endOverhang,
   isRollingStockModel,
   jointKind,
@@ -92,49 +114,79 @@ export interface TrainSet {
   vehicles: Vehicle[]
   /** 1 = forward (lead advances nose-first), -1 = reverse */
   direction: 1 | -1
-  /** Current speed in m/s */
+  /** Current speed in m/s, always ≥ 0: `direction` says which way */
   currentSpeed: number
-  /** Max speed m/s */
+  /** Maximum speed m/s of the rolling stock: no tractive effort above it */
   maxSpeed: number
-  /** Acceleration m/s² at full traction (notch = MAX_NOTCH) */
-  acceleration: number
-  /** Braking deceleration m/s² at full service brake (notch = -MAX_NOTCH) */
-  braking: number
-  /** Emergency braking deceleration m/s² */
-  emergencyBraking: number
-  /** Coasting friction deceleration m/s² */
-  coastingDecel: number
-  /** Reverser position; can only be moved at standstill with traction off */
+  /**
+   * Reverser position; can only be moved at standstill with traction off. It sets the way the
+   * tractive effort pushes: the train itself may roll the other way (see `direction`).
+   */
   reverser: Reverser
-  /** Combined power/brake handle: 1..MAX_NOTCH traction, 0 neutral, -1..-MAX_NOTCH service brake */
+  /**
+   * Combined handle: 1 … MAX_NOTCH traction, 0 neutral (N), -1 … MIN_NOTCH electric brake, each
+   * notch an equal share of the available effort
+   */
   notch: number
   /** Emergency brake latched until the train has stopped */
   emergencyBrake: boolean
+  /** Brake pipe pressure in bar: BRAKE_PIPE_RELEASED … BRAKE_PIPE_FULL_SERVICE, 0 in emergency */
+  brakePipe: number
+  /** Filling of the brake cylinders, 0 (released) … 1 (full): follows the brake pipe with a delay */
+  brakeCylinder: number
+  /** Seconds empty brake cylinders have been waiting to fill since the brake was applied (dead time) */
+  brakeLag: number
+  /** Position of the brake handle (impulse valve), see `BrakeCommand` */
+  brakeCommand: BrakeCommand
+  /** Share of the available tractive effort applied, 0…1: follows the notch with a ramp */
+  tractionEffort: number
+  /** Share of the available electric brake effort applied, 0…1: follows the notch with a ramp */
+  electricBrakeEffort: number
+  /** Speed (m/s) at which the last tick ran the train into a buffer stop or another train, else 0 */
+  impactSpeed: number
+  /** Set when the train has left the rails in a curve: it cannot move until `rerailTrain` */
+  derailed: Derailment | null
+  /**
+   * Set when the train has passed a closed signal against the rules (see `tickSignalling`), until
+   * it passes another signal properly or its controls are reset. Absent or null otherwise.
+   */
+  signalPassed?: SignalPassedAtDanger | null
+  /**
+   * Set when the train was caught over the speed its cab checks it against on a cab-signalled line
+   * (see `tickSignalling`), until it is back under it or its controls are reset. Absent or null otherwise.
+   */
+  overspeed?: CabOverspeed | null
 }
 
 export type Reverser = 'forward' | 'neutral' | 'reverse'
 
-/** Number of traction notches and of service brake notches on the combined handle */
-export const MAX_NOTCH = 5
+/** Number of traction notches on the handle */
+export const MAX_NOTCH = TRACTION_NOTCHES
+/** Lowest notch of the handle: the strongest electric brake notch */
+export const MIN_NOTCH = -ELECTRIC_BRAKE_NOTCHES
 
 /** Below this speed (m/s) the train counts as stopped */
 const STANDSTILL_SPEED = 0.001
 
-/** Build a stationary TrainSet with default dynamics and controls at rest */
+/** Build a stationary TrainSet: brakes applied, handle on N, reverser in neutral */
 export function makeTrainSet(id: TrainSetId, vehicles: Vehicle[]): TrainSet {
   return {
     id,
     vehicles,
     direction: 1,
     currentSpeed: 0,
-    maxSpeed: 500 / 3.6,
-    acceleration: 5.5,
-    braking: 10.0,
-    emergencyBraking: 20.0,
-    coastingDecel: 0.5,
+    maxSpeed: consistMaxSpeed(vehicles),
     reverser: 'neutral',
     notch: 0,
     emergencyBrake: false,
+    brakePipe: BRAKE_PIPE_FULL_SERVICE,
+    brakeCylinder: 1,
+    brakeLag: 0,
+    brakeCommand: 'hold',
+    tractionEffort: 0,
+    electricBrakeEffort: 0,
+    impactSpeed: 0,
+    derailed: null,
   }
 }
 
@@ -184,12 +236,12 @@ export function isTrainStopped(train: TrainSet): boolean {
 }
 
 /**
- * Move the reverser. Refused while the train is moving or the handle is in traction.
+ * Move the reverser. Refused while the train is moving, derailed, or the handle is off N.
  * A non-neutral position also sets the travel direction.
  */
 export function setReverser(train: TrainSet, reverser: Reverser): boolean {
   if (train.reverser === reverser) return true
-  if (!isTrainStopped(train) || train.notch > 0) return false
+  if (train.derailed || !isTrainStopped(train) || train.notch !== 0) return false
   train.reverser = reverser
   if (reverser !== 'neutral') train.direction = reverser === 'forward' ? 1 : -1
   return true
@@ -203,64 +255,79 @@ export function shiftReverser(train: TrainSet, step: 1 | -1): boolean {
 }
 
 /**
- * Put the combined handle on a notch (clamped to ±MAX_NOTCH).
+ * Put the handle on a notch (clamped to MIN_NOTCH…MAX_NOTCH).
  * While the emergency brake is latched the handle is locked until the train has stopped;
- * moving it at standstill releases the emergency brake.
+ * moving it at standstill releases the emergency brake. Refused on a derailed train.
  */
 export function setNotch(train: TrainSet, notch: number): boolean {
-  if (train.emergencyBrake) {
-    if (!isTrainStopped(train)) return false
-    train.emergencyBrake = false
-  }
-  train.notch = Math.max(-MAX_NOTCH, Math.min(MAX_NOTCH, Math.round(notch)))
+  if (train.derailed) return false
+  if (train.emergencyBrake && !releaseEmergencyBrake(train)) return false
+  train.notch = Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, Math.round(notch)))
   return true
 }
 
-/** Latch the emergency brake: traction is cut and the handle drops to full service brake */
+/**
+ * Latch the emergency brake: the brake pipe is vented, the traction and the electric brake are
+ * cut and the handle comes back to N. Nothing can be released before the train has stopped.
+ */
 export function triggerEmergencyBrake(train: TrainSet): void {
   train.emergencyBrake = true
-  train.notch = -MAX_NOTCH
+  train.notch = 0
+  train.tractionEffort = 0
+  train.electricBrakeEffort = 0
+  train.brakeCommand = 'hold'
 }
 
-/** Release the emergency brake; only possible once the train has stopped */
+/**
+ * Release the emergency brake; only possible once the train has stopped, and never on a derailed
+ * train (see `rerailTrain`). The brake stays applied at full service pressure: the driver releases
+ * it like any other application.
+ */
 export function releaseEmergencyBrake(train: TrainSet): boolean {
-  if (!isTrainStopped(train)) return false
-  train.emergencyBrake = false
+  if (train.derailed || !isTrainStopped(train)) return false
+  if (train.emergencyBrake) applyParkedBrake(train)
   return true
 }
 
-/** Distance (m) needed to stop from the current speed at full service brake */
-export function stoppingDistance(train: TrainSet): number {
-  return (train.currentSpeed * train.currentSpeed) / (2 * train.braking)
-}
-
-/** Commanded state in the shape the debug overlay expects: sign of the command and its magnitudes */
-export function trainDriveTelemetry(train: TrainSet): { throttle: 1 | 0 | -1; acceleration: number; braking: number } {
-  const accel = commandedAcceleration(train)
-  return {
-    throttle: accel > 0 ? 1 : accel < 0 ? -1 : 0,
-    acceleration: Math.max(accel, 0),
-    braking: Math.max(-accel, 0),
-  }
-}
-
-/** Stop the train and put every control back at rest (neutral reverser, handle on N) */
+/**
+ * Stop the train and put every control back at rest: brakes applied, handle on N, reverser in
+ * neutral. A derailment is not undone here: the train stays derailed, its emergency brake latched,
+ * until `rerailTrain` — entering or leaving the driving mode does not put it back on the track.
+ */
 export function resetTrainControls(train: TrainSet): void {
   train.currentSpeed = 0
   train.notch = 0
   train.reverser = 'neutral'
-  train.emergencyBrake = false
+  train.tractionEffort = 0
+  train.electricBrakeEffort = 0
+  train.impactSpeed = 0
+  if (train.signalPassed) train.signalPassed = null
+  if (train.overspeed) train.overspeed = null
+  applyParkedBrake(train)
+  if (train.derailed) {
+    train.emergencyBrake = true
+    train.brakePipe = 0
+  }
 }
 
 /**
- * Acceleration commanded by the controls, in m/s² along the travel direction:
- * positive = traction, negative = braking, 0 = coasting.
+ * Derail the train when the cant deficiency under one of its vehicles has reached what overturns
+ * its rolling stock: `train.derailed` records the speed and the limit that applied, and the
+ * emergency brake is latched for good (see `rerailTrain`). Full size only: nothing derails on a
+ * model railway scale. Returns true when the train has just derailed.
  */
-export function commandedAcceleration(train: TrainSet): number {
-  if (train.emergencyBrake) return -train.emergencyBraking
-  if (train.notch < 0) return (train.notch / MAX_NOTCH) * train.braking
-  if (train.notch > 0 && train.reverser !== 'neutral') return (train.notch / MAX_NOTCH) * train.acceleration
-  return 0
+export function checkDerailment(
+  net: Network,
+  train: TrainSet,
+  env: DrivingEnvironment = DEFAULT_DRIVING_ENVIRONMENT,
+  profile: TrackProfile = trackProfile(net, env.line ?? DEFAULT_LINE_SETTINGS),
+): boolean {
+  if (train.derailed || train.vehicles.length === 0 || !(train.currentSpeed > 0)) return false
+  const speed = train.currentSpeed * 3.6
+  if (cantDeficiencyIn(profile, train.vehicles, speed) < consistOverturningDeficiency(train.vehicles)) return false
+  train.derailed = { speed, limit: rakeSpeedLimitIn(net, profile, train) }
+  triggerEmergencyBrake(train)
+  return true
 }
 
 // ─── Simulation ───────────────────────────────────────────────────────────────
@@ -270,30 +337,7 @@ export function commandedAcceleration(train: TrainSet): number {
  * (bogies, couplings and both overhangs): the stretches of segments and the nodes it stands over.
  */
 export function trainOccupancy(net: Network, train: TrainSet): WalkTrace {
-  const trace: WalkTrace = { spans: [], nodes: [] }
-  if (train.vehicles.length === 0) return trace
-  const options = { trace, stayOn: bogieSegments(train) }
-
-  const lead = train.vehicles[0]
-  walkForward(net, lead.front.segId, lead.front.t, lead.front.forward, endOverhang(train.vehicles, 0, 'front'), options)
-
-  let prev: Vehicle | null = null
-  for (const veh of train.vehicles) {
-    if (prev) {
-      // Nothing to cover on an articulated joint: both vehicles stand on the same bogie
-      walkBackward(net, prev.rear.segId, prev.rear.t, prev.rear.forward, jointSpacing(prev, veh), options)
-    }
-    walkBackward(net, veh.front.segId, veh.front.t, veh.front.forward, bogieDistance(veh), options)
-    // The stored bogie positions always count, even where the track can no longer be walked
-    trace.spans.push({ segId: veh.front.segId, t0: veh.front.t, t1: veh.front.t })
-    trace.spans.push({ segId: veh.rear.segId, t0: veh.rear.t, t1: veh.rear.t })
-    prev = veh
-  }
-
-  const lastIdx = train.vehicles.length - 1
-  const last = train.vehicles[lastIdx]
-  walkBackward(net, last.rear.segId, last.rear.t, last.rear.forward, endOverhang(train.vehicles, lastIdx, 'rear'), options)
-  return trace
+  return rakeOccupancy(net, train.vehicles)
 }
 
 /** Body length of the i-th vehicle of a rake, over both ends */
@@ -355,14 +399,7 @@ function freeDistanceAhead(
   obstacles: TrainSet[],
   occupancy?: TrainOccupancyCache,
 ): number | null {
-  // The end of the train that leads the move: nose of the lead vehicle, or tail of the last one in reverse
-  const reversing = train.direction === -1
-  const lastIdx = train.vehicles.length - 1
-  const veh = reversing ? train.vehicles[lastIdx] : train.vehicles[0]
-  const overhang = reversing ? endOverhang(train.vehicles, lastIdx, 'rear') : endOverhang(train.vehicles, 0, 'front')
-  const ahead: WalkTrace = { spans: [], nodes: [] }
-  if (reversing) walkBackward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, overhang + reach, { trace: ahead })
-  else walkForward(net, veh.front.segId, veh.front.t, veh.front.forward, overhang + reach, { trace: ahead })
+  const { ahead, overhang } = traceAhead(net, train, reach)
 
   const occupied = obstacles.flatMap((other) => {
     let trace = occupancy?.get(other.id)
@@ -392,11 +429,42 @@ function freeDistanceAhead(
 }
 
 /**
+ * Walk the route ahead of the end of the train that leads the move — nose of the lead vehicle, or
+ * tail of the last one in reverse — up to `reach` meters past that end. The trace starts at the
+ * bogie under that end, `overhang` meters behind it.
+ */
+function traceAhead(net: Network, train: TrainSet, reach: number): { ahead: WalkTrace; overhang: number } {
+  const reversing = train.direction === -1
+  const lastIdx = train.vehicles.length - 1
+  const veh = reversing ? train.vehicles[lastIdx] : train.vehicles[0]
+  const overhang = reversing ? endOverhang(train.vehicles, lastIdx, 'rear') : endOverhang(train.vehicles, 0, 'front')
+  const ahead: WalkTrace = { spans: [], nodes: [] }
+  if (reversing) walkBackward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, overhang + reach, { trace: ahead })
+  else walkForward(net, veh.front.segId, veh.front.t, veh.front.forward, overhang + reach, { trace: ahead })
+  return { ahead, overhang }
+}
+
+/**
+ * Track left (meters) ahead of the leading end of the train before the track ends for it — a
+ * buffer stop, or points set against it — looking `reach` meters ahead. Returns null when the
+ * track goes on further than that; 0 or less means the end of the train is at the end or past it.
+ */
+export function trackLeftAhead(net: Network, train: TrainSet, reach: number): number | null {
+  if (train.vehicles.length === 0) return null
+  const { ahead, overhang } = traceAhead(net, train, reach)
+  const walked = ahead.spans.reduce((sum, span) => sum + segmentPartialLength(net, span.segId, span.t0, span.t1), 0)
+  return walked >= overhang + reach - 1e-6 ? null : walked - overhang
+}
+
+/**
  * Advance a TrainSet by deltaMeters * direction.
  * The lead vehicle moves first; all followers are recalculated via walkBackward.
  * All-or-nothing: when any vehicle cannot follow (dead end, switch set against the train), nothing
  * moves and false is returned. Followers still on a turnout branch stay on it whatever the switch
  * says, so points thrown under the train cannot make them jump to the other branch.
+ *
+ * The move is shortened so that the leading end of the train — not the bogie under it — stops at
+ * the end of the track (a buffer stop, points set against the train); false is then returned.
  *
  * `others` are the trains to collide with (the train itself is ignored): the move is shortened so
  * that the train stops a coupling gap short of the nearest one ahead, and false is returned as for
@@ -413,6 +481,14 @@ export function advanceTrainSet(
   if (train.vehicles.length === 0) return false
 
   let blocked = false
+  if (deltaMeters > 0) {
+    const left = trackLeftAhead(net, train, deltaMeters)
+    if (left !== null) {
+      deltaMeters = left
+      blocked = true
+      if (deltaMeters < 1e-6) return false
+    }
+  }
   const obstacles = others.filter((other) => other !== train && other.id !== train.id && other.vehicles.length > 0)
   if (obstacles.length > 0 && deltaMeters > 0) {
     const free = freeDistanceAhead(net, train, deltaMeters + COUPLING_GAP, obstacles, occupancy)
@@ -469,9 +545,28 @@ export function advanceTrainSet(
 }
 
 /**
- * Run one physics tick (dt seconds) on a TrainSet.
- * Updates currentSpeed from the driving controls, then calls advanceTrainSet.
- * Returns false when the train is stopped by an end of track or by one of `others`.
+ * True when the leading end of the train, running in its `direction`, stands right against the
+ * end of the track or a coupling gap away from one of `others`: it cannot move that way at all.
+ */
+function isBlockedAhead(net: Network, train: TrainSet, others: TrainSet[], occupancy?: TrainOccupancyCache): boolean {
+  const reach = 0.01
+  const left = trackLeftAhead(net, train, reach)
+  if (left !== null && left < 1e-6) return true
+  const obstacles = others.filter((other) => other !== train && other.id !== train.id && other.vehicles.length > 0)
+  if (obstacles.length === 0) return false
+  const free = freeDistanceAhead(net, train, reach + COUPLING_GAP, obstacles, occupancy)
+  return free !== null && free - COUPLING_GAP < 1e-6
+}
+
+/**
+ * Run one physics tick (dt seconds) on a TrainSet: the controls, the air brake and the speed are
+ * integrated with a fixed step of at most `PHYSICS_STEP` (a long `dt` is cut into equal steps, so
+ * the result does not depend on the frame rate), and the train is moved along the track. `env`
+ * turns the track levels into slopes.
+ *
+ * Returns false when the train is stopped by an end of track or by one of `others`: either it ran
+ * into it during this tick — `train.impactSpeed` then holds the speed of the impact — or it stands
+ * against it and is pushed onto it (by gravity or by its own traction; `impactSpeed` is 0).
  */
 export function tickTrainSet(
   net: Network,
@@ -479,24 +574,43 @@ export function tickTrainSet(
   dt: number,
   others: TrainSet[] = [],
   occupancy?: TrainOccupancyCache,
+  env: DrivingEnvironment = DEFAULT_DRIVING_ENVIRONMENT,
 ): boolean {
-  const accel = commandedAcceleration(train)
+  train.impactSpeed = 0
+  if (train.vehicles.length === 0 || !(dt > 0)) return true
 
-  let speed = train.currentSpeed
-
-  if (accel !== 0) {
-    speed = Math.max(0, Math.min(speed + accel * dt, train.maxSpeed))
-  } else {
-    // coasting
-    speed = Math.max(speed - train.coastingDecel * dt, 0)
+  // The obstacle check reads `train.direction`, which the physics only flips once it lets go
+  const isBlocked = (direction: 1 | -1): boolean => {
+    const previous = train.direction
+    train.direction = direction
+    const blocked = isBlockedAhead(net, train, others, occupancy)
+    train.direction = previous
+    return blocked
   }
 
-  train.currentSpeed = speed
-
-  if (isTrainStopped(train)) return true // stopped, no movement needed
-
-  const dist = speed * dt
-  return advanceTrainSet(net, train, dist, others, occupancy)
+  const steps = Math.max(1, Math.ceil(dt / PHYSICS_STEP - 1e-9))
+  const h = dt / steps
+  // Only a moving train at full size can derail; the profile is then read once for the whole tick
+  // (the track does not change while the train is stepped)
+  const line = env.line ?? DEFAULT_LINE_SETTINGS
+  let profile: TrackProfile | undefined
+  let free = true
+  for (let i = 0; i < steps; i++) {
+    const step = stepTrainDynamics(net, train, h, env, isBlocked)
+    if (step.blocked) {
+      free = false
+    } else if (step.distance > 0 && !advanceTrainSet(net, train, step.distance, others, occupancy)) {
+      // Ran into the end of the track or another train: the train stops dead against it
+      train.impactSpeed = Math.max(train.impactSpeed, train.currentSpeed)
+      train.currentSpeed = 0
+      free = false
+    }
+    if (train.currentSpeed > 0 && !train.derailed && line.realScale !== false) {
+      profile ??= trackProfile(net, line)
+      checkDerailment(net, train, env, profile)
+    }
+  }
+  return free
 }
 
 // ─── Coupling ─────────────────────────────────────────────────────────────────
@@ -628,6 +742,25 @@ export function reverseTrainSet(train: TrainSet): TrainSet {
   return { ...train, vehicles }
 }
 
+/** True when `switchDrivingCab` would hand the controls over: a stopped rake with a power car at its tail */
+export function canSwitchDrivingCab(train: TrainSet): boolean {
+  const tail = train.vehicles[train.vehicles.length - 1]
+  return train.vehicles.length >= 2 && tail.kind === 'loco' && isTrainStopped(train) && !train.derailed
+}
+
+/**
+ * Hand the controls over to the cab at the other end of the rake: the tail power car becomes
+ * the lead. Nothing moves and no body turns around, only the driving end changes, so
+ * "forward" now heads the other way. Refused while moving, or when the tail is not a power car.
+ */
+export function switchDrivingCab(train: TrainSet): TrainSet | null {
+  if (!canSwitchDrivingCab(train)) return null
+  const switched = reverseTrainSet(train)
+  resetTrainControls(switched)
+  switched.direction = 1
+  return switched
+}
+
 /**
  * A stopped train whose locomotives are all turned around is reversed, so that "forward" drives it
  * nose first (a tail locomotive uncoupled from its rake becomes an ordinary train).
@@ -751,10 +884,15 @@ export function coupleTrains(
   if (!aRearPos || !bFrontPos) return trains
   if (dist2(aRearPos, bFrontPos) > MAX_COUPLE_DISTANCE) return trains
 
+  // The merged train keeps the controls of `a`; its brake pipe now runs through both rakes, so the
+  // brake is as applied as the more applied of the two
   const merged: TrainSet = {
     ...a,
     id: generateId('train'),
     vehicles: [...a.vehicles, ...b.vehicles],
+    brakePipe: Math.min(a.brakePipe, b.brakePipe),
+    brakeCylinder: Math.max(a.brakeCylinder, b.brakeCylinder),
+    derailed: a.derailed ?? b.derailed,
   }
 
   // Lay the merged rake out again so the new joint gets its spacing (a shared bogie between two
@@ -859,7 +997,22 @@ export function handleCouplingClick(
 export interface TrainVehicleVisual {
   id: string
   kind: 'loco' | 'wagon'
+  /** Footprint of the body on the ground: what selection, hit-testing, collisions and coupling read */
   polygon: Point[]
+  /**
+   * Outline of the roof when the body leans (cant, speed in a curve, derailment): the footprint,
+   * point for point, as it shows from above. Absent when the body stands upright.
+   */
+  roof?: Point[]
+  /** Flank showing beside the roof of a leaning body (see `leanedOutline`); absent or empty when none shows */
+  flank?: Point[]
+  /**
+   * Outline of what is drawn of a leaning body, roof and flank together: what a highlight of the
+   * vehicle goes round. Absent when the body stands upright (the footprint is then what is drawn).
+   */
+  drawn?: Point[]
+  /** True when the body lies on its side (derailed): `roof` is its silhouette, flank up */
+  lying?: boolean
   windshield?: Point[]
   headlights?: { left: Point; right: Point }
   tgvDetails?: TGVDetails
@@ -878,9 +1031,13 @@ const TRAILER_END_MARGIN = 0.35
 /**
  * Compute the complete visual geometry for a TrainSet: body outlines, bogies with axles (a bogie
  * shared by two trailers appears once) and one gangway per joint.
+ *
+ * With `line`, the lean of the bodies is worked out as well (`rakeLean`): a leaning vehicle gets
+ * its `roof` and `flank`, and the gangways hang between the roofs. The footprints never change.
  */
-export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisuals | null {
+export function getTrainSetVisuals(net: Network, train: TrainSet, line?: LineSettings): TrainSetVisuals | null {
   if (train.vehicles.length === 0) return null
+  const leans = line && line.realScale !== false ? rakeLean(net, trackProfile(net, line), train) : null
 
   const visuals: TrainVehicleVisual[] = []
   const bogies: BogieFrame[] = []
@@ -888,6 +1045,21 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
 
   // Left/right corners of both body ends of each vehicle, to hang the gangways on
   const vehicleFrames: ({ rear: [Point, Point]; front: [Point, Point] } | null)[] = []
+
+  /** Add the roof and the flank of a leaning vehicle to its visual; returns the outline the gangways hang on */
+  const leanBody = (i: number, visual: TrainVehicleVisual): Point[] => {
+    const lean = leans?.[i]
+    const veh = train.vehicles[i]
+    const pF = lean ? positionOnSegment(net, veh.front.segId, veh.front.t) : null
+    const pR = lean ? positionOnSegment(net, veh.rear.segId, veh.rear.t) : null
+    const leaned = lean && pF && pR ? leanedOutline(visual.polygon, pR, pF, lean, bodyHeight(veh)) : null
+    if (!leaned) return visual.polygon
+    visual.roof = leaned.roof
+    visual.flank = leaned.flank
+    visual.drawn = leaned.envelope
+    if (leaned.lying) visual.lying = true
+    return leaned.roof
+  }
 
   for (let i = 0; i < train.vehicles.length; i++) {
     const veh = train.vehicles[i]
@@ -918,21 +1090,23 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
         halfWidth: spec.width / 2,
       })
       if (tgv) {
-        visuals.push({
+        const visual: TrainVehicleVisual = {
           id: veh.id,
           kind: 'loco',
           polygon: tgv.polygon,
           windshield: tgv.windshield,
           headlights: tgv.headlights,
           tgvDetails: tgv,
-        })
+        }
+        visuals.push(visual)
+        const outline = leanBody(i, visual)
 
         // Body ends: the tip of the nose and the flat back
         // tgv.polygon: 0=noseTipL, 9=noseTipR, 4=backL, 5=backR
-        const tipL = tgv.polygon[0]
-        const tipR = tgv.polygon[9]
-        const backL = tgv.polygon[4]
-        const backR = tgv.polygon[5]
+        const tipL = outline[0]
+        const tipR = outline[9]
+        const backL = outline[4]
+        const backR = outline[5]
         // Turned around, the flat back faces the head of the train and left/right swap sides
         vehicleFrames[i] = veh.flipped
           ? { front: [backR, backL], rear: [tipR, tipL] }
@@ -966,15 +1140,17 @@ export function getTrainSetVisuals(net: Network, train: TrainSet): TrainSetVisua
           const c3 = { x: cRearCenter.x - nx * w, y: cRearCenter.y - ny * w }
           const c4 = { x: cRearCenter.x + nx * w, y: cRearCenter.y + ny * w }
 
-          visuals.push({
+          const visual: TrainVehicleVisual = {
             id: veh.id,
             kind: 'wagon',
             polygon: [c1, c2, c3, c4],
-          })
+          }
+          visuals.push(visual)
+          const outline = leanBody(i, visual)
 
           vehicleFrames[i] = {
-            front: [c1, c2],
-            rear: [c4, c3],
+            front: [outline[0], outline[1]],
+            rear: [outline[3], outline[2]],
           }
         }
       }
@@ -1115,14 +1291,16 @@ export function trainRouteStart(train: TrainSet): TrackPosition | null {
 /**
  * Throw the next facing turnout ahead of the train to the left or right of its travel direction.
  * Running forward the junction is looked up ahead of the lead vehicle; in reverse, behind the last one.
- * Returns false when there is no facing turnout ahead, or when a vehicle of one of `trains`
- * (the train itself by default) stands over its points.
+ * Returns false when there is no facing turnout ahead, when a vehicle of one of `trains`
+ * (the train itself by default) stands over its points, or when `isLocked` says the turnout is
+ * held for another train (see `isNodeReserved` in `signalling.ts`).
  */
 export function steerTrainSetJunction(
   net: Network,
   train: TrainSet,
   steerDirection: 'left' | 'right',
   trains: TrainSet[] = [train],
+  isLocked?: (junction: Junction) => boolean,
 ): boolean {
   if (train.vehicles.length === 0) return false
   const reversing = train.direction === -1
@@ -1138,13 +1316,68 @@ export function steerTrainSetJunction(
     direction: 1,
   }
   const upcoming = findUpcomingJunction(net, probe)
-  if (!upcoming || isJunctionOccupied(net, upcoming.junction, trains)) return false
+  if (!upcoming || isJunctionOccupied(net, upcoming.junction, trains) || isLocked?.(upcoming.junction)) return false
   return steerJunction(net, probe, steerDirection)
+}
+
+/**
+ * Side the open route leaves on at a turnout met by its points, seen in the travel direction:
+ * `left` when the points are set to the leftmost branch, `right` to the rightmost. `null` when
+ * neither applies: the middle route of a three-way turnout, or a turnout met by one of its
+ * branches (the route does not fork there, it only is open or closed).
+ */
+export function openRouteSide(ahead: JunctionAhead): 'left' | 'right' | null {
+  if (!ahead.facing) return null
+  const index = ahead.branches.indexOf(ahead.activeBranch)
+  if (index === 0) return 'left'
+  if (index === ahead.branches.length - 1) return 'right'
+  return null
+}
+
+/** The turnout the steering commands act on, as a driver needs to know it */
+export interface TurnoutAhead {
+  /** Track distance from the start of the route to the points, m */
+  distance: number
+  side: 'left' | 'right' | null
+  /** A vehicle stands over the points, or they are held for another train: the turnout cannot be thrown */
+  locked: boolean
+}
+
+/**
+ * The turnout `steerJunction` would throw for a route starting at `start`: the first one on the
+ * route, met by its points or by a branch. `null` when the route reaches none. `isLocked` tells
+ * whether a turnout is held for another train.
+ */
+export function turnoutAhead(
+  net: Network,
+  start: TrackPosition,
+  travelDirection: 1 | -1,
+  trains: TrainSet[],
+  isLocked?: (junction: Junction) => boolean,
+): TurnoutAhead | null {
+  const ahead = findJunctionAhead(net, start, travelDirection)
+  if (!ahead) return null
+  return {
+    distance: Math.max(0, ahead.distance),
+    side: openRouteSide(ahead),
+    locked: isJunctionOccupied(net, ahead.junction, trains) || !!isLocked?.(ahead.junction),
+  }
+}
+
+/** The turnout `steerTrainSetJunction` would throw for this train, measured from its leading bogie */
+export function trainTurnoutAhead(
+  net: Network,
+  train: TrainSet,
+  trains: TrainSet[] = [train],
+  isLocked?: (junction: Junction) => boolean,
+): TurnoutAhead | null {
+  const start = trainRouteStart(train)
+  return start ? turnoutAhead(net, start, 1, trains, isLocked) : null
 }
 
 // ─── Persistence & network consistency ────────────────────────────────────────
 
-/** Saved form of a train: where each vehicle stands. Driving state (speed, handle, reverser) is not kept. */
+/** Saved form of a train: where each vehicle stands. Driving state (speed, handle, reverser, brake) is not kept. */
 export interface SerializedTrain {
   id: TrainSetId
   direction: 1 | -1
@@ -1232,7 +1465,7 @@ export function pruneTrainsToNetwork(net: Network, trains: TrainSet[]): TrainSet
 }
 
 /**
- * Rebuild trains from saved data on a network: every train comes back stopped with its controls at rest,
+ * Rebuild trains from saved data on a network: every train comes back stopped, brakes applied and controls at rest,
  * and anything malformed or standing on a missing segment is dropped. Each rake is laid out again
  * from its lead, so a save made with another vehicle geometry is realigned on the current one.
  */

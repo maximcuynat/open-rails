@@ -1,13 +1,45 @@
 export type { Camera } from '@infrastructure/render/camera'
+import { isRailClosedAt } from '@domain/models/routing'
 import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
 import { bezierDerivative1, bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
-import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
-import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
+import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
+import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import type { LineSettings } from '@domain/models/speedLimits'
+import { networkDerived } from './networkDerived'
+import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
+import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
+import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type SectionStripeStyle } from './lodTracks'
+import { renderCantMarks } from './cantRender'
+import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGradientChevrons, type GradientColors } from './gradientRender'
+import { trackProfile } from '@domain/models/trackSpeed'
+import { gaugeOnScreen, nodeMarkerShown, trackLod } from './lod'
+import {
+  BADGE_FULL_FROM_PX,
+  DIAGNOSTIC_CLUSTER_RADIUS_PX,
+  DIAGNOSTIC_LABEL_FROM_PX,
+  clusterMarkers,
+  diagnosticsClustered,
+  placeBadges,
+  sectionArrowSegments,
+  sectionBadgeMinLength,
+  sectionBadgeWanted,
+  type BadgeBox,
+  type MarkerSeverity,
+} from './lodOverlays'
+import { textWidth } from './textWidth'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
+import {
+  deckAbutments,
+  groupPiecesByLevel,
+  nodeJointBand,
+  segmentLevelPieces,
+  trackPositionBand,
+  type TrackPiece,
+} from './levelPieces'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -268,7 +300,10 @@ export const BALLAST_WIDTH = 3.20
 /** Minimum curve radius for full-speed classical tracks (meters) */
 export const MIN_RADIUS = 150.0
 
-/** Below this scale (pixels per meter), render as a single simplified line. */
+/**
+ * Below this scale (pixels per meter) the previews of the drawing tools in `Canvas.tsx` are a plain
+ * line. The network itself no longer reads it: its tiers come from `trackLod`.
+ */
 export const SIMPLIFY_THRESHOLD = 0.05
 
 export interface ViewportBounds {
@@ -335,28 +370,9 @@ export function isSegmentInBounds(
   return true
 }
 
-/** Check if a segment is an inactive branch of a junction located specifically at nodeId */
+/** True when the points at `nodeId` are set against this rail (see `isRailClosedAt`) */
 export function isInactiveBranchAtNode(net: Network, segId: string, nodeId: NodeId): boolean {
-  for (const junc of net.junctions.values()) {
-    if (junc.nodeId !== nodeId) continue
-    if (junc.hand === 'three_way') {
-      if (junc.activeBranch === 'straight') {
-        if (segId === junc.divergingSegmentId || segId === junc.divergingRightSegmentId) return true
-      } else if (junc.activeBranch === 'right') {
-        if (segId === junc.straightSegmentId || segId === junc.divergingSegmentId) return true
-      } else {
-        if (segId === junc.straightSegmentId || segId === junc.divergingRightSegmentId) return true
-      }
-    } else {
-      if (
-        (junc.activeBranch === 'straight' && segId === junc.divergingSegmentId) ||
-        (junc.activeBranch === 'diverging' && segId === junc.straightSegmentId)
-      ) {
-        return true
-      }
-    }
-  }
-  return false
+  return isRailClosedAt(net, segId, nodeId)
 }
 
 /** Visual length (in meters) of the turnout mechanism/divergence zone */
@@ -489,6 +505,253 @@ export interface RenderNetworkOptions {
   quietNodeIds?: ReadonlySet<string>
   /** Rail gauge of the layout: scales the distance thresholds of the diagnostics */
   gauge?: number
+  /**
+   * Draw only one part of the network: the rails (with their bridge decks), or everything that
+   * sits on top of them (badges, signs, nodes, diagnostics). Absent: both, in one call.
+   * Used to slip the trains between two track levels (`renderNetworkWithTrains`).
+   */
+  part?: 'tracks' | 'overlays'
+  /** Rails of this level only (see `segmentLevelPieces`). Absent: every level, lowest first. */
+  level?: number
+  /**
+   * Height of one level and steepest slope allowed: with it, a ramp steeper than that is reported
+   * by the diagnostic marker. Absent: slopes are not checked.
+   */
+  gradient?: GradientLimits
+  /** Speed zones that stand out (signalling mode). Absent: every zone is drawn plain. */
+  speedZones?: SpeedZoneHighlight
+  /** Signals, blocks and what goes with them (see `renderSignalling`). Absent: no signal is drawn. */
+  signals?: SignalRenderOptions
+  /**
+   * Cant and slopes marked on the track (`cantRender.ts`, `gradientRender.ts`). Absent: neither is
+   * drawn. The cant is read under `line` — full size only — and the slopes need `gradient`.
+   */
+  inclination?: { line: LineSettings }
+}
+
+// ─────────────────── Track levels (bridges and tunnels) ───────────────────
+
+/** Bridge deck width, in metres for a standard-gauge track: wider than the ballast it carries. */
+export const DECK_WIDTH = BALLAST_WIDTH * 1.45
+/** Width of the parapet drawn along each edge of a bridge deck. */
+export const DECK_PARAPET_WIDTH = 0.30
+/** Opacity of a rail below ground (tunnel). */
+export const TUNNEL_ALPHA = 0.4
+/** Dash pattern (screen px) of a rail below ground. */
+export const TUNNEL_DASH = [6, 5]
+/** Opacity of a vehicle running in a tunnel. */
+export const TUNNEL_VEHICLE_ALPHA = 0.35
+
+/** Levels `above` (excluded) to `upTo` (included): what one pass of the layered drawing covers. */
+export interface LevelBand {
+  above: number
+  upTo: number
+}
+
+export function inLevelBand(level: number, band?: LevelBand): boolean {
+  return !band || (level > band.above && level <= band.upTo)
+}
+
+/** Drawing level of the rail under a bogie: its real height there (see `heightBand`). */
+export function trackPositionLevel(net: Network, pos: { segId: string; t: number }): number {
+  return trackPositionBand(net, pos)
+}
+
+/**
+ * Level of a vehicle: the height of the rail under its bogies, the higher of the two when it
+ * straddles a change of level. At the foot of a ramp it is still on the ground.
+ */
+export function vehicleLevel(
+  net: Network,
+  vehicle: { front: { segId: string; t: number }; rear: { segId: string; t: number } },
+): number {
+  return Math.max(trackPositionLevel(net, vehicle.front), trackPositionLevel(net, vehicle.rear))
+}
+
+function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
+  const visible: Segment[] = []
+  for (const seg of net.segments.values()) {
+    const a = net.nodes.get(seg.from)
+    const b = net.nodes.get(seg.to)
+    if (!a || !b) continue
+    if (isSegmentInBounds(a.pos, b.pos, seg.via, bounds)) visible.push(seg)
+  }
+  return visible
+}
+
+/** Levels of the rails in view, lowest first. A network without bridge or tunnel gives `[0]`. */
+export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: number): number[] {
+  let hasLevels = false
+  for (const node of net.nodes.values()) {
+    if (node.level) {
+      hasLevels = true
+      break
+    }
+  }
+  if (!hasLevels) return [0]
+  const levels = new Set<number>()
+  for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) {
+    for (const piece of segmentLevelPieces(net, seg)) levels.add(piece.band)
+  }
+  return [...levels].sort((x, y) => x - y)
+}
+
+/** Geometry of a piece of rail: the whole rail, or the part of it between `t0` and `t1` */
+function pieceGeometry(net: Network, piece: TrackPiece): { a: Point; b: Point; via?: Point } | null {
+  const from = net.nodes.get(piece.seg.from)
+  const to = net.nodes.get(piece.seg.to)
+  if (!from || !to) return null
+  if (piece.seg.kind === 'curve' && piece.seg.via) {
+    const sub = subdivideCurve(from.pos, piece.seg.via, to.pos, piece.t0, piece.t1)
+    return { a: sub.p0, b: sub.p2, via: sub.via }
+  }
+  return subdivideStraight(from.pos, to.pos, piece.t0, piece.t1)
+}
+
+function traceCenterline(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  a: Point,
+  b: Point,
+  via?: Point,
+): void {
+  ctx.beginPath()
+  ctx.moveTo((a.x - cam.x) * cam.scale + vw / 2, (a.y - cam.y) * cam.scale + vh / 2)
+  const bx = (b.x - cam.x) * cam.scale + vw / 2
+  const by = (b.y - cam.y) * cam.scale + vh / 2
+  if (via) {
+    ctx.quadraticCurveTo((via.x - cam.x) * cam.scale + vw / 2, (via.y - cam.y) * cam.scale + vh / 2, bx, by)
+  } else {
+    ctx.lineTo(bx, by)
+  }
+}
+
+/**
+ * Bridge decks of the pieces of rail of one level above ground: an opaque band wider than the
+ * ballast, with a parapet along each edge, that hides whatever runs below. Drawn before the rails
+ * it carries. A ramp only has a deck over the part that is more than half a level up; where the
+ * deck starts (`deckAbutments`) it gets an abutment: a closing line and two splayed wing walls, the
+ * usual map symbol of a bridge end.
+ */
+export function renderBridgeDecks(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  pieces: TrackPiece[],
+  level: number,
+  gauge: number = GAUGE,
+): void {
+  if (level <= 0 || pieces.length === 0) return
+  const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
+  const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
+  const edge = getCanvasStyle(ctx.canvas, '--rail', '#526071')
+
+  const s = cam.scale
+  const ratio = gauge / GAUGE
+  const halfDeck = (DECK_WIDTH * ratio) / 2
+  const deckPx = DECK_WIDTH * ratio * s
+  const parapetPx = Math.max(1, DECK_PARAPET_WIDTH * ratio * s)
+
+  ctx.save()
+  ctx.lineCap = 'butt'
+  ctx.lineJoin = 'miter'
+
+  // Parapets: the full width in the rail colour, the deck itself is laid over its middle. All the
+  // parapets first, so that the deck of one span never gets cut by the edge of the next.
+  ctx.strokeStyle = edge
+  ctx.lineWidth = deckPx
+  for (const piece of pieces) {
+    const e = pieceGeometry(net, piece)
+    if (!e) continue
+    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
+    ctx.stroke()
+  }
+
+  // Deck: the background colour (opaque, it hides the lower rails), lightly tinted with the ink
+  // so that it reads as a slab in the light theme as in the dark one.
+  ctx.lineWidth = Math.max(1, deckPx - 2 * parapetPx)
+  for (const piece of pieces) {
+    const e = pieceGeometry(net, piece)
+    if (!e) continue
+    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
+    ctx.strokeStyle = paper
+    ctx.globalAlpha = 1
+    ctx.stroke()
+    ctx.strokeStyle = ink
+    ctx.globalAlpha = 0.08
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+
+  // Abutments where a deck starts
+  ctx.strokeStyle = edge
+  ctx.lineWidth = Math.max(1.5, parapetPx * 1.5)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  const wing = halfDeck * 0.6
+  for (const piece of pieces) {
+    // `tangent` points into the deck: the wings splay the other way
+    for (const { pos, tangent, normal } of deckAbutments(net, piece)) {
+      const corner = (side: 1 | -1): Point => ({
+        x: pos.x + normal.x * halfDeck * side,
+        y: pos.y + normal.y * halfDeck * side,
+      })
+      const tip = (side: 1 | -1): Point => {
+        const c = corner(side)
+        return { x: c.x + (normal.x * side - tangent.x) * wing, y: c.y + (normal.y * side - tangent.y) * wing }
+      }
+      const pts = [tip(1), corner(1), corner(-1), tip(-1)].map((p) => w2s(p, cam, vw, vh))
+      ctx.beginPath()
+      ctx.moveTo(pts[0][0], pts[0][1])
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1])
+      ctx.stroke()
+    }
+  }
+
+  ctx.restore()
+}
+
+/**
+ * The network and the trains together. On a single visible level this is what it always was:
+ * the whole network, `drawOverTracks`, then the trains on top. As soon as two levels are in
+ * view the drawing is interleaved, lowest level first — the rails of a level, then the vehicles
+ * standing on it — so that a train passing under a bridge is hidden by its deck; the overlays of
+ * the network (badges, signs, nodes, diagnostics) and `drawOverTracks` then come once, last.
+ */
+export function renderNetworkWithTrains(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  selection: Selection,
+  sectionMeta: Record<string, SectionMetadata> | undefined,
+  options: RenderNetworkOptions | undefined,
+  drawTrains: (band?: LevelBand) => void,
+  drawOverTracks?: () => void,
+): void {
+  // The schematic does not layer the levels: one pass, and no sorting of the rails by level
+  const levels = trackLod(cam.scale, GAUGE) === 'schematic' ? [] : visibleTrackLevels(net, cam, vw, vh)
+  if (levels.length <= 1) {
+    renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, options)
+    drawOverTracks?.()
+    drawTrains()
+    return
+  }
+  levels.forEach((level, i) => {
+    renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'tracks', level })
+    // The outer bands are open-ended: a vehicle whose own rail is out of view is still drawn
+    drawTrains({
+      above: i === 0 ? -Infinity : levels[i - 1],
+      upTo: i === levels.length - 1 ? Infinity : level,
+    })
+  })
+  renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'overlays' })
+  drawOverTracks?.()
 }
 
 export function renderNetwork(
@@ -501,7 +764,6 @@ export function renderNetwork(
   sectionMeta?: Record<string, SectionMetadata>,
   options?: RenderNetworkOptions,
 ): void {
-  const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const accent = getCanvasStyle(ctx.canvas, '--accent', '#2563eb')
   const railColor = getCanvasStyle(ctx.canvas, '--rail', '#526071')
   const railHeadColor = getCanvasStyle(ctx.canvas, '--rail-head', '#ffffff')
@@ -511,162 +773,171 @@ export function renderNetwork(
   const hideSectionCenterline = options?.hideSectionCenterline ?? isPan
   const onlyRenamedSectionBadges = options?.onlyRenamedSectionBadges ?? isPan
 
-  const simplified = cam.scale < SIMPLIFY_THRESHOLD
+  // Level of detail of this frame: the rails are drawn with the constant `GAUGE`, so it reads that one
+  const lod = trackLod(cam.scale, GAUGE)
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
-  const trackSections = computeTrackSections(net, sectionMeta)
-  const visibleSegments: Segment[] = []
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    if (isSegmentInBounds(a.pos, b.pos, seg.via, bounds)) {
-      visibleSegments.push(seg)
+  const derived = networkDerived(net, sectionMeta)
+  const trackSections = derived.sections
+  const selectedSections = new Set<TrackSection>()
+  for (const sid of selection.segments) {
+    const sec = derived.sectionOfSegment.get(sid)
+    if (sec) selectedSections.add(sec)
+  }
+  // Speed zones and signalling stay readable when the track is no longer drawn in detail: they
+  // only go once the whole network is a few pixels wide
+  const showsTrackObjects = cam.scale >= SIMPLIFY_THRESHOLD
+
+  // The schematic draws sections, not rails: no rail is sorted for it, nor for the overlays alone —
+  // unless a band or a stripe has to be laid along the rails under the diagram
+  const drawsRails = options?.part !== 'overlays' && lod !== 'schematic'
+  const underlaysOnly = options?.part !== 'overlays' && lod === 'schematic' && showsTrackObjects &&
+    (net.speedZones.size > 0 || options?.signals !== undefined)
+  const visibleSegments = drawsRails || underlaysOnly ? segmentsInBounds(net, bounds) : []
+
+  // Rails are drawn level by level, lowest first, so that a bridge covers what runs below it.
+  // Without bridge or tunnel there is a single group: the whole network, in its own order.
+  // A ramp is cut where it crosses a half level: each piece goes with the level it is really at.
+  const allGroups = groupPiecesByLevel(net, visibleSegments)
+  const levelGroups = options?.level === undefined ? allGroups : allGroups.filter((g) => g.level === options.level)
+  // Each rail joint belongs to one level only when several are drawn
+  const jointsByLevel = allGroups.length > 1 || options?.level !== undefined
+
+  // Cant and slopes marked on the track. The profile of the track and the ramps are kept from one
+  // frame to the next (`trackProfile`, `networkDerived`): only what is in view is traced here.
+  const inclination = options?.inclination
+  const cantProfile = inclination && drawsRails && (lod === 'detail' || lod === 'rails') && inclination.line.realScale !== false
+    ? trackProfile(net, inclination.line)
+    : null
+  const cantColor = cantProfile && cantProfile.rails.size > 0 ? getCanvasStyle(ctx.canvas, '--accent', '#2563eb') : ''
+  const rampIndex = inclination && options?.gradient && lod !== 'schematic' ? derived.ramps(options.gradient.levelHeight) : null
+  const ramps = rampIndex && rampIndex.ramps.length > 0 ? rampIndex : null
+  const steepRails = ramps ? derived.steepRails(options?.gauge, options?.gradient) : undefined
+  const gradientColors: GradientColors | null = ramps
+    ? {
+        ink: getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a'),
+        alert: getCanvasStyle(ctx.canvas, '--danger', '#dc2626'),
+        paper: getCanvasStyle(ctx.canvas, '--paper', '#ffffff'),
+      }
+    : null
+
+  /** What lies under the rails of a level, whatever the tier the rails are drawn in */
+  const drawTrackUnderlays = (pieces: TrackPiece[], level: number): void => {
+    if (!showsTrackObjects) return
+    const alpha = level < 0 ? TUNNEL_ALPHA : 1
+    // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
+    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod)
+    // Blocks and track held for the trains: stripes beside the rails of this level
+    renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, alpha, options?.signals)
+  }
+
+  /** How the stripe of the section of a rail is drawn */
+  const stripeOf = (segId: string): SectionStripeStyle => {
+    const sec = derived.sectionOfSegment.get(segId)
+    return {
+      color: sec?.color ?? '#94a3b8',
+      station: sec?.type === 'station_stop',
+      selected: sec !== undefined && selectedSections.has(sec),
     }
   }
 
-  if (simplified) {
-    // Draw simplified single-line representation for low zoom levels
-    for (const seg of visibleSegments) {
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
+  // Cant and slope marks belong to the tiers that draw the two rails (detail and rails)
+  /** Cant: the outer rail of the canted curves, highlighted under the rails */
+  const drawCantMarks = (pieces: TrackPiece[], level: number): void => {
+    if (!cantProfile || !cantColor) return
+    renderCantMarks(ctx, cam, vw, vh, net, pieces, cantProfile, GAUGE, GAUGE, level < 0 ? TUNNEL_ALPHA : 1, cantColor)
+  }
+  /** Slopes: chevrons between the rails of the ramps, pointing up */
+  const drawGradientChevrons = (pieces: TrackPiece[], level: number): void => {
+    if (!ramps || !steepRails || !gradientColors) return
+    renderGradientChevrons(ctx, cam, vw, vh, net, pieces, ramps, steepRails, GAUGE, level < 0 ? TUNNEL_ALPHA : 1, gradientColors)
+  }
 
-      const selected = selection.segments.has(seg.id)
-      const sec = findSectionBySegment(trackSections, seg.id)
-      const secColor = selected ? accent : (sec?.color ?? ink)
-      const intervals = getSegmentRenderIntervals(net, seg, a.pos, b.pos)
+  const drawDetailedTracks = (pieces: TrackPiece[], level: number): void => {
+    // 0. BRIDGE DECK under the rails of a level above ground
+    renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
+    const tunnel = level < 0
 
-      for (const inter of intervals) {
-        ctx.save()
-        if (inter.isTurnout) {
-          ctx.globalAlpha = 0.4
-          ctx.setLineDash([5, 4])
-        }
+    drawTrackUnderlays(pieces, level)
+    drawCantMarks(pieces, level)
 
-        ctx.strokeStyle = secColor
-        ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
-        ctx.lineCap = 'round'
-
-        if (seg.kind === 'curve' && seg.via) {
-          const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
-          const p0x = (sub.p0.x - cam.x) * cam.scale + vw / 2
-          const p0y = (sub.p0.y - cam.y) * cam.scale + vh / 2
-          const vx = (sub.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (sub.via.y - cam.y) * cam.scale + vh / 2
-          const p2x = (sub.p2.x - cam.x) * cam.scale + vw / 2
-          const p2y = (sub.p2.y - cam.y) * cam.scale + vh / 2
-
-          ctx.beginPath()
-          ctx.moveTo(p0x, p0y)
-          ctx.quadraticCurveTo(vx, vy, p2x, p2y)
-          ctx.stroke()
-        } else {
-          const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
-          const ax = (sub.a.x - cam.x) * cam.scale + vw / 2
-          const ay = (sub.a.y - cam.y) * cam.scale + vh / 2
-          const bx = (sub.b.x - cam.x) * cam.scale + vw / 2
-          const by = (sub.b.y - cam.y) * cam.scale + vh / 2
-
-          ctx.beginPath()
-          ctx.moveTo(ax, ay)
-          ctx.lineTo(bx, by)
-          ctx.stroke()
-        }
-
-        ctx.restore()
-      }
-    }
-  } else {
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
-    // Draw a subtle, distinct colored stripe in the track center identifying each functional section
-    if (!hideSectionCenterline) {
-      for (const seg of visibleSegments) {
-        const a = net.nodes.get(seg.from)
-        const b = net.nodes.get(seg.to)
-        if (!a || !b) continue
+    // A subtle coloured stripe in the middle of the track tells the sections apart: one stroke per colour
+    if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, pieces, level, stripeOf)
 
-        const sec = findSectionBySegment(trackSections, seg.id)
-        const secColor = sec?.color ?? '#94a3b8'
-        const isSecSelected = sec && sec.segmentIds.some((sid) => selection.segments.has(sid))
-
-        ctx.save()
-        ctx.strokeStyle = secColor
-        const isStation = sec?.type === 'station_stop'
-        ctx.lineWidth = isStation ? Math.max(2.5, Math.min(5.0, 0.6 * cam.scale)) : Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
-        ctx.globalAlpha = isSecSelected ? 0.95 : isStation ? 0.8 : 0.45
-        ctx.lineCap = 'round'
-        if (isStation) {
-          ctx.setLineDash([8, 4])
-        }
-        ctx.beginPath()
-        const ax = (a.pos.x - cam.x) * cam.scale + vw / 2
-        const ay = (a.pos.y - cam.y) * cam.scale + vh / 2
-        const bx = (b.pos.x - cam.x) * cam.scale + vw / 2
-        const by = (b.pos.y - cam.y) * cam.scale + vh / 2
-        ctx.moveTo(ax, ay)
-        if (seg.kind === 'curve' && seg.via) {
-          const vx = (seg.via.x - cam.x) * cam.scale + vw / 2
-          const vy = (seg.via.y - cam.y) * cam.scale + vh / 2
-          ctx.quadraticCurveTo(vx, vy, bx, by)
-        } else {
-          ctx.lineTo(bx, by)
-        }
-        ctx.stroke()
-        ctx.restore()
-      }
-    }
-
-    // 2. PURE RAIL RENDERING
-    for (const seg of visibleSegments) {
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-
-      const selected = selection.segments.has(seg.id)
-      const intervals = getSegmentRenderIntervals(net, seg, a.pos, b.pos)
-
-      for (const inter of intervals) {
-        ctx.save()
-        if (inter.isTurnout) {
-          ctx.globalAlpha = 0.4
-        }
-
-        if (seg.kind === 'curve' && seg.via) {
-          const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
-          renderDetailedCurveRails(ctx, cam, sub.p0, sub.via, sub.p2, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
-        } else {
-          const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
-          renderDetailedRailLines(ctx, cam, sub.a, sub.b, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
-        }
-
-        ctx.restore()
-      }
-    }
+    // 2. PURE RAIL RENDERING: the two rails of every piece, gathered by style
+    renderDetailRails(ctx, cam, vw, vh, net, pieces, level, selection.segments, { rail: railColor, accent, head: railHeadColor }, GAUGE)
     // Connect rails and create smooth dynamic miter joints at nodes
-    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE)
+    if (tunnel) {
+      ctx.save()
+      ctx.globalAlpha = TUNNEL_ALPHA
+    }
+    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE, jointsByLevel ? level : undefined)
+    if (tunnel) ctx.restore()
+    drawGradientChevrons(pieces, level)
+  }
 
-    // 3. SECTION BADGES (LOD: multi-level representation according to cam.scale)
-    // - Scale < 1.0 (Macro view): hide all labels unless the section is actively selected
-    // - 1.0 <= Scale < 3.0 (Overview): compact badge (name + arrow) only if section is >= 45px on screen
-    // - Scale >= 3.0 (Detailed view): full badge with type prefix, name, arrow, and exact length
-    const showAllBadges = cam.scale >= 1.0
+  if (options?.part !== 'overlays') {
+    if (lod === 'schematic') {
+      for (const group of levelGroups) drawTrackUnderlays(group.pieces, group.level)
+      // Once for the whole network: the levels are not layered in this tier
+      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { rail: railColor, accent })
+    } else if (lod === 'line') {
+      const paper = levelGroups.some((g) => g.level > 0) ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
+      for (const group of levelGroups) {
+        drawTrackUnderlays(group.pieces, group.level)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE)
+      }
+    } else if (lod === 'rails') {
+      // The two rails of every track in a handful of strokes, then the stripe of the sections
+      const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
+      for (const group of levelGroups) {
+        drawTrackUnderlays(group.pieces, group.level)
+        drawCantMarks(group.pieces, group.level)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true)
+        if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, group.pieces, group.level, stripeOf)
+        drawGradientChevrons(group.pieces, group.level)
+      }
+    } else {
+      for (const group of levelGroups) drawDetailedTracks(group.pieces, group.level)
+    }
+  }
+  if (options?.part === 'tracks') return
+
+  // Pixels between the two rails: what the thresholds of the overlays are measured against
+  const gaugePx = gaugeOnScreen(cam.scale, GAUGE)
+
+  /** Screen rectangles the slope labels must keep clear of: section badges, then diagnostic markers */
+  const takenBoxes: BadgeBox[] = []
+  {
+    // 3. SECTION BADGES (LOD: multi-level representation according to the gauge on screen)
+    // - Below BADGES_ALL_FROM_PX (macro view, schematic tier included): only the selected section
+    //   and the ones the user renamed
+    // - Up to BADGE_FULL_FROM_PX (overview): compact badge (name + arrow) only if section is >= 45px on screen
+    // - From BADGE_FULL_FROM_PX (detailed view): full badge with type prefix, name, arrow, and exact length
+    // A badge never covers another one: they are all measured first, then `placeBadges` keeps
+    // the ones that fit, by priority.
+    const fullBadges = gaugePx >= BADGE_FULL_FROM_PX
+    const badges: (BadgeBox & { sec: TrackSection; text: string; cx: number; cy: number })[] = []
+    ctx.save()
+    ctx.font = '600 10px Archivo, system-ui, sans-serif'
     for (const sec of options?.hideSectionBadges ? [] : trackSections) {
       if (sec.segmentIds.length === 0) continue
-      const isSecSelected = sec.segmentIds.some((sid) => selection.segments.has(sid))
+      const isSecSelected = selectedSections.has(sec)
+      const renamed = isRenamedSection(sec)
 
       if (onlyRenamedSectionBadges) {
         // En mode déplacement / vue épurée : uniquement les voies renommées par l'utilisateur
-        if (!isRenamedSection(sec)) continue
+        if (!renamed) continue
         if (sec.totalLength * cam.scale < 30 && !isSecSelected) continue
       } else {
-        // When zoomed out (< 1.0), only show badge for the currently selected section
-        if (!showAllBadges && !isSecSelected) continue
+        if (!sectionBadgeWanted(gaugePx, { selected: isSecSelected, renamed })) continue
 
-        // In overview mode (1.0 to 3.0), avoid drawing badges on tiny track fragments (< 45px on screen)
+        // Not on a track too short on screen for this zoom: tiny fragments up close, all but the
+        // long tracks once the drawing is no longer the detailed one
         const secScreenLen = sec.totalLength * cam.scale
-        if (!isSecSelected && cam.scale < 3.0 && secScreenLen < 45) continue
+        if (!isSecSelected && !renamed && secScreenLen < sectionBadgeMinLength(lod, gaugePx)) continue
       }
 
       const midSegIdx = Math.floor(sec.segmentIds.length / 2)
@@ -688,7 +959,7 @@ export function renderNetwork(
 
       const dirSymbol = sec.direction === 'forward' ? ' →' : sec.direction === 'backward' ? ' ←' : ''
       let text: string
-      if (cam.scale >= 3.0 || isSecSelected) {
+      if (fullBadges || isSecSelected) {
         const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Évit. · ' : ''
         text = `${typePrefix}${sec.name}${dirSymbol} (${sec.totalLength.toFixed(1)} m)`
       } else {
@@ -696,10 +967,7 @@ export function renderNetwork(
         text = `${sec.name}${dirSymbol}`
       }
 
-      ctx.save()
-      ctx.font = '600 10px Archivo, system-ui, sans-serif'
-      const metrics = ctx.measureText(text)
-      const bgW = metrics.width + 12
+      const bgW = textWidth(ctx, text) + 12
       const bgH = 18
       let badgeY = sy - 14
       const keepOut = options?.badgeExclusion
@@ -710,6 +978,19 @@ export function renderNetwork(
       ) {
         badgeY = keepOut.y + keepOut.h + bgH / 2 + 2
       }
+      badges.push({
+        x: sx - bgW / 2, y: badgeY - bgH / 2, w: bgW, h: bgH,
+        selected: isSecSelected, renamed, length: sec.totalLength,
+        sec, text, cx: sx, cy: badgeY,
+      })
+    }
+    ctx.restore()
+
+    const placedBadges = placeBadges(badges)
+    for (const badge of placedBadges) {
+      const { sec, text, cx: sx, cy: badgeY, w: bgW, h: bgH, selected: isSecSelected } = badge
+      ctx.save()
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
 
       // Pill background
       ctx.fillStyle = isSecSelected ? sec.color : sec.type === 'station_stop' ? 'rgba(8, 51, 68, 0.92)' : 'rgba(30, 41, 59, 0.85)'
@@ -729,60 +1010,65 @@ export function renderNetwork(
       ctx.fillText(text, sx, badgeY)
       ctx.restore()
     }
+
+    // The slope labels are placed further down, once the diagnostic markers are known
+    for (const b of placedBadges) takenBoxes.push({ x: b.x, y: b.y, w: b.w, h: b.h, selected: true, renamed: false, length: b.length })
   }
 
-  // 4. END OF TRACK / FIN DE VOIE (Sens interdit logique sur chaque fin de voie / impasse)
-  if (!hideConstructionNodes) {
-    for (const node of net.nodes.values()) {
-      if (!isPointInBounds(node.pos, bounds)) continue
-      const adj = net.adjacency.get(node.id) ?? []
-      if (adj.length === 1) {
-        const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-        const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+  // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
+  // with the bands at far zoom.
+  if (showsTrackObjects) {
+    renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
+      highlight: options?.speedZones,
+      gauge: GAUGE,
+      showOverlaps: !hideConstructionNodes,
+    })
+    // Signals stand beside the track, above the rails; hidden with the boards at far zoom
+    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, options.signals)
+  }
 
-        ctx.save()
-        const signR = Math.max(7, Math.min(11, 1.8 * cam.scale))
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
-        ctx.shadowBlur = 5
-        ctx.shadowOffsetY = 1.5
-
-        // Red circle with white border
-        ctx.fillStyle = '#dc2626'
-        ctx.strokeStyle = '#ffffff'
-        ctx.lineWidth = 1.5
-        ctx.beginPath()
-        ctx.arc(sx, sy, signR, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-
-        // White horizontal bar
-        ctx.shadowColor = 'transparent'
-        const barW = signR * 1.35
-        const barH = Math.max(2.2, signR * 0.35)
-        ctx.fillStyle = '#ffffff'
-        ctx.beginPath()
-        if (typeof ctx.roundRect === 'function') {
-          ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
-        } else {
-          ctx.rect(sx - barW / 2, sy - barH / 2, barW, barH)
-        }
-        ctx.fill()
-
-        ctx.restore()
-      }
+  // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
+  // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
+  // Detail and rails tiers only: further out it is smaller than the stroke of the rail it ends.
+  for (const node of lod === 'detail' || lod === 'rails' ? net.nodes.values() : []) {
+    if (!isPointInBounds(node.pos, bounds)) continue
+    if ((net.adjacency.get(node.id) ?? []).length === 1) {
+      renderBufferStop(ctx, cam, node, net, vw, vh, options?.gauge ?? GAUGE)
     }
   }
 
   // 5. NODES (Points d'articulation et sélection)
   if (!hideConstructionNodes) {
+    // The plain joints are by far the most numerous: they are gathered and drawn in two fills,
+    // under the markers that stand out (selection, end of track, crossing)
+    const shown: { sx: number; sy: number; selected: boolean; connectionCount: number }[] = []
+    const plain: number[] = []
     for (const node of net.nodes.values()) {
       if (!isPointInBounds(node.pos, bounds)) continue
-
+      const selected = selection.nodes.has(node.id)
+      const connectionCount = (net.adjacency.get(node.id) ?? []).length
+      if (!nodeMarkerShown(lod, { selected, degree: connectionCount })) continue
       const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
       const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
-      const selected = selection.nodes.has(node.id)
-      const adj = net.adjacency.get(node.id) ?? []
-      const connectionCount = adj.length
+      if (!selected && connectionCount !== 0 && connectionCount !== 1 && connectionCount !== 4) plain.push(sx, sy)
+      else shown.push({ sx, sy, selected, connectionCount })
+    }
+    if (plain.length > 0) {
+      // Intermediate joint or junction: neat white dot
+      const discs = (radius: number): void => {
+        ctx.beginPath()
+        for (let i = 0; i < plain.length; i += 2) {
+          ctx.moveTo(plain[i] + radius, plain[i + 1])
+          ctx.arc(plain[i], plain[i + 1], radius, 0, Math.PI * 2)
+        }
+        ctx.fill()
+      }
+      ctx.fillStyle = '#334155'
+      discs(4)
+      ctx.fillStyle = '#ffffff'
+      discs(2.5)
+    }
+    for (const { sx, sy, selected, connectionCount } of shown) {
 
       if (selected) {
         // Selected node: accent ring + central white point
@@ -795,7 +1081,18 @@ export function renderNetwork(
         ctx.arc(sx, sy, 4, 0, Math.PI * 2)
         ctx.fill()
       } else if (connectionCount === 1) {
-        // Dead end already rendered with clean Sens Interdit sign
+        // End of track: a snap point, where the track can be carried on
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = accent
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(sx, sy, 5.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = accent
+        ctx.beginPath()
+        ctx.arc(sx, sy, 2, 0, Math.PI * 2)
+        ctx.fill()
       } else if (connectionCount === 0) {
         // Isolated / orphan node (0 connected tracks): render clear visible indicator so it is never an invisible ghost
         ctx.save()
@@ -826,29 +1123,19 @@ export function renderNetwork(
         ctx.fill()
         ctx.stroke()
         ctx.restore()
-      } else {
-        // Intermediate joint or junction: neat white dot
-        ctx.fillStyle = '#334155'
-        ctx.beginPath()
-        ctx.arc(sx, sy, 4, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillStyle = '#ffffff'
-        ctx.beginPath()
-        ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
-        ctx.fill()
       }
     }
   }
 
   // 6. CIRCULATION DIRECTION INDICATORS (Discreet directional arrows on one-way sections)
-  // Skip at macro zoom (< 0.8) to keep network schematic clean
-  if (!hideConstructionNodes && cam.scale >= 0.8) {
+  // One per rail in the detail tier, one per section in the line tier, none in the schematic
+  if (!hideConstructionNodes) {
     for (const sec of trackSections) {
       if (sec.direction === 'two_way' || sec.orderedNodeIds.length < 2) continue
       const isForward = sec.direction === 'forward'
 
-      // Draw discreet directional arrow along each segment of the section
-      for (const sid of sec.segmentIds) {
+      // Draw discreet directional arrow along the segments of the section that carry one
+      for (const sid of sectionArrowSegments(lod, sec.segmentIds)) {
         const seg = net.segments.get(sid)
       if (!seg) continue
       const a = net.nodes.get(seg.from)
@@ -909,8 +1196,7 @@ export function renderNetwork(
 
   // 7. DIRECTION CONFLICTS / SENS INTERDIT (Panneau sens interdit en cas d'incohérence -> <-)
   if (!hideConstructionNodes) {
-    const conflicts = detectDirectionConflicts(net, trackSections)
-    for (const conf of conflicts) {
+    for (const conf of derived.conflicts) {
       if (!isPointInBounds(conf.pos, bounds)) continue
       const sx = (conf.pos.x - cam.x) * cam.scale + vw / 2
       const sy = (conf.pos.y - cam.y) * cam.scale + vh / 2
@@ -942,19 +1228,21 @@ export function renderNetwork(
       ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
       ctx.fill()
 
-      // Pulsing warning text above the sign
-      ctx.font = '700 10px Archivo, system-ui, sans-serif'
-      const warnText = 'SENS INTERDIT · CONFLIT'
-      const tw = ctx.measureText(warnText).width
-      const textY = sy - signR - 12
-      ctx.fillStyle = '#dc2626'
-      ctx.beginPath()
-      ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
-      ctx.fill()
-      ctx.fillStyle = '#ffffff'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(warnText, sx, textY)
+      // Pulsing warning text above the sign (the schematic tier keeps the sign alone)
+      if (lod !== 'schematic') {
+        ctx.font = '700 10px Archivo, system-ui, sans-serif'
+        const warnText = 'SENS INTERDIT · CONFLIT'
+        const tw = textWidth(ctx, warnText)
+        const textY = sy - signR - 12
+        ctx.fillStyle = '#dc2626'
+        ctx.beginPath()
+        ctx.roundRect(sx - tw / 2 - 6, textY - 8, tw + 12, 16, 4)
+        ctx.fill()
+        ctx.fillStyle = '#ffffff'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(warnText, sx, textY)
+      }
 
       ctx.restore()
     }
@@ -962,19 +1250,36 @@ export function renderNetwork(
 
   // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
   if (!hideConstructionNodes) {
-    const kinematicIssues = analyzeKinematics(net, options?.gauge)
-    for (const issue of kinematicIssues) {
+    // One marker per issue, with its label when there is room for it. Once the rails are no
+    // longer drawn in detail, the markers that would pile up are merged into one that shows how
+    // many it stands for.
+    const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
+    for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
       if (options?.quietNodeIds?.has(issue.nodeId)) continue
       const node = net.nodes.get(issue.nodeId)
       if (!node || !isPointInBounds(node.pos, bounds)) continue
-
-      const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-      const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
+      markers.push({
+        x: (node.pos.x - cam.x) * cam.scale + vw / 2,
+        y: (node.pos.y - cam.y) * cam.scale + vh / 2,
+        severity: issue.severity,
+        mark: '!',
+        label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
+      })
+    }
+    const drawn = !diagnosticsClustered(lod)
+      ? markers
+      : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
+        ...c, mark: c.count > 1 ? String(c.count) : '!',
+      }))
+    for (const marker of drawn) {
+      const { x: sx, y: sy, label } = marker
 
       ctx.save()
-      const isErr = issue.severity === 'error'
+      const isErr = marker.severity === 'error'
       const badgeColor = isErr ? '#ef4444' : '#f59e0b'
       const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
+      // The diamond with its halo
+      takenBoxes.push({ x: sx - signR - 4, y: sy - signR - 4, w: 2 * (signR + 4), h: 2 * (signR + 4), selected: true, renamed: false, length: 0 })
 
       // Pulse halo
       ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
@@ -1000,14 +1305,14 @@ export function renderNetwork(
       ctx.font = '900 11px Archivo, system-ui, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText('!', sx, sy)
+      ctx.fillText(marker.mark, sx, sy)
 
       // Label badge above if zoom is reasonable
-      if (cam.scale >= 0.9) {
+      if (label !== undefined) {
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const label = issue.kind === 'track_gap' ? 'Voie interrompue' : issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
-        const tw = ctx.measureText(label).width
+        const tw = textWidth(ctx, label)
         const ty = sy - signR - 10
+        takenBoxes.push({ x: sx - tw / 2 - 5, y: ty - 7, w: tw + 10, h: 15, selected: true, renamed: false, length: 0 })
 
         ctx.fillStyle = badgeColor
         ctx.beginPath()
@@ -1023,8 +1328,29 @@ export function renderNetwork(
       ctx.restore()
     }
   }
+
+  // 9. SLOPE of each ramp (« 35 ‰ »), in the detailed and the line drawing. A label gives way to
+  // the section badges, to the diagnostic markers (one of them already says « Pente 60 ‰ » at the
+  // foot of a ramp that is too steep) and to the longer ramps: same placement as the badges.
+  if (ramps && steepRails && gradientColors) {
+    ctx.save()
+    ctx.font = GRADIENT_LABEL_FONT
+    const labels = gradientLabelBoxes(ctx, cam, vw, vh, net, ramps, steepRails)
+    ctx.restore()
+    if (labels.length > 0) {
+      const kept = new Set<BadgeBox>(placeBadges<BadgeBox>([...takenBoxes, ...labels]))
+      drawGradientLabels(ctx, labels.filter((label) => kept.has(label)), gradientColors)
+    }
+  }
 }
 
+
+/** Short text of the badge above a diagnostic marker */
+export function diagnosticLabel(issue: KinematicIssue): string {
+  if (issue.kind === 'track_gap') return 'Voie interrompue'
+  if (issue.kind === 'steep_gradient') return `Pente ${issue.gradientPermille ?? 0} ‰`
+  return issue.angleDeg ? `∠ ${issue.angleDeg}° Cassure` : 'Jonction non franchissable'
+}
 
 export function renderDetailedRailBallast(
   ctx: CanvasRenderingContext2D,
@@ -1516,6 +1842,8 @@ export function renderScaleBar(
   vh: number,
   /** Width in pixels reserved on the right of the canvas (an overlay sits there) */
   rightInset = 0,
+  /** Height in pixels reserved at the bottom of the canvas */
+  bottomInset = 0,
 ): void {
   const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
   const panel = getCanvasStyle(ctx.canvas, '--panel', '#f5f5f5')
@@ -1528,7 +1856,7 @@ export function renderScaleBar(
   const barH = 8
   const right = vw - rightInset
   const x = right - barPx - margin
-  const y = vh - margin
+  const y = vh - bottomInset - margin
 
   ctx.save()
 
@@ -1538,7 +1866,7 @@ export function renderScaleBar(
   const pillW = Math.max(barPx, labelW) + 16
   const pillH = barH + 24
   const pillX = right - pillW - margin / 2
-  const pillY = vh - pillH - margin / 2
+  const pillY = vh - bottomInset - pillH - margin / 2
   ctx.fillStyle = panel
   ctx.globalAlpha = 0.85
   roundRect(ctx, pillX, pillY, pillW, pillH, 6)
@@ -1582,30 +1910,6 @@ function roundRect(
   ctx.arcTo(x, y + h, x, y, r)
   ctx.arcTo(x, y, x + w, y, r)
   ctx.closePath()
-}
-
-/** Connect rail lines and ballast seamlessly at nodes where 2 or more segments meet. */
-export function isInactiveBranch(net: Network, segId: string): boolean {
-  for (const junc of net.junctions.values()) {
-    if (junc.hand === 'three_way') {
-      if (junc.activeBranch === 'straight') {
-        if (segId === junc.divergingSegmentId || segId === junc.divergingRightSegmentId) return true
-      } else if (junc.activeBranch === 'right') {
-        if (segId === junc.straightSegmentId || segId === junc.divergingSegmentId) return true
-      } else {
-        // 'left' or 'diverging'
-        if (segId === junc.straightSegmentId || segId === junc.divergingRightSegmentId) return true
-      }
-    } else {
-      if (
-        (junc.activeBranch === 'straight' && segId === junc.divergingSegmentId) ||
-        (junc.activeBranch === 'diverging' && segId === junc.straightSegmentId)
-      ) {
-        return true
-      }
-    }
-  }
-  return false
 }
 
 export interface SegmentEndGeom {
@@ -1909,11 +2213,15 @@ export function renderRailJoints(
   accent: string,
   bounds?: ViewportBounds,
   gauge: number = GAUGE,
+  /** Only the joints of this level: the level the two rails are drawn with where they meet */
+  level?: number,
 ): void {
   const s = cam.scale
   const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
   const railPx = Math.max(1.2, RAIL_WIDTH * railWidthRatio * s)
   const capRadius = railPx / 2
+  type JointPair = ReturnType<typeof getConnectedEndPairs>[number]
+  const groups: JointPair[][] = [[], [], [], []]
 
   for (const node of net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
@@ -1929,58 +2237,58 @@ export function renderRailJoints(
     const pairs = getConnectedEndPairs(node, ends, cam, vw, vh, gauge)
 
     for (const p of pairs) {
+      if (level !== undefined && nodeJointBand(net, node.id, [p.e1.segId, p.e2.segId]) !== level) continue
       const isSel = p.e1.selected || p.e2.selected
       const isDim = p.e1.isInactive || p.e2.isInactive
-      const col = isSel ? accent : railColor
-
-      ctx.save()
-      if (isDim) ctx.globalAlpha = 0.4
-
-      // Pass 1: Rail base / patin
-      ctx.strokeStyle = col
-      ctx.lineWidth = railPx
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1LScr[0], p.r1LScr[1])
-      ctx.lineTo(p.jLeftScr[0], p.jLeftScr[1])
-      ctx.lineTo(p.r2LScr[0], p.r2LScr[1])
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1RScr[0], p.r1RScr[1])
-      ctx.lineTo(p.jRightScr[0], p.jRightScr[1])
-      ctx.lineTo(p.r2RScr[0], p.r2RScr[1])
-      ctx.stroke()
-
-      // Small anchor caps at vertices to ensure zero subpixel gap
-      ctx.fillStyle = col
-      ctx.beginPath()
-      ctx.arc(p.jLeftScr[0], p.jLeftScr[1], capRadius, 0, Math.PI * 2)
-      ctx.arc(p.jRightScr[0], p.jRightScr[1], capRadius, 0, Math.PI * 2)
-      ctx.fill()
-
-      // Pass 2: Polished steel rail head
-      const headPx = Math.max(0.8, railPx * 0.42)
-      ctx.strokeStyle = isSel ? '#ffffff' : '#ffffff'
-      ctx.lineWidth = headPx
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1LScr[0], p.r1LScr[1])
-      ctx.lineTo(p.jLeftScr[0], p.jLeftScr[1])
-      ctx.lineTo(p.r2LScr[0], p.r2LScr[1])
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1RScr[0], p.r1RScr[1])
-      ctx.lineTo(p.jRightScr[0], p.jRightScr[1])
-      ctx.lineTo(p.r2RScr[0], p.r2RScr[1])
-      ctx.stroke()
-
-      ctx.restore()
+      groups[(isSel ? 1 : 0) + (isDim ? 2 : 0)].push(p)
     }
   }
+
+  // The joints are gathered by style — plain, selected, and both again where the points are set
+  // against the rail — and each style is drawn in one go: bases, caps, then heads
+  const headPx = Math.max(0.8, railPx * 0.42)
+  const trace = (joints: JointPair[]): void => {
+    ctx.beginPath()
+    for (const p of joints) {
+      ctx.moveTo(p.r1LScr[0], p.r1LScr[1])
+      ctx.lineTo(p.jLeftScr[0], p.jLeftScr[1])
+      ctx.lineTo(p.r2LScr[0], p.r2LScr[1])
+      ctx.moveTo(p.r1RScr[0], p.r1RScr[1])
+      ctx.lineTo(p.jRightScr[0], p.jRightScr[1])
+      ctx.lineTo(p.r2RScr[0], p.r2RScr[1])
+    }
+    ctx.stroke()
+  }
+  groups.forEach((joints, style) => {
+    if (joints.length === 0) return
+    const col = style & 1 ? accent : railColor
+    ctx.save()
+    if (style & 2) ctx.globalAlpha *= 0.4
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+
+    // Pass 1: Rail base / patin
+    ctx.strokeStyle = col
+    ctx.lineWidth = railPx
+    trace(joints)
+
+    // Small anchor caps at vertices to ensure zero subpixel gap
+    ctx.fillStyle = col
+    ctx.beginPath()
+    for (const p of joints) {
+      ctx.moveTo(p.jLeftScr[0] + capRadius, p.jLeftScr[1])
+      ctx.arc(p.jLeftScr[0], p.jLeftScr[1], capRadius, 0, Math.PI * 2)
+      ctx.moveTo(p.jRightScr[0] + capRadius, p.jRightScr[1])
+      ctx.arc(p.jRightScr[0], p.jRightScr[1], capRadius, 0, Math.PI * 2)
+    }
+    ctx.fill()
+
+    // Pass 2: Polished steel rail head
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = headPx
+    trace(joints)
+    ctx.restore()
+  })
 }
 
 /**
@@ -2098,465 +2406,6 @@ export function renderFishplates(
 
       ctx.restore()
     }
-  }
-}
-
-/**
- * Render realistic railway turnout mechanical parts:
- * - Tapered switch blades (lames d'aiguilles effilees)
- * - Frog V (coeur d'aiguille) with angle matching deviation
- * - Guard rails (contre-rails) with flared ends opposite the frog
- * - Extended turnout sleepers (traverses longues)
- * - Switch motor (moteur d'aiguille) lateral
- */
-export function renderTurnoutMechanicalDetails(
-  ctx: CanvasRenderingContext2D,
-  cam: Camera,
-  vw: number,
-  vh: number,
-  net: Network,
-  bounds?: ViewportBounds,
-): void {
-  const s = cam.scale
-  if (s < 0.7) return
-
-  const hg = GAUGE / 2
-  const railPx = Math.max(1.5, RAIL_WIDTH * s)
-  const steelDark = '#334155'
-  const steelMid = '#64748b'
-  const steelBright = '#94a3b8'
-
-  for (const junc of net.junctions.values()) {
-    const apex = net.nodes.get(junc.nodeId)
-    const straightNode = net.nodes.get(junc.straightNodeId)
-    const divNode = net.nodes.get(junc.divergingNodeId)
-    if (!apex || !straightNode || !divNode) continue
-
-    if (bounds && !isPointInBounds(apex.pos, bounds)) continue
-
-    const ax_scr = (apex.pos.x - cam.x) * s + vw / 2
-    const ay_scr = (apex.pos.y - cam.y) * s + vh / 2
-    if (ax_scr < -150 || ax_scr > vw + 150 || ay_scr < -150 || ay_scr > vh + 150) continue
-
-    const ddx = straightNode.pos.x - apex.pos.x
-    const ddy = straightNode.pos.y - apex.pos.y
-    const straightLen = Math.hypot(ddx, ddy)
-    if (straightLen < 10) continue
-
-    const ux = ddx / straightLen
-    const uy = ddy / straightLen
-    const nx = -uy
-    const ny = ux
-    const side: 1 | -1 = junc.hand === 'left' ? 1 : -1
-
-    const specAngle = junc.frogNumber === 4 ? 15 : 10
-    const thetaRad = (specAngle * Math.PI) / 180
-    const frogDist = Math.min(straightLen * 0.75, GAUGE / Math.sin(thetaRad))
-
-    // Convert (t, d) coordinates to screen pixels.
-    // t = distance along straight track from apex, d = lateral offset (perpendicular)
-    const worldToScreen = (t: number, d: number): [number, number] => {
-      const wx = apex.pos.x + t * ux + d * nx
-      const wy = apex.pos.y + t * uy + d * ny
-      return [(wx - cam.x) * s + vw / 2, (wy - cam.y) * s + vh / 2]
-    }
-
-
-    ctx.save()
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-
-    // ------------------------------------------------------------------
-    // 1. EXTENDED TURNOUT SLEEPERS (Traverses longues d'aiguillage)
-    // ------------------------------------------------------------------
-    // Turnout sleepers span the full width including both straight and diverging tracks.
-    if (s >= 0.8) {
-      const sleeperW = Math.max(1.5, SLEEPER_WIDTH * s)
-      const numSleepers = Math.max(4, Math.floor((frogDist + 20) / SLEEPER_SPACING))
-      ctx.fillStyle = '#8B7355'
-      ctx.strokeStyle = '#6B5335'
-      ctx.lineWidth = 0.5
-
-      for (let i = 0; i < numSleepers; i++) {
-        const t = 2 + i * SLEEPER_SPACING
-        if (t > frogDist + 20) break
-
-        // Compute lateral extent: outer edge of straight track on both sides,
-        // plus the diverging track offset if t is in the blade/frog region
-        const straightOuterD = hg + 5
-        const divOffset = t * Math.sin(thetaRad)
-
-        // Pick the wider extent on the diverging side
-        const sideExtent = side > 0
-          ? Math.max(straightOuterD, hg + 5 + divOffset)
-          : Math.max(straightOuterD, hg + 5 + divOffset)
-
-        const leftD = (junc.hand === 'three_way' || side > 0) ? sideExtent : (hg + 5)
-        const rightD = (junc.hand === 'three_way' || side < 0) ? sideExtent : (hg + 5)
-
-        const p1 = worldToScreen(t, leftD)
-        const p2 = worldToScreen(t, -rightD)
-
-        ctx.beginPath()
-        // Draw a rotated rectangle (sleeper aligned perpendicular to track)
-        const halfW = sleeperW / 2
-        // The sleeper is along the normal direction, so its length goes from p1 to p2
-        // and its width is perpendicular to that (along track direction)
-        const sdx = p2[0] - p1[0]
-        const sdy = p2[1] - p1[1]
-        const sLen = Math.hypot(sdx, sdy)
-        if (sLen < 1) continue
-        const snx = sdx / sLen
-        const sny = sdy / sLen
-        // perpendicular to sleeper direction = along track direction in screen space
-        const spx = -sny
-        const spy = snx
-
-        ctx.moveTo(p1[0] + spx * halfW, p1[1] + spy * halfW)
-        ctx.lineTo(p2[0] + spx * halfW, p2[1] + spy * halfW)
-        ctx.lineTo(p2[0] - spx * halfW, p2[1] - spy * halfW)
-        ctx.lineTo(p1[0] - spx * halfW, p1[1] - spy * halfW)
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // 2. TAPERED SWITCH BLADES (Lames d'aiguilles effilees)
-    // ------------------------------------------------------------------
-    // Each blade is a filled polygon that tapers from BLADE_TOE_WIDTH (0.3mm)
-    // at the toe (point) to RAIL_WIDTH (1.0mm) at the heel (full rail width).
-    // The active (closed) blade sits against the stock rail (gap = 0).
-    // The inactive (open) blade progressively opens from 0 at heel to ~3mm at toe.
-    const bladeLen = 32
-    const toeX = 6
-
-    const isStraight = junc.activeBranch === 'straight'
-
-    const BLADE_TOE_WIDTH = 0.3  // mm, very thin at the point
-    const BLADE_HEEL_WIDTH = RAIL_WIDTH  // full rail width at heel
-    const BLADE_OPEN_GAP = 3.0   // mm, max opening gap at toe when blade is open
-    const BLADE_STEPS = 16       // number of segments for smooth taper
-
-    // -- Straight blade (on the side*hg rail) --
-    {
-      const stockRailD = side * hg  // stock rail position (center of rail)
-      const closedDir = -side       // blade is on the inner side of the stock rail
-      const isActive = isStraight
-      // When active: blade against stock rail (gap=0 along full length)
-      // When inactive: heel is still at stock rail, toe opens away by BLADE_OPEN_GAP
-
-      // Build polygon: top edge (outer, against stock rail) then bottom edge (inner)
-      const topPts: [number, number][] = []
-      const botPts: [number, number][] = []
-
-      for (let i = 0; i <= BLADE_STEPS; i++) {
-        const frac = i / BLADE_STEPS
-        const t = toeX + frac * bladeLen
-        // Width at this point (linear taper)
-        const halfW = (BLADE_TOE_WIDTH + frac * (BLADE_HEEL_WIDTH - BLADE_TOE_WIDTH)) / 2
-
-        // Gap from stock rail: when closed = 0, when open = linearly from BLADE_OPEN_GAP at toe to 0 at heel
-        const gap = isActive ? 0 : BLADE_OPEN_GAP * (1 - frac)
-
-        // Outer edge (toward stock rail): stock rail center + closedDir * gap
-        const outerD = stockRailD + closedDir * gap
-        // Inner edge (away from stock rail): outer + closedDir * 2*halfW
-        const innerD = outerD + closedDir * 2 * halfW
-
-        topPts.push(worldToScreen(t, outerD))
-        botPts.push(worldToScreen(t, innerD))
-      }
-
-      // Draw filled polygon
-      ctx.fillStyle = isActive ? steelDark : steelMid
-      ctx.strokeStyle = steelDark
-      ctx.lineWidth = Math.max(0.5, 0.5 * s)
-      ctx.beginPath()
-      ctx.moveTo(topPts[0][0], topPts[0][1])
-      for (let i = 1; i < topPts.length; i++) {
-        ctx.lineTo(topPts[i][0], topPts[i][1])
-      }
-      for (let i = botPts.length - 1; i >= 0; i--) {
-        ctx.lineTo(botPts[i][0], botPts[i][1])
-      }
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-
-      // Steel highlight on the top surface (rail head)
-      if (s >= 1.5) {
-        const headPx = Math.max(0.5, railPx * 0.3)
-        ctx.strokeStyle = '#e2e8f0'
-        ctx.lineWidth = headPx
-        ctx.beginPath()
-        ctx.moveTo(topPts[0][0], topPts[0][1])
-        for (let i = 1; i < topPts.length; i++) {
-          ctx.lineTo(topPts[i][0], topPts[i][1])
-        }
-        ctx.stroke()
-      }
-    }
-
-    // -- Diverging blade (on the -side*hg rail, follows the diverging curve) --
-    {
-      const stockRailD = -side * hg  // diverging-side stock rail
-      const closedDir = side         // blade is on the inner side of this stock rail
-      const isActive = !isStraight
-
-      const topPts: [number, number][] = []
-      const botPts: [number, number][] = []
-
-      for (let i = 0; i <= BLADE_STEPS; i++) {
-        const frac = i / BLADE_STEPS
-        const t = toeX + frac * bladeLen
-        const halfW = (BLADE_TOE_WIDTH + frac * (BLADE_HEEL_WIDTH - BLADE_TOE_WIDTH)) / 2
-
-        const gap = isActive ? 0 : BLADE_OPEN_GAP * (1 - frac)
-
-        // The diverging blade curves away: at position t along the track,
-        // the diverging rail has moved by t * sin(thetaRad) laterally
-        const divCurveOffset = side * t * Math.sin(thetaRad) * 0.4
-
-        const outerD = stockRailD + closedDir * gap + divCurveOffset
-        const innerD = outerD + closedDir * 2 * halfW
-
-        topPts.push(worldToScreen(t, outerD))
-        botPts.push(worldToScreen(t, innerD))
-      }
-
-      ctx.fillStyle = isActive ? steelDark : steelMid
-      ctx.strokeStyle = steelDark
-      ctx.lineWidth = Math.max(0.5, 0.5 * s)
-      ctx.beginPath()
-      ctx.moveTo(topPts[0][0], topPts[0][1])
-      for (let i = 1; i < topPts.length; i++) {
-        ctx.lineTo(topPts[i][0], topPts[i][1])
-      }
-      for (let i = botPts.length - 1; i >= 0; i--) {
-        ctx.lineTo(botPts[i][0], botPts[i][1])
-      }
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-
-      // Steel highlight
-      if (s >= 1.5) {
-        const headPx = Math.max(0.5, railPx * 0.3)
-        ctx.strokeStyle = '#e2e8f0'
-        ctx.lineWidth = headPx
-        ctx.beginPath()
-        ctx.moveTo(topPts[0][0], topPts[0][1])
-        for (let i = 1; i < topPts.length; i++) {
-          ctx.lineTo(topPts[i][0], topPts[i][1])
-        }
-        ctx.stroke()
-      }
-    }
-
-    // Stretcher bar (tringle de manoeuvre) connecting both blade toes
-    {
-      const straightToeD = side * hg + (isStraight ? 0 : -side * BLADE_OPEN_GAP)
-      const divToeD = -side * hg + (!isStraight ? 0 : side * BLADE_OPEN_GAP)
-        + side * toeX * Math.sin(thetaRad) * 0.4
-      const barP1 = worldToScreen(toeX, straightToeD)
-      const barP2 = worldToScreen(toeX, divToeD)
-
-      ctx.strokeStyle = '#1e293b'
-      ctx.lineWidth = Math.max(1.2, 1.3 * s)
-      ctx.beginPath()
-      ctx.moveTo(barP1[0], barP1[1])
-      ctx.lineTo(barP2[0], barP2[1])
-      ctx.stroke()
-    }
-
-    // ------------------------------------------------------------------
-    // 3. SLIDE CHAIRS (Coussinets de glissement sous les lames)
-    // ------------------------------------------------------------------
-    if (s >= 1.0) {
-      const chairW = Math.max(1.8, 2.2 * s)
-      const chairH = Math.max(2.8, 3.6 * s)
-      ctx.fillStyle = steelBright
-      for (const cx of [8, 14, 20, 26]) {
-        const cpStraight = worldToScreen(cx, side * (hg - 1.2))
-        const cpDiv = worldToScreen(cx, -side * (hg - 1.2) + side * cx * Math.sin(thetaRad) * 0.2)
-        ctx.fillRect(cpStraight[0] - chairW / 2, cpStraight[1] - chairH / 2, chairW, chairH)
-        ctx.fillRect(cpDiv[0] - chairW / 2, cpDiv[1] - chairH / 2, chairW, chairH)
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // 4. FROG V (Coeur d'aiguille)
-    // ------------------------------------------------------------------
-    // The frog is a V-shaped casting at frogDist along the straight track,
-    // on the diverging-side rail (side * hg). The point of the V faces
-    // toward the apex (incoming trains). The two branches follow the
-    // straight and diverging rails downstream.
-    {
-      const frogLen = 14           // length of the frog V branches
-      const frogHalfBase = RAIL_WIDTH * 0.5  // half-width at each branch end
-
-      // Point of the V (sharp nose, facing the apex)
-      const vPoint = worldToScreen(frogDist, side * hg)
-
-      // End of straight branch
-      const strEndT = frogDist + frogLen
-      const strEndD = side * hg
-      const strEnd = worldToScreen(strEndT, strEndD)
-      // Perpendicular offsets at the end of the straight branch
-      const strEndOuter = worldToScreen(strEndT, strEndD + side * frogHalfBase)
-      const strEndInner = worldToScreen(strEndT, strEndD - side * frogHalfBase)
-
-      // End of diverging branch: follows the deviation angle
-      const divEndT = frogDist + frogLen
-      const divEndD = side * (hg + frogLen * Math.sin(thetaRad))
-      const divEnd = worldToScreen(divEndT, divEndD)
-      const divEndOuter = worldToScreen(divEndT, divEndD + side * frogHalfBase)
-      const divEndInner = worldToScreen(divEndT, divEndD - side * frogHalfBase)
-
-      // Draw the frog V as a filled shape:
-      // Point -> straight branch outer edge -> straight branch inner edge -> back to point
-      // -> diverging branch inner edge -> diverging branch outer edge -> back to point
-      ctx.fillStyle = steelDark
-      ctx.strokeStyle = '#1e293b'
-      ctx.lineWidth = Math.max(0.5, 0.6 * s)
-
-      // Straight branch of V
-      ctx.beginPath()
-      ctx.moveTo(vPoint[0], vPoint[1])
-      ctx.lineTo(strEndOuter[0], strEndOuter[1])
-      ctx.lineTo(strEndInner[0], strEndInner[1])
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-
-      // Diverging branch of V
-      ctx.beginPath()
-      ctx.moveTo(vPoint[0], vPoint[1])
-      ctx.lineTo(divEndOuter[0], divEndOuter[1])
-      ctx.lineTo(divEndInner[0], divEndInner[1])
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-
-      // Polished rail head highlight on frog V
-      if (s >= 1.5) {
-        ctx.strokeStyle = '#e2e8f0'
-        ctx.lineWidth = Math.max(0.5, railPx * 0.25)
-        ctx.beginPath()
-        ctx.moveTo(strEnd[0], strEnd[1])
-        ctx.lineTo(vPoint[0], vPoint[1])
-        ctx.lineTo(divEnd[0], divEnd[1])
-        ctx.stroke()
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // 5. GUARD RAILS (Contre-rails) with flared ends
-    // ------------------------------------------------------------------
-    // Guard rails sit on the rail OPPOSITE the frog, guiding wheel flanges.
-    // They are positioned at the same longitudinal range as the frog,
-    // approximately 2x the frog length, with flared (evase) ends.
-    {
-      const guardLen = 28         // total guard rail length (~2x frog length)
-      const guardHalf = guardLen / 2
-      const flareLen = 5          // length of flared section at each end
-      const flareGap = 1.8        // flare opening (mm)
-      const guardGap = 2.2        // gap between guard rail and stock rail center (mm)
-      const guardCenterT = frogDist + 7  // centered longitudinally on the frog region
-
-      // Guard rail on the straight-side rail (opposite to the frog which is on side*hg)
-      const straightGuardD = -side * (hg - guardGap)
-      const flareDirStr = side * flareGap  // flare direction (away from stock rail)
-
-      const sgStart = worldToScreen(guardCenterT - guardHalf, straightGuardD + flareDirStr)
-      const sgFlare1 = worldToScreen(guardCenterT - guardHalf + flareLen, straightGuardD)
-      const sgFlare2 = worldToScreen(guardCenterT + guardHalf - flareLen, straightGuardD)
-      const sgEnd = worldToScreen(guardCenterT + guardHalf, straightGuardD + flareDirStr)
-
-      ctx.strokeStyle = steelDark
-      ctx.lineWidth = railPx
-      ctx.beginPath()
-      ctx.moveTo(sgStart[0], sgStart[1])
-      ctx.lineTo(sgFlare1[0], sgFlare1[1])
-      ctx.lineTo(sgFlare2[0], sgFlare2[1])
-      ctx.lineTo(sgEnd[0], sgEnd[1])
-      ctx.stroke()
-
-      // Guard rail on the diverging-side rail (opposite frog, follows diverging curve)
-      // This rail is on the outer side of the diverging track
-      const divGuardSteps = 12
-      const divGuardPtsOuter: [number, number][] = []
-      for (let i = 0; i <= divGuardSteps; i++) {
-        const frac = i / divGuardSteps
-        const t = guardCenterT - guardHalf + frac * guardLen
-        // Diverging track lateral offset at distance t from apex
-        const divLateralOffset = side * t * Math.sin(thetaRad)
-        const baseD = side * (hg - guardGap) + divLateralOffset * 0.8
-        // Add flare at the ends
-        let flareD = 0
-        if (frac < flareLen / guardLen) {
-          const flareFrac = 1 - frac / (flareLen / guardLen)
-          flareD = -side * flareGap * flareFrac
-        } else if (frac > 1 - flareLen / guardLen) {
-          const flareFrac = (frac - (1 - flareLen / guardLen)) / (flareLen / guardLen)
-          flareD = -side * flareGap * flareFrac
-        }
-        divGuardPtsOuter.push(worldToScreen(t, baseD + flareD))
-      }
-
-      ctx.strokeStyle = steelDark
-      ctx.lineWidth = railPx
-      ctx.beginPath()
-      ctx.moveTo(divGuardPtsOuter[0][0], divGuardPtsOuter[0][1])
-      for (let i = 1; i < divGuardPtsOuter.length; i++) {
-        ctx.lineTo(divGuardPtsOuter[i][0], divGuardPtsOuter[i][1])
-      }
-      ctx.stroke()
-
-      // Spacer blocks (cales d'ecartement) holding guard rails to stock rails
-      if (s >= 1.2) {
-        const blkW = Math.max(1.5, 1.8 * s)
-        const blkH = Math.max(1.5, 1.8 * s)
-        ctx.fillStyle = '#1e293b'
-        for (const dt of [-8, -2, 4, 10]) {
-          const dist = guardCenterT + dt
-          const sb1 = worldToScreen(dist, -side * (hg - 1.1))
-          ctx.fillRect(sb1[0] - blkW / 2, sb1[1] - blkH / 2, blkW, blkH)
-          const divOffset = side * dist * Math.sin(thetaRad) * 0.8
-          const sb2 = worldToScreen(dist, side * (hg - 1.1) + divOffset)
-          ctx.fillRect(sb2[0] - blkW / 2, sb2[1] - blkH / 2, blkW, blkH)
-        }
-      }
-    }
-
-    // ------------------------------------------------------------------
-    // 6. SWITCH MOTOR (Moteur d'aiguille lateral)
-    // ------------------------------------------------------------------
-    {
-      const motorW = 10 * s
-      const motorH = 6 * s
-      const motorPos = worldToScreen(toeX, side * (hg + 7))
-      ctx.fillStyle = '#1e293b'
-      ctx.strokeStyle = '#475569'
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.rect(motorPos[0] - motorW / 2, motorPos[1] - motorH / 2, motorW, motorH)
-      ctx.fill()
-      ctx.stroke()
-
-      // Operating rod (biellette de commande) to the closest blade
-      const rodTarget = worldToScreen(toeX, side * hg + (isStraight ? 0 : -side * BLADE_OPEN_GAP))
-      ctx.strokeStyle = steelDark
-      ctx.lineWidth = Math.max(1.0, 1.2 * s)
-      ctx.beginPath()
-      ctx.moveTo(motorPos[0], motorPos[1])
-      ctx.lineTo(rodTarget[0], rodTarget[1])
-      ctx.stroke()
-    }
-
-    ctx.restore()
   }
 }
 
@@ -2793,8 +2642,9 @@ export function renderDiamondCrossingDetails(
 }
 
 /**
- * Render authentic railway buffer stop (heurtoir de voie à poutre rouge et tampons)
- * on dead-end track endpoints (Layer 4 mechanical details).
+ * Buffer stop (heurtoir) closing a track at a dead-end node: a red beam across the end of the
+ * rails with its two buffers, held by two struts bolted on the rails. Sized from the gauge, with
+ * a minimum on screen so the end of a track still shows when zoomed out.
  */
 export function renderBufferStop(
   ctx: CanvasRenderingContext2D,
@@ -2803,12 +2653,14 @@ export function renderBufferStop(
   net: Network,
   vw: number,
   vh: number,
+  gauge = GAUGE,
 ): void {
   const segId = net.adjacency.get(node.id)?.[0]
   if (!segId) return
   const seg = net.segments.get(segId)
   if (!seg) return
 
+  // Direction in which the track runs off its end
   let forwardDir: Point | null = null
   if (node.id === seg.to) {
     forwardDir = segmentTangentAt(net, seg, seg.to)
@@ -2816,101 +2668,61 @@ export function renderBufferStop(
     const t = segmentTangentAt(net, seg, seg.from)
     if (t) forwardDir = { x: -t.x, y: -t.y }
   }
-
   if (!forwardDir) return
 
   const s = cam.scale
-  const hg = GAUGE / 2
+  const hg = gauge / 2
   const uF = forwardDir
   const uP = { x: -uF.y, y: uF.x }
+  const at = (along: number, across: number): [number, number] =>
+    w2s({ x: node.pos.x + uF.x * along + uP.x * across, y: node.pos.y + uF.y * along + uP.y * across }, cam, vw, vh)
+
+  // Half-width of the beam: a little wider than the track, at least 5 px
+  const beamHalf = Math.max(hg * 1.45, 5 / s)
 
   ctx.save()
 
-  // 1. Concrete / ballast anchor foundation behind the stop
-  if (s >= 1.0) {
-    const moundCenter = { x: node.pos.x + uF.x * 6, y: node.pos.y + uF.y * 6 }
-    const m1 = w2s({ x: moundCenter.x + uP.x * (hg + 3.5), y: moundCenter.y + uP.y * (hg + 3.5) }, cam, vw, vh)
-    const m2 = w2s({ x: moundCenter.x - uP.x * (hg + 3.5), y: moundCenter.y - uP.y * (hg + 3.5) }, cam, vw, vh)
-    const m3 = w2s({ x: moundCenter.x - uP.x * (hg + 2) + uF.x * 5, y: moundCenter.y - uP.y * (hg + 2) + uF.y * 5 }, cam, vw, vh)
-    const m4 = w2s({ x: moundCenter.x + uP.x * (hg + 2) + uF.x * 5, y: moundCenter.y + uP.y * (hg + 2) + uF.y * 5 }, cam, vw, vh)
-
-    ctx.fillStyle = '#94a3b8'
+  // Struts from the rails up to the beam, once there is room to see them
+  if (hg * s >= 3) {
+    const strutLen = gauge * 1.6
+    ctx.strokeStyle = '#334155'
+    ctx.lineWidth = Math.max(1.2, 0.12 * s)
+    ctx.lineCap = 'round'
     ctx.beginPath()
-    ctx.moveTo(m1[0], m1[1])
-    ctx.lineTo(m2[0], m2[1])
-    ctx.lineTo(m3[0], m3[1])
-    ctx.lineTo(m4[0], m4[1])
-    ctx.closePath()
-    ctx.fill()
-    ctx.strokeStyle = '#64748b'
-    ctx.lineWidth = 1
+    for (const side of [1, -1]) {
+      const foot = at(-strutLen, side * hg)
+      const head = at(0, side * hg)
+      ctx.moveTo(foot[0], foot[1])
+      ctx.lineTo(head[0], head[1])
+    }
     ctx.stroke()
   }
 
-  // 2. Heavy diagonal steel brace struts (jambes de force) bolted onto the rails
-  const strutLen = 14
-  const strutRailLeft = w2s({ x: node.pos.x - uF.x * strutLen + uP.x * hg, y: node.pos.y - uF.y * strutLen + uP.y * hg }, cam, vw, vh)
-  const strutRailRight = w2s({ x: node.pos.x - uF.x * strutLen - uP.x * hg, y: node.pos.y - uF.y * strutLen - uP.y * hg }, cam, vw, vh)
-  const strutHeadLeft = w2s({ x: node.pos.x + uF.x * 1.5 + uP.x * hg, y: node.pos.y + uF.y * 1.5 + uP.y * hg }, cam, vw, vh)
-  const strutHeadRight = w2s({ x: node.pos.x + uF.x * 1.5 - uP.x * hg, y: node.pos.y + uF.y * 1.5 - uP.y * hg }, cam, vw, vh)
-
-  ctx.strokeStyle = '#334155'
-  ctx.lineWidth = Math.max(1.8, 2.2 * s)
-  ctx.lineCap = 'square'
-
-  ctx.beginPath()
-  ctx.moveTo(strutRailLeft[0], strutRailLeft[1])
-  ctx.lineTo(strutHeadLeft[0], strutHeadLeft[1])
-  ctx.moveTo(strutRailRight[0], strutRailRight[1])
-  ctx.lineTo(strutHeadRight[0], strutHeadRight[1])
-  // Cross diagonal brace
-  ctx.moveTo(strutRailLeft[0], strutRailLeft[1])
-  ctx.lineTo(strutHeadRight[0], strutHeadRight[1])
-  ctx.stroke()
-
-  // 3. Heavy red buffer crossbeam (traverse rouge de butoir)
-  const beamHalfW = hg + 3.8
-  const beamCenter = { x: node.pos.x + uF.x * 2.0, y: node.pos.y + uF.y * 2.0 }
-  const b1 = w2s({ x: beamCenter.x + uP.x * beamHalfW, y: beamCenter.y + uP.y * beamHalfW }, cam, vw, vh)
-  const b2 = w2s({ x: beamCenter.x - uP.x * beamHalfW, y: beamCenter.y - uP.y * beamHalfW }, cam, vw, vh)
-
+  // Red beam across the end of the track
+  const b1 = at(0, beamHalf)
+  const b2 = at(0, -beamHalf)
   ctx.strokeStyle = '#dc2626'
-  ctx.lineWidth = Math.max(3.0, 4.0 * s)
+  ctx.lineWidth = Math.max(3, 0.3 * s)
   ctx.lineCap = 'butt'
   ctx.beginPath()
   ctx.moveTo(b1[0], b1[1])
   ctx.lineTo(b2[0], b2[1])
   ctx.stroke()
 
-  // 4. White reflective center target (cible blanche réglementaire)
-  const centerScr = w2s(beamCenter, cam, vw, vh)
-  const targetR = Math.max(1.8, 2.4 * s)
-  ctx.fillStyle = '#ffffff'
-  ctx.beginPath()
-  ctx.arc(centerScr[0], centerScr[1], targetR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#dc2626'
-  ctx.lineWidth = 1
-  ctx.stroke()
-
-  // 5. Dual circular buffer pads (tampons de butoir) aligned with each rail
-  const bufLeft = w2s({ x: beamCenter.x + uP.x * hg, y: beamCenter.y + uP.y * hg }, cam, vw, vh)
-  const bufRight = w2s({ x: beamCenter.x - uP.x * hg, y: beamCenter.y - uP.y * hg }, cam, vw, vh)
-  const padR = Math.max(1.5, 2.0 * s)
-
-  ctx.fillStyle = '#0f172a'
-  ctx.strokeStyle = '#475569'
-  ctx.lineWidth = 1
-
-  ctx.beginPath()
-  ctx.arc(bufLeft[0], bufLeft[1], padR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.stroke()
-
-  ctx.beginPath()
-  ctx.arc(bufRight[0], bufRight[1], padR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.stroke()
+  // Buffers facing the track, one in line with each rail
+  if (hg * s >= 3) {
+    const padR = Math.max(1.5, 0.16 * s)
+    ctx.fillStyle = '#0f172a'
+    ctx.strokeStyle = '#f8fafc'
+    ctx.lineWidth = 1
+    for (const side of [1, -1]) {
+      const pad = at(-0.22, side * hg)
+      ctx.beginPath()
+      ctx.arc(pad[0], pad[1], padR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
+  }
 
   ctx.restore()
 }
@@ -2930,17 +2742,70 @@ import {
   type TGVFullTrain,
 } from '@domain/models/locomotive'
 import type { TrainSet, CouplerPoint } from '@domain/models/train'
-import { getTrainSetVisuals, trainDriveTelemetry, MAX_COUPLE_DISTANCE } from '@domain/models/train'
+import { getTrainSetVisuals, MAX_COUPLE_DISTANCE } from '@domain/models/train'
+import { trainDynamics, type DrivingEnvironment } from '@domain/models/trainDynamics'
 
 import type { TrainDebugOptions } from '@application/state/editorStore'
+import { drawTrainMarker, pointsInBounds, vehiclesInBounds } from './lodTrains'
 
 export interface TrainTelemetry {
   speed?: number
   maxSpeed?: number
+  /** What the train is doing: 1 = traction, -1 = braking, 0 = neither */
   throttle?: 1 | 0 | -1
+  /** Legacy locomotive: acceleration (m/s²) while `throttle` is 1 */
   acceleration?: number
+  /** Legacy locomotive: deceleration (m/s²) while `throttle` is -1, also used for its stopping distance */
   braking?: number
+  /** Acceleration the physics really gives, m/s², signed along the motion. Replaces the legacy estimate. */
+  realAcceleration?: number
+  /** Distance (m) the physics needs to stop the train. Replaces the legacy estimate. */
+  stoppingDistance?: number
   debugOptions?: Partial<TrainDebugOptions>
+}
+
+/** Brake cylinder pressure (bar) from which a train is shown as braking */
+const BRAKING_SHOWN_FROM_BAR = 0.05
+
+/** Telemetry of a TrainSet for the debug overlay, read from the physics rather than from the controls */
+export function trainSetTelemetry(net: Network, train: TrainSet, env?: DrivingEnvironment): TrainTelemetry {
+  const dynamics = trainDynamics(net, train, env)
+  return {
+    speed: train.currentSpeed,
+    maxSpeed: train.maxSpeed,
+    throttle: dynamics.brakeCylinderBar > BRAKING_SHOWN_FROM_BAR || dynamics.electricBrakeForce > 0
+      ? -1
+      : dynamics.tractionEffort > 0 ? 1 : 0,
+    realAcceleration: dynamics.acceleration,
+    stoppingDistance: dynamics.stoppingDistance,
+  }
+}
+
+/** Samples along the stopping distance tape (sampleForwardTrack gives up after 150 steps) */
+const STOP_TAPE_SAMPLES = 140
+/** Longest stopping distance tape drawn, m */
+const STOP_TAPE_MAX_LENGTH = 20000
+
+/** Deceleration (m/s²) assumed for the legacy locomotive when it gives none */
+const LEGACY_DEFAULT_BRAKING = 10.0
+
+/**
+ * Acceleration (m/s², signed along the motion) and stopping distance (m) the overlay shows.
+ * A TrainSet brings both from the physics; the legacy locomotive has them rebuilt from its controls.
+ */
+export function telemetryKinematics(telemetry: TrainTelemetry | undefined): { acceleration: number; stoppingDistance: number } {
+  const speed = telemetry?.speed ?? 0
+  const throttle = telemetry?.throttle ?? 0
+  // `||`, not `??`: a braking of 0 would make the stopping distance infinite
+  const braking = telemetry?.braking || LEGACY_DEFAULT_BRAKING
+  const acceleration = telemetry?.realAcceleration
+    ?? (throttle === 1 ? (telemetry?.acceleration ?? 5.5) : throttle === -1 ? -braking : speed > 0.05 ? -0.5 : 0)
+  const stoppingDistance = telemetry?.stoppingDistance ?? (speed * speed) / (2 * braking)
+  return {
+    acceleration: Number.isFinite(acceleration) ? acceleration : 0,
+    // +Infinity is kept: it is the physics saying that the brake does not hold the train on this slope
+    stoppingDistance: Number.isNaN(stoppingDistance) ? 0 : Math.max(stoppingDistance, 0),
+  }
 }
 
 /**
@@ -2969,6 +2834,14 @@ export function renderLocomotive(
   const train = getFullTGVTrain(net, loco)
   if (!train) return
 
+  // Nothing of the consist in view: nothing to draw. The debug overlay reaches far beyond the
+  // train (stopping distance, vectors), so it is never skipped.
+  if (!isDebugSkeleton) {
+    const bounds = getViewportBounds(cam, vw, vh)
+    const bodies = [train.leadLoco, ...train.cars, ...(train.rearLoco ? [train.rearLoco] : [])]
+    if (!bodies.some(body => pointsInBounds(body.polygon, bounds))) return
+  }
+
   ctx.save()
 
   // Convert world points to screen
@@ -2977,6 +2850,18 @@ export function renderLocomotive(
 
   if (isGhost) {
     ctx.globalAlpha = 0.45
+  }
+
+  // Schematic drawing: the consist is a marker of constant size (the caller handles its level)
+  if (!isDebugSkeleton && trackLod(cam.scale, GAUGE) === 'schematic') {
+    drawTrainMarker(
+      ctx, toSx, toSy,
+      train.bogies.map(b => ({ pos: b.center, level: 0 })),
+      trainMarkerStyle(ctx, isSelected && !isGhost, isDeleteHovered && !isGhost),
+      (_level, draw) => draw(),
+    )
+    ctx.restore()
+    return
   }
 
   // Ligne de sélection fine et nette sans aucun effet de glow baveux (désactivé en mode squelette pour clarté)
@@ -4176,22 +4061,17 @@ export function renderTrainDynamicVectors(
     ? leadHeading
     : { x: -leadHeading.x, y: -leadHeading.y }
 
-  const currentAccel = throttle === 1
-    ? (telemetry?.acceleration ?? 5.5)
-    : throttle === -1
-    ? -(telemetry?.braking ?? 10.0)
-    : speedMs > 0.05
-    ? -0.5
-    : 0
+  const { acceleration: currentAccel, stoppingDistance: dStop } = telemetryKinematics(telemetry)
 
   // ─── 1 à 4 : Vecteurs physiques dynamiques (activables/désactivables) ───
   if (showVectors) {
     // 1. Ruban de distance d'arrêt de sécurité projetée (Stopping distance tape)
+    // A real stopping distance runs to kilometres: the sampling step grows with it so that the
+    // tape reaches its end within the number of steps sampleForwardTrack allows
     if (net && leadPos && speedMs > 0.5) {
-      const brakeDecel = telemetry?.braking ?? 10.0
-      const dStop = (speedMs * speedMs) / (2 * brakeDecel)
       if (dStop > 0.8) {
-        const stopPts = sampleForwardTrack(net, leadPos, travelDirection, dStop, 1.0)
+        const tapeLength = Math.min(dStop, STOP_TAPE_MAX_LENGTH)
+        const stopPts = sampleForwardTrack(net, leadPos, travelDirection, tapeLength, Math.max(1.0, tapeLength / STOP_TAPE_SAMPLES))
         if (stopPts.length >= 2) {
           ctx.save()
           // Ruban avertisseur projeté sur les rails
@@ -4231,7 +4111,7 @@ export function renderTrainDynamicVectors(
           ctx.stroke()
 
           // Badge au point d'arrêt
-          const stopBadgeText = `🛑 Arrêt d'urgence : ${dStop.toFixed(1)} m`
+          const stopBadgeText = `🛑 Distance d'arrêt : ${Number.isFinite(dStop) ? `${dStop.toFixed(1)} m` : '∞'}`
           drawVectorBadge(toSx(lastP), toSy(lastP) - 16, stopBadgeText, '#fca5a5', 'rgba(153, 27, 27, 0.92)', fontSize)
           ctx.restore()
         }
@@ -4387,8 +4267,6 @@ export function renderTrainDynamicVectors(
         ctx.lineWidth = Math.max(1.8, 2.5 * Math.sqrt(cam.scale))
         ctx.stroke()
 
-        const brakeDecel = telemetry?.braking ?? 10.0
-        const dStop = (speedMs * speedMs) / (2 * brakeDecel)
         const isCollisionRisk = speedMs > 0.5 && dStop >= totalDist
         const alertText = isCollisionRisk
           ? `🚨 COLLISION HEURTOIR D'ICI ${totalDist.toFixed(1)} m !`
@@ -4578,7 +4456,7 @@ export function renderDrivingRoute(
       ahead.branches.forEach((b, i) => { if (b !== ahead.activeBranch) drawBranch(i, false) })
       drawBranch(ahead.branches.indexOf(ahead.activeBranch), true)
 
-      drawLabel(distanceLabel, cx, cy - discR - 11)
+      drawLabel(ahead.open ? distanceLabel : `Aiguille fermée · ${distanceLabel}`, cx, cy - discR - 11)
     }
   }
 
@@ -4784,8 +4662,44 @@ function drawTrainSetBody(
   ctx.stroke()
 }
 
+/** Shade of the flank of a body: its side wall in shadow, apart from the sky blue of the roof and from the accent of the cant mark */
+export const TRAIN_FLANK_FILL = 'rgba(71, 85, 105, 0.78)'
+const TRAIN_FLANK_GHOST_FILL = 'rgba(71, 85, 105, 0.4)'
+const TRAIN_FLANK_EDGE = 'rgba(100, 116, 139, 0.95)'
+
+/** Flank of a leaning body, seen from above beside its roof: a side wall in shadow */
+function drawTrainSetFlank(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  toSx: (p: Point) => number,
+  toSy: (p: Point) => number,
+  flank: Point[],
+  isGhost = false,
+): void {
+  ctx.beginPath()
+  ctx.moveTo(toSx(flank[0]), toSy(flank[0]))
+  for (let pi = 1; pi < flank.length; pi++) ctx.lineTo(toSx(flank[pi]), toSy(flank[pi]))
+  ctx.closePath()
+  ctx.fillStyle = isGhost ? TRAIN_FLANK_GHOST_FILL : TRAIN_FLANK_FILL
+  ctx.fill()
+  ctx.strokeStyle = TRAIN_FLANK_EDGE
+  ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
+  ctx.stroke()
+}
+
+/** Colours of the marker a train is in the schematic drawing: ink, accent when selected, red under the delete tool */
+function trainMarkerStyle(ctx: CanvasRenderingContext2D, selected: boolean, deleting: boolean): { color: string; halo: string } {
+  const color = deleting
+    ? '#ef4444'
+    : selected ? getCanvasStyle(ctx.canvas, '--accent', '#2563eb') : getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
+  return { color, halo: getCanvasStyle(ctx.canvas, '--paper', '#ffffff') }
+}
+
 /**
  * Render a complete TrainSet from the fleet on the canvas.
+ * With `band`, only what stands on those track levels is drawn (one pass of the layered drawing,
+ * see `renderNetworkWithTrains`); the debug overlay comes with the highest vehicle of the train.
+ * A vehicle below ground (tunnel) is dimmed.
  */
 export function renderTrainSet(
   ctx: CanvasRenderingContext2D,
@@ -4800,8 +4714,18 @@ export function renderTrainSet(
   telemetry?: TrainTelemetry,
   selectedVehicleId?: string | null,
   deleteVehicleId?: string | null,
+  band?: LevelBand,
+  line?: LineSettings,
 ): void {
-  const visuals = getTrainSetVisuals(net, train)
+  // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
+  // beyond the train (stopping distance, vectors), so it is never skipped.
+  const bounds = getViewportBounds(cam, vw, vh)
+  if (!isDebugSkeleton && !vehiclesInBounds(net, train.vehicles, bounds)) return
+  const inView = (points: Point[]): boolean => pointsInBounds(points, bounds)
+  const lod = trackLod(cam.scale, GAUGE)
+
+  // The lean of the bodies only shows close up: further out it is under a pixel, and not asked for
+  const visuals = getTrainSetVisuals(net, train, lod === 'detail' ? line : undefined)
   if (!visuals) return
 
   ctx.save()
@@ -4812,14 +4736,77 @@ export function renderTrainSet(
     ctx.globalAlpha = 0.45
   }
 
+  // Track level of each vehicle, and of the train as a whole (its highest vehicle)
+  const levelById = new Map<string, number>()
+  let topLevel = -Infinity
+  for (const veh of train.vehicles) {
+    const level = vehicleLevel(net, veh)
+    levelById.set(veh.id, level)
+    if (level > topLevel) topLevel = level
+  }
+  const levelOf = (vehicleId: string): number => levelById.get(vehicleId) ?? 0
+  // A gangway hangs between two vehicles: it follows the higher one
+  const gangwayLevel = (index: number): number =>
+    visuals.accordions.length === train.vehicles.length - 1
+      ? Math.max(levelOf(train.vehicles[index].id), levelOf(train.vehicles[index + 1].id))
+      : topLevel
+  /** Draw a part standing on `level`: skipped outside the band of this pass, dimmed in a tunnel */
+  const atLevel = (level: number, draw: () => void): void => {
+    if (!inLevelBand(level, band)) return
+    if (level >= 0) {
+      draw()
+      return
+    }
+    ctx.save()
+    ctx.globalAlpha = (isGhost ? 0.45 : 1) * TUNNEL_VEHICLE_ALPHA
+    draw()
+    ctx.restore()
+  }
+
+  // Schematic drawing: the whole train is a marker of constant size, along its bogies
+  if (lod === 'schematic') {
+    drawTrainMarker(
+      ctx, toSx, toSy,
+      visuals.bogies.map(b => ({ pos: b.center, level: b.pos ? trackPositionLevel(net, b.pos) : topLevel })),
+      trainMarkerStyle(ctx, isSelected && !isGhost, !!deleteVehicleId && !isGhost),
+      atLevel,
+    )
+  }
+
+  /**
+   * Highlights of the leaning vehicles, drawn once the bodies are: under them, as the highlight of
+   * an upright vehicle is, they would be hidden by the flank
+   */
+  const overBodies: (() => void)[] = []
+  const strokeOutline = (outline: Point[], color: string, width: number): void => {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(toSx(outline[0]), toSy(outline[0]))
+    for (let pi = 1; pi < outline.length; pi++) {
+      ctx.lineTo(toSx(outline[pi]), toSy(outline[pi]))
+    }
+    ctx.closePath()
+    ctx.stroke()
+    ctx.restore()
+  }
+
   // Selection outline for entire train
-  if (isSelected && !isGhost && !isDebugSkeleton) {
+  if (isSelected && !isGhost && !isDebugSkeleton && lod !== 'schematic') {
     ctx.save()
     ctx.strokeStyle = '#38bdf8'
     ctx.lineWidth = 1.5
     ctx.lineJoin = 'round'
     for (const v of visuals.vehicles) {
-      if (v.polygon.length > 0) {
+      if (inView(v.polygon) && inLevelBand(levelOf(v.id), band)) {
+        // Round what is drawn: the roof and the flank of a leaning body, else the footprint
+        const drawn = v.drawn
+        if (drawn) {
+          overBodies.push(() => strokeOutline(drawn, '#38bdf8', 1.5))
+          continue
+        }
         ctx.beginPath()
         ctx.moveTo(toSx(v.polygon[0]), toSy(v.polygon[0]))
         for (let pi = 1; pi < v.polygon.length; pi++) {
@@ -4833,9 +4820,12 @@ export function renderTrainSet(
   }
 
   // Targeted vehicle highlight (when a specific car or loco in the train is selected)
-  if (selectedVehicleId && !isGhost) {
+  if (selectedVehicleId && !isGhost && lod !== 'schematic') {
     const selV = visuals.vehicles.find(v => v.id === selectedVehicleId)
-    if (selV && selV.polygon.length > 0) {
+    const drawn = selV?.drawn
+    if (selV && drawn && inView(selV.polygon) && inLevelBand(levelOf(selV.id), band)) {
+      overBodies.push(() => strokeOutline(drawn, '#f59e0b', 2.5))
+    } else if (selV && inView(selV.polygon) && inLevelBand(levelOf(selV.id), band)) {
       ctx.save()
       ctx.strokeStyle = '#f59e0b'
       ctx.lineWidth = 2.5
@@ -4852,24 +4842,44 @@ export function renderTrainSet(
   }
 
   // 1. Bogies: each physical bogie once (two trailers share one), the first is the lead bogie
+  // A bogie is at the level of its own rail
+  // Bogies and gangways are close-up detail: below it a vehicle is its plain silhouette
   for (let i = 0; i < visuals.bogies.length; i++) {
-    drawTrainSetBogie(ctx, cam, toSx, toSy, visuals.bogies[i], i === 0, isGhost)
+    const bogie = visuals.bogies[i]
+    if (lod !== 'detail' || !inView(bogie.polygon)) continue
+    atLevel(bogie.pos ? trackPositionLevel(net, bogie.pos) : topLevel, () => {
+      drawTrainSetBogie(ctx, cam, toSx, toSy, bogie, i === 0, isGhost)
+    })
   }
 
   // 2. Accordions
-  for (const acc of visuals.accordions) {
-    drawTrainSetAccordion(ctx, cam, toSx, toSy, acc, isGhost)
+  for (let i = 0; i < visuals.accordions.length; i++) {
+    const acc = visuals.accordions[i]
+    if (lod !== 'detail' || !inView([...acc.frontFrame, ...acc.rearFrame])) continue
+    atLevel(gangwayLevel(i), () => {
+      drawTrainSetAccordion(ctx, cam, toSx, toSy, visuals.accordions[i], isGhost)
+    })
   }
 
   // 3. Vehicles
   for (const v of visuals.vehicles) {
-    drawTrainSetBody(ctx, cam, toSx, toSy, v.polygon, isDebugSkeleton, telemetry)
+    if (lod === 'schematic' || !inView(v.polygon)) continue
+    atLevel(levelOf(v.id), () => {
+      // A leaning body: the flank it shows first, then its roof in place of the footprint
+      // A body lying on its side shows nothing but its flank: its whole silhouette in that shade
+      if (v.roof && v.lying) drawTrainSetFlank(ctx, cam, toSx, toSy, v.roof, isGhost)
+      else if (v.roof && v.flank && v.flank.length > 0) drawTrainSetFlank(ctx, cam, toSx, toSy, v.flank, isGhost)
+      if (!v.lying) drawTrainSetBody(ctx, cam, toSx, toSy, v.roof ?? v.polygon, isDebugSkeleton, telemetry)
+    })
   }
 
+  // The whole train first, the picked vehicle over it: the order they have under upright bodies
+  for (const draw of overBodies) draw()
+
   // 3.5 Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
-  if (deleteVehicleId && !isGhost) {
+  if (deleteVehicleId && !isGhost && lod !== 'schematic') {
     const delV = visuals.vehicles.find(v => v.id === deleteVehicleId)
-    if (delV && delV.polygon.length > 0) {
+    if (delV && inView(delV.polygon) && inLevelBand(levelOf(delV.id), band)) {
       ctx.save()
       ctx.shadowColor = 'rgba(239, 68, 68, 0.85)'
       ctx.shadowBlur = 10
@@ -4877,10 +4887,11 @@ export function renderTrainSet(
       ctx.lineWidth = 3
       ctx.lineJoin = 'round'
       ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
+      const outline = delV.drawn ?? delV.polygon
       ctx.beginPath()
-      ctx.moveTo(toSx(delV.polygon[0]), toSy(delV.polygon[0]))
-      for (let pi = 1; pi < delV.polygon.length; pi++) {
-        ctx.lineTo(toSx(delV.polygon[pi]), toSy(delV.polygon[pi]))
+      ctx.moveTo(toSx(outline[0]), toSy(outline[0]))
+      for (let pi = 1; pi < outline.length; pi++) {
+        ctx.lineTo(toSx(outline[pi]), toSy(outline[pi]))
       }
       ctx.closePath()
       ctx.fill()
@@ -4915,7 +4926,7 @@ export function renderTrainSet(
   }
 
   // 4. Debug skeleton
-  if (isDebugSkeleton) {
+  if (isDebugSkeleton && inLevelBand(topLevel, band)) {
     ctx.save()
     const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
     ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
@@ -4983,11 +4994,7 @@ export function renderTrainSet(
       leadNosePt,
       leadHeading,
       train.direction,
-      telemetry ?? {
-        speed: train.currentSpeed,
-        maxSpeed: train.maxSpeed,
-        ...trainDriveTelemetry(train),
-      },
+      telemetry ?? trainSetTelemetry(net, train),
       leadPos,
     )
   }

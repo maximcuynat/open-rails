@@ -241,8 +241,46 @@ kbd {
   text-align: left;
 }
 
-.menu-item:hover:not(.disabled) {
+.menu-row {
+  position: relative;
+}
+
+/* Hover and arrow keys move the same highlight */
+.menu-item.active {
   background: var(--panel-2);
+}
+
+.menu-item-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  margin-right: -8px;
+  color: var(--accent);
+}
+
+.menu-item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.menu-item-shortcut {
+  font-family: inherit;
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.menu-item-arrow {
+  flex: none;
+  opacity: 0.6;
+}
+
+.menu-submenu {
+  top: -5px;
+  left: 100%;
+  margin-top: 0;
+  margin-left: 2px;
+  min-width: 170px;
 }
 
 .menu-item.disabled {
@@ -280,23 +318,28 @@ kbd {
   background: var(--panel-2);
 }
 
-.tb-version {
-  padding: 3px 6px;
-  border: none;
+.tb-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
+  background: var(--panel);
   color: var(--ink);
+  font-family: inherit;
   font-size: 11px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.7;
-  text-decoration: none;
+  cursor: pointer;
 }
 
-.tb-version:hover {
+.tb-scale:hover {
   background: var(--panel-2);
-  opacity: 1;
+}
+
+.tb-scale-board {
+  opacity: 0.75;
+  font-weight: 400;
 }
 
 .about-body {
@@ -313,6 +356,209 @@ kbd {
 
 .about-body a {
   color: var(--accent);
+}
+
+/* --- Pairing window of the phone desk --- */
+.modal-dialog.remote-dialog {
+  max-width: 600px;
+}
+
+.remote-pairing {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.remote-pairing p {
+  margin: 0;
+}
+
+.remote-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+}
+
+.remote-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #f5a524;
+}
+
+.remote-status.is-connected .remote-status-dot { background: #2fc46a; }
+.remote-status.is-error .remote-status-dot { background: var(--danger); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .remote-status.is-waiting .remote-status-dot { animation: remote-pulse 1.4s ease-in-out infinite; }
+}
+
+@keyframes remote-pulse {
+  50% { opacity: 0.35; }
+}
+
+.remote-status-detail {
+  flex-basis: 100%;
+  opacity: 0.8;
+}
+
+.remote-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+/* Always black on white: a reader needs the contrast whatever the theme */
+.remote-qr {
+  flex: none;
+  width: 212px;
+  height: 212px;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.remote-qr.is-empty {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  color: #1a1a1a;
+  border: 1px solid var(--border);
+}
+
+.remote-side {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.remote-step {
+  padding-bottom: 6px;
+}
+
+.remote-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.remote-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1.2;
+  user-select: all;
+}
+
+.remote-url-row {
+  display: flex;
+  gap: 6px;
+}
+
+.remote-url,
+.remote-host-input {
+  min-width: 0;
+  padding: 6px 8px;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.remote-url {
+  flex: 1;
+}
+
+.remote-url:focus,
+.remote-host-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.remote-host {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.remote-host-input {
+  max-width: 260px;
+}
+
+.remote-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.remote-choice {
+  padding: 2px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.remote-choice:hover,
+.remote-choice.is-active {
+  border-color: var(--accent);
+}
+
+.remote-hint {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.remote-hint.is-warning {
+  opacity: 1;
+  color: var(--danger);
+}
+
+.remote-help {
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.remote-help summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.remote-help p,
+.remote-help ul {
+  margin: 8px 0 0;
+}
+
+.remote-help ul {
+  padding-left: 18px;
+}
+
+.remote-help code {
+  padding: 1px 4px;
+  font-size: 11px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
 }
 
 /* ===== ToolBar Islands (Floating vertical pills, left) ===== */
@@ -451,6 +697,39 @@ kbd {
 .tb-back-btn {
   border-color: var(--border);
   background: var(--panel-2);
+}
+
+/* Signalling mode, pro level: a panel of its own, told apart by its edging and its badge */
+.toolbar-signal-pro {
+  border-color: #b45309;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), inset 0 3px 0 #f59e0b;
+}
+
+.tb-level-badge {
+  width: 100%;
+  margin-bottom: 3px;
+  padding: 2px 0;
+  border-radius: 5px;
+  background: #f59e0b;
+  color: #111827;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  user-select: none;
+}
+
+.toolbar-signal-pro .tb-train-btn.active:not(.tb-display-btn) {
+  background: #f59e0b;
+  border-color: #b45309;
+  color: #111827;
+}
+
+/* Display toggles of the signalling mode: lighter than a tool in hand */
+.tb-train-btn.tb-display-btn.active {
+  background: var(--panel-2);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .tb-back-btn:hover {
@@ -595,6 +874,13 @@ kbd {
 
 .canvas-wrap canvas.tool-select {
   cursor: default;
+}
+
+.canvas-wrap canvas.tool-signal.signal-speedZone,
+.canvas-wrap canvas.tool-signal.signal-blockSignal,
+.canvas-wrap canvas.tool-signal.signal-pathSignal,
+.canvas-wrap canvas.tool-signal.signal-cabMarker {
+  cursor: crosshair;
 }
 
 .canvas-wrap canvas.tool-pan {
@@ -859,6 +1145,8 @@ kbd {
 }
 
 .cb-label {
+  /* Room for « 12 nœuds »: going from one selection to the next does not shift the buttons */
+  min-width: 58px;
   padding: 0 6px;
   font-weight: 700;
   white-space: nowrap;
@@ -873,7 +1161,49 @@ kbd {
   border-radius: 6px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  /* Its min-width is ratcheted up by ContextBar: the text stays put inside the wider slot */
+  box-sizing: border-box;
+  white-space: nowrap;
 }
+
+/* Two buttons around a value in a slot of constant width: they never move between clicks */
+.cb-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+}
+
+.cb-btn.cb-step {
+  width: 26px;
+  padding: 4px 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-step-value {
+  box-sizing: border-box;
+  width: 78px;
+  padding: 3px 4px;
+  background: var(--panel-2);
+  border-radius: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* The stepper value as a pick list: same slot, same width, so the buttons still do not move */
+select.cb-step-select {
+  width: 92px;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align-last: center;
+  cursor: pointer;
+}
+
 
 .cb-value.cb-accent {
   color: var(--accent);
@@ -955,7 +1285,8 @@ kbd {
 
 .minimap {
   position: absolute;
-  bottom: 12px;
+  /* Lifted above the driving console when one runs along the bottom */
+  bottom: calc(12px + var(--minimap-lift, 0px));
   left: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1469,6 +1800,18 @@ kbd {
   font-size: var(--font-size-sm);
 }
 
+.shortcuts-section {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.shortcuts-note {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  opacity: 0.8;
+}
+
 .shortcut-kbd {
   display: inline-block;
   padding: 2px 6px;
@@ -1898,4 +2241,1168 @@ kbd {
 .ctx-danger:hover:not(:disabled) {
   background: var(--panel-2);
   color: var(--danger);
+}
+
+/* ===== HUD dock (debug panel, above or beside the driving console; alone in the corner in the editor) ===== */
+.hud-dock {
+  position: absolute;
+  right: var(--dock-right, 12px);
+  bottom: var(--dock-bottom, 12px);
+  width: 220px; /* DEBUG_PANEL.width in consoleLayout.ts */
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  z-index: var(--z-driving);
+}
+
+.debug-panel {
+  flex-shrink: 0;
+  padding: var(--space-1);
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  user-select: none;
+}
+
+.debug-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 2px 2px var(--space-2);
+  margin-bottom: 2px;
+}
+
+.debug-panel-title {
+  margin-right: auto;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
+.debug-panel-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.debug-panel-close:hover {
+  background: var(--panel-2);
+  opacity: 1;
+}
+
+.debug-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  color: var(--ink);
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.debug-row:hover {
+  background: var(--panel-2);
+}
+
+.debug-row:focus-visible,
+.debug-panel-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.debug-row-label {
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+}
+
+.debug-row[aria-checked='true'] .debug-row-label {
+  opacity: 1;
+}
+
+.debug-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.debug-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  background: var(--ink);
+  border-radius: var(--radius-full);
+  opacity: 0.45;
+  transition: transform var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
+}
+
+.debug-row[aria-checked='true'] .debug-switch {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.debug-row[aria-checked='true'] .debug-switch::after {
+  transform: translateX(12px);
+  background: var(--accent-fg);
+  opacity: 1;
+}
+
+/* ===== Driving console =====
+ * Three layouts (band, on-board screen, levers) built from the same instruments. A console fills
+ * the positioned element it is put in and is scaled as a whole by --console-scale. It keeps one
+ * dark look in both themes, like a real desk.
+ */
+.console-stage {
+  --hud: #0c1220;
+  --hud-2: #161e30;
+  --hud-line: #2a3550;
+  --hud-fg: #f4f6fa;
+  --hud-dim: #93a0b8;
+  --hud-blue: #38bdf8;
+  --hud-green: #2fc46a;
+  --hud-amber: #f5a524;
+  --hud-red: #ef4444;
+  --hud-violet: #a78bfa;
+  --dmi: #031122;
+  --dmi-line: #0b2742;
+  --dmi-grey: #c3c3c3;
+  --dmi-dark: #555b66;
+  --console-mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, Consolas, monospace;
+  --tone: var(--hud-dim);
+
+  position: absolute;
+  inset: 0;
+  padding: 12px; /* CONSOLE_MARGIN in consoleLayout.ts */
+  zoom: var(--console-scale, 1);
+  z-index: var(--z-driving);
+  /* Only the console itself takes the pointer: the canvas stays reachable around it */
+  pointer-events: none;
+  color: var(--hud-fg);
+  font-family: var(--font-family);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  user-select: none;
+}
+
+.console-stage > * {
+  pointer-events: auto;
+}
+
+:where(.console-stage) button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.console-stage button:disabled {
+  cursor: not-allowed;
+}
+
+.console-stage button:focus-visible {
+  outline: 2px solid var(--hud-blue);
+  outline-offset: 1px;
+}
+
+/* Tones: one custom property, read by fills, strokes, pills and buttons alike */
+.console-stage .tone-blue { --tone: var(--hud-blue); }
+.console-stage .tone-green, .console-stage .tone-released, .console-stage .side-traction { --tone: var(--hud-green); }
+.console-stage .tone-amber, .console-stage .tone-releasing, .console-stage .tone-applying, .console-stage .side-brake { --tone: var(--hud-amber); }
+.console-stage .tone-red, .console-stage .tone-applied, .console-stage .tone-emergency { --tone: var(--hud-red); }
+.console-stage .tone-grey { --tone: var(--dmi-grey); }
+.console-stage .tone-track { --tone: var(--hud-line); }
+.console-stage .side-neutral { --tone: var(--hud-dim); }
+
+.console-key {
+  display: inline-block;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-family: var(--console-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  color: var(--hud-fg);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.console-lbl {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--hud-dim);
+}
+
+/* --- Instruments (SVG) --- */
+.console-stage svg text {
+  font-family: var(--font-family);
+}
+
+.console-track { fill: none; stroke: var(--hud-line); stroke-linecap: round; }
+.console-arc { fill: none; stroke: var(--tone); stroke-linecap: round; }
+.console-fill { fill: var(--tone); }
+.console-mark { stroke: var(--hud-fg); stroke-width: 1.5; }
+.console-tick { stroke: var(--hud-dim); stroke-width: 1.5; }
+.console-tick.is-thin { stroke-width: 1; }
+.console-tick-label { font-size: 11px; font-weight: 600; fill: var(--hud-dim); }
+.console-dial-max { fill: var(--hud-red); }
+.console-gauge-value { font-size: 19px; font-weight: 800; fill: var(--hud-fg); }
+.console-gauge-name { font-size: 10px; font-weight: 700; fill: var(--hud-dim); }
+.console-tape-label { font-size: 10px; font-weight: 600; fill: var(--hud-dim); }
+
+.console-round-track { fill: none; stroke: var(--dmi-dark); stroke-width: 7; }
+.console-round-arc { fill: none; stroke: var(--dmi-grey); stroke-width: 7; }
+.console-round-tick { stroke: #fff; stroke-width: 1; }
+.console-round-tick.is-major { stroke-width: 2; }
+.console-round-label { font-size: 15px; font-weight: 600; fill: #fff; }
+.console-round-unit { font-size: 13px; font-weight: 600; fill: var(--dmi-grey); }
+.console-needle { fill: var(--dmi-grey); transform-box: view-box; transform-origin: 150px 150px; }
+.console-hub { fill: var(--dmi-grey); }
+.console-hub-value { font-size: 31px; font-weight: 800; fill: var(--dmi); }
+.console-vbar-frame { fill: none; stroke: var(--dmi-dark); stroke-width: 1; }
+.console-vbar-mark { stroke: #fff; stroke-width: 1.5; }
+.console-distbar-mark { stroke: var(--dmi-grey); stroke-width: 1; }
+
+/* --- Speed limits: colour of the speed, marks on its scale, boards, curve warning, derailment --- */
+/* White in normal running, yellow when a lower limit ahead is still exceeded, orange within
+   10 km/h under the limit in force, red above it */
+.console-stage .speed-normal { --tone: var(--hud-fg); color: var(--hud-fg); }
+.console-stage .speed-ahead { --tone: #facc15; color: #facc15; }
+.console-stage .speed-near { --tone: #fb923c; color: #fb923c; }
+.console-stage .speed-over { --tone: var(--hud-red); color: var(--hud-red); }
+
+/* The on-board screen keeps its grey needle in normal running */
+.console-round-dial:not(.speed-normal) .console-round-arc { stroke: var(--tone); }
+.console-round-dial:not(.speed-normal) :is(.console-needle, .console-hub) { fill: var(--tone); }
+
+/* Solid mark: limit in force. Hollow mark: next lower limit */
+.console-limit-mark { fill: var(--hud-fg); stroke: var(--hud); stroke-width: 1.5; }
+.console-limit-mark.is-next { fill: var(--hud); stroke: var(--hud-fg); stroke-width: 2; }
+.console-round-dial .console-limit-mark { fill: #fff; stroke: var(--dmi); }
+.console-round-dial .console-limit-mark.is-next { fill: var(--dmi); stroke: #fff; }
+
+/* The boards of the real signs: the limit in force white on black, its announcement black on white */
+.console-limit {
+  display: inline-block;
+  min-width: 30px;
+  padding: 0 5px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 17px;
+  text-align: center;
+  vertical-align: middle;
+  color: #fff;
+  background: #000;
+  border: 1.5px solid #fff;
+  border-radius: 3px;
+}
+
+.console-limit.is-next {
+  color: #000;
+  background: #fff;
+  border-color: #000;
+  box-shadow: 0 0 0 1px #fff;
+}
+
+/* The two boards in the bottom corners of a dial (band and on-board screen) */
+.console-corner-limit {
+  position: absolute;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: var(--hud-dim);
+}
+
+.console-corner-limit small { font-size: inherit; letter-spacing: 0.04em; text-transform: uppercase; }
+.console-corner-limit.is-current { left: 14px; align-items: flex-start; }
+.console-corner-limit.is-next { right: 14px; align-items: flex-end; }
+.console-corner-limit.is-next small { color: var(--hud-fg); text-transform: none; }
+.console-screen-dial .console-corner-limit { bottom: 6px; color: var(--dmi-grey); }
+.console-screen-dial .console-corner-limit.is-current { left: 8px; }
+.console-screen-dial .console-corner-limit.is-next { right: 8px; }
+
+.console-limit-distance {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.console-stage .console-curve { font-weight: 800; }
+.console-stage .curve-discomfort { color: #fb923c; fill: #fb923c; }
+.console-stage .curve-danger { color: var(--hud-red); fill: var(--hud-red); }
+
+.console-stage-alert {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.console-derail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, 92%);
+  margin-bottom: 12vh;
+  padding: 16px 22px;
+  text-align: center;
+  background: var(--hud);
+  border: 2px solid var(--hud-red);
+  border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+}
+
+.console-derail b { font-size: 17px; font-weight: 800; }
+.console-derail > span { font-size: 13px; color: var(--hud-dim); }
+.console-derail .console-btn { justify-content: center; padding: 9px 16px; }
+
+.console-icon {
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- Controls shared by the layouts --- */
+.console-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(12, 18, 32, 0.9);
+  border: 1px solid var(--hud-line);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+.console-tools.is-inline {
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.console-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: var(--hud-dim);
+}
+
+.console-stage .console-tool { color: var(--hud-dim); }
+.console-stage .console-tool:hover { color: var(--hud-fg); background: rgba(255, 255, 255, 0.14); }
+.console-stage .console-tool.is-active { color: var(--hud-blue); border-color: var(--hud-blue); }
+.console-stage .console-tool.is-danger { color: var(--hud-red); border-color: rgba(239, 68, 68, 0.45); }
+
+/* In the title row of the on-board screen there is no room for key caps: the tooltips name the keys */
+.console-tools.is-inline .console-tool { height: 22px; min-width: 24px; }
+.console-tools.is-inline .console-key { display: none; }
+
+.console-tools-rank {
+  padding: 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--hud-blue);
+}
+
+.console-stage .console-tool:disabled { opacity: 0.4; }
+.console-stage .console-tool:disabled:hover { color: var(--hud-dim); background: rgba(255, 255, 255, 0.06); }
+
+/* Distance to the turnout the two steering buttons throw */
+.console-tools-turnout {
+  min-width: 34px;
+  padding: 0 1px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--hud-dim);
+}
+
+.console-tools-turnout.is-locked { color: var(--hud-amber); }
+
+/* A phone holds the controls too: shown among the tools, with the way to cut it off */
+.console-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 3px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--hud-green);
+  border: 1px solid color-mix(in srgb, var(--hud-green) 55%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hud-green) 12%, transparent);
+}
+
+.console-link-cut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--hud-dim);
+}
+
+.console-stage .console-link-cut:hover { color: var(--hud-red); background: rgba(255, 255, 255, 0.12); }
+.console-link-cut .console-icon { width: 10px; height: 10px; }
+
+.console-tools.is-inline .console-link { height: 22px; }
+.console-tools.is-inline .console-link-text { display: none; }
+
+.console-tools-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--hud-line);
+}
+
+.console-rev-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.console-rev {
+  display: flex;
+  border: 1px solid var(--hud-line);
+  border-radius: 7px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.console-rev.is-needed {
+  border-color: var(--hud-amber);
+  box-shadow: 0 0 0 2px rgba(245, 165, 36, 0.3);
+}
+
+.console-rev button {
+  padding: 3px 14px;
+  background: none;
+  border: none;
+}
+
+.console-stage .console-rev button { color: var(--hud-dim); }
+.console-stage .console-rev button:disabled { opacity: 0.45; }
+.console-stage .console-rev button.is-on { background: rgba(167, 139, 250, 0.3); color: #efeaff; }
+
+.console-flip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--hud-2);
+  border: 1px solid var(--hud-line);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.console-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid var(--tone);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--tone) 13%, transparent);
+}
+
+.console-stage .console-btn { color: var(--tone); }
+.console-stage .console-btn.tone-red { color: #fff; background: rgba(239, 68, 68, 0.28); justify-content: center; }
+.console-stage .console-btn.is-active { color: #06101f; background: var(--tone); }
+.console-stage .console-btn.tone-red.is-active { color: #fff; }
+.console-stage .console-btn:disabled { opacity: 0.45; }
+
+.console-hold-button {
+  /* Held with a finger: no scroll, no long-press menu */
+  touch-action: none;
+}
+
+/* Stopped with the brake on: the release button calls for attention */
+.console-stage .is-hinted:not(:disabled):not(.is-active) {
+  animation: console-hint 1.4s ease-in-out infinite;
+}
+
+@keyframes console-hint {
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--hud-green) 45%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-stage .is-hinted:not(:disabled):not(.is-active) {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--hud-green) 45%, transparent);
+  }
+}
+
+.console-pill {
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  color: var(--tone);
+  border: 1px solid var(--tone);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+}
+
+.console-note {
+  font-size: 12px;
+  color: var(--hud-dim);
+}
+
+/* --- A: band along the bottom --- */
+.console-stage-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.console-band {
+  flex: none;
+  width: min(980px, 100%);
+  height: 176px;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr) 290px;
+  background: var(--hud);
+  border: 1px solid var(--hud-line);
+  border-radius: 14px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+}
+
+.console-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 16px;
+}
+
+.console-zone + .console-zone {
+  border-left: 1px solid var(--hud-line);
+}
+
+.console-zhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.console-handle-value {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.console-gauges {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+}
+
+.console-gauge {
+  flex: none;
+  width: 100px;
+  height: 64px;
+}
+
+.console-hold {
+  display: flex;
+  gap: 8px;
+}
+
+.console-hold .console-btn {
+  flex: 1;
+  padding: 5px 9px;
+}
+
+.console-mid .console-flip {
+  align-self: center;
+}
+
+.console-mid {
+  position: relative;
+  align-items: center;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.console-half-dial {
+  flex: none;
+  width: 300px;
+  height: 118px;
+}
+
+.console-speed {
+  position: absolute;
+  top: 46px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 54px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  pointer-events: none;
+}
+
+.console-speed small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--hud-dim);
+}
+
+.console-side {
+  position: absolute;
+  top: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--hud-dim);
+  white-space: nowrap;
+}
+
+.console-side.is-left { left: 16px; }
+.console-side.is-right { right: 16px; text-align: right; }
+
+.console-side b {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--hud-fg);
+}
+
+.console-notches {
+  display: grid;
+  gap: 3px;
+}
+
+.console-notch {
+  padding: 9px 0;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.5;
+  background: var(--hud-2);
+  border: 1px solid var(--hud-line);
+  border-radius: 5px;
+}
+
+.console-stage .console-notch { color: var(--hud-dim); }
+.console-stage .console-notch:hover { border-color: var(--tone); }
+
+.console-stage .console-notch.is-fill {
+  color: var(--hud-fg);
+  background: color-mix(in srgb, var(--tone) 30%, transparent);
+  border-color: color-mix(in srgb, var(--tone) 50%, transparent);
+}
+
+.console-stage .console-notch.is-on {
+  color: #06101f;
+  background: var(--tone);
+  border-color: var(--tone);
+}
+
+.console-stage .console-notch.side-neutral.is-on {
+  background: var(--hud-fg);
+  border-color: var(--hud-fg);
+}
+
+.console-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--hud-2);
+  overflow: hidden;
+}
+
+.console-bar i {
+  display: block;
+  width: var(--console-effort, 0%);
+  height: 100%;
+  border-radius: 4px;
+  background: var(--tone);
+}
+
+.console-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--hud-dim);
+}
+
+.console-row b {
+  color: var(--hud-fg);
+}
+
+.console-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 31px;
+  padding: 0 7px;
+  font-size: 16px;
+  font-weight: 800;
+  background: var(--hud-2);
+  border: 1px solid var(--hud-line);
+  border-radius: 7px;
+}
+
+.console-stage .console-step:hover { border-color: var(--hud-dim); }
+
+.console-emergency {
+  margin-left: auto;
+  padding: 6px 10px;
+}
+
+/* --- B: on-board screen in the corner --- */
+.console-screen {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 470px;
+  height: 468px;
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) 96px;
+  grid-template-rows: 30px minmax(0, 1fr) 62px 54px;
+  color: var(--dmi-grey);
+  background: var(--dmi);
+  border: 1px solid #1c3555;
+  border-radius: 6px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+}
+
+.console-screen > div {
+  border: 1px solid var(--dmi-line);
+  min-width: 0;
+  min-height: 0;
+}
+
+.console-screen-top {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.console-screen-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-screen-dist {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.console-distbar {
+  flex: 1;
+  width: 46px;
+  min-height: 0;
+}
+
+.console-screen-dist b {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.console-screen-dial {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.console-round-dial {
+  width: 300px;
+  height: 300px;
+}
+
+.console-screen-press {
+  display: flex;
+  gap: 6px;
+  padding: 8px 8px 6px;
+}
+
+.console-screen-press > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-height: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.console-vbar {
+  flex: 1;
+  width: 34px;
+  min-height: 0;
+}
+
+.console-screen-press b {
+  font-size: 15px;
+  color: #fff;
+}
+
+.console-screen-info {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.console-screen-info > div {
+  padding: 7px 10px;
+  border-right: 1px solid var(--dmi-line);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.console-screen-info b {
+  display: block;
+  font-size: 19px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #fff;
+}
+
+.console-screen-info b[class*='tone-'] {
+  color: var(--tone);
+}
+
+.console-screen-keys {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1.4fr 0.85fr 0.85fr 1.1fr 1fr 1fr;
+  gap: 5px;
+  padding: 8px;
+}
+
+.console-screen-keys.is-legacy {
+  grid-template-columns: 1.5fr 1fr 1fr 3fr;
+}
+
+.console-soft {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  background: #0a2238;
+  border: 1px solid var(--dmi-dark);
+  border-radius: 3px;
+}
+
+.console-stage .console-soft { color: #fff; }
+.console-stage button.console-soft:hover { border-color: var(--dmi-grey); }
+.console-stage .console-soft.is-active { background: var(--dmi-grey); color: var(--dmi); }
+.console-stage .console-soft:disabled { opacity: 0.45; }
+
+.console-soft small,
+.console-soft .console-key {
+  min-height: 12px;
+  padding: 0;
+  font-family: var(--console-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 12px;
+  color: var(--dmi-grey);
+  background: none;
+  border: none;
+}
+
+.console-stage .console-soft.is-active .console-key { color: var(--dmi); }
+.console-stage .console-soft.is-red { background: #7d0a0c; border-color: #bf0002; }
+.console-stage .console-soft.is-red.is-active { background: #bf0002; color: #fff; }
+
+.console-soft-rev {
+  overflow: hidden;
+}
+
+.console-soft-rev .console-rev {
+  align-self: stretch;
+  flex: 1;
+  border: none;
+  border-radius: 0;
+}
+
+.console-soft-rev .console-rev button {
+  flex: 1;
+  padding: 0;
+}
+
+.console-stage .console-soft-rev .console-rev button { color: var(--dmi-grey); }
+.console-stage .console-soft-rev .console-rev button.is-on { background: var(--dmi-grey); color: var(--dmi); }
+.console-soft-rev .console-rev.is-needed { box-shadow: inset 0 0 0 2px var(--hud-amber); }
+
+/* --- C: two levers, speed as a number --- */
+.console-stage-levers {
+  display: grid;
+  /* The speed block is centred in the window while there is room, then slides left of the levers */
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(max-content, 1fr);
+  align-items: end;
+  gap: 12px;
+}
+
+.console-levers-main {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.console-speedblock {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  max-width: 100%;
+  padding: 10px 22px 12px;
+  background: rgba(12, 18, 32, 0.9);
+  border: 1px solid var(--hud-line);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.console-speedblock-num {
+  flex: none;
+  min-width: 108px;
+}
+
+.console-speedblock-value {
+  font-size: 60px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.console-speedblock-unit {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--hud-dim);
+  white-space: nowrap;
+}
+
+.console-speedblock-tape {
+  flex: 0 1 250px;
+  min-width: 184px; /* the reverser with its two key caps */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.console-tape {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.console-stats {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 1px 12px;
+  font-size: 13px;
+  color: var(--hud-dim);
+  white-space: nowrap;
+}
+
+.console-stats b {
+  text-align: right;
+  color: var(--hud-fg);
+}
+
+.console-levers {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.console-lever-box {
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  background: rgba(12, 18, 32, 0.9);
+  border: 1px solid var(--hud-line);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.console-lever-box.is-wide {
+  width: 136px;
+}
+
+/* « Frein élec. » has to fit the narrow box on one line */
+.console-lever-box .console-lbl {
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.console-lever {
+  width: 80px;
+  height: 290px;
+  cursor: grab;
+  /* Dragged with a finger: the page must not scroll under it */
+  touch-action: none;
+}
+
+.console-lever.is-wide { width: 120px; }
+.console-lever:active { cursor: grabbing; }
+.console-lever.is-disabled { cursor: not-allowed; opacity: 0.5; }
+.console-lever-slot { fill: var(--hud-2); stroke: var(--hud-line); }
+.console-lever-label { font-size: 12px; font-weight: 600; fill: var(--hud-dim); }
+.console-lever-label.is-on { font-weight: 800; fill: var(--hud-fg); }
+.console-knob-body { fill: var(--tone); stroke: #fff; stroke-width: 2; }
+.console-knob-grip { stroke: rgba(0, 0, 0, 0.45); stroke-width: 1.5; }
+.console-lever.is-spring .console-knob { transition: transform 140ms ease-out; }
+
+.console-lever-value {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.console-lever-value.is-small {
+  font-size: 14px;
+  color: var(--tone);
+}
+
+.console-lever-pressures {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--hud-dim);
+  white-space: nowrap;
+}
+
+.console-lever-keys {
+  display: flex;
+  gap: 4px;
+  min-height: 19px;
+}
+
+.console-estop {
+  flex: none;
+  width: 62px;
+  height: 62px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: center;
+  background: var(--hud-red);
+  border: 4px solid #7f1d1d;
+  border-radius: 50%;
+  box-shadow: 0 6px 18px rgba(239, 68, 68, 0.45);
+}
+
+.console-stage .console-estop { color: #fff; }
+.console-stage .console-estop.is-active { border-color: #fff; }
+
+.console-estop .console-key {
+  margin-top: 1px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: none;
 }

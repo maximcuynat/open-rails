@@ -34,8 +34,8 @@ export function bezierEndTangent(via: Point, end: Point): Point {
  * turnouts leave tangent to their stem, so this only has to absorb hand-edited geometry: it is set
  * to the divergence of the sharpest catalog turnout (#4, 15°), which keeps a branch drawn as a
  * straight chord usable. Anything sharper is a corner, not a track transition:
- * - `isTransitionAllowed` refuses it, so trains and routes treat it as an end of track;
- * - `autoDetectJunctions` does not register a turnout whose routes exceed it;
+ * - `isPassageOpen` refuses it, so trains and routes treat it as an end of track;
+ * - `proposeJunction` does not read a turnout in a fork whose routes exceed it;
  * - `analyzeKinematics` reports it.
  */
 export const MAX_TRANSITION_DEFLECTION_DEG = 15

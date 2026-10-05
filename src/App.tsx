@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { EditorStore, useEditorVersion } from '@application/state/editorStore'
 import { useKeyboardShortcuts } from '@presentation/hooks/useKeyboardShortcuts'
 import { Canvas } from '@presentation/components/canvas/Canvas'
@@ -8,12 +8,20 @@ import { SidePanel } from '@presentation/components/sidepanel/SidePanel'
 import { CanvasOverlay } from '@presentation/components/canvas/CanvasOverlay'
 import { MiniMap } from '@presentation/components/minimap/MiniMap'
 import { ToastContainer } from '@presentation/components/common/Toast'
-import { DrivingHUD } from '@presentation/components/hud/DrivingHUD'
+import { DrivingDock } from '@presentation/components/hud/DrivingDock'
+import { arrangeConsole } from '@presentation/components/console/consoleLayout'
+import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
+import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
   if (storeRef.current === null) storeRef.current = new EditorStore()
   const store = storeRef.current
+
+  // The phone desk belongs to this page: opened from the Simulation menu, gone with the page
+  const remoteRef = useRef<RemoteSession | null>(null)
+  if (remoteRef.current === null) remoteRef.current = createRemoteSession({ store, createLink: createWebSocketLink })
+  const remote = remoteRef.current
 
   // Subscribe so App re-renders on store changes (drives child components).
   useEditorVersion(store)
@@ -46,6 +54,16 @@ export default function App() {
     }
   }, [store])
 
+  // Closing the page closes the room: the phone is told at once instead of waiting for a timeout
+  useEffect(() => {
+    const handleLeave = () => remote.close()
+    window.addEventListener('pagehide', handleLeave)
+    return () => {
+      window.removeEventListener('pagehide', handleLeave)
+      remote.close()
+    }
+  }, [remote])
+
   // Apply theme: auto = follow prefers-color-scheme, light/dark = explicit override.
   useEffect(() => {
     const root = document.documentElement
@@ -66,17 +84,26 @@ export default function App() {
     }
   }, [store.theme])
 
+  // Which driving console fits the canvas area, and what it pushes aside (mini-map, debug panel)
+  const arrangement = arrangeConsole(vp.w, vp.h, store.consolePreference, store.isPlayMode, store.showTrainDebug)
+  const canvasAreaStyle = {
+    '--console-scale': arrangement.scale,
+    '--minimap-lift': `${arrangement.placement.minimapLift}px`,
+    '--dock-right': `${arrangement.placement.debug.right}px`,
+    '--dock-bottom': `${arrangement.placement.debug.bottom}px`,
+  } as CSSProperties
+
   return (
     <div className="app-layout">
-      <TopBar store={store} onFitView={fitView} />
+      <TopBar store={store} remote={remote} onFitView={fitView} />
       <div className="app-middle">
-        <div className="app-canvas-area">
+        <div className="app-canvas-area" style={canvasAreaStyle}>
           <Canvas store={store} onViewport={onViewport} />
           <ToolBar store={store} />
           <CanvasOverlay store={store} />
           <SidePanel store={store} />
           {store.showMinimap && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
-          <DrivingHUD store={store} />
+          <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>
       <ToastContainer />
