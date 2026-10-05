@@ -193,10 +193,9 @@ describe('generateRealisticSVG', () => {
     /** Ground track along y = 100 and a track across it along x = 100, added first, with no common node */
     function crossingTracks(upperLevel: number) {
       const net = createNetwork()
-      const b1 = addNode(net, { x: 100, y: 0 })
-      const b2 = addNode(net, { x: 100, y: 200 })
-      const upper = addSegment(net, b1.id, b2.id)!
-      upper.level = upperLevel
+      const b1 = addNode(net, { x: 100, y: 0 }, upperLevel)
+      const b2 = addNode(net, { x: 100, y: 200 }, upperLevel)
+      addSegment(net, b1.id, b2.id)
       const a1 = addNode(net, { x: 0, y: 100 })
       const a2 = addNode(net, { x: 200, y: 100 })
       addSegment(net, a1.id, a2.id)
@@ -207,7 +206,8 @@ describe('generateRealisticSVG', () => {
       const net = createNetwork()
       const n1 = addNode(net, { x: 0, y: 0 })
       const n2 = addNode(net, { x: 246, y: 0 })
-      addSegment(net, n1.id, n2.id)!.level = 0
+      addSegment(net, n1.id, n2.id)
+      for (const node of net.nodes.values()) node.level = 0
 
       const svg = generateRealisticSVG(net, 'Flat')
       expect(svg.match(/<g id="[^"]+"/g)).toEqual([
@@ -255,17 +255,21 @@ describe('generateRealisticSVG', () => {
       expect(svg).not.toContain('class="bridge-deck" />')
     })
 
-    it('ramp: an abutment closes the deck at the node shared with a lower rail', () => {
+    it('ramp: an abutment closes the flat span at the node where the ramp comes up', () => {
       const net = createNetwork()
       const a = addNode(net, { x: 0, y: 0 })
-      const b = addNode(net, { x: 100, y: 0 })
-      const c = addNode(net, { x: 200, y: 0 })
+      const b = addNode(net, { x: 100, y: 0 }, 1)
+      const c = addNode(net, { x: 200, y: 0 }, 1)
+      // a → b climbs from the ground, b → c is the bridge
       addSegment(net, a.id, b.id)
-      addSegment(net, b.id, c.id)!.level = 1
+      addSegment(net, b.id, c.id)
 
       const svg = generateRealisticSVG(net, 'Ramp')
+      // The ramp is drawn with the level it reaches: both rails in the level-1 group, on a deck
+      expect(svg).not.toContain('<g id="level-0">')
+      expect(svg.match(/class="bridge-deck" \/>/g)).toHaveLength(2)
       expect(svg.match(/class="bridge-abutment" \/>/g)).toHaveLength(1)
-      // Closing line across the deck at x = 100, wings splayed towards the lower rail
+      // Closing line across the deck at x = 100, wings splayed towards the ramp
       expect(svg).toMatch(/<path d="M 9[0-9.]+ [0-9.-]+ L 100 2\.32 L 100 -2\.32 L 9[0-9.]+ [0-9.-]+" class="bridge-abutment"/)
     })
   })

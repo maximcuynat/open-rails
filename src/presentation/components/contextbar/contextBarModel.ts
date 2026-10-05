@@ -114,8 +114,8 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
     run: () => { store.createParallelTrackFromSelection() },
   }
 
-  // Track level (bridge / tunnel). Each rail moves from its own level, so a whole bridge (several
-  // rails) goes up in one click. Always shown for rails, « Sol » included: nothing appears or
+  // Track level (bridge / tunnel): the heights of the nodes of the rails. Each node moves from its
+  // own height, so a whole bridge (several rails) goes up in one click. Always shown for rails, « Sol » included: nothing appears or
   // goes away between two clicks.
   const range = levelRange(store.network, segments) ?? { min: 0, max: 0 }
   const level: ContextBarItem = {

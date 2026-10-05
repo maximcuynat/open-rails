@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
 import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
-import { MAX_LEVEL, MIN_LEVEL, segmentLevel } from '@domain/models/network'
+import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
@@ -17,7 +17,7 @@ import {
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
-import { levelLabel } from '../common/trackLevel'
+import { levelRange, levelRangeLabel } from '../common/trackLevel'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>
@@ -32,8 +32,8 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-/** Track level of the selected rail, with − / + to send it under or over the other tracks. */
-function LevelField({ store, level }: { store: EditorStore; level: number }) {
+/** Heights of the selected rail (of its two nodes), with − / + to send it under or over the other tracks. */
+function LevelField({ store, range }: { store: EditorStore; range: { min: number; max: number } }) {
   const stepButton = (delta: 1 | -1, disabled: boolean) => (
     <button
       type="button"
@@ -64,11 +64,11 @@ function LevelField({ store, level }: { store: EditorStore; level: number }) {
       label="Niveau"
       value={
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-          {stepButton(-1, level <= MIN_LEVEL)}
-          <span style={{ minWidth: '64px', textAlign: 'center', color: level === 0 ? undefined : 'var(--accent)' }}>
-            {levelLabel(level)}
+          {stepButton(-1, range.max <= MIN_LEVEL)}
+          <span style={{ minWidth: '64px', textAlign: 'center', color: range.min === 0 && range.max === 0 ? undefined : 'var(--accent)' }}>
+            {levelRangeLabel(range)}
           </span>
-          {stepButton(1, level >= MAX_LEVEL)}
+          {stepButton(1, range.min >= MAX_LEVEL)}
         </span>
       }
     />
@@ -604,7 +604,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
-        <LevelField store={store} level={segmentLevel(seg)} />
+        <LevelField store={store} range={levelRange(store.network, [seg.id]) ?? { min: 0, max: 0 }} />
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}

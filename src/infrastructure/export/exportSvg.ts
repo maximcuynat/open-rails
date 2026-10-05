@@ -1,7 +1,7 @@
 import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
 import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
-import { nodeLevels, segmentLevel } from '@domain/models/network'
+import { segmentBand } from '@domain/models/network'
 import type { Camera } from '@infrastructure/render/camera'
 import { detectCrossings, lineLineIntersection } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
@@ -15,6 +15,7 @@ import {
   DECK_WIDTH,
   DECK_PARAPET_WIDTH,
   TUNNEL_ALPHA,
+  isDeckEndAt,
   getNodeSegmentEnds,
   getNodeSegmentEndVector,
   getConnectedEndPairs,
@@ -107,7 +108,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
 
   const levelOfSegment = (segId: string): number => {
     const seg = net.segments.get(segId)
-    return seg ? segmentLevel(seg) : 0
+    return seg ? segmentBand(net, seg) : 0
   }
 
   // Helper to format float with 2 decimal places
@@ -163,7 +164,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     const nodeB = net.nodes.get(seg.to)
     if (!nodeA || !nodeB) continue
 
-    const level = segmentLevel(seg)
+    const level = segmentBand(net, seg)
     outputLevel = level
     // Sleepers only make way for a crossing of their own level
     const crossings = allCrossings.filter((c) => levelOfSegment(c.seg1Id) === level)
@@ -178,11 +179,11 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
       deckParapets.push(`<path d="${d}" class="bridge-parapet" />`)
       deckSlabs.push(`<path d="${d}" class="bridge-deck" />`)
 
-      // Abutment where the deck meets a lower rail (ramp node): closing line and two wing walls
+      // Abutment where a flat span meets a ramp going down: closing line and two wing walls
       const halfDeck = DECK_WIDTH / 2
       const wing = halfDeck * 0.6
       for (const node of [nodeA, nodeB]) {
-        if (![...nodeLevels(net, node.id)].some((other) => other < level)) continue
+        if (!isDeckEndAt(net, seg, node.id)) continue
         const { tangent, normal } = getNodeSegmentEndVector(net, seg, node.id)
         const corner = (side: 1 | -1): Point => ({
           x: node.pos.x + normal.x * halfDeck * side,
@@ -636,7 +637,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     if (adj.length === 1) {
       const seg = net.segments.get(adj[0])
       if (!seg) continue
-      outputLevel = segmentLevel(seg)
+      outputLevel = segmentBand(net, seg)
       let forwardDir: Point | null = null
       if (node.id === seg.to) {
         forwardDir = segmentTangentAt(net, seg, seg.to)
@@ -680,7 +681,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     const seg0 = net.segments.get(adj[0])
     const seg1 = net.segments.get(adj[1])
     if (!seg0 || !seg1) continue
-    outputLevel = Math.max(segmentLevel(seg0), segmentLevel(seg1))
+    outputLevel = Math.max(segmentBand(net, seg0), segmentBand(net, seg1))
 
     const getTanSvg = (seg: typeof seg0): Point => {
       const tan = segmentTangentAt(net, seg, node.id)

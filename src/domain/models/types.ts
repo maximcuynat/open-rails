@@ -9,6 +9,13 @@ export interface Point {
 export interface RailNode {
   id: NodeId
   pos: Point
+  /**
+   * Height of the track at this node, in levels (bridge > 0, tunnel < 0, decimals allowed), absent
+   * on the ground. A rail runs from the height of its `from` node to that of its `to` node: a ramp
+   * when they differ. Two tracks only interact (crossing, weld, split, duplicate) where their
+   * heights are within `LEVEL_CLEARANCE`. Read it with `nodeLevel`.
+   */
+  level?: number
 }
 
 export type SegmentKind = 'straight' | 'curve'
@@ -22,11 +29,6 @@ export interface Segment {
   via?: Point
   /** Parent segment ID if this segment was split from another segment */
   parentSegmentId?: SegmentId
-  /**
-   * Stacking level (bridge > 0, tunnel < 0), absent on the ground. Two rails only interact
-   * (crossing, weld, split, duplicate) where they share a level. Read it with `segmentLevel`.
-   */
-  level?: number
 }
 
 export type JunctionId = string

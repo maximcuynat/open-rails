@@ -1,5 +1,5 @@
 import type { Network, Point, RailNode } from '@domain/models/types'
-import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, branchLevel } from '@domain/models/network'
+import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, nodeLevel } from '@domain/models/network'
 import { splitSegment } from '@domain/models/junction'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
@@ -130,27 +130,40 @@ export function computeAutoConnectGeometry(
 }
 
 /**
+ * Height of a node created at `pos` on a link between two nodes: on the even slope from one to the
+ * other (by straight-line distance), i.e. their own height when they agree.
+ */
+function levelBetween(a: RailNode | undefined, b: RailNode | undefined, pos: Point): number {
+  const ha = nodeLevel(a)
+  const hb = nodeLevel(b)
+  if (!a || !b || ha === hb) return ha
+  const da = Math.hypot(pos.x - a.pos.x, pos.y - a.pos.y)
+  const db = Math.hypot(pos.x - b.pos.x, pos.y - b.pos.y)
+  return da + db > 0 ? ha + ((hb - ha) * da) / (da + db) : ha
+}
+
+/**
  * Apply auto-connect to the network between Node A and Node B.
  */
 export function applyAutoConnect(net: Network, nodeAId: string, nodeBId: string, tolerance?: number): boolean {
   const geom = computeAutoConnectGeometry(net, nodeAId, nodeBId)
   if (!geom) return false
 
-  // The link continues the track it starts from, on its level
-  const level = branchLevel(net, nodeAId)
   if (geom.kind === 'straight') {
-    addSegment(net, nodeAId, nodeBId, level)
+    addSegment(net, nodeAId, nodeBId)
   } else if (geom.kind === 'single-curve' && geom.segments[0].via) {
-    addCurveSegment(net, nodeAId, nodeBId, geom.segments[0].via, level)
+    addCurveSegment(net, nodeAId, nodeBId, geom.segments[0].via)
   } else if (geom.kind === 's-curve' && geom.intermediateNodes.length > 0) {
-    const midNode = addNode(net, geom.intermediateNodes[0])
+    // The link climbs from the height of A to the height of B
+    const midPos = geom.intermediateNodes[0]
+    const midNode = addNode(net, midPos, levelBetween(net.nodes.get(nodeAId), net.nodes.get(nodeBId), midPos))
     const seg1 = geom.segments[0]
     const seg2 = geom.segments[1]
-    if (seg1.via) addCurveSegment(net, nodeAId, midNode.id, seg1.via, level)
-    else addSegment(net, nodeAId, midNode.id, level)
+    if (seg1.via) addCurveSegment(net, nodeAId, midNode.id, seg1.via)
+    else addSegment(net, nodeAId, midNode.id)
 
-    if (seg2.via) addCurveSegment(net, midNode.id, nodeBId, seg2.via, level)
-    else addSegment(net, midNode.id, nodeBId, level)
+    if (seg2.via) addCurveSegment(net, midNode.id, nodeBId, seg2.via)
+    else addSegment(net, midNode.id, nodeBId)
   }
 
   reconcileNetworkIntersections(net, tolerance)
@@ -290,12 +303,11 @@ export function applyCrossover(net: Network, preview: CrossoverPreview, toleranc
   const node2 = split2 ? split2.midNode : addNode(net, preview.track2Pos)
 
   // Add inflection midpoint node
-  const nodeM = addNode(net, preview.midPos)
+  const nodeM = addNode(net, preview.midPos, levelBetween(node1, node2, preview.midPos))
 
   // Add the two curved segments forming the smooth C1 S-curve
-  const level = branchLevel(net, node1.id)
-  addCurveSegment(net, node1.id, nodeM.id, preview.via1, level)
-  addCurveSegment(net, nodeM.id, node2.id, preview.via2, level)
+  addCurveSegment(net, node1.id, nodeM.id, preview.via1)
+  addCurveSegment(net, nodeM.id, node2.id, preview.via2)
 
   reconcileNetworkIntersections(net, tolerance)
   return true
@@ -449,13 +461,13 @@ export function applyParallelTurnout(
     startNode = addNode(net, preview.startPos)
   }
 
-  const midNode = addNode(net, preview.midPos)
-  const endNode = addNode(net, preview.endPos)
+  // The branch stays at the height of the track it leaves
+  const level = nodeLevel(startNode)
+  const midNode = addNode(net, preview.midPos, level)
+  const endNode = addNode(net, preview.endPos, level)
 
-  // The branch stays on the level of the track it leaves
-  const level = branchLevel(net, startNode.id)
-  addCurveSegment(net, startNode.id, midNode.id, preview.via1, level)
-  addCurveSegment(net, midNode.id, endNode.id, preview.via2, level)
+  addCurveSegment(net, startNode.id, midNode.id, preview.via1)
+  addCurveSegment(net, midNode.id, endNode.id, preview.via2)
 
   reconcileNetworkIntersections(net, tolerance)
   return { startNode, midNode, endNode }
@@ -562,12 +574,12 @@ export function applyFreeformParallelTurnout(
   geom: FreeformParallelTurnoutResult,
   tolerance?: number,
 ): { midNode: RailNode; endNode: RailNode } {
-  const midNode = addNode(net, geom.midPos)
-  const endNode = addNode(net, geom.endPos)
+  const level = nodeLevel(net.nodes.get(startNodeId))
+  const midNode = addNode(net, geom.midPos, level)
+  const endNode = addNode(net, geom.endPos, level)
 
-  const level = branchLevel(net, startNodeId)
-  addArcCurve(net, startNodeId, midNode.id, geom.via1, level)
-  addArcCurve(net, midNode.id, endNode.id, geom.via2, level)
+  addArcCurve(net, startNodeId, midNode.id, geom.via1)
+  addArcCurve(net, midNode.id, endNode.id, geom.via2)
 
   reconcileNetworkIntersections(net, tolerance)
   return { midNode, endNode }
@@ -686,25 +698,25 @@ export function applyPassingSiding(net: Network, preview: SidingPreview, toleran
   const nEntry = split1 ? split1.midNode : addNode(net, preview.entryTurnoutPos)
 
   const split2 = splitSegment(net, preview.segId, preview.exitTurnoutPos)
-  const nExit = split2 ? split2.midNode : addNode(net, preview.exitTurnoutPos)
+  const nExit = split2 ? split2.midNode : addNode(net, preview.exitTurnoutPos, nodeLevel(nEntry))
 
-  // Add siding transition and track nodes
-  const nEntryMid = addNode(net, preview.entryMidPos)
-  const nSStart = addNode(net, preview.sidingStartPos)
-  const nSEnd = addNode(net, preview.sidingEndPos)
-  const nExitMid = addNode(net, preview.exitMidPos)
+  // Add siding transition and track nodes: each end of the siding at the height of its turnout,
+  // so that the siding runs alongside the main line, ramp included
+  const nEntryMid = addNode(net, preview.entryMidPos, nodeLevel(nEntry))
+  const nSStart = addNode(net, preview.sidingStartPos, nodeLevel(nEntry))
+  const nSEnd = addNode(net, preview.sidingEndPos, nodeLevel(nExit))
+  const nExitMid = addNode(net, preview.exitMidPos, nodeLevel(nExit))
 
   // Entry S-curve (2 curves)
-  const level = branchLevel(net, nEntry.id)
-  addCurveSegment(net, nEntry.id, nEntryMid.id, preview.entryVia1, level)
-  addCurveSegment(net, nEntryMid.id, nSStart.id, preview.entryVia2, level)
+  addCurveSegment(net, nEntry.id, nEntryMid.id, preview.entryVia1)
+  addCurveSegment(net, nEntryMid.id, nSStart.id, preview.entryVia2)
 
   // Siding body (straight)
-  addSegment(net, nSStart.id, nSEnd.id, level)
+  addSegment(net, nSStart.id, nSEnd.id)
 
   // Exit S-curve (2 curves)
-  addCurveSegment(net, nSEnd.id, nExitMid.id, preview.exitVia1, level)
-  addCurveSegment(net, nExitMid.id, nExit.id, preview.exitVia2, level)
+  addCurveSegment(net, nSEnd.id, nExitMid.id, preview.exitVia1)
+  addCurveSegment(net, nExitMid.id, nExit.id, preview.exitVia2)
 
   reconcileNetworkIntersections(net, tolerance)
   return true
@@ -820,7 +832,7 @@ export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0, det
             detachedPos = { x: bestNode.pos.x + (dx / len) * gap, y: bestNode.pos.y + (dy / len) * gap }
           }
         }
-        const detachedNode = addNode(net, detachedPos)
+        const detachedNode = addNode(net, detachedPos, nodeLevel(bestNode))
         if (seg.from === bestNode.id) seg.from = detachedNode.id
         else if (seg.to === bestNode.id) seg.to = detachedNode.id
         // Rebuild adjacency

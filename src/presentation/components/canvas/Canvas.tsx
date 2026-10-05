@@ -25,7 +25,7 @@ import {
   addNode,
   addSegment,
   addCurveChain,
-  branchLevel,
+  nodeLevel,
   hitNode,
   hitSegment,
   snapToGrid,
@@ -1227,16 +1227,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               endId = endJoin.nodeId
             } else if (endJoin?.segId) {
               const splitRes = splitSegment(store.network, endJoin.segId, endPos)
-              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+              endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos, nodeLevel(startNode)).id
             } else {
-              const endNode = addNode(store.network, endPos)
+              const endNode = addNode(store.network, endPos, nodeLevel(startNode))
               endId = endNode.id
               endsInOpenSpace = true
             }
             // Insert the curve as arc pieces, fitted to where the end node actually is
             const endNodePos = store.network.nodes.get(endId)?.pos ?? endPos
             const pieces = curvePiecesTo(geom, startNode.pos, endNodePos)
-            addCurveChain(store.network, cs.startId, endId, pieces, branchLevel(store.network, cs.startId))
+            addCurveChain(store.network, cs.startId, endId, pieces)
 
             const isParallelKey = e.shiftKey || e.ctrlKey || store.isParallelActive
 
@@ -1245,12 +1245,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const parPieces = pieces.map((p) => computeParallelCurve(p.start, p.via, p.end, store.parallelOffset))
               let secStartId = store.parallelLastNodeId
               if (!secStartId) {
-                const s2 = addNode(store.network, parPieces[0].start)
+                const s2 = addNode(store.network, parPieces[0].start, nodeLevel(startNode))
                 secStartId = s2.id
               }
-              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end)
+              const endNode2 = addNode(store.network, parPieces[parPieces.length - 1].end, nodeLevel(store.network.nodes.get(endId)))
 
-              addCurveChain(store.network, secStartId, endNode2.id, parPieces, branchLevel(store.network, cs.startId))
+              addCurveChain(store.network, secStartId, endNode2.id, parPieces)
 
               store.parallelMode = true
               store.parallelLastNodeId = endNode2.id
@@ -1303,8 +1303,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   const off = store.parallelOffset
 
                   // Voie principale : lastNodeId -> snappedWorld
-                  const endNode = addNode(store.network, snappedWorld)
-                  addSegment(store.network, store.lastNodeId, endNode.id, branchLevel(store.network, store.lastNodeId))
+                  const endNode = addNode(store.network, snappedWorld, nodeLevel(startNode))
+                  addSegment(store.network, store.lastNodeId, endNode.id)
 
                   // Voie secondaire : startNode+offset -> snappedWorld+offset
                   const startPos2 = { x: startNode.pos.x + nx * off, y: startNode.pos.y + ny * off }
@@ -1312,11 +1312,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   // Creer ou recuperer le noeud de depart secondaire
                   let startNodeId2 = store.parallelLastNodeId
                   if (!startNodeId2) {
-                    const s2 = addNode(store.network, startPos2)
+                    const s2 = addNode(store.network, startPos2, nodeLevel(startNode))
                     startNodeId2 = s2.id
                   }
-                  const endNode2 = addNode(store.network, endPos2)
-                  addSegment(store.network, startNodeId2, endNode2.id, branchLevel(store.network, store.lastNodeId))
+                  const endNode2 = addNode(store.network, endPos2, nodeLevel(startNode))
+                  addSegment(store.network, startNodeId2, endNode2.id)
 
                   store.parallelMode = true
                   store.lastNodeId = endNode.id
@@ -1365,13 +1365,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   const off = store.parallelOffset
 
                   // Voie principale
-                  const endNode = addNode(store.network, snappedWorld)
-                  addSegment(store.network, store.lastNodeId, endNode.id, branchLevel(store.network, store.lastNodeId))
+                  const endNode = addNode(store.network, snappedWorld, nodeLevel(mainStart))
+                  addSegment(store.network, store.lastNodeId, endNode.id)
 
                   // Voie secondaire (meme direction, decalee)
                   const endPos2 = { x: snappedWorld.x + nx * off, y: snappedWorld.y + ny * off }
-                  const endNode2 = addNode(store.network, endPos2)
-                  addSegment(store.network, store.parallelLastNodeId, endNode2.id, branchLevel(store.network, store.lastNodeId))
+                  const endNode2 = addNode(store.network, endPos2, nodeLevel(mainStart))
+                  addSegment(store.network, store.parallelLastNodeId, endNode2.id)
 
                   store.lastNodeId = endNode.id
                   store.parallelLastNodeId = endNode2.id
@@ -1396,7 +1396,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (clickedNode) {
           // If already extending from another node, clicking this node completes the segment and finishes!
           if (store.lastNodeId && store.lastNodeId !== clickedNode.id) {
-            addSegment(store.network, store.lastNodeId, clickedNode.id, branchLevel(store.network, store.lastNodeId))
+            addSegment(store.network, store.lastNodeId, clickedNode.id)
             store.reconcileNetwork()
             store.markDirty()
             store.lastNodeId = null
@@ -1471,14 +1471,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
                   ? store.hoverSegSteps.nearest
                   : endPos
                 const splitRes = splitSegment(store.network, hitSegId, targetEnd)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd).id
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, targetEnd, nodeLevel(startNode)).id
               } else {
-                const endNode = addNode(store.network, endPos)
+                const endNode = addNode(store.network, endPos, nodeLevel(startNode))
                 endId = endNode.id
                 endsInOpenSpace = true
               }
             }
-            addSegment(store.network, store.lastNodeId, endId, branchLevel(store.network, store.lastNodeId))
+            addSegment(store.network, store.lastNodeId, endId)
             store.reconcileNetwork()
             store.clearNumericInput()
             store.markDirty()
@@ -2356,14 +2356,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               const hitSegId = hitSegment(store.network, endPos, hitTol)
               if (hitSegId) {
                 const splitRes = splitSegment(store.network, hitSegId, endPos)
-                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos).id
+                endId = splitRes ? splitRes.midNode.id : addNode(store.network, endPos, nodeLevel(startNode)).id
               } else {
-                const endNode = addNode(store.network, endPos)
+                const endNode = addNode(store.network, endPos, nodeLevel(startNode))
                 endId = endNode.id
                 endsInOpenSpace = true
               }
             }
-            addSegment(store.network, store.lastNodeId, endId, branchLevel(store.network, store.lastNodeId))
+            addSegment(store.network, store.lastNodeId, endId)
             store.reconcileNetwork()
             store.markDirty()
             if (endsInOpenSpace && store.network.nodes.has(endId)) {

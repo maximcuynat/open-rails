@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorStore, JUNCTION_OCCUPIED_REFUSED } from '@application/state/editorStore'
-import { addNode, addSegment, resetIdCounter, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
+import { addNode, addSegment, resetIdCounter, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { findJunctionAtNode } from '@domain/models/junction'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { showToast } from '../common/Toast'
@@ -194,6 +194,10 @@ describe('contextual bar — track levels', () => {
     expect(bar(store).some((i) => i.kind === 'stepper')).toBe(false)
   })
 
+  /** Put a rail flat at `level`: both its nodes */
+  const setRailLevel = (store: EditorStore, seg: { from: string; to: string }, level: number) =>
+    setNodesLevel(store.network, [seg.from, seg.to], level)
+
   it('the bar keeps the same items, in the same order, whatever the level: nothing moves between two clicks', () => {
     const { store, seg } = storeWithTrack()
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
@@ -202,24 +206,43 @@ describe('contextual bar — track levels', () => {
 
     expect(stepper(bar(store), 'level')).toMatchObject({ caption: 'Niveau', text: 'Sol' })
     for (const level of [1, 2, MAX_LEVEL, -1, MIN_LEVEL]) {
-      seg.level = level
+      setRailLevel(store, seg, level)
       expect(shape()).toEqual(onTheGround)
     }
-    seg.level = 1
+    setRailLevel(store, seg, 1)
     expect(stepper(bar(store), 'level').text).toBe('Pont +1')
-    seg.level = -2
+    setRailLevel(store, seg, -2)
     expect(stepper(bar(store), 'level').text).toBe('Tunnel −2')
   })
 
-  it('a selection across several levels shows the span, in a short form', () => {
-    const { store, b, seg } = storeWithTrack()
-    const c = addNode(store.network, { x: 400, y: 0 })
-    const next = addSegment(store.network, b.id, c.id)!
-    next.level = 1
-    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
+  it('a ramp shows the heights of its two ends, in a short form', () => {
+    const { store, a, b, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const onTheGround = shape()
+
+    setNodesLevel(store.network, [b.id], 1)
     expect(stepper(bar(store), 'level').text).toBe('0 à +1')
-    seg.level = MIN_LEVEL
-    next.level = MAX_LEVEL
+    expect(shape()).toEqual(onTheGround)
+    setNodesLevel(store.network, [a.id], -1)
+    expect(stepper(bar(store), 'level').text).toBe('−1 à +1')
+    // A node left by a cut half-way up
+    setNodesLevel(store.network, [a.id], 0.5)
+    expect(stepper(bar(store), 'level').text).toBe('+0,5 à +1')
+    setNodesLevel(store.network, [b.id], 0.5)
+    expect(stepper(bar(store), 'level').text).toBe('Pont +0,5')
+  })
+
+  it('a selection across several levels shows the span, in a short form', () => {
+    const { store, a, b, seg } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 }, 1)
+    const d = addNode(store.network, { x: 600, y: 0 }, 1)
+    addSegment(store.network, b.id, c.id)
+    const bridge = addSegment(store.network, c.id, d.id)!
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, bridge.id]) })
+    expect(stepper(bar(store), 'level').text).toBe('0 à +1')
+    setNodesLevel(store.network, [a.id, b.id], MIN_LEVEL)
+    setNodesLevel(store.network, [c.id, d.id], MAX_LEVEL)
     expect(stepper(bar(store), 'level').text).toBe('−5 à +5')
   })
 
@@ -232,15 +255,16 @@ describe('contextual bar — track levels', () => {
     }
     expect(disabled()).toEqual({ up: false, down: false })
 
-    seg.level = MAX_LEVEL
+    setRailLevel(store, seg, MAX_LEVEL)
     expect(disabled()).toEqual({ up: true, down: false })
-    seg.level = MIN_LEVEL
+    setRailLevel(store, seg, MIN_LEVEL)
     expect(disabled()).toEqual({ up: false, down: true })
 
-    // Mixed selection: a button stays available as long as one rail can still move
+    // Mixed selection: a button stays available as long as one node can still move
     const c = addNode(store.network, { x: 400, y: 0 })
     const next = addSegment(store.network, b.id, c.id)!
-    seg.level = MAX_LEVEL
+    setRailLevel(store, seg, MAX_LEVEL)
+    setNodesLevel(store.network, [c.id], 0)
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
     expect(disabled()).toEqual({ up: false, down: false })
   })

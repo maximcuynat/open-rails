@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  LEVEL_CLEARANCE,
+  MAX_LEVEL,
+  MIN_LEVEL,
+  addArcCurve,
   addCurveSegment,
   addNode,
   addSegment,
@@ -7,15 +11,19 @@ import {
   dissolveNode,
   hitNode,
   hitSegment,
-  nodeLevels,
+  isRamp,
+  levelsMeet,
+  nodeLevel,
   removeDuplicateSegments,
   resetIdCounter,
-  segmentLevel,
-  setSegmentsLevel,
+  segmentBand,
+  segmentEndLevels,
+  segmentHeightAt,
+  setNodesLevel,
 } from './network'
 import type { Network, Segment } from './types'
 import { detectCrossings, separateLevelsAtNode } from './crossing'
-import { autoDetectJunctions, splitSegment } from './junction'
+import { autoDetectJunctions, splitSegment, weldNodes } from './junction'
 import { computeTrackSections } from './sections'
 import { snapToNearestTrack } from './locomotive'
 import { advanceTrainSet, createVehicle, makeTrainSet } from './train'
@@ -24,19 +32,108 @@ import { applyParallelTurnout, performTrackCut } from '../geometry/constructionT
 
 beforeEach(() => resetIdCounter(0))
 
-/** Two straights crossing at the origin: `ew` along x on the ground, `ns` along y on `level` */
+/** Two straights crossing at the origin: `ew` along x on the ground, `ns` along y at height `level` */
 function cross(level = 0): { net: Network; ew: Segment; ns: Segment } {
   const net = createNetwork()
   const w = addNode(net, { x: -100, y: 0 })
   const e = addNode(net, { x: 100, y: 0 })
-  const s = addNode(net, { x: 0, y: -100 })
-  const n = addNode(net, { x: 0, y: 100 })
+  const s = addNode(net, { x: 0, y: -100 }, level)
+  const n = addNode(net, { x: 0, y: 100 }, level)
   const ew = addSegment(net, w.id, e.id)!
-  const ns = addSegment(net, s.id, n.id, level)!
+  const ns = addSegment(net, s.id, n.id)!
   return { net, ew, ns }
 }
 
-const levelsOf = (net: Network) => [...net.segments.values()].map(segmentLevel).sort()
+/** A rail from (0,0) at height `from` to (100,0) at height `to` */
+function rail(from: number, to: number) {
+  const net = createNetwork()
+  const a = addNode(net, { x: 0, y: 0 }, from)
+  const b = addNode(net, { x: 100, y: 0 }, to)
+  return { net, a, b, seg: addSegment(net, a.id, b.id)! }
+}
+
+/** Put both nodes of the given rails at `level` */
+const setRailsLevel = (net: Network, segs: Segment[], level: number) =>
+  setNodesLevel(net, segs.flatMap((seg) => [seg.from, seg.to]), level)
+
+const bandsOf = (net: Network) => [...net.segments.values()].map((seg) => segmentBand(net, seg)).sort()
+const heightsOf = (net: Network) => [...net.nodes.values()].map(nodeLevel).sort()
+
+describe('heights are on the nodes', () => {
+  it('a node is on the ground unless it says otherwise, and the ground is stored as no field', () => {
+    const net = createNetwork()
+    const ground = addNode(net, { x: 0, y: 0 })
+    const high = addNode(net, { x: 10, y: 0 }, 1.5)
+    expect(nodeLevel(ground)).toBe(0)
+    expect('level' in ground).toBe(false)
+    expect(nodeLevel(high)).toBe(1.5)
+    expect(nodeLevel(undefined)).toBe(0)
+  })
+
+  it('setNodesLevel clamps without rounding, counts the nodes changed and removes the field on the ground', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 }, 0.25)
+
+    expect(setNodesLevel(net, [a.id, b.id, 'missing'], 0.25)).toBe(1)
+    expect(a.level).toBe(0.25)
+    expect(setNodesLevel(net, [a.id, b.id], 99)).toBe(2)
+    expect(a.level).toBe(MAX_LEVEL)
+    expect(setNodesLevel(net, [a.id], -99)).toBe(1)
+    expect(a.level).toBe(MIN_LEVEL)
+    expect(setNodesLevel(net, [a.id, b.id], 0)).toBe(2)
+    expect('level' in a).toBe(false)
+    expect('level' in b).toBe(false)
+  })
+
+  it('segmentHeightAt interpolates between the two ends, isRamp tells a ramp from a flat rail', () => {
+    const ramp = rail(0, 1)
+    expect(segmentEndLevels(ramp.net, ramp.seg)).toEqual({ from: 0, to: 1 })
+    expect(segmentHeightAt(ramp.net, ramp.seg, 0)).toBe(0)
+    expect(segmentHeightAt(ramp.net, ramp.seg, 0.25)).toBeCloseTo(0.25, 12)
+    expect(segmentHeightAt(ramp.net, ramp.seg, 1)).toBe(1)
+    expect(isRamp(ramp.net, ramp.seg)).toBe(true)
+
+    const down = rail(2, -1)
+    expect(segmentHeightAt(down.net, down.seg, 0.5)).toBeCloseTo(0.5, 12)
+
+    const bridge = rail(1, 1)
+    expect(segmentHeightAt(bridge.net, bridge.seg, 0.3)).toBe(1)
+    expect(isRamp(bridge.net, bridge.seg)).toBe(false)
+    const ground = rail(0, 0)
+    expect(isRamp(ground.net, ground.seg)).toBe(false)
+  })
+
+  it('segmentBand: the level the upper end reaches above ground, else the level the lower end goes down to', () => {
+    const band = (from: number, to: number) => {
+      const r = rail(from, to)
+      return segmentBand(r.net, r.seg)
+    }
+    expect(band(0, 0)).toBe(0)
+    expect(Object.is(band(0, 0), 0)).toBe(true)
+    expect(band(1, 1)).toBe(1)
+    expect(band(0, 1)).toBe(1)
+    expect(band(1, 0)).toBe(1)
+    expect(band(0, 0.5)).toBe(1)
+    expect(band(1, 2)).toBe(2)
+    expect(band(1.5, 1)).toBe(2)
+    expect(band(-1, -1)).toBe(-1)
+    expect(band(0, -1)).toBe(-1)
+    expect(band(-0.5, 0)).toBe(-1)
+    expect(band(-1, -2)).toBe(-2)
+    // Through the ground: drawn with what is above
+    expect(band(-1, 1)).toBe(1)
+  })
+
+  it('levelsMeet: closer than LEVEL_CLEARANCE', () => {
+    expect(LEVEL_CLEARANCE).toBe(0.5)
+    expect(levelsMeet(0, 0)).toBe(true)
+    expect(levelsMeet(1, 1.49)).toBe(true)
+    expect(levelsMeet(0, 0.5)).toBe(false)
+    expect(levelsMeet(0, 1)).toBe(false)
+    expect(levelsMeet(-1, 0)).toBe(false)
+  })
+})
 
 describe('two tracks crossing', () => {
   it('on the same level get a crossing node, as before', () => {
@@ -51,6 +148,7 @@ describe('two tracks crossing', () => {
 
   it('on different levels are left alone: no node, no crossing, two independent sections', () => {
     const { net, ew, ns } = cross(1)
+    expect(segmentBand(net, ns)).toBe(1)
     expect(detectCrossings(net)).toHaveLength(0)
 
     const res = reconcileNetworkIntersections(net)
@@ -71,9 +169,9 @@ describe('two tracks crossing', () => {
     const a = addNode(net, { x: -100, y: 0 })
     const b = addNode(net, { x: 100, y: 0 })
     addSegment(net, a.id, b.id)
-    const c = addNode(net, { x: -50, y: -20 })
-    const d = addNode(net, { x: 50, y: -20 })
-    addCurveSegment(net, c.id, d.id, { x: 0, y: 60 }, 2)
+    const c = addNode(net, { x: -50, y: -20 }, 2)
+    const d = addNode(net, { x: 50, y: -20 }, 2)
+    addCurveSegment(net, c.id, d.id, { x: 0, y: 60 })
 
     reconcileNetworkIntersections(net)
 
@@ -82,15 +180,98 @@ describe('two tracks crossing', () => {
   })
 })
 
-describe('a node only meets the rails of its level', () => {
+describe('a ramp meets what is at its height where they meet', () => {
+  /** A 0 → `top` ramp along x from 0 to 100, and a ground track across it at x = `at` */
+  function rampAcross(at: number, top = 1, rampFirst = true) {
+    const net = createNetwork()
+    const build = [
+      () => {
+        const a = addNode(net, { x: 0, y: 0 })
+        const b = addNode(net, { x: 100, y: 0 }, top)
+        return addSegment(net, a.id, b.id)!
+      },
+      () => {
+        const c = addNode(net, { x: at, y: -50 })
+        const d = addNode(net, { x: at, y: 50 })
+        return addSegment(net, c.id, d.id)!
+      },
+    ]
+    const [ramp, ground] = rampFirst ? [build[0](), build[1]()] : [build[1](), build[0]()].reverse()
+    return { net, ramp, ground }
+  }
+
+  for (const rampFirst of [true, false]) {
+    it(`crossed at 20 % of its length by a ground track: a crossing (ramp laid ${rampFirst ? 'first' : 'last'})`, () => {
+      const { net } = rampAcross(20, 1, rampFirst)
+      expect(detectCrossings(net)).toHaveLength(1)
+
+      const res = reconcileNetworkIntersections(net)
+
+      expect(res.splitCount).toBe(2)
+      expect(net.nodes.size).toBe(5)
+      expect(net.segments.size).toBe(4)
+      const centre = [...net.nodes.values()].find((nd) => net.adjacency.get(nd.id)!.length === 4)!
+      expect(centre.pos.x).toBeCloseTo(20, 9)
+      expect(centre.pos.y).toBeCloseTo(0, 9)
+      // The flat track stays flat: the crossing is on the ground and the ramp climbs from there
+      expect(nodeLevel(centre)).toBe(0)
+      expect(heightsOf(net)).toEqual([0, 0, 0, 0, 1])
+      expect(detectCrossings(net)).toHaveLength(1)
+    })
+  }
+
+  it('crossed at 80 % of its length: the ground track passes under it, no node', () => {
+    const { net, ramp, ground } = rampAcross(80)
+    expect(detectCrossings(net)).toHaveLength(0)
+
+    const res = reconcileNetworkIntersections(net)
+
+    expect(res).toEqual({ splitCount: 0, weldedCount: 0 })
+    expect(net.nodes.size).toBe(4)
+    expect([...net.segments.keys()]).toEqual([ramp.id, ground.id])
+    expect(detectCrossings(net)).toHaveLength(0)
+    expect(computeTrackSections(net)).toHaveLength(2)
+  })
+
+  it('a ramp going down passes under the ground track near its bottom', () => {
+    const { net } = rampAcross(80, -1)
+    expect(reconcileNetworkIntersections(net)).toEqual({ splitCount: 0, weldedCount: 0 })
+    expect(detectCrossings(net)).toHaveLength(0)
+  })
+
+  it('the end of a ground rail lying on the ramp is wired in near the foot, not near the top', () => {
+    const build = (at: number) => {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 })
+      const b = addNode(net, { x: 100, y: 0 }, 1)
+      addSegment(net, a.id, b.id)
+      const c = addNode(net, { x: at, y: 0 })
+      const d = addNode(net, { x: at, y: 50 })
+      addSegment(net, c.id, d.id)
+      return { net, c, res: reconcileNetworkIntersections(net) }
+    }
+
+    const foot = build(20)
+    expect(foot.res.splitCount).toBe(1)
+    expect(foot.net.adjacency.get(foot.c.id)).toHaveLength(3)
+    // The node already carried a rail: it keeps its own height
+    expect(nodeLevel(foot.c)).toBe(0)
+
+    const top = build(80)
+    expect(top.res.splitCount).toBe(0)
+    expect(top.net.adjacency.get(top.c.id)).toHaveLength(1)
+  })
+})
+
+describe('a node only meets the rails at its height', () => {
   it('the end of a bridge rail lying on a ground rail does not split it', () => {
     const net = createNetwork()
     const a = addNode(net, { x: 0, y: 0 })
     const b = addNode(net, { x: 200, y: 0 })
     const ground = addSegment(net, a.id, b.id)!
-    const c = addNode(net, { x: 100, y: 0 })
-    const d = addNode(net, { x: 200, y: 20 })
-    addSegment(net, c.id, d.id, 1)
+    const c = addNode(net, { x: 100, y: 0 }, 1)
+    const d = addNode(net, { x: 200, y: 20 }, 1)
+    addSegment(net, c.id, d.id)
 
     const res = reconcileNetworkIntersections(net)
 
@@ -99,15 +280,15 @@ describe('a node only meets the rails of its level', () => {
     expect(net.junctions.size).toBe(0)
   })
 
-  it('two stacked rail ends of different levels are not welded, two of the same level are', () => {
+  it('two stacked rail ends of different heights are not welded, two of the same height are', () => {
     const build = (level: number) => {
       const net = createNetwork()
       const a = addNode(net, { x: 0, y: 0 })
       const b = addNode(net, { x: 100, y: 0 })
       addSegment(net, a.id, b.id)
-      const c = addNode(net, { x: 100, y: 0 })
-      const d = addNode(net, { x: 200, y: 0 })
-      addSegment(net, c.id, d.id, level)
+      const c = addNode(net, { x: 100, y: 0 }, level)
+      const d = addNode(net, { x: 200, y: 0 }, level)
+      addSegment(net, c.id, d.id)
       return { net, res: reconcileNetworkIntersections(net) }
     }
 
@@ -115,80 +296,112 @@ describe('a node only meets the rails of its level', () => {
     const stacked = build(1)
     expect(stacked.res.weldedCount).toBe(0)
     expect(stacked.net.nodes.size).toBe(4)
+    expect(build(-1).res.weldedCount).toBe(0)
   })
 
-  it('a ramp node (two levels) still joins a rail of either level', () => {
-    const net = createNetwork()
-    // Ramp: ground rail then bridge rail, meeting at (100, 0)
-    const a = addNode(net, { x: 0, y: 0 })
-    const ramp = addNode(net, { x: 100, y: 0 })
-    const b = addNode(net, { x: 200, y: 0 })
-    addSegment(net, a.id, ramp.id)
-    addSegment(net, ramp.id, b.id, 1)
-    expect([...nodeLevels(net, ramp.id)].sort()).toEqual([0, 1])
-    // A separate bridge rail ending on the ramp node
-    const c = addNode(net, { x: 100, y: 0 })
-    const d = addNode(net, { x: 100, y: 100 })
-    addSegment(net, c.id, d.id, 1)
+  it('the top of a ramp is at bridge height: a bridge rail ending there joins it, a ground rail does not', () => {
+    const build = (level: number) => {
+      const net = createNetwork()
+      // Ramp from the ground up to (100, 0), then a flat span
+      const a = addNode(net, { x: 0, y: 0 })
+      const top = addNode(net, { x: 100, y: 0 }, 1)
+      const b = addNode(net, { x: 200, y: 0 }, 1)
+      addSegment(net, a.id, top.id)
+      addSegment(net, top.id, b.id)
+      // A separate rail ending on the top of the ramp
+      const c = addNode(net, { x: 100, y: 0 }, level)
+      const d = addNode(net, { x: 100, y: 100 }, level)
+      addSegment(net, c.id, d.id)
+      return reconcileNetworkIntersections(net).weldedCount
+    }
 
-    expect(reconcileNetworkIntersections(net).weldedCount).toBe(1)
+    expect(build(1)).toBe(1)
+    expect(build(0)).toBe(0)
   })
 
-  it('a lone node is on no level yet and is wired into a bridge rail it lies on', () => {
+  it('weldNodes keeps the height of the node that is kept', () => {
     const net = createNetwork()
-    const a = addNode(net, { x: 0, y: 0 })
-    const b = addNode(net, { x: 200, y: 0 })
-    addSegment(net, a.id, b.id, 1)
+    const a = addNode(net, { x: 0, y: 0 }, 1)
+    const b = addNode(net, { x: 100, y: 0 }, 1)
+    addSegment(net, a.id, b.id)
+    const c = addNode(net, { x: 100, y: 0 }, 1.25)
+    const d = addNode(net, { x: 200, y: 0 }, 2)
+    const climb = addSegment(net, c.id, d.id)!
+
+    expect(weldNodes(net, b.id, c.id)).toBe(true)
+
+    expect(nodeLevel(b)).toBe(1)
+    expect(segmentEndLevels(net, climb)).toEqual({ from: 1, to: 2 })
+  })
+
+  it('a lone node has no height of its own yet: it is wired into a bridge rail it lies on, at its height', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 }, 1)
+    const b = addNode(net, { x: 200, y: 0 }, 1)
+    addSegment(net, a.id, b.id)
     const lone = addNode(net, { x: 100, y: 0 })
 
     expect(reconcileNetworkIntersections(net).splitCount).toBe(1)
     expect(net.adjacency.get(lone.id)).toHaveLength(2)
-    expect(levelsOf(net)).toEqual([1, 1])
+    expect(nodeLevel(lone)).toBe(1)
+    expect(bandsOf(net)).toEqual([1, 1])
+  })
+
+  it('a lone node on a ramp takes the height of the ramp there', () => {
+    const { net } = rail(0, 1)
+    const lone = addNode(net, { x: 30, y: 0 })
+
+    expect(reconcileNetworkIntersections(net).splitCount).toBe(1)
+    expect(nodeLevel(lone)).toBeCloseTo(0.3, 9)
   })
 })
 
 describe('superimposed rails', () => {
-  it('addSegment and addCurveSegment reuse the rail of the same level only', () => {
+  it('two rails between the same two nodes are one rail: addSegment and addCurveSegment reuse it', () => {
     const net = createNetwork()
-    const a = addNode(net, { x: 0, y: 0 })
-    const b = addNode(net, { x: 100, y: 0 })
-    const ground = addSegment(net, a.id, b.id)!
-    const bridge = addSegment(net, a.id, b.id, 1)!
+    const a = addNode(net, { x: 0, y: 0 }, 1)
+    const b = addNode(net, { x: 100, y: 0 }, 1)
+    const bridge = addSegment(net, a.id, b.id)!
 
-    expect(bridge.id).not.toBe(ground.id)
-    expect(addSegment(net, b.id, a.id)!.id).toBe(ground.id)
-    expect(addSegment(net, b.id, a.id, 1)!.id).toBe(bridge.id)
+    expect(addSegment(net, b.id, a.id)!.id).toBe(bridge.id)
 
     const via = { x: 50, y: 30 }
     const curve = addCurveSegment(net, a.id, b.id, via)!
-    const upperCurve = addCurveSegment(net, a.id, b.id, via, -1)!
-    expect(upperCurve.id).not.toBe(curve.id)
-    expect(addCurveSegment(net, a.id, b.id, via, -1)!.id).toBe(upperCurve.id)
-    expect(net.segments.size).toBe(4)
+    expect(curve.id).not.toBe(bridge.id)
+    expect(addCurveSegment(net, b.id, a.id, via)!.id).toBe(curve.id)
+    expect(net.segments.size).toBe(2)
   })
 
-  it('removeDuplicateSegments keeps a rail stacked on another level and drops a true duplicate', () => {
+  it('a rail stacked over another one has its own nodes: both stay, until it comes down onto it', () => {
     const net = createNetwork()
     const a = addNode(net, { x: 0, y: 0 })
     const b = addNode(net, { x: 100, y: 0 })
     const ground = addSegment(net, a.id, b.id)!
-    const bridge = addSegment(net, a.id, b.id, 1)!
-    expect(removeDuplicateSegments(net, 0.1)).toBe(0)
+    const a1 = addNode(net, { x: 0, y: 0 }, 1)
+    const b1 = addNode(net, { x: 100, y: 0 }, 1)
+    const bridge = addSegment(net, a1.id, b1.id)!
 
-    // Lowered by hand: now a second ground rail on top of the first
-    setSegmentsLevel(net, [bridge.id], 0)
-    expect(removeDuplicateSegments(net, 0.1)).toBe(1)
+    expect(bridge.id).not.toBe(ground.id)
+    expect(removeDuplicateSegments(net, 0.1)).toBe(0)
+    expect(reconcileNetworkIntersections(net)).toEqual({ splitCount: 0, weldedCount: 0 })
+    expect(net.segments.size).toBe(2)
+    expect(net.nodes.size).toBe(4)
+
+    // Lowered: now a second ground rail on top of the first, the older one is kept
+    setNodesLevel(net, [a1.id, b1.id], 0)
+    expect(reconcileNetworkIntersections(net).weldedCount).toBe(2)
     expect([...net.segments.keys()]).toEqual([ground.id])
+    expect(net.nodes.size).toBe(2)
   })
 })
 
-describe('a rail hands its level down to its pieces', () => {
+describe('the pieces of a rail keep its heights', () => {
   /** A bridge rail from (0,0) to (200,0), straight or curved */
   function bridge(curved: boolean) {
     const net = createNetwork()
-    const a = addNode(net, { x: 0, y: 0 })
-    const b = addNode(net, { x: 200, y: 0 })
-    const seg = curved ? addCurveSegment(net, a.id, b.id, { x: 100, y: 40 }, 1)! : addSegment(net, a.id, b.id, 1)!
+    const a = addNode(net, { x: 0, y: 0 }, 1)
+    const b = addNode(net, { x: 200, y: 0 }, 1)
+    const seg = curved ? addCurveSegment(net, a.id, b.id, { x: 100, y: 40 })! : addSegment(net, a.id, b.id)!
     return { net, a, b, seg }
   }
 
@@ -200,8 +413,12 @@ describe('a rail hands its level down to its pieces', () => {
       expect(performTrackCut(net, { x: 100, y: curved ? 20 : 0 }, 5)).toBe(true)
 
       expect(net.segments.has(seg.id)).toBe(false)
-      expect(levelsOf(net)).toEqual([1, 1])
-      for (const piece of net.segments.values()) expect(piece.parentSegmentId).toBe(seg.id)
+      expect(bandsOf(net)).toEqual([1, 1])
+      expect(heightsOf(net)).toEqual([1, 1, 1])
+      for (const piece of net.segments.values()) {
+        expect(isRamp(net, piece)).toBe(false)
+        expect(piece.parentSegmentId).toBe(seg.id)
+      }
     })
 
     it(`reconcile split of a ${shape} at a node`, () => {
@@ -209,17 +426,88 @@ describe('a rail hands its level down to its pieces', () => {
       const mid = addNode(net, { x: 100, y: curved ? 20 : 0 })
       const halves = splitSegmentAtNode(net, seg.id, mid.id)!
 
-      expect(segmentLevel(halves.seg1)).toBe(1)
-      expect(segmentLevel(halves.seg2)).toBe(1)
+      expect(segmentEndLevels(net, halves.seg1)).toEqual({ from: 1, to: 1 })
+      expect(segmentEndLevels(net, halves.seg2)).toEqual({ from: 1, to: 1 })
       expect(halves.seg1.parentSegmentId).toBe(seg.id)
       // Cut again: still on the bridge, still the same ancestor
       const again = splitSegment(net, halves.seg1.id, { x: 50, y: curved ? 15 : 0 })!
-      expect(segmentLevel(again.seg1)).toBe(1)
+      expect(nodeLevel(again.midNode)).toBe(1)
+      expect(segmentBand(net, again.seg1)).toBe(1)
       expect(again.seg2.parentSegmentId).toBe(seg.id)
+    })
+
+    it(`a 0 → 1 ramp (${shape}) cut in the middle: a node at 0.5 and two ramps that share the climb`, () => {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 })
+      const b = addNode(net, { x: 200, y: 0 }, 1)
+      const seg = curved ? addCurveSegment(net, a.id, b.id, { x: 100, y: 40 })! : addSegment(net, a.id, b.id)!
+
+      const cut = splitSegment(net, seg.id, { x: 100, y: curved ? 20 : 0 })!
+
+      expect(nodeLevel(cut.midNode)).toBeCloseTo(0.5, 9)
+      expect(segmentEndLevels(net, cut.seg1).from).toBe(0)
+      expect(segmentEndLevels(net, cut.seg1).to).toBeCloseTo(0.5, 9)
+      expect(segmentEndLevels(net, cut.seg2).to).toBe(1)
+      expect(isRamp(net, cut.seg1) && isRamp(net, cut.seg2)).toBe(true)
     })
   }
 
-  it('a turnout laid on a bridge cuts it into bridge rails and branches off on the same level', () => {
+  it('scissors a quarter of the way up a ramp leave a node at 0.25', () => {
+    const { net } = rail(0, 1)
+    expect(performTrackCut(net, { x: 25, y: 0 }, 5)).toBe(true)
+    expect(heightsOf(net)).toEqual([0, 0.25, 1])
+  })
+
+  it('scissors on a node of a bridge detach a rail end that stays at the height of the bridge', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 }, 1)
+    const m = addNode(net, { x: 100, y: 0 }, 1)
+    const b = addNode(net, { x: 200, y: 0 }, 1)
+    addSegment(net, a.id, m.id)
+    addSegment(net, m.id, b.id)
+
+    expect(performTrackCut(net, { x: 100, y: 0 }, 5)).toBe(true)
+
+    expect(net.nodes.size).toBe(4)
+    expect(heightsOf(net)).toEqual([1, 1, 1, 1])
+    expect(bandsOf(net)).toEqual([1, 1])
+  })
+
+  it('splitSegmentAtNode: a lone node takes the height of the ramp, a node that carries a rail keeps its own', () => {
+    const lone = rail(0, 1)
+    const mid = addNode(lone.net, { x: 50, y: 0 })
+    splitSegmentAtNode(lone.net, lone.seg.id, mid.id)
+    expect(nodeLevel(mid)).toBeCloseTo(0.5, 9)
+
+    const wired = rail(0, 1)
+    const end = addNode(wired.net, { x: 50, y: 0 }, 0.75)
+    const far = addNode(wired.net, { x: 50, y: 80 }, 0.75)
+    addSegment(wired.net, end.id, far.id)
+    const halves = splitSegmentAtNode(wired.net, wired.seg.id, end.id)!
+    expect(nodeLevel(end)).toBe(0.75)
+    expect(segmentEndLevels(wired.net, halves.seg1)).toEqual({ from: 0, to: 0.75 })
+    expect(segmentEndLevels(wired.net, halves.seg2)).toEqual({ from: 0.75, to: 1 })
+  })
+
+  it('a curve laid as arc pieces between two heights climbs evenly, joint after joint', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 100 }, 1)
+    const chain = addArcCurve(net, a.id, b.id, { x: 100, y: 0 })!
+
+    expect(chain.nodes.length).toBeGreaterThan(0)
+    const heights = [0, ...chain.nodes.map(nodeLevel), 1]
+    const step = 1 / chain.segments.length
+    heights.forEach((h, i) => expect(h).toBeCloseTo(i * step, 6))
+
+    // Between two nodes of the same height every joint is at that height
+    const flat = createNetwork()
+    const c = addNode(flat, { x: 0, y: 0 }, 2)
+    const d = addNode(flat, { x: 100, y: 100 }, 2)
+    for (const node of addArcCurve(flat, c.id, d.id, { x: 100, y: 0 })!.nodes) expect(nodeLevel(node)).toBe(2)
+  })
+
+  it('a turnout laid on a bridge cuts it into bridge rails and branches off at the same height', () => {
     const { net, seg } = bridge(false)
     const placed = applyParallelTurnout(net, {
       valid: true,
@@ -233,45 +521,55 @@ describe('a rail hands its level down to its pieces', () => {
 
     expect(placed).not.toBeNull()
     expect(net.segments.size).toBe(4)
-    expect(levelsOf(net)).toEqual([1, 1, 1, 1])
+    expect(bandsOf(net)).toEqual([1, 1, 1, 1])
+    expect(heightsOf(net)).toEqual([1, 1, 1, 1, 1])
     expect(net.junctions.size).toBe(1)
   })
 
-  it('two ground tracks crossing under reconcile give four ground rails, two bridge tracks four bridge rails', () => {
+  it('two bridge tracks crossing under reconcile give four bridge rails and a crossing up there', () => {
     const net = createNetwork()
-    const w = addNode(net, { x: -100, y: 0 })
-    const e = addNode(net, { x: 100, y: 0 })
-    const s = addNode(net, { x: 0, y: -100 })
-    const n = addNode(net, { x: 0, y: 100 })
-    addSegment(net, w.id, e.id, 2)
-    addSegment(net, s.id, n.id, 2)
+    const w = addNode(net, { x: -100, y: 0 }, 2)
+    const e = addNode(net, { x: 100, y: 0 }, 2)
+    const s = addNode(net, { x: 0, y: -100 }, 2)
+    const n = addNode(net, { x: 0, y: 100 }, 2)
+    addSegment(net, w.id, e.id)
+    addSegment(net, s.id, n.id)
 
     reconcileNetworkIntersections(net)
 
-    expect(levelsOf(net)).toEqual([2, 2, 2, 2])
+    expect(bandsOf(net)).toEqual([2, 2, 2, 2])
+    expect(heightsOf(net)).toEqual([2, 2, 2, 2, 2])
     expect(detectCrossings(net)).toHaveLength(1)
   })
 
-  it('dissolveNode merges two halves of one level and refuses to merge across a ramp', () => {
-    const build = (l1: number, l2: number) => {
+  it('dissolveNode merges two rails whose node is on their common slope, and refuses when it is not', () => {
+    const build = (ha: number, hm: number, hb: number, xm = 100) => {
       const net = createNetwork()
-      const a = addNode(net, { x: 0, y: 0 })
-      const m = addNode(net, { x: 100, y: 0 })
-      const b = addNode(net, { x: 200, y: 0 })
-      addSegment(net, a.id, m.id, l1)
-      addSegment(net, m.id, b.id, l2)
+      const a = addNode(net, { x: 0, y: 0 }, ha)
+      const m = addNode(net, { x: xm, y: 0 }, hm)
+      const b = addNode(net, { x: 200, y: 0 }, hb)
+      addSegment(net, a.id, m.id)
+      addSegment(net, m.id, b.id)
       return { net, m }
     }
 
-    const flat = build(1, 1)
+    const flat = build(1, 1, 1)
     const merged = dissolveNode(flat.net, flat.m.id)
-    expect(merged && segmentLevel(merged)).toBe(1)
+    expect(merged && segmentEndLevels(flat.net, merged)).toEqual({ from: 1, to: 1 })
     expect(flat.net.segments.size).toBe(1)
 
-    const ramp = build(0, 1)
-    expect(dissolveNode(ramp.net, ramp.m.id)).toBeNull()
-    expect(ramp.net.segments.size).toBe(2)
-    expect(ramp.net.nodes.has(ramp.m.id)).toBe(true)
+    // An even ramp cut in two (a quarter of the way) is one ramp again
+    const even = build(0, 0.25, 1, 50)
+    const ramp = dissolveNode(even.net, even.m.id)
+    expect(ramp && isRamp(even.net, ramp)).toBe(true)
+    expect(even.net.segments.size).toBe(1)
+
+    // The foot of a ramp, or a node off the slope: removing it would change the slope
+    for (const kept of [build(0, 0, 1), build(0, 1, 1), build(0, 0.5, 1, 50)]) {
+      expect(dissolveNode(kept.net, kept.m.id)).toBeNull()
+      expect(kept.net.segments.size).toBe(2)
+      expect(kept.net.nodes.has(kept.m.id)).toBe(true)
+    }
   })
 })
 
@@ -285,30 +583,39 @@ describe('separateLevelsAtNode', () => {
     const isNs = (seg: Segment) => [seg.from, seg.to].some((nid) => Math.abs(net.nodes.get(nid)!.pos.y) > 1)
     return { net, centre, ns: arms.filter(isNs), ew: arms.filter((seg) => !isNs(seg)) }
   }
+  /** The far ends of a track through `centreId` */
+  const farEnds = (track: Segment[], centreId: string) =>
+    track.map((seg) => (seg.from === centreId ? seg.to : seg.from))
 
-  it('does nothing while the two tracks share a level', () => {
+  it('does nothing while the two tracks would still meet, or without a track through the node', () => {
     const { net, centre, ns } = diamond()
-    expect(separateLevelsAtNode(net, centre.id)).toBeNull()
-
-    // One half raised: the track is a ramp that still touches the ground at the crossing
-    setSegmentsLevel(net, [ns[0].id], 1)
-    expect(separateLevelsAtNode(net, centre.id)).toBeNull()
+    expect(separateLevelsAtNode(net, centre.id, ns[0].id, 0)).toBeNull()
+    expect(separateLevelsAtNode(net, centre.id, ns[0].id, 0.4)).toBeNull()
+    expect(separateLevelsAtNode(net, centre.id, 'missing', 1)).toBeNull()
+    expect(separateLevelsAtNode(net, farEnds(ns, centre.id)[0], ns[0].id, 1)).toBeNull()
     expect(net.adjacency.get(centre.id)).toHaveLength(4)
+    expect(net.nodes.size).toBe(5)
+    expect(nodeLevel(centre)).toBe(0)
   })
 
-  it('moves the upper track onto a twin node, and reconcile keeps the two apart', () => {
+  it('moves the raised track onto a twin node at its height, and reconcile keeps the two apart', () => {
     const { net, centre, ns, ew } = diamond()
-    setSegmentsLevel(net, ns.map((seg) => seg.id), 1)
+    setNodesLevel(net, farEnds(ns, centre.id), 1)
 
-    const twinId = separateLevelsAtNode(net, centre.id)!
+    const twinId = separateLevelsAtNode(net, centre.id, ns[0].id, 1)!
 
     expect(twinId).not.toBe(centre.id)
     expect(net.nodes.get(twinId)!.pos).toEqual(centre.pos)
     expect(net.nodes.get(twinId)!.pos).not.toBe(centre.pos)
+    expect(nodeLevel(net.nodes.get(twinId))).toBe(1)
+    expect(nodeLevel(centre)).toBe(0)
     expect([...net.adjacency.get(centre.id)!].sort()).toEqual(ew.map((seg) => seg.id).sort())
     expect([...net.adjacency.get(twinId)!].sort()).toEqual(ns.map((seg) => seg.id).sort())
     for (const seg of ns) expect([seg.from, seg.to]).toContain(twinId)
     for (const seg of ns) expect([seg.from, seg.to]).not.toContain(centre.id)
+    // A bridge is a bridge: both its rails are flat, one level up
+    for (const seg of ns) expect(segmentEndLevels(net, seg)).toEqual({ from: 1, to: 1 })
+    for (const seg of ew) expect(segmentEndLevels(net, seg)).toEqual({ from: 0, to: 0 })
 
     expect(reconcileNetworkIntersections(net)).toEqual({ splitCount: 0, weldedCount: 0 })
     expect(net.nodes.size).toBe(6)
@@ -317,19 +624,25 @@ describe('separateLevelsAtNode', () => {
     expect(computeTrackSections(net)).toHaveLength(2)
   })
 
-  it('moves the lower track out when it is the tunnel that was lowered: the upper one is always the one moved', () => {
+  it('when the track goes down (tunnel) it is the other one that moves: the twin always carries the upper track', () => {
     const { net, centre, ns, ew } = diamond()
-    setSegmentsLevel(net, ns.map((seg) => seg.id), -1)
+    setNodesLevel(net, farEnds(ns, centre.id), -1)
 
-    const twinId = separateLevelsAtNode(net, centre.id)!
+    const twinId = separateLevelsAtNode(net, centre.id, ns[0].id, -1)!
 
     expect([...net.adjacency.get(twinId)!].sort()).toEqual(ew.map((seg) => seg.id).sort())
+    expect(nodeLevel(net.nodes.get(twinId))).toBe(0)
+    expect(nodeLevel(centre)).toBe(-1)
+    for (const seg of ns) expect(segmentEndLevels(net, seg)).toEqual({ from: -1, to: -1 })
+    for (const seg of ew) expect(segmentEndLevels(net, seg)).toEqual({ from: 0, to: 0 })
   })
 
-  it('an unseparated node carrying two tracks without a common level is not reported as a crossing', () => {
-    const { net, ns } = diamond()
-    setSegmentsLevel(net, ns.map((seg) => seg.id), 1)
-    expect(detectCrossings(net)).toHaveLength(0)
+  it('two tracks through one node are at the same height there: a crossing, whatever that height', () => {
+    const { net, centre } = diamond()
+    setNodesLevel(net, [centre.id], 1)
+    expect(detectCrossings(net)).toHaveLength(1)
+    expect(reconcileNetworkIntersections(net)).toEqual({ splitCount: 0, weldedCount: 0 })
+    expect(net.adjacency.get(centre.id)).toHaveLength(4)
   })
 
   it('repoints the junctions that looked at the crossing node through a moved rail', () => {
@@ -345,8 +658,8 @@ describe('separateLevelsAtNode', () => {
 
     const nsNow = net.adjacency.get(centre.id)!.map((sid) => net.segments.get(sid)!)
       .filter((seg) => [seg.from, seg.to].some((nid) => Math.abs(net.nodes.get(nid)!.pos.y) > 1))
-    setSegmentsLevel(net, nsNow.map((seg) => seg.id), 1)
-    const twinId = separateLevelsAtNode(net, centre.id)!
+    setNodesLevel(net, farEnds(nsNow, centre.id), 1)
+    const twinId = separateLevelsAtNode(net, centre.id, nsNow[0].id, 1)!
 
     expect(junc.stemNodeId).toBe(twinId)
     // What notify() re-derives from the topology agrees
@@ -361,12 +674,12 @@ describe('picking what is on top', () => {
       const net = createNetwork()
       const w = addNode(net, { x: -100, y: 0 })
       const e = addNode(net, { x: 100, y: 0 })
-      const s = addNode(net, { x: 0, y: -100 })
-      const n = addNode(net, { x: 0, y: 100 })
+      const s = addNode(net, { x: 0, y: -100 }, 1)
+      const n = addNode(net, { x: 0, y: 100 }, 1)
       // Either insertion order: the choice does not depend on which rail was laid first
-      const bridge = bridgeFirst ? addSegment(net, s.id, n.id, 1)! : null
+      const bridge = bridgeFirst ? addSegment(net, s.id, n.id)! : null
       const ground = addSegment(net, w.id, e.id)!
-      const top = bridge ?? addSegment(net, s.id, n.id, 1)!
+      const top = bridge ?? addSegment(net, s.id, n.id)!
 
       expect(hitSegment(net, { x: 0, y: 0 }, 5)).toBe(top.id)
       expect(snapToNearestTrack(net, { x: 0, y: 0 }, 5)!.segId).toBe(top.id)
@@ -374,9 +687,29 @@ describe('picking what is on top', () => {
       expect(hitSegment(net, { x: 3, y: 0.5 }, 5)).toBe(ground.id)
       expect(snapToNearestTrack(net, { x: 3, y: 0.5 }, 5)!.segId).toBe(ground.id)
       // A tunnel under the ground rail is not what is seen
-      setSegmentsLevel(net, [top.id], -1)
+      setRailsLevel(net, [top], -1)
       expect(hitSegment(net, { x: 0, y: 0 }, 5)).toBe(ground.id)
       expect(snapToNearestTrack(net, { x: 0, y: 0 }, 5)!.segId).toBe(ground.id)
+    }
+  })
+
+  it('on a ramp it is the height at that place that counts, not the height the ramp reaches', () => {
+    for (const rampFirst of [false, true]) {
+      // Down from 1 (west) to −1 (east), over a ground track at x = −60 and under another at x = 60
+      const net = createNetwork()
+      const a = addNode(net, { x: -100, y: 0 }, 1)
+      const b = addNode(net, { x: 100, y: 0 }, -1)
+      const ramp = rampFirst ? addSegment(net, a.id, b.id)! : null
+      const across = (x: number) => addSegment(net, addNode(net, { x, y: -50 }).id, addNode(net, { x, y: 50 }).id)!
+      const under = across(-60)
+      const over = across(60)
+      const rampId = (ramp ?? addSegment(net, a.id, b.id)!).id
+
+      expect(hitSegment(net, { x: -60, y: 0 }, 5)).toBe(rampId)
+      expect(snapToNearestTrack(net, { x: -60, y: 0 }, 5)!.segId).toBe(rampId)
+      expect(hitSegment(net, { x: 60, y: 0 }, 5)).toBe(over.id)
+      expect(snapToNearestTrack(net, { x: 60, y: 0 }, 5)!.segId).toBe(over.id)
+      expect(net.segments.has(under.id)).toBe(true)
     }
   })
 
@@ -386,11 +719,10 @@ describe('picking what is on top', () => {
     const centre = [...net.nodes.values()].find((nd) => net.adjacency.get(nd.id)!.length === 4)!
     const ns = net.adjacency.get(centre.id)!.map((sid) => net.segments.get(sid)!)
       .filter((seg) => [seg.from, seg.to].some((nid) => Math.abs(net.nodes.get(nid)!.pos.y) > 1))
-    setSegmentsLevel(net, ns.map((seg) => seg.id), 1)
-    const twinId = separateLevelsAtNode(net, centre.id)!
+    const twinId = separateLevelsAtNode(net, centre.id, ns[0].id, 1)!
 
     expect(hitNode(net, { x: 0.2, y: 0.1 }, 5)).toBe(twinId)
-    setSegmentsLevel(net, ns.map((seg) => seg.id), -1)
+    setNodesLevel(net, [twinId], -1)
     expect(hitNode(net, { x: 0.2, y: 0.1 }, 5)).toBe(centre.id)
   })
 

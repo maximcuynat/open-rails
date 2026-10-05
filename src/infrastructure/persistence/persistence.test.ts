@@ -5,6 +5,9 @@ import {
   addSegment,
   addCurveSegment,
   resetIdCounter,
+  nodeLevel,
+  segmentBand,
+  segmentEndLevels,
 } from '../../domain/models/network'
 import { placeTurnout, toggleJunction } from '../../domain/models/junction'
 import {
@@ -266,58 +269,155 @@ describe('persistence module', () => {
 describe('track levels', () => {
   beforeEach(() => resetIdCounter(0))
 
-  /** A ground track along x and a track along y on `level`, crossing at the origin without a node */
+  /** A ground track along x and a track along y at height `level`, crossing at the origin without a node */
   function crossed(level: number) {
     const net = createNetwork()
     const w = addNode(net, { x: -100, y: 0 })
     const e = addNode(net, { x: 100, y: 0 })
-    const s = addNode(net, { x: 0, y: -100 })
-    const n = addNode(net, { x: 0, y: 100 })
+    const s = addNode(net, { x: 0, y: -100 }, level)
+    const n = addNode(net, { x: 0, y: 100 }, level)
     const ground = addSegment(net, w.id, e.id)!
-    const other = addSegment(net, s.id, n.id, level)!
-    return { net, ground, other }
+    const other = addSegment(net, s.id, n.id)!
+    return { net, ground, other, w, e, s, n }
   }
 
-  it('writes the level of a rail only when it is off the ground', () => {
-    const { net, ground, other } = crossed(2)
+  const reload = (data: unknown) => deserializeNetwork(JSON.parse(JSON.stringify(data))).network
+
+  it('writes the height of a node only when it is off the ground, and nothing on the rails', () => {
+    const { net, w, s, n } = crossed(2)
     const data = serializeNetwork(net)
 
-    const saved = (id: string) => data.segments.find((seg) => seg.id === id)!
-    expect(saved(other.id).level).toBe(2)
-    expect('level' in saved(ground.id)).toBe(false)
+    const saved = (id: string) => data.nodes.find((node) => node.id === id)!
+    expect(saved(s.id).level).toBe(2)
+    expect(saved(n.id).level).toBe(2)
+    expect('level' in saved(w.id)).toBe(false)
+    for (const seg of data.segments) expect('level' in seg).toBe(false)
   })
 
-  it('round-trips levels, and loading does not put a node under the bridge', () => {
+  it('round-trips heights, and loading does not put a node under the bridge', () => {
     const { net, ground, other } = crossed(-1)
-    const restored = deserializeNetwork(JSON.parse(JSON.stringify(serializeNetwork(net)))).network
+    const restored = reload(serializeNetwork(net))
 
     expect(restored.nodes.size).toBe(4)
     expect([...restored.segments.keys()]).toEqual([ground.id, other.id])
-    expect(restored.segments.get(other.id)!.level).toBe(-1)
-    expect(restored.segments.get(ground.id)!.level).toBeUndefined()
+    expect(segmentEndLevels(restored, restored.segments.get(other.id)!)).toEqual({ from: -1, to: -1 })
+    expect(segmentEndLevels(restored, restored.segments.get(ground.id)!)).toEqual({ from: 0, to: 0 })
   })
 
-  it('a file without levels loads as it always did: the crossing gets its node and no rail gets a level', () => {
+  it('round-trips a decimal height: a ramp cut in the middle comes back with its node at 0.5', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const m = addNode(net, { x: 100, y: 0 }, 0.5)
+    const b = addNode(net, { x: 200, y: 0 }, 1)
+    addSegment(net, a.id, m.id)
+    addSegment(net, m.id, b.id)
+    // A ground track crossing under the upper half, which must stay clear of it
+    const c = addNode(net, { x: 190, y: -50 })
+    const d = addNode(net, { x: 190, y: 50 })
+    addSegment(net, c.id, d.id)
+
+    const data = serializeNetwork(net)
+    expect(data.nodes.find((node) => node.id === m.id)!.level).toBe(0.5)
+    const restored = reload(data)
+
+    expect(restored.nodes.size).toBe(5)
+    expect(restored.segments.size).toBe(3)
+    expect(nodeLevel(restored.nodes.get(a.id))).toBe(0)
+    expect(nodeLevel(restored.nodes.get(m.id))).toBe(0.5)
+    expect(nodeLevel(restored.nodes.get(b.id))).toBe(1)
+    expect(serializeNetwork(restored).nodes).toEqual(data.nodes)
+  })
+
+  it('a file without heights loads as it always did: the crossing gets its node and nothing gets a level', () => {
     const { net } = crossed(0)
     const data = JSON.parse(JSON.stringify(serializeNetwork(net)))
     expect(JSON.stringify(data)).not.toContain('level')
+    // The file is what it was before heights existed: nodes are an id and two coordinates
+    expect(Object.keys(data.nodes[0])).toEqual(['id', 'x', 'y'])
+    expect(Object.keys(data.segments[0])).toEqual(['id', 'from', 'to', 'kind'])
 
     const restored = deserializeNetwork(data).network
 
     expect(restored.nodes.size).toBe(5)
     expect(restored.segments.size).toBe(4)
+    for (const node of restored.nodes.values()) expect('level' in node).toBe(false)
     for (const seg of restored.segments.values()) expect('level' in seg).toBe(false)
     // Saving it again adds nothing to the file
     expect(JSON.stringify(serializeNetwork(restored))).not.toContain('level')
   })
 
-  it('ignores a level that is not a whole number within the allowed range', () => {
-    const { net, other } = crossed(1)
-    for (const bad of [1.5, 99, -6, '1', null, NaN]) {
+  it('ignores a height that is not a finite number within the allowed range', () => {
+    const { net, s } = crossed(1)
+    for (const bad of [99, -6, 5.01, '1', null, NaN, Infinity]) {
       const data = JSON.parse(JSON.stringify(serializeNetwork(net)))
-      data.segments.find((seg: { id: string }) => seg.id === other.id).level = bad
+      data.nodes.find((node: { id: string }) => node.id === s.id).level = bad
       const restored = deserializeNetwork(data).network
-      for (const seg of restored.segments.values()) expect(seg.level).toBeUndefined()
+      expect(restored.nodes.get(s.id)!.level).toBeUndefined()
     }
+  })
+
+  describe('a save made when the level was on the rails', () => {
+    /** The file format of the first version of track levels: `level` on the segments, none on the nodes */
+    const legacy = (level: number) => ({
+      version: 1,
+      nodes: [
+        { id: 'n_1', x: -100, y: 0 },
+        { id: 'n_2', x: 100, y: 0 },
+        { id: 'n_3', x: 0, y: -100 },
+        { id: 'n_4', x: 0, y: 100 },
+      ],
+      segments: [
+        { id: 's_5', from: 'n_1', to: 'n_2', kind: 'straight' },
+        { id: 's_6', from: 'n_3', to: 'n_4', kind: 'straight', level },
+      ],
+      junctions: [],
+    })
+
+    it('keeps its bridge and its tunnel: their nodes take the level, before reconcile can cut them', () => {
+      for (const level of [1, -1]) {
+        const restored = reload(legacy(level))
+
+        expect(restored.nodes.size).toBe(4)
+        expect([...restored.segments.keys()]).toEqual(['s_5', 's_6'])
+        const other = restored.segments.get('s_6')!
+        expect(segmentEndLevels(restored, other)).toEqual({ from: level, to: level })
+        expect(segmentBand(restored, other)).toBe(level)
+        expect(segmentBand(restored, restored.segments.get('s_5')!)).toBe(0)
+        expect('level' in other).toBe(false)
+
+        // Saved again in the current format
+        const saved = serializeNetwork(restored)
+        expect(saved.nodes.filter((node) => node.level === level).map((node) => node.id)).toEqual(['n_3', 'n_4'])
+        for (const seg of saved.segments) expect('level' in seg).toBe(false)
+      }
+    })
+
+    it('a node between rails of different levels takes the one furthest from the ground, the upper one on a tie', () => {
+      const chain = (first: number | undefined, second: number | undefined) => {
+        const data = {
+          version: 1,
+          nodes: [
+            { id: 'n_1', x: 0, y: 0 },
+            { id: 'n_2', x: 100, y: 0 },
+            { id: 'n_3', x: 200, y: 0 },
+          ],
+          segments: [
+            { id: 's_4', from: 'n_1', to: 'n_2', kind: 'straight', ...(first === undefined ? {} : { level: first }) },
+            { id: 's_5', from: 'n_2', to: 'n_3', kind: 'straight', ...(second === undefined ? {} : { level: second }) },
+          ],
+          junctions: [],
+        }
+        const restored = reload(data)
+        return ['n_1', 'n_2', 'n_3'].map((id) => nodeLevel(restored.nodes.get(id)))
+      }
+
+      // The old "cliff" between a ground rail and a bridge rail becomes a ramp up to the bridge
+      expect(chain(undefined, 1)).toEqual([0, 1, 1])
+      expect(chain(1, 2)).toEqual([1, 2, 2])
+      expect(chain(-2, 1)).toEqual([-2, -2, 1])
+      expect(chain(-1, 1)).toEqual([-1, 1, 1])
+      expect(chain(1, -1)).toEqual([1, 1, -1])
+      expect(chain(undefined, -1)).toEqual([0, -1, -1])
+    })
   })
 })

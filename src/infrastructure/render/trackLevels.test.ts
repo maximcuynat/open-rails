@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCamera } from '@infrastructure/render/camera'
-import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
+import { createNetwork, addNode, addSegment, addCurveSegment, setNodesLevel } from '@domain/models/network'
 import { createTrainSet, type TrainSet } from '@domain/models/train'
 import type { Network } from '@domain/models/types'
 import {
@@ -79,14 +79,14 @@ const near = (a: number, b: number, eps = 0.01) => Math.abs(a - b) < eps
 
 /**
  * A ground track along y = 0 (x 0 → 200) and a track across it along x = 100 (y −50 → 50) with no
- * common node. The crossing track is added FIRST: only its level can put it on top.
+ * common node. The crossing track is added FIRST: only its level (the height of its two nodes) can
+ * put it on top.
  */
 function crossingTracks(upperLevel: number) {
   const net = createNetwork()
-  const u1 = addNode(net, { x: 100, y: -50 })
-  const u2 = addNode(net, { x: 100, y: 50 })
+  const u1 = addNode(net, { x: 100, y: -50 }, upperLevel)
+  const u2 = addNode(net, { x: 100, y: 50 }, upperLevel)
   const upper = addSegment(net, u1.id, u2.id)!
-  if (upperLevel !== 0) upper.level = upperLevel
   const g1 = addNode(net, { x: 0, y: 0 })
   const g2 = addNode(net, { x: 200, y: 0 })
   const ground = addSegment(net, g1.id, g2.id)!
@@ -205,35 +205,42 @@ describe('track levels — rails', () => {
     expect(flat.map((op) => op.lineWidth)).toEqual([2.5, 2.5])
   })
 
-  it('ramp: the deck ends on an abutment at the node shared with a lower rail, and only there', () => {
+  it('ramp: the flat span ends on an abutment at the node where the ramp comes up, and only there', () => {
     const net = createNetwork()
     const a = addNode(net, { x: 0, y: 0 })
-    const b = addNode(net, { x: 100, y: 0 })
-    const c = addNode(net, { x: 200, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 }, 1)
+    const c = addNode(net, { x: 200, y: 0 }, 1)
+    // a → b climbs from the ground, b → c is the bridge
     addSegment(net, a.id, b.id)
-    const bridge = addSegment(net, b.id, c.id)!
-    bridge.level = 1
+    addSegment(net, b.id, c.id)
 
     const abutmentWidth = Math.max(1.5, DECK_PARAPET_WIDTH * SCALE * 1.5)
     const abutments = () =>
       drawPlain(net).filter((op) => op.name === 'stroke' && near(op.lineWidth ?? 0, abutmentWidth) && op.strokeStyle === '#526071')
 
     const drawn = abutments()
-    // One abutment, at the ramp node b (screen centre), not at the free end c
+    // One abutment, at the top of the ramp b (screen centre): none at the free end c, none at the foot a
     expect(drawn).toHaveLength(1)
     expect(drawn[0].start![0]).toBeLessThan(VW / 2) // the wings splay away from the deck
     expect(Math.abs(drawn[0].start![1] - VH / 2)).toBeGreaterThan((DECK_WIDTH / 2) * SCALE)
 
-    // The whole line on the bridge: no level change, no abutment
-    for (const seg of net.segments.values()) seg.level = 1
+    // A ramp carries the deck of its level over its whole length, like the span it leads to
+    expect(indices(drawPlain(net), isDeckStroke)).toHaveLength(2)
+
+    // The whole line on the bridge: no ramp, no abutment
+    setNodesLevel(net, [a.id], 1)
+    expect(abutments()).toHaveLength(0)
+
+    // A ramp that goes on up from the span is not a bridge end either
+    setNodesLevel(net, [a.id], 2)
     expect(abutments()).toHaveLength(0)
   })
 
   it('a curved rail gets a curved deck', () => {
     const net = createNetwork()
-    const a = addNode(net, { x: 0, y: 0 })
-    const b = addNode(net, { x: 200, y: 60 })
-    addCurveSegment(net, a.id, b.id, { x: 100, y: 0 })!.level = 2
+    const a = addNode(net, { x: 0, y: 0 }, 2)
+    const b = addNode(net, { x: 200, y: 60 }, 2)
+    addCurveSegment(net, a.id, b.id, { x: 100, y: 0 })
     const ops = drawPlain(net)
 
     const deck = indices(ops, isDeckStroke)[0]
@@ -272,14 +279,14 @@ describe('track levels — trains', () => {
     expect(visibleTrackLevels(net, createCamera(5000, 5000, SCALE), VW, VH)).toEqual([0])
   })
 
-  it('a vehicle is on the level of the rail under its bogies, the higher one across a ramp', () => {
+  it('a vehicle is on the level of the rail under its bogies, the higher one at the foot of a ramp', () => {
     const net = createNetwork()
     const a = addNode(net, { x: 0, y: 0 })
     const b = addNode(net, { x: 100, y: 0 })
-    const c = addNode(net, { x: 200, y: 0 })
+    const c = addNode(net, { x: 200, y: 0 }, 1)
     const low = addSegment(net, a.id, b.id)!
+    // The 0 → 1 ramp is drawn with level 1
     const high = addSegment(net, b.id, c.id)!
-    high.level = 1
     const pos = (segId: string) => ({ segId })
     expect(vehicleLevel(net, { front: pos(low.id), rear: pos(low.id) })).toBe(0)
     expect(vehicleLevel(net, { front: pos(high.id), rear: pos(low.id) })).toBe(1)
@@ -372,8 +379,8 @@ describe('track levels — trains', () => {
     expect(indices(layered.ops, isDeckStroke)).toEqual([])
     expect(layered.ops.every((op) => op.dash.length === 0 || op.dash.join() !== TUNNEL_DASH.join())).toBe(true)
 
-    // An explicit `level: 0` on the rails changes nothing either
-    for (const seg of net.segments.values()) seg.level = 0
+    // An explicit `level: 0` on the nodes changes nothing either
+    for (const node of net.nodes.values()) node.level = 0
     expect(drawLayered(net, [train]).ops).toEqual(plain.ops)
   })
 })

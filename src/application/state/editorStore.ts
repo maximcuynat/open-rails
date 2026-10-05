@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, segmentLevel, setSegmentsLevel, branchLevel } from '@domain/models/network'
-import { separateLevelsAtNode } from '@domain/models/crossing'
+import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel } from '@domain/models/network'
+import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
@@ -875,16 +875,14 @@ export class EditorStore {
       const toId = rev ? seg.from : seg.to
       const a = net.nodes.get(fromId)!.pos
       const b = net.nodes.get(toId)!.pos
-      // The copy runs alongside its model, on the same level
-      const level = segmentLevel(seg)
       if (seg.via) {
         const par = computeParallelCurve(a, seg.via, b, off)
-        return { fromId, toId, start: par.start, end: par.end, via: par.via as Point | null, level }
+        return { fromId, toId, start: par.start, end: par.end, via: par.via as Point | null }
       }
       const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
       const nx = (-(b.y - a.y) / len) * off
       const ny = ((b.x - a.x) / len) * off
-      return { fromId, toId, start: { x: a.x + nx, y: a.y + ny }, end: { x: b.x + nx, y: b.y + ny }, via: null, level }
+      return { fromId, toId, start: { x: a.x + nx, y: a.y + ny }, end: { x: b.x + nx, y: b.y + ny }, via: null }
     })
 
     // Where exactly two rails meet, both copies share one node (mitre of the two offsets)
@@ -917,7 +915,8 @@ export class EditorStore {
           isShared = true
         }
       }
-      const node = addNode(net, target)
+      // The copy runs alongside its model, at the same heights
+      const node = addNode(net, target, nodeLevel(net.nodes.get(nid)))
       newNodes.add(node.id)
       if (isShared) sharedNodeIds.set(nid, node.id)
       return node.id
@@ -927,7 +926,7 @@ export class EditorStore {
     for (const p of pieces) {
       const fromId = nodeFor(p.fromId, p.start)
       const toId = nodeFor(p.toId, p.end)
-      const seg = p.via ? addCurveSegment(net, fromId, toId, p.via, p.level) : addSegment(net, fromId, toId, p.level)
+      const seg = p.via ? addCurveSegment(net, fromId, toId, p.via) : addSegment(net, fromId, toId)
       if (seg) newSegs.add(seg.id)
     }
     if (newSegs.size === 0) return false
@@ -976,17 +975,17 @@ export class EditorStore {
       }
     }
     if (!mainSeg) {
-      mainSeg = addSegment(this.network, idA, idB, branchLevel(this.network, idA))
+      mainSeg = addSegment(this.network, idA, idB)
     }
 
     // Créer les 2 nouveaux nœuds parallèles
     const p2A = { x: nodeA.pos.x + nx * off, y: nodeA.pos.y + ny * off }
     const p2B = { x: nodeB.pos.x + nx * off, y: nodeB.pos.y + ny * off }
 
-    const newNodeA = addNode(this.network, p2A)
-    const newNodeB = addNode(this.network, p2B)
+    const newNodeA = addNode(this.network, p2A, nodeLevel(nodeA))
+    const newNodeB = addNode(this.network, p2B, nodeLevel(nodeB))
 
-    const secSeg = addSegment(this.network, newNodeA.id, newNodeB.id, branchLevel(this.network, idA))
+    const secSeg = addSegment(this.network, newNodeA.id, newNodeB.id)
 
     // Sélectionner les 2 nouveaux nœuds pour permettre d'enchaîner la pose ou les visualiser
     this.selection = { nodes: new Set([newNodeA.id, newNodeB.id]), segments: new Set(secSeg ? [secSeg.id] : []) }
@@ -1002,8 +1001,8 @@ export class EditorStore {
   connectSelectedNodes = (): boolean => {
     if (this.selection.nodes.size !== 2) return false
     const [idA, idB] = [...this.selection.nodes]
-    // The rail continues the track it starts from: off a bridge node, it is part of the bridge
-    const s = addSegment(this.network, idA, idB, branchLevel(this.network, idA))
+    // The rail runs from the height of one node to the height of the other (a ramp when they differ)
+    const s = addSegment(this.network, idA, idB)
     this.reconcileNetwork()
     this.markDirty()
     this.notify()
@@ -1496,31 +1495,54 @@ export class EditorStore {
   }
 
   /**
-   * Raise (`delta` > 0) or lower the selected rails by `delta` levels, each from its own level.
-   * Returns true when at least one rail changed.
+   * Raise (`delta` > 0) or lower the selection by `delta` levels: the nodes of the selected rails
+   * (each node once, from its own height), or the selected nodes when no rail is selected. The
+   * rails are not touched: an unselected neighbour that shares a moved node becomes a ramp.
+   * Where a selected track crosses an unselected one on a shared node (a diamond), the node is
+   * split first so that only the selected track moves: the crossing becomes a bridge.
+   * Returns true when at least one node changed height.
    */
   shiftSelectionLevel = (delta: number): boolean => {
     const net = this.network
     const step = Math.round(delta)
     if (step === 0) return false
 
-    const touchedNodes = new Set<string>()
+    const selected = this.selection.segments
+    const nodeIds = new Set<string>()
     const shifted = new Map<string, string>() // rail -> ancestor its pieces would name
-    for (const sid of this.selection.segments) {
+    for (const sid of selected) {
       const seg = net.segments.get(sid)
-      if (!seg || setSegmentsLevel(net, [sid], segmentLevel(seg) + step) === 0) continue
+      if (!seg) continue
       shifted.set(sid, seg.parentSegmentId ?? sid)
-      touchedNodes.add(seg.from)
-      touchedNodes.add(seg.to)
+      nodeIds.add(seg.from)
+      nodeIds.add(seg.to)
     }
-    if (shifted.size === 0) return false
+    if (shifted.size === 0) {
+      for (const nid of this.selection.nodes) if (net.nodes.has(nid)) nodeIds.add(nid)
+    }
+    if (nodeIds.size === 0) return false
 
     // Rails keep their shape, and the trains their place: a rail that reconcile cuts (a bridge
     // brought down onto the track it spanned) is handled like any other cut
     this.pinTrains()
-    // A level crossing whose tracks no longer share a level becomes a bridge...
-    for (const nid of touchedNodes) separateLevelsAtNode(net, nid)
-    // ...and a bridge brought back to the level of the track under it becomes a crossing again
+    let changed = 0
+    for (const nid of nodeIds) {
+      const target = nodeLevel(net.nodes.get(nid)) + step
+      // A level crossing of a selected track with an unselected one becomes a bridge...
+      const through = throughTracksAtNode(net, nid)
+      const own = through?.tracks.find((track) => track.every((seg) => selected.has(seg.id)))
+      const other = through?.tracks.find((track) => track !== own)
+      if (own && other && !other.some((seg) => selected.has(seg.id)) && separateLevelsAtNode(net, nid, own[0].id, target)) {
+        changed++
+        continue
+      }
+      changed += setNodesLevel(net, [nid], target)
+    }
+    if (changed === 0) {
+      this.unpinTrains()
+      return false
+    }
+    // ...and a bridge brought back to the height of the track under it becomes a crossing again
     const before = new Set(net.segments.keys())
     this.reconcileNetwork()
     this.realignTrains()

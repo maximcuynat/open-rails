@@ -8,7 +8,7 @@ import { segmentTangentAt } from '@domain/geometry/tangent'
 import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
-import { nodeLevels, segmentLevel } from '@domain/models/network'
+import { isRamp, nodeLevel, segmentBand } from '@domain/models/network'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -496,7 +496,7 @@ export interface RenderNetworkOptions {
    * Used to slip the trains between two track levels (`renderNetworkWithTrains`).
    */
   part?: 'tracks' | 'overlays'
-  /** Rails of this level only (see `segmentLevel`). Absent: every level, lowest first. */
+  /** Rails of this level only (see `segmentBand`). Absent: every level, lowest first. */
   level?: number
 }
 
@@ -523,10 +523,10 @@ export function inLevelBand(level: number, band?: LevelBand): boolean {
   return !band || (level > band.above && level <= band.upTo)
 }
 
-/** Level of the rail a bogie stands on. */
+/** Drawing level (`segmentBand`) of the rail a bogie stands on. */
 export function trackPositionLevel(net: Network, pos: { segId: string }): number {
   const seg = net.segments.get(pos.segId)
-  return seg ? segmentLevel(seg) : 0
+  return seg ? segmentBand(net, seg) : 0
 }
 
 /** Level of a vehicle: the rail under its bogies, the higher of the two when it straddles a ramp. */
@@ -545,15 +545,31 @@ function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
   return visible
 }
 
-/** Segments split by level, lowest level first; the order inside a level is kept. */
-function groupSegmentsByLevel(segs: Segment[]): { level: number; segs: Segment[] }[] {
+/**
+ * True when the bridge deck of `seg` ends on an abutment at `nodeId`: a flat rail above ground
+ * meets there a ramp that goes down from it.
+ */
+export function isDeckEndAt(net: Network, seg: Segment, nodeId: string): boolean {
+  if (isRamp(net, seg)) return false
+  const height = nodeLevel(net.nodes.get(nodeId))
+  if (height <= 0) return false
+  for (const sid of net.adjacency.get(nodeId) ?? []) {
+    const other = net.segments.get(sid)
+    if (!other || other.id === seg.id) continue
+    if (nodeLevel(net.nodes.get(other.from === nodeId ? other.to : other.from)) < height) return true
+  }
+  return false
+}
+
+/** Segments split by drawing level (`segmentBand`), lowest first; the order inside a level is kept. */
+function groupSegmentsByLevel(net: Network, segs: Segment[]): { level: number; segs: Segment[] }[] {
   if (segs.length === 0) return []
-  const first = segmentLevel(segs[0])
+  const first = segmentBand(net, segs[0])
   // A network on a single level (every network without a bridge): one group, nothing to sort
-  if (segs.every((seg) => segmentLevel(seg) === first)) return [{ level: first, segs }]
+  if (segs.every((seg) => segmentBand(net, seg) === first)) return [{ level: first, segs }]
   const byLevel = new Map<number, Segment[]>()
   for (const seg of segs) {
-    const level = segmentLevel(seg)
+    const level = segmentBand(net, seg)
     const group = byLevel.get(level)
     if (group) group.push(seg)
     else byLevel.set(level, [seg])
@@ -564,15 +580,15 @@ function groupSegmentsByLevel(segs: Segment[]): { level: number; segs: Segment[]
 /** Levels of the rails in view, lowest first. A network without bridge or tunnel gives `[0]`. */
 export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: number): number[] {
   let hasLevels = false
-  for (const seg of net.segments.values()) {
-    if (seg.level) {
+  for (const node of net.nodes.values()) {
+    if (node.level) {
       hasLevels = true
       break
     }
   }
   if (!hasLevels) return [0]
   const levels = new Set<number>()
-  for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) levels.add(segmentLevel(seg))
+  for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) levels.add(segmentBand(net, seg))
   return [...levels].sort((x, y) => x - y)
 }
 
@@ -599,8 +615,8 @@ function traceCenterline(
 /**
  * Bridge decks of the rails of one level above ground: an opaque band wider than the ballast,
  * with a parapet along each edge, that hides whatever runs below. Drawn before the rails it
- * carries. Where the deck meets a lower rail (ramp node) it ends on an abutment: a closing line
- * and two splayed wing walls, the usual map symbol of a bridge end.
+ * carries. Where a flat span meets a ramp going down (`isDeckEndAt`) it gets an abutment: a closing
+ * line and two splayed wing walls, the usual map symbol of a bridge end.
  */
 export function renderBridgeDecks(
   ctx: CanvasRenderingContext2D,
@@ -669,12 +685,7 @@ export function renderBridgeDecks(
   for (const seg of segs) {
     for (const nodeId of [seg.from, seg.to]) {
       const node = net.nodes.get(nodeId)
-      if (!node) continue
-      let ramp = false
-      for (const other of nodeLevels(net, nodeId)) {
-        if (other < level) ramp = true
-      }
-      if (!ramp) continue
+      if (!node || !isDeckEndAt(net, seg, nodeId)) continue
       // `tangent` points from the node into the deck: the wings splay the other way
       const { tangent, normal } = getNodeSegmentEndVector(net, seg, nodeId)
       const corner = (side: 1 | -1): Point => ({
@@ -763,7 +774,7 @@ export function renderNetwork(
 
   // Rails are drawn level by level, lowest first, so that a bridge covers what runs below it.
   // Without bridge or tunnel there is a single group: the whole network, in its own order.
-  const allGroups = groupSegmentsByLevel(visibleSegments)
+  const allGroups = groupSegmentsByLevel(net, visibleSegments)
   const levelGroups = options?.level === undefined ? allGroups : allGroups.filter((g) => g.level === options.level)
   // Each rail joint belongs to one level only when several are drawn
   const jointsByLevel = allGroups.length > 1 || options?.level !== undefined
