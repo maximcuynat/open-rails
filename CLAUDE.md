@@ -21,7 +21,7 @@ npx vitest run -t "<test name substring>"           # single test by name
 
 There is no linter or formatter configured. `tsc` is the only static check, and it is strict with `noUnusedLocals` / `noUnusedParameters` (unused imports and variables are build errors) and `verbatimModuleSyntax` (type-only imports must use `import type` / `import { type X }`).
 
-Vitest transpiles without typechecking, so a green test run does not mean the build passes — run `npm run typecheck` as well. The only CI is `.github/workflows/deploy.yml`, which runs `npm run build` on pushes to `main` and deploys `dist/` to GitHub Pages (hence `base: './'` in `vite.config.ts`); it does not run the tests, and pushes that only touch `*.md` do not trigger it.
+Vitest transpiles without typechecking, so a green test run does not mean the build passes — run `npm run typecheck` as well. The only CI is `.github/workflows/deploy.yml`: it runs when a GitHub Release is published (or by manual dispatch), executes `npm test` then `npm run build`, and deploys `dist/` to GitHub Pages (hence `base: '/open-rails/'` in `vite.config.ts`). Nothing runs on a plain push. Its actions are pinned by commit SHA; `main` and `developement` refuse force-pushes and deletion, and `v*` tags cannot be moved.
 
 ## Architecture
 

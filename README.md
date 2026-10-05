@@ -9,25 +9,30 @@
 
 ## ✨ Fonctionnalités clés
 
-- **Tracé de voies précis & continu** :
-  - Continuité tangentielle stricte ($G^1$ à $10^{-5}$) entre sections droites et courbes de Bézier quadratiques.
-  - Deux modes de pose : **Catalogue Kato Unitrack HO** ou **Voie libre 100% (Flex)**.
-  - Aiguillages automatiques, croisements à niveau et doubles voies parallèles.
-- **Cotations CAD temps réel & Gizmo 2D** :
-  - Affichage instantané des rayons ($R$), longueurs ($L$), angles ($\theta$) et entraxes de voies.
-  - Gizmo orthogonal 2D pour translater précisément les nœuds et aiguillages sur les axes X ou Y.
-- **Atelier Train & Simulation cinématique** :
-  - Rame TGV complète et réversible : motrice de tête $M_1$, voitures voyageurs articulées, motrice de queue $M_2$.
-  - Glisser-déposer fluide (Pointer Drag & HTML5 Drag & Drop) des motrices et voitures sur les rails.
-  - Modèle cinématique rigoureux : bogies en retrait ($3{,}04\,\text{m}$), axes orientés tournants avec la voie, soufflets d'accordéons élastiques ancrés sur les parois latérales.
-- **Mode Conduite dynamique** :
-  - Vitesse en temps réel jusqu'à $500\,\text{km/h}$.
-  - Contrôle clavier (<kbd>F5</kbd> pour prendre les commandes, <kbd>↑</kbd>/<kbd>↓</kbd> crans de traction et de freinage, <kbd>←</kbd>/<kbd>→</kbd> Aiguillage).
-  - Réversibilité ferroviaire réelle : inverseur avant / neutre / arrière (<kbd>Maj</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd>).
-  - Mode Debug Squelette (<kbd>D</kbd>) affichant les pivots, bielles d'attelage et accordéons.
-- **Export & Sauvegarde** :
-  - Export vectoriel SVG multi-calques prêt pour l'impression ou la découpe laser.
-  - Sauvegarde et chargement de réseaux au format JSON.
+- **Tracé de voies** :
+  - Continuité tangentielle ($G^1$) entre sections droites et courbes ; un coude de plus de 15° est signalé et n'est pas franchissable.
+  - Aiguillages, traversées, voies parallèles, heurtoirs en bout de voie.
+  - **Niveaux de voie** : ponts, tunnels et rampes, avec leur pente en ‰.
+  - Cotations en direct (rayon, longueur, angle, entraxe) et saisie d'une longueur exacte au clavier.
+- **Trains** :
+  - Rames TGV articulées (**Duplex** et **TGV M**) construites véhicule par véhicule sur la voie, attelage et dételage.
+  - Plusieurs trains sur le réseau, arrêt au contact d'un autre train ou d'un heurtoir.
+- **Conduite réaliste** (à l'échelle 1:1) :
+  - Masse, puissance, adhérence et résistance à l'avancement ; la pente et les courbes comptent.
+  - Frein à air (conduite générale, cylindres de frein, manomètres), frein électrique, freinage d'urgence.
+  - Console de conduite qui s'adapte à la taille de la fenêtre.
+- **Limites de vitesse, dévers et déraillement** :
+  - Zones de vitesse posées sur la voie, vitesse de ligne, annonce de la prochaine limite.
+  - Dévers calculé par courbe ; une courbe prise trop vite fait dérailler la rame.
+  - Pentes et dévers visibles sur le plan (chevrons, rail extérieur surligné, caisse qui penche).
+- **Signalisation** :
+  - Niveau standard : signaux de block et de trajectoire, cantons, réservation du trajet.
+  - Niveau pro *(expérimental)* : signaux français, ralentissements, vitesse en cabine sur ligne à grande vitesse.
+- **Réseaux d'exemple** (Fichier ▸ Exemples), dont la gare de Marseille Saint-Charles d'après OpenStreetMap.
+- **Export & sauvegarde** : sauvegarde automatique dans le navigateur, import / export JSON, export SVG et PNG.
+- **Raccourcis clavier reconfigurables** et thèmes clair / sombre.
+
+> Le **pupitre sur téléphone** *(expérimental)* ne fonctionne que lorsque l'application tourne en local (`npm run dev`), pas sur la démo en ligne.
 
 ---
 
@@ -44,6 +49,9 @@
 | <kbd>M</kbd> | Règle (mesurer) |
 | <kbd>H</kbd> | Déplacer la vue |
 | <kbd>L</kbd> | Trains (pose et sélection) |
+| <kbd>S</kbd> | Limite de vitesse |
+| <kbd>B</kbd> | Signal de block (sémaphore au niveau pro) |
+| <kbd>J</kbd> | Signal de trajectoire (carré au niveau pro) |
 | **Pose des voies** | |
 | <kbd>0</kbd>–<kbd>9</kbd> puis <kbd>Entrée</kbd> | Saisir la longueur exacte de la voie droite en cours |
 | <kbd>Tab</kbd> | Continuer en courbe depuis le nœud de la voie droite en cours |
@@ -64,11 +72,19 @@
 | <kbd>I</kbd> | Afficher / masquer l'inspecteur |
 | <kbd>Ctrl</kbd> + <kbd>,</kbd> ou <kbd>,</kbd> | Paramètres du réseau (échelles, unités) |
 | **Conduite** | |
-| <kbd>F5</kbd> | Entrer en mode conduite / le quitter |
-| <kbd>↑</kbd> / <kbd>↓</kbd> | Manipulateur : un cran de traction / de freinage |
-| <kbd>Maj</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd> | Inverseur (avant · neutre · arrière) |
-| <kbd>Retour arrière</kbd> | Arrêt d'urgence |
+| <kbd>F5</kbd> | Prendre les commandes / les rendre |
+| <kbd>A</kbd> / <kbd>D</kbd> ou <kbd>↑</kbd> / <kbd>↓</kbd> | Manipulateur : un cran de plus / de moins (traction P1…P5, frein électrique B1…B5) |
+| <kbd>Q</kbd> (maintenir) | Desserrer le frein à air |
+| <kbd>E</kbd> (maintenir) | Serrer le frein à air |
+| <kbd>W</kbd> / <kbd>S</kbd> ou <kbd>Maj</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd> | Inverseur (avant · neutre · arrière) |
+| <kbd>Retour arrière</kbd> | Freinage d'urgence |
 | <kbd>←</kbd> / <kbd>→</kbd> | Orienter le prochain aiguillage |
+| <kbd>Espace</kbd> | Quitter la conduite |
+| <kbd>F3</kbd> | Squelette debug des trains |
+
+Les lettres de conduite désignent la **position** des touches d'un clavier QWERTY (sur un clavier AZERTY : <kbd>Q</kbd>/<kbd>D</kbd>, <kbd>A</kbd>/<kbd>E</kbd>, <kbd>Z</kbd>/<kbd>S</kbd>). Tous les raccourcis se modifient dans **Paramètres ▸ Raccourcis**.
+
+Pour démarrer un train : <kbd>F5</kbd>, inverseur vers l'avant, maintenir « desserrer le frein » jusqu'à 5 bar, puis monter le manipulateur.
 
 ---
 
