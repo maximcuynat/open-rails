@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment, removeSegment } from '@domain/models/network'
 import { computeTrackSections } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
+import { detectConnectedComponents, detectDeadEnds, detectLoops } from '@domain/services/pathfinding'
 import type { Network } from '@domain/models/types'
 import { networkDerived, POLYLINE_MAX_CHORDS, POLYLINE_TOLERANCE } from './networkDerived'
 
@@ -107,6 +108,86 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     expect(issues).toEqual(analyzeKinematics(net, 1.435, gradient))
     expect(derived.kinematicIssues(1.435)).toEqual(analyzeKinematics(net, 1.435))
     expect(derived.kinematicIssues(1.435)).not.toBe(issues)
+  })
+
+  it('gives the graph analyses of the inspector, worked out once', () => {
+    const { net, ids } = line()
+    // A triangle on the first rail, and a rail apart from the rest
+    const top = addNode(net, { x: 15, y: 20 })
+    addSegment(net, ids[0], top.id)
+    addSegment(net, top.id, ids[1])
+    const e = addNode(net, { x: 0, y: 100 })
+    const f = addNode(net, { x: 30, y: 100 })
+    addSegment(net, e.id, f.id)
+
+    const derived = networkDerived(net)
+    expect(derived.deadEnds()).toEqual(detectDeadEnds(net))
+    expect(derived.loops()).toEqual(detectLoops(net))
+    expect(derived.components()).toEqual(detectConnectedComponents(net))
+    expect(derived.loops()).toHaveLength(1)
+    expect(derived.components()).toHaveLength(2)
+
+    expect(networkDerived(net).deadEnds()).toBe(derived.deadEnds())
+    expect(networkDerived(net).loops()).toBe(derived.loops())
+    expect(networkDerived(net).components()).toBe(derived.components())
+  })
+
+  it('works the graph analyses out again when the track changes', () => {
+    const { net, ids, segs } = line()
+    const first = networkDerived(net)
+    const deadEnds = first.deadEnds()
+    const loops = first.loops()
+    const components = first.components()
+    expect(deadEnds).toHaveLength(2)
+    expect(loops).toHaveLength(0)
+    expect(components).toHaveLength(1)
+
+    // A rail added closes a loop
+    const top = addNode(net, { x: 30, y: 30 })
+    addSegment(net, ids[0], top.id)
+    const closing = addSegment(net, top.id, ids[2])!
+    let derived = networkDerived(net)
+    expect(derived.loops()).not.toBe(loops)
+    expect(derived.loops()).toEqual(detectLoops(net))
+    expect(derived.loops()).toHaveLength(1)
+    expect(derived.deadEnds()).toHaveLength(0)
+
+    // A rail removed opens it again
+    removeSegment(net, closing.id)
+    derived = networkDerived(net)
+    expect(derived.loops()).toHaveLength(0)
+    expect(derived.deadEnds()).toEqual(detectDeadEnds(net))
+
+    // A node moved: the same graph, but nothing is kept across a change of the network
+    const kept = derived.components()
+    net.nodes.get(ids[1])!.pos.y = 2
+    expect(networkDerived(net).components()).not.toBe(kept)
+    expect(networkDerived(net).components()).toEqual(detectConnectedComponents(net))
+
+    // A rail cut off from the rest makes a second part
+    removeSegment(net, segs[1])
+    expect(networkDerived(net).components()).toEqual(detectConnectedComponents(net))
+  })
+
+  it('works the graph analyses out again when a table changes', () => {
+    const { net, ids, segs } = line()
+    const d = addNode(net, { x: 60, y: 4 })
+    const branch = addSegment(net, ids[1], d.id)!
+    const before = networkDerived(net)
+    const loops = before.loops()
+    net.junctions.set('j_test', {
+      id: 'j_test',
+      nodeId: ids[1],
+      kind: 'turnout',
+      passages: [{ a: segs[0], b: segs[1] }, { a: segs[0], b: branch.id }],
+      positions: [[0], [1]],
+      active: 0,
+    })
+    const after = networkDerived(net)
+    expect(after).not.toBe(before)
+    expect(after.loops()).not.toBe(loops)
+    expect(after.loops()).toEqual(detectLoops(net))
+    expect(after.sections).toEqual(computeTrackSections(net))
   })
 
   it('keeps separate data for separate networks', () => {

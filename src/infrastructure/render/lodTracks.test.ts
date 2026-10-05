@@ -11,10 +11,12 @@ import {
   LINE_HALO_EXTRA,
   LINE_MIN_WIDTH,
   SCHEMATIC_LINE_WIDTH,
+  SCHEMATIC_TRACK_SPACING,
   decimatePolyline,
   lineTrackWidth,
   renderLineTracks,
   renderSchematicTracks,
+  schematicLineWidth,
 } from '@infrastructure/render/lodTracks'
 
 const VW = 800
@@ -218,36 +220,54 @@ describe('renderNetwork by tier', () => {
     expect(large.calls.arc).toBeUndefined()
   })
 
-  it('detail tier: still two rails and their heads per rail, the section stripe and the joints', () => {
+  it('detail tier: still two rails and their heads, the section stripe and the joints — the rails of every piece in one stroke', () => {
     const scale = 8
     expect(trackLod(scale, GAUGE)).toBe('detail')
     const { net } = yard(1, 2)
     const { strokes } = tracks(net, scale, 30, 0)
     const railPx = Math.max(1.2, RAIL_WIDTH * scale)
-    // Per rail: the stripe of its section, the two rails, their heads
-    expect(strokes.filter((s) => s.strokeStyle === RAIL && s.lineWidth === railPx && s.lineCap === 'butt')).toHaveLength(2)
+    // The rails of the two pieces in a single stroke; their heads in another
+    const bases = strokes.filter((s) => s.strokeStyle === RAIL && s.lineWidth === railPx && s.lineCap === 'butt')
+    expect(bases).toHaveLength(1)
     // The heads of the rails, and those of the joint between the two
     expect(strokes.filter((s) => s.strokeStyle === '#ffffff').length).toBeGreaterThanOrEqual(2)
-    expect(strokes.length).toBeGreaterThan(6)
-    // The two rails of a straight: one path, either side of the centre line
-    const rails = strokes.find((s) => s.strokeStyle === RAIL && s.lineWidth === railPx)!
-    expect(rails.path.map((c) => c.name)).toEqual(['moveTo', 'lineTo', 'moveTo', 'lineTo'])
-    expect(rails.path[0].args[1]).toBeCloseTo(VH / 2 + (GAUGE / 2) * scale)
-    expect(rails.path[2].args[1]).toBeCloseTo(VH / 2 - (GAUGE / 2) * scale)
+    expect(strokes.length).toBeGreaterThan(4)
+    // Each straight piece: its two rails, either side of the centre line
+    expect(bases[0].path.map((c) => c.name)).toEqual(['moveTo', 'lineTo', 'moveTo', 'lineTo', 'moveTo', 'lineTo', 'moveTo', 'lineTo'])
+    expect(bases[0].path[0].args[1]).toBeCloseTo(VH / 2 + (GAUGE / 2) * scale)
+    expect(bases[0].path[2].args[1]).toBeCloseTo(VH / 2 - (GAUGE / 2) * scale)
   })
 
-  it('schematic tier: one stroke per section colour, whatever the number of rails', () => {
+  it('detail tier: a rail of a curve is the curve beside it, tangent to the track at both ends', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 40, y: 4 })
+    addCurveSegment(net, a.id, b.id, { x: 20, y: 0 })
+    const scale = 8
+    const { strokes } = tracks(net, scale, 20, 0)
+    const railPx = Math.max(1.2, RAIL_WIDTH * scale)
+    const base = strokes.find((s) => s.strokeStyle === RAIL && s.lineWidth === railPx)!
+    expect(base.path.map((c) => c.name)).toEqual(['moveTo', 'quadraticCurveTo', 'moveTo', 'quadraticCurveTo'])
+    // The track leaves along +x: its rails start straight above and below its first node
+    const sx = VW / 2 + (0 - 20) * scale
+    expect(base.path[0].args[0]).toBeCloseTo(sx)
+    expect(base.path[0].args[1]).toBeCloseTo(VH / 2 + (GAUGE / 2) * scale)
+    expect(base.path[2].args[0]).toBeCloseTo(sx)
+    expect(base.path[2].args[1]).toBeCloseTo(VH / 2 - (GAUGE / 2) * scale)
+    // … and the control point of each rail is level with its start: same tangent as the track
+    expect(base.path[1].args[1]).toBeCloseTo(base.path[0].args[1])
+  })
+
+  it('schematic tier: one stroke in the colour of the rails, whatever the number of rails', () => {
     const scale = 0.1
     expect(trackLod(scale, GAUGE)).toBe('schematic')
     const { net } = yard(20, 30)
     const { strokes } = tracks(net, scale)
-    const colors = new Set(networkDerived(net, {}).sections.map((sec) => sec.color))
-    expect(strokes).toHaveLength(colors.size)
-    expect(strokes.length).toBeLessThanOrEqual(20)
-    for (const s of strokes) expect(s.lineWidth).toBe(SCHEMATIC_LINE_WIDTH)
+    expect(strokes).toHaveLength(1)
+    expect(strokes[0].strokeStyle).toBe(RAIL)
+    expect(strokes[0].lineWidth).toBe(schematicLineWidth(scale))
     // Every rail is 3 px long here, so each one keeps its end: a point per node, no more
-    const points = strokes.reduce((n, s) => n + s.path.length, 0)
-    expect(points).toBe(20 * 31)
+    expect(strokes[0].path.length).toBe(20 * 31)
   })
 })
 
@@ -277,22 +297,27 @@ describe('schematic tier', () => {
     const cam = createCamera(camX, 0, scale)
     const derived = networkDerived(net)
     const selectedSections = new Set(selected.map((sid) => derived.sectionOfSegment.get(sid)!))
-    renderSchematicTracks(rec.ctx, cam, VW, VH, derived.sectionPolylines(), getViewportBounds(cam, VW, VH, 80), selectedSections, { accent: ACCENT })
+    renderSchematicTracks(rec.ctx, cam, VW, VH, derived.sectionPolylines(), getViewportBounds(cam, VW, VH, 80), selectedSections, { rail: RAIL, accent: ACCENT })
     return { ...rec, derived }
   }
 
-  it('one path per colour, each section a single run of points', () => {
+  it('schematicLineWidth: wide enough to touch the next track, never under the plain line', () => {
+    // At the edge of the schematic two tracks 4 m apart are 1.4 px apart: the line covers the gap
+    expect(schematicLineWidth(0.35)).toBeGreaterThan(SCHEMATIC_TRACK_SPACING * 0.35)
+    expect(schematicLineWidth(0.35)).toBeCloseTo(2.9)
+    // From afar the whole station is within the plain line
+    expect(schematicLineWidth(0.01)).toBe(SCHEMATIC_LINE_WIDTH)
+  })
+
+  it('one stroke in the colour of the rails, each section a single run of points', () => {
     const { net } = yard(12, 40)
     const { strokes, derived } = drawSchematic(net, 0.02)
     expect(derived.sections).toHaveLength(12)
-    expect(strokes).toHaveLength(new Set(derived.sections.map((s) => s.color)).size)
-    expect(strokes.reduce((n, s) => n + s.path.filter((c) => c.name === 'moveTo').length, 0)).toBe(12)
+    expect(strokes).toHaveLength(1)
+    expect(strokes[0].strokeStyle).toBe(RAIL)
+    expect(strokes[0].path.filter((c) => c.name === 'moveTo')).toHaveLength(12)
     // 1 200 m of track is 24 px: about a point per pixel, not one per rail end
-    for (const s of strokes) {
-      const perSection = s.path.length / s.path.filter((c) => c.name === 'moveTo').length
-      expect(perSection).toBeLessThanOrEqual(26)
-      expect(s.strokeStyle).not.toBe(ACCENT)
-    }
+    expect(strokes[0].path.length / 12).toBeLessThanOrEqual(26)
   })
 
   it('a selected section is drawn last, in the accent colour', () => {
@@ -301,7 +326,7 @@ describe('schematic tier', () => {
     const last = strokes[strokes.length - 1]
     expect(last.strokeStyle).toBe(ACCENT)
     expect(last.path.filter((c) => c.name === 'moveTo')).toHaveLength(1)
-    expect(strokes.slice(0, -1).map((s) => s.strokeStyle)).not.toContain(ACCENT)
+    expect(strokes.slice(0, -1).map((s) => s.strokeStyle)).toEqual([RAIL])
   })
 
   it('a section out of the viewport is not traced', () => {

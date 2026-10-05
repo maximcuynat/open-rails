@@ -230,16 +230,16 @@ describe('track levels — rails', () => {
     expect(tunnel.map((op) => op.dash)).toEqual([TUNNEL_DASH, []])
   })
 
-  it('schematic tier: one line per section in its colour, the levels are not layered', () => {
+  it('schematic tier: one line per section, all in the colour of the rails, the levels are not layered', () => {
     const far = createCamera(100, 0, 0.02)
     const lines = (ops: Op[]) => ops.filter((op) => op.name === 'stroke' && op.start && !isBufferStopStroke(op))
     const strokes = lines(drawPlain(crossingTracks(1).net, far))
-    expect(strokes.map((op) => op.lineWidth)).toEqual([2, 2])
+    // The two tracks in one stroke
+    expect(strokes.map((op) => op.lineWidth)).toEqual([2])
     expect(strokes.map((op) => op.strokeStyle)).not.toContain('#ffffff')
     expect(strokes[0].start![1]).toBeCloseTo(VH / 2 - 50 * 0.02)
-    expect(strokes[1].start![0]).toBeCloseTo(VW / 2 - 100 * 0.02)
 
-    // A track wholly below ground is dimmed
+    // A track wholly below ground is dimmed, in a stroke of its own
     const tunnel = lines(drawPlain(crossingTracks(-1).net, far))
     expect(tunnel.map((op) => op.globalAlpha)).toEqual([TUNNEL_ALPHA, 1])
   })
@@ -791,12 +791,43 @@ describe('speed zones on the canvas', () => {
     expect(far.some((op) => op.strokeStyle === SPEED_ZONE_COLOR)).toBe(false)
     expect(far.some(isBoardText)).toBe(false)
 
-    // 80 m at 0.3 px/m: 24 px on screen. The band stays, the boards go
-    const small = draw(net, {}, createCamera(100, 0, 0.3))
-    expect(small.some((op) => op.name === 'stroke' && op.strokeStyle === SPEED_ZONE_COLOR)).toBe(true)
-    expect(small.some(isBoardText)).toBe(false)
+    // Up close (4 px/m): band and boards
+    const isBand = (op: Op) => op.name === 'stroke' && op.strokeStyle === SPEED_ZONE_COLOR
+    const close = draw(net, { hideSectionBadges: true })
+    expect(close.some(isBand)).toBe(true)
+    expect(close.filter(isBoardText)).toHaveLength(2)
+
+    // At the edge of the detailed drawing (2.2 px/m) a whole station is still in view: no board yet
+    const detailed = draw(net, {}, createCamera(100, 0, 2.2))
+    expect(detailed.some(isBand)).toBe(true)
+    expect(detailed.some(isBoardText)).toBe(false)
+
+    // Line drawing (1 px/m, 80 px on screen): the band stays, the boards go unless the zone is picked
+    const line = draw(net, {}, createCamera(100, 0, 1))
+    expect(line.some(isBand)).toBe(true)
+    expect(line.some(isBoardText)).toBe(false)
+    const pickedLine = draw(net, { speedZones: { selectedId: zone.id } }, createCamera(100, 0, 1))
+    expect(pickedLine.filter(isBoardText)).toHaveLength(2)
+
+    // Schematic (0.3 px/m): neither band nor board, unless the zone is picked
+    const schematic = draw(net, {}, createCamera(100, 0, 0.3))
+    expect(schematic.some(isBand)).toBe(false)
+    expect(schematic.some(isBoardText)).toBe(false)
     const picked = draw(net, { speedZones: { selectedId: zone.id } }, createCamera(100, 0, 0.3))
-    expect(picked.filter(isBoardText)).toHaveLength(2)
+    expect(picked.some(isBand)).toBe(true)
+    // 24 px between its two boards: they would cover each other, one is kept
+    expect(picked.filter(isBoardText)).toHaveLength(1)
+  })
+
+  it('never draws a board over another one: the longest zone keeps its own', () => {
+    const { net } = tracksWithZone(0)
+    // A second zone that starts where the first one ends: its « Z » board would cover the « R » one
+    addSpeedZoneBetween(net, at(net, 140), at(net, 170), 60)
+    const boards = texts(draw(net)).filter((text) => /^[ZR] \d+$/.test(text))
+    expect(boards).toContain('Z 90')
+    expect(boards).toContain('R 90')
+    expect(boards).not.toContain('Z 60')
+    expect(boards).toContain('R 60')
   })
 
   it('keeps bands and boards in the driving view', () => {

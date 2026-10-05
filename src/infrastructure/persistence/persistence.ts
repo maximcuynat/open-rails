@@ -1,6 +1,6 @@
 import type { Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
-import { declareTurnout, findJunctionAtNode, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
+import { declareTurnout, findJunctionAtNode, invalidateJunctionIndex, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
 import {
   DEFAULT_SIGNALLING_SETTINGS,
@@ -412,6 +412,7 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
     }
     if (typeof j.frogNumber === 'number') junction.frogNumber = j.frogNumber
     net.junctions.set(junction.id, junction)
+    invalidateJunctionIndex(net)
     return
   }
 

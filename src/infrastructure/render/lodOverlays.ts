@@ -15,6 +15,25 @@ const STANDARD_GAUGE = 1.435
 export const BADGES_ALL_FROM_PX = 1.0 * STANDARD_GAUGE
 /** From this many pixels a badge is the full one: type, name, direction and length (scale 3.0 at 1:1) */
 export const BADGE_FULL_FROM_PX = 3.0 * STANDARD_GAUGE
+/**
+ * Short of the detailed drawing, only what is long on screen is named — the main tracks first, as
+ * on a map: a section or a speed zone shorter than this many pixels keeps its label for a closer look
+ */
+export const LABEL_MIN_LENGTH_FAR_PX = 240
+/** In the detailed drawing a compact badge still needs this many pixels of track */
+export const BADGE_MIN_LENGTH_PX = 45
+/** In the detailed drawing the boards of a speed zone need this many pixels of zone */
+export const SPEED_BOARDS_MIN_LENGTH_PX = 40
+
+/**
+ * Shortest section, in pixels on screen, that gets a badge at this zoom (the selected section and
+ * the ones the user named are not held to it)
+ */
+export function sectionBadgeMinLength(lod: TrackLod, gaugePx: number): number {
+  if (lod !== 'detail') return LABEL_MIN_LENGTH_FAR_PX
+  return gaugePx >= BADGE_FULL_FROM_PX ? 0 : BADGE_MIN_LENGTH_PX
+}
+
 /** From this many pixels a diagnostic marker carries its text label (scale 0.9 at 1:1) */
 export const DIAGNOSTIC_LABEL_FROM_PX = 0.9 * STANDARD_GAUGE
 /** Diagnostic markers closer than this on screen are merged into one in the schematic drawing */
@@ -34,12 +53,12 @@ export function sectionBadgeWanted(
 
 /**
  * Rails of a one-way section that carry a direction arrow.
- * - detail: every rail
+ * - detail, rails: every rail
  * - line: the middle rail only, one arrow per section
  * - schematic: none
  */
 export function sectionArrowSegments<T>(lod: TrackLod, segmentIds: readonly T[]): readonly T[] {
-  if (lod === 'detail') return segmentIds
+  if (lod === 'detail' || lod === 'rails') return segmentIds
   if (lod === 'schematic' || segmentIds.length === 0) return []
   return [segmentIds[Math.floor(segmentIds.length / 2)]]
 }
@@ -81,12 +100,41 @@ export function placeBadges<T extends BadgeBox>(candidates: readonly T[]): T[] {
   return kept.sort((p, q) => p.index - q.index).map((k) => k.box)
 }
 
+/**
+ * Whether the two boards of a speed zone (« Z 30 », « R 30 ») are drawn, for a zone `lengthPx`
+ * long on screen. Text is read up close: in the detailed drawing every zone long enough to carry
+ * two boards has them; in the rails drawing only the long ones; further out the band alone shows
+ * where a limit applies. The zone the user is working on (picked, or about to be removed) always
+ * keeps its boards.
+ */
+export function speedZoneBoardsShown(lod: TrackLod, zone: { highlighted: boolean; lengthPx: number }): boolean {
+  if (zone.highlighted) return true
+  if (lod === 'detail') return zone.lengthPx >= SPEED_BOARDS_MIN_LENGTH_PX
+  return lod === 'rails' && zone.lengthPx >= LABEL_MIN_LENGTH_FAR_PX
+}
+
+/**
+ * Whether the band of a speed zone is drawn. In the schematic the network is a diagram a few
+ * pixels wide, where a band would be wider than the track it lies under: only the zone the user
+ * is working on keeps it.
+ */
+export function speedZoneBandShown(lod: TrackLod, zone: { highlighted: boolean }): boolean {
+  return lod !== 'schematic' || zone.highlighted
+}
+
+/** Whether diagnostic markers that pile up on screen are merged: as soon as a track is a single line */
+export function diagnosticsClustered(lod: TrackLod): boolean {
+  return lod === 'line' || lod === 'schematic'
+}
+
 export type MarkerSeverity = 'warning' | 'error'
 
 export interface ScreenMarker {
   x: number
   y: number
   severity: MarkerSeverity
+  /** Text shown above the marker, when there is room for one */
+  label?: string
 }
 
 export interface MarkerCluster extends ScreenMarker {
@@ -97,16 +145,18 @@ export interface MarkerCluster extends ScreenMarker {
 /**
  * Merges the markers that fall within `radius` pixels of each other. A marker joins the first
  * cluster whose centre is close enough, and the centre moves to the mean of its members; the
- * worst severity of the members is the one of the cluster.
+ * worst severity of the members is the one of the cluster. It keeps a label only when all its
+ * members say the same thing.
  */
 export function clusterMarkers(markers: readonly ScreenMarker[], radius: number): MarkerCluster[] {
   const clusters: MarkerCluster[] = []
   for (const m of markers) {
     const c = clusters.find((k) => Math.hypot(k.x - m.x, k.y - m.y) <= radius)
     if (!c) {
-      clusters.push({ x: m.x, y: m.y, severity: m.severity, count: 1 })
+      clusters.push({ x: m.x, y: m.y, severity: m.severity, label: m.label, count: 1 })
       continue
     }
+    if (c.label !== m.label) c.label = undefined
     c.x = (c.x * c.count + m.x) / (c.count + 1)
     c.y = (c.y * c.count + m.y) / (c.count + 1)
     c.count += 1

@@ -541,7 +541,8 @@ describe('slope marks', () => {
     const { net } = ramp()
     const measure = (scale: number) => {
       const cam = createCamera(200, 0, scale)
-      expect(trackLod(scale, GAUGE)).toBe('detail')
+      // The marks are drawn wherever the two rails are: the detail tier and the rails tier below it
+      expect(['detail', 'rails']).toContain(trackLod(scale, GAUGE))
       const strokes = chevronStrokes(draw(net, cam, options()).paints)
       const chevrons = strokes.flatMap((p) => p.path)
       const xs = chevrons.map((sub) => sub[1][0]).sort((a, b) => a - b)

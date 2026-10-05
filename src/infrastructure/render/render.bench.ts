@@ -4,6 +4,10 @@ import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/mod
 import { renderNetworkWithTrains } from '@infrastructure/render/renderer'
 import type { Network } from '@domain/models/types'
 import { DEFAULT_LINE_SETTINGS } from '@domain/models/speedLimits'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { deserializeNetwork, type SerializedProject } from '@infrastructure/persistence/persistence'
+import { syncJunctions } from '@domain/models/junction'
 
 /**
  * Time of one frame of the network at several zooms. Run with `npm run bench`; not part of
@@ -66,6 +70,69 @@ for (const [lines, perLine] of [[20, 50], [40, 100]] as const) {
   describe(`${net.segments.size} rails`, () => {
     for (const scale of ZOOMS) {
       const cam = createCamera((perLine * 30) / 2, (lines * 6) / 2, scale)
+      bench(`${scale} px/m`, () => {
+        renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
+      })
+    }
+  })
+}
+
+// ─────────────────── A real station: the Marseille Saint-Charles example ───────────────────
+
+const marseille: SerializedProject = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../examples/marseille-saint-charles.json', import.meta.url)), 'utf8'),
+)
+
+/**
+ * `copies` × `copies` stations side by side, `pitch` metres apart: the same track, turnouts
+ * included, at the size of a whole region. Speed zones are left out.
+ */
+export function buildStations(copies: number, pitch = 1400): Network {
+  const net = createNetwork()
+  for (let row = 0; row < copies; row++) {
+    for (let col = 0; col < copies; col++) {
+      const ids = new Map<string, string>()
+      for (const node of marseille.nodes) {
+        ids.set(node.id, addNode(net, { x: node.x + col * pitch, y: node.y + row * pitch }).id)
+      }
+      for (const seg of marseille.segments) {
+        const from = ids.get(seg.from)!
+        const to = ids.get(seg.to)!
+        if (seg.via) addCurveSegment(net, from, to, { x: seg.via.x + col * pitch, y: seg.via.y + row * pitch })
+        else addSegment(net, from, to)
+      }
+    }
+  }
+  syncJunctions(net)
+  return net
+}
+
+/** Middle of the station (m), and the scales of its three drawings: schematic, line (fit to the window), detail with most of it in view */
+const STATION_CENTRE = { x: 500, y: -540 }
+const STATION_ZOOMS = [0.3, 0.7, 2.2]
+
+{
+  const net = deserializeNetwork(marseille).network
+  const ctx = stubCtx()
+  describe(`Marseille Saint-Charles, ${net.segments.size} rails, ${net.speedZones.size} speed zones`, () => {
+    for (const scale of STATION_ZOOMS) {
+      const cam = createCamera(STATION_CENTRE.x, STATION_CENTRE.y, scale)
+      bench(`${scale} px/m`, () => {
+        renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
+      })
+    }
+  })
+}
+
+{
+  const copies = 3
+  const net = buildStations(copies)
+  const ctx = stubCtx()
+  const middle = ((copies - 1) * 1400) / 2
+  describe(`${copies * copies} stations, ${net.segments.size} rails`, () => {
+    // Whole region in the window, then one station among the others at the three scales
+    for (const scale of [0.2, ...STATION_ZOOMS]) {
+      const cam = createCamera(STATION_CENTRE.x + middle, STATION_CENTRE.y + middle, scale)
       bench(`${scale} px/m`, () => {
         renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
       })

@@ -3,6 +3,7 @@ import { EditorStore, IMPACT_REPORT_SPEED, trainImpactMessage } from './editorSt
 import * as trainModel from '@domain/models/train'
 import * as trainDynamicsModel from '@domain/models/trainDynamics'
 import { addNode, addSegment, addCurveSegment, resetIdCounter } from '@domain/models/network'
+import { computeTrackSections } from '@domain/models/sections'
 import { applyNodeTransform, collectAffectedVias } from '@domain/geometry/nodeTransform'
 import { getStorage, resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { CONSOLE_PREFERENCE_KEY } from '@infrastructure/persistence/preferences'
@@ -786,5 +787,45 @@ describe('EditorStore driving console preference', () => {
   it('ignores a saved value it does not know', () => {
     getStorage()!.setItem(CONSOLE_PREFERENCE_KEY, 'hologram')
     expect(new EditorStore().consolePreference).toBe('auto')
+  })
+})
+
+describe('camera-only notification', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+  })
+
+  it('reaches the subscribers without changing the version the panels follow', () => {
+    const store = new EditorStore()
+    let notified = 0
+    store.subscribe(() => { notified++ })
+    const version = store.getVersion()
+
+    store.camera.x += 10
+    store.notifyView()
+    expect(notified).toBe(1)
+    expect(store.getVersion()).toBe(version)
+
+    store.notify()
+    expect(notified).toBe(2)
+    expect(store.getVersion()).toBe(version + 1)
+  })
+
+  it('saves and exports the same sections as a fresh computation, before and after an edit', () => {
+    const store = new EditorStore()
+    const a = addNode(store.network, { x: 0, y: 0 })
+    const b = addNode(store.network, { x: 50, y: 0 })
+    addSegment(store.network, a.id, b.id)
+    expect(store.exportProject().sections).toHaveLength(1)
+
+    // Edited in place, with no notification in between: the export follows
+    const c = addNode(store.network, { x: 0, y: 40 })
+    const d = addNode(store.network, { x: 50, y: 40 })
+    addSegment(store.network, c.id, d.id)
+    expect(store.exportProject().sections).toHaveLength(2)
+    expect(store.exportProject().sections!.map((s) => s.segmentIds)).toEqual(
+      computeTrackSections(store.network, store.sectionMeta).map((s) => s.segmentIds),
+    )
   })
 })

@@ -7,6 +7,9 @@ import { speedZoneOverlaps } from '@domain/models/speedLimits'
 import { trackSpansLength } from '@domain/services/trackPath'
 import { drawDiagnosticMarker } from './diagnosticMarker'
 import type { TrackPiece } from './levelPieces'
+import { trackLod, type TrackLod } from './lod'
+import { placeBadges, speedZoneBandShown, speedZoneBoardsShown, type BadgeBox } from './lodOverlays'
+import { textWidth } from './textWidth'
 
 // ─────────────────── Speed zones on the canvas ───────────────────
 //
@@ -25,8 +28,6 @@ export const SPEED_ZONE_ACTIVE_ALPHA = 0.55
 export const SPEED_ZONE_BAND_GAUGES = 2.6
 /** The band is never thinner than this on screen (px) */
 const SPEED_ZONE_MIN_WIDTH = 5
-/** A zone shorter than this on screen (px) gets no board, unless it is the picked one */
-export const SPEED_ZONE_BOARD_MIN_LENGTH = 40
 /** Distance (px) between the axis of the track and the middle of a board */
 const BOARD_OFFSET = 20
 const BOARD_HEIGHT = 14
@@ -97,8 +98,12 @@ export function renderSpeedZoneBands(
   gauge: number,
   levelAlpha: number,
   highlight?: SpeedZoneHighlight,
+  lod: TrackLod = 'detail',
 ): void {
   if (net.speedZones.size === 0) return
+  // In the schematic only the zone being worked on keeps its band (see `speedZoneBandShown`)
+  if (!speedZoneBandShown(lod, { highlighted: highlight?.dangerId != null || highlight?.selectedId != null })) return
+  const plainShown = speedZoneBandShown(lod, { highlighted: false })
   const plain: TrackSpan[] = []
   const selected: TrackSpan[] = []
   const danger: TrackSpan[] = []
@@ -109,6 +114,7 @@ export function renderSpeedZoneBands(
       if (t1 - t0 <= 1e-9) continue
       const id = stretch.zone.id
       const group = id === highlight?.dangerId ? danger : id === highlight?.selectedId ? selected : plain
+      if (group === plain && !plainShown) continue
       group.push({ segId: piece.seg.id, t0, t1 })
     }
   }
@@ -216,6 +222,8 @@ export function overlapLabel(speed: number): string {
 
 export interface SpeedZoneMarkerOptions {
   highlight?: SpeedZoneHighlight
+  /** Gauge the rails are drawn with, m: the boards follow the tier of the drawing */
+  gauge: number
   /** Construction view: the stretches shared by two zones get the diagnostic marker */
   showOverlaps: boolean
 }
@@ -242,7 +250,22 @@ export function renderSpeedZoneMarkers(
     return x < -margin || x > vw + margin || y < -margin || y > vh + margin ? null : { x, y }
   }
 
-  const board = (end: ZoneEnd, text: string, outline: string | null): void => {
+  interface Board extends BadgeBox {
+    at: Point
+    cx: number
+    cy: number
+    text: string
+    outline: string | null
+  }
+
+  ctx.save()
+  ctx.font = '700 9px Archivo, system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  const lod = trackLod(cam.scale, options.gauge)
+  const boards: Board[] = []
+  const board = (end: ZoneEnd, text: string, outline: string | null, length: number): void => {
     const at = toScreen(end.pos)
     if (!at) return
     // Beside the track, on the side that is up on screen, so it never covers the rails
@@ -254,8 +277,24 @@ export function renderSpeedZoneMarkers(
     }
     const cx = at.x + nx * BOARD_OFFSET
     const cy = at.y + ny * BOARD_OFFSET
-    const width = ctx.measureText(text).width + 10
+    const width = textWidth(ctx, text) + 10
+    boards.push({
+      x: cx - width / 2, y: cy - BOARD_HEIGHT / 2, w: width, h: BOARD_HEIGHT,
+      selected: outline !== null, renamed: false, length,
+      at, cx, cy, text, outline,
+    })
+  }
+  for (const { zone, length, a, b } of layout.boards) {
+    const danger = zone.id === options.highlight?.dangerId
+    const selected = zone.id === options.highlight?.selectedId
+    if (!speedZoneBoardsShown(lod, { highlighted: danger || selected, lengthPx: length * cam.scale })) continue
+    const outline = danger ? SPEED_ZONE_DANGER_COLOR : selected ? SPEED_ZONE_COLOR : null
+    board(a, `Z ${zone.speed}`, outline, length)
+    board(b, `R ${zone.speed}`, outline, length)
+  }
 
+  // A board never covers another one: the zone being worked on first, then the longest zones
+  for (const { at, cx, cy, x, y, w, h, text, outline } of placeBadges(boards)) {
     // Post from the track to the board
     ctx.strokeStyle = outline ?? BOARD_BG
     ctx.lineWidth = 1.5
@@ -266,7 +305,7 @@ export function renderSpeedZoneMarkers(
 
     ctx.fillStyle = BOARD_BG
     ctx.beginPath()
-    ctx.roundRect(cx - width / 2, cy - BOARD_HEIGHT / 2, width, BOARD_HEIGHT, 2)
+    ctx.roundRect(x, y, w, h, 2)
     ctx.fill()
     ctx.strokeStyle = outline ?? BOARD_INK
     ctx.lineWidth = outline ? 2 : 1
@@ -274,19 +313,6 @@ export function renderSpeedZoneMarkers(
 
     ctx.fillStyle = BOARD_INK
     ctx.fillText(text, cx, cy + 0.5)
-  }
-
-  ctx.save()
-  ctx.font = '700 9px Archivo, system-ui, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  for (const { zone, length, a, b } of layout.boards) {
-    const danger = zone.id === options.highlight?.dangerId
-    const selected = zone.id === options.highlight?.selectedId
-    if (!danger && !selected && length * cam.scale < SPEED_ZONE_BOARD_MIN_LENGTH) continue
-    const outline = danger ? SPEED_ZONE_DANGER_COLOR : selected ? SPEED_ZONE_COLOR : null
-    board(a, `Z ${zone.speed}`, outline)
-    board(b, `R ${zone.speed}`, outline)
   }
   ctx.restore()
 

@@ -44,12 +44,50 @@ export function leaveDirection(net: Network, seg: Segment, nodeId: NodeId): Poin
   return { x: 1, y: 0 }
 }
 
-/** The route table of a node, if it has one */
-export function findJunctionAtNode(net: Network, nodeId: NodeId): Junction | undefined {
+/** The tables of a network by the node they sit on, as they were when the index was built */
+interface JunctionIndex {
+  junctions: Network['junctions']
+  size: number
+  byNode: Map<NodeId, Junction>
+}
+
+const junctionIndexes = new WeakMap<Network, JunctionIndex>()
+
+function buildJunctionIndex(net: Network): JunctionIndex {
+  const byNode = new Map<NodeId, Junction>()
   for (const junc of net.junctions.values()) {
-    if (junc.nodeId === nodeId) return junc
+    // The first table of a node wins, as when the tables are read in order
+    if (!byNode.has(junc.nodeId)) byNode.set(junc.nodeId, junc)
   }
-  return undefined
+  const index = { junctions: net.junctions, size: net.junctions.size, byNode }
+  junctionIndexes.set(net, index)
+  return index
+}
+
+/**
+ * Forget the index `findJunctionAtNode` answers from. To be called by whatever adds a table,
+ * removes one or moves one to another node: the index is also rebuilt when the number of tables
+ * changed and when the table it finds is no longer the one of that node, but a table that appears
+ * on a node while another goes cannot be seen from there.
+ */
+export function invalidateJunctionIndex(net: Network): void {
+  junctionIndexes.delete(net)
+}
+
+/**
+ * The route table of a node, if it has one. Asked for every rail end at every frame and at every
+ * step of a train, so it is answered from an index by node instead of reading all the tables.
+ */
+export function findJunctionAtNode(net: Network, nodeId: NodeId): Junction | undefined {
+  let index = junctionIndexes.get(net)
+  if (!index || index.junctions !== net.junctions || index.size !== net.junctions.size) {
+    index = buildJunctionIndex(net)
+  }
+  const found = index.byNode.get(nodeId)
+  if (found && (found.nodeId !== nodeId || net.junctions.get(found.id) !== found)) {
+    return buildJunctionIndex(net).byNode.get(nodeId)
+  }
+  return found
 }
 
 /** Every rail the table names */

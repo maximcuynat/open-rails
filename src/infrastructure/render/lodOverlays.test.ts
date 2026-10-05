@@ -12,9 +12,16 @@ import {
   DIAGNOSTIC_CLUSTER_RADIUS_PX,
   DIAGNOSTIC_LABEL_FROM_PX,
   clusterMarkers,
+  diagnosticsClustered,
   placeBadges,
   sectionArrowSegments,
   sectionBadgeWanted,
+  BADGE_MIN_LENGTH_PX,
+  LABEL_MIN_LENGTH_FAR_PX,
+  SPEED_BOARDS_MIN_LENGTH_PX,
+  sectionBadgeMinLength,
+  speedZoneBandShown,
+  speedZoneBoardsShown,
   type BadgeBox,
 } from './lodOverlays'
 
@@ -79,7 +86,9 @@ describe('thresholds of the overlays (gauge on screen)', () => {
   })
 
   it('the test scales are one per tier', () => {
-    expect(trackLod(DETAIL, GAUGE)).toBe('detail')
+    // The default 1:1 zoom is in the rails drawing: its overlays are those of the detailed one,
+    // short of the labels of the short tracks
+    expect(trackLod(DETAIL, GAUGE)).toBe('rails')
     expect(trackLod(LINE, GAUGE)).toBe('line')
     expect(trackLod(SCHEMATIC, GAUGE)).toBe('schematic')
   })
@@ -167,6 +176,41 @@ describe('placeBadges', () => {
   })
 })
 
+describe('speed zones per tier', () => {
+  it('boards: every zone long enough up close, the long ones in the rails drawing, none further out', () => {
+    const zone = (lengthPx: number, highlighted = false) => ({ highlighted, lengthPx })
+    expect(speedZoneBoardsShown('detail', zone(SPEED_BOARDS_MIN_LENGTH_PX))).toBe(true)
+    expect(speedZoneBoardsShown('detail', zone(SPEED_BOARDS_MIN_LENGTH_PX - 1))).toBe(false)
+    expect(speedZoneBoardsShown('rails', zone(LABEL_MIN_LENGTH_FAR_PX))).toBe(true)
+    expect(speedZoneBoardsShown('rails', zone(LABEL_MIN_LENGTH_FAR_PX - 1))).toBe(false)
+    expect(speedZoneBoardsShown('line', zone(5000))).toBe(false)
+    expect(speedZoneBoardsShown('schematic', zone(5000))).toBe(false)
+    // The zone being worked on keeps its boards at every zoom
+    expect(speedZoneBoardsShown('schematic', zone(3, true))).toBe(true)
+  })
+
+  it('section badges: tiny fragments are skipped up close, all but the long tracks further out', () => {
+    expect(sectionBadgeMinLength('detail', BADGE_FULL_FROM_PX)).toBe(0)
+    expect(sectionBadgeMinLength('detail', BADGE_FULL_FROM_PX - 0.01)).toBe(BADGE_MIN_LENGTH_PX)
+    expect(sectionBadgeMinLength('rails', 4)).toBe(LABEL_MIN_LENGTH_FAR_PX)
+    expect(sectionBadgeMinLength('line', 2)).toBe(LABEL_MIN_LENGTH_FAR_PX)
+  })
+
+  it('bands stay until the schematic, where only the zone being worked on keeps its own', () => {
+    expect(speedZoneBandShown('detail', { highlighted: false })).toBe(true)
+    expect(speedZoneBandShown('line', { highlighted: false })).toBe(true)
+    expect(speedZoneBandShown('schematic', { highlighted: false })).toBe(false)
+    expect(speedZoneBandShown('schematic', { highlighted: true })).toBe(true)
+  })
+
+  it('diagnostic markers are merged as soon as a track is a single line', () => {
+    expect(diagnosticsClustered('detail')).toBe(false)
+    expect(diagnosticsClustered('rails')).toBe(false)
+    expect(diagnosticsClustered('line')).toBe(true)
+    expect(diagnosticsClustered('schematic')).toBe(true)
+  })
+})
+
 describe('clusterMarkers', () => {
   const R = DIAGNOSTIC_CLUSTER_RADIUS_PX
 
@@ -179,6 +223,21 @@ describe('clusterMarkers', () => {
       { x: 0, y: 0, severity: 'warning', count: 1 },
       { x: 100, y: 0, severity: 'error', count: 1 },
     ])
+  })
+
+  it('keeps the label the merged markers share, and none when they differ', () => {
+    const same = clusterMarkers([
+      { x: 0, y: 0, severity: 'warning', label: 'Voie interrompue' },
+      { x: 5, y: 0, severity: 'warning', label: 'Voie interrompue' },
+    ], R)
+    expect(same).toHaveLength(1)
+    expect(same[0].label).toBe('Voie interrompue')
+
+    const mixed = clusterMarkers([
+      { x: 0, y: 0, severity: 'warning', label: 'Voie interrompue' },
+      { x: 5, y: 0, severity: 'error', label: 'Pente 60 ‰' },
+    ], R)
+    expect(mixed[0].label).toBeUndefined()
   })
 
   it('merges close markers at their mean, with the count', () => {
@@ -431,20 +490,26 @@ describe('renderNetwork overlays per tier', () => {
       expect(networkDerived(gaps(2, 500), {}).kinematicIssues()).toHaveLength(4)
     })
 
-    it('detail and line: one marker per issue, with its label', () => {
-      for (const scale of [DETAIL, LINE]) {
-        const ctx = draw(gaps(1, 500), scale)
-        expect(marks(ctx)).toEqual(['!', '!'])
-        expect(labels(ctx)).toHaveLength(2)
-      }
+    it('detail: one marker per issue, with its label', () => {
+      const ctx = draw(gaps(1, 500), DETAIL)
+      expect(marks(ctx)).toEqual(['!', '!'])
+      expect(labels(ctx)).toHaveLength(2)
     })
 
-    it('drops the label below DIAGNOSTIC_LABEL_FROM_PX, still one marker per issue', () => {
+    it('line: the two ends of a gap, 0.2 px apart, are one marker that keeps the label they share', () => {
+      const ctx = draw(gaps(1, 500), LINE)
+      expect(marks(ctx)).toEqual(['2'])
+      expect(labels(ctx)).toHaveLength(1)
+      // Two gaps 500 px apart stay two markers
+      expect(marks(draw(gaps(2, 500), LINE, { cy: 250 }))).toEqual(['2', '2'])
+    })
+
+    it('drops the label below DIAGNOSTIC_LABEL_FROM_PX, the marker stays', () => {
       const ctx = draw(gaps(1, 500), 0.89)
       expect(trackLod(0.89, GAUGE)).toBe('line')
-      expect(marks(ctx)).toEqual(['!', '!'])
+      expect(marks(ctx)).toEqual(['2'])
       expect(labels(ctx)).toHaveLength(0)
-      expect(labels(draw(gaps(1, 500), 0.9))).toHaveLength(2)
+      expect(labels(draw(gaps(1, 500), 0.9))).toHaveLength(1)
     })
 
     it('schematic: close markers become one with the count, far ones stay apart, no label', () => {

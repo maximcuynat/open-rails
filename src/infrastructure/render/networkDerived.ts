@@ -1,4 +1,4 @@
-import type { Network, SegmentId } from '@domain/models/types'
+import type { Network, NodeId, SegmentId } from '@domain/models/types'
 import { gradientRamps, type GradientRamp, type RampRail } from '@domain/models/network'
 import { bezierPoint } from '@domain/geometry/curve'
 import {
@@ -9,6 +9,10 @@ import {
   type TrackSection,
 } from '@domain/models/sections'
 import { analyzeKinematics, type GradientLimits, type KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import { detectConnectedComponents, detectDeadEnds, detectLoops } from '@domain/services/pathfinding'
+
+/** A part of the network no rail joins to the rest */
+export type NetworkComponent = ReturnType<typeof detectConnectedComponents>[number]
 
 /** A section as one line, in world coordinates: what the zoomed-out drawing traces (see `lodTracks.ts`) */
 export interface SectionPolyline {
@@ -41,6 +45,13 @@ export interface NetworkDerived {
   ramps(levelHeight: number): RampIndex
   /** Rails the diagnostics report as steeper than the limit: the ones `kinematicIssues` names, built on first use */
   steepRails(gauge?: number, gradient?: GradientLimits): ReadonlySet<SegmentId>
+  /**
+   * The graph analyses the inspector shows, each worked out on first use and kept. They are shared
+   * with every other reader: not to be modified.
+   */
+  deadEnds(): readonly NodeId[]
+  loops(): readonly (readonly NodeId[])[]
+  components(): readonly NetworkComponent[]
 }
 
 /**
@@ -198,6 +209,9 @@ function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | un
   const rampIndexes = new Map<number, RampIndex>()
   const steep = new Map<string, Set<SegmentId>>()
   const issueKey = (gauge?: number, gradient?: GradientLimits): string => `${gauge}|${gradient?.levelHeight}|${gradient?.maxGradient}`
+  let deadEnds: NodeId[] | undefined
+  let loops: NodeId[][] | undefined
+  let components: NetworkComponent[] | undefined
   return {
     sections,
     sectionOfSegment,
@@ -245,6 +259,9 @@ function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | un
       }
       return rails
     },
+    deadEnds: () => (deadEnds ??= detectDeadEnds(net)),
+    loops: () => (loops ??= detectLoops(net)),
+    components: () => (components ??= detectConnectedComponents(net)),
   }
 }
 

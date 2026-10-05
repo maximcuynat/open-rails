@@ -4,10 +4,10 @@ import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
 import { isTraversableDeflection } from '../geometry/tangent'
 import { isCrossingAngle } from './crossing'
-import { findJunctionAtNode, junctionRails, leaveDirection } from './routing'
+import { findJunctionAtNode, invalidateJunctionIndex, junctionRails, leaveDirection } from './routing'
 import type { Junction, JunctionId, Network, NodeId, Passage, Point, RailNode, Segment, SegmentId } from './types'
 
-export { findJunctionAtNode, junctionRails }
+export { findJunctionAtNode, invalidateJunctionIndex, junctionRails }
 
 export interface TurnoutSpec {
   frogNumber: 4 | 6
@@ -78,6 +78,7 @@ export function declareTurnout(
   if (params.frogNumber !== undefined) junc.frogNumber = params.frogNumber
   if (params.activeBranch) setJunctionBranch(junc, params.activeBranch)
   net.junctions.set(junc.id, junc)
+  invalidateJunctionIndex(net)
   return junc
 }
 
@@ -168,6 +169,7 @@ export function declareBranchOff(
 /** Remove a junction definition from the network (does not remove the rails unless specified). */
 export function removeJunction(net: Network, id: JunctionId): void {
   net.junctions.delete(id)
+  invalidateJunctionIndex(net)
 }
 
 /** Put a device in one of its positions. Every change of position goes through here. */
@@ -240,6 +242,7 @@ export function declareDoubleSlip(
     active: 0,
   }
   net.junctions.set(junc.id, junc)
+  invalidateJunctionIndex(net)
   return junc
 }
 
@@ -568,6 +571,7 @@ export function syncJunctions(net: Network): Junction[] {
   for (const junc of [...net.junctions.values()]) {
     if (!net.nodes.has(junc.nodeId) || seen.has(junc.nodeId)) {
       net.junctions.delete(junc.id)
+      invalidateJunctionIndex(net)
       continue
     }
     seen.add(junc.nodeId)
@@ -575,13 +579,17 @@ export function syncJunctions(net: Network): Junction[] {
 
     if (!dropDeadPassages(net, junc, rails)) {
       net.junctions.delete(junc.id)
+      invalidateJunctionIndex(net)
       continue
     }
     if (isTurnoutKind(junc)) {
       const named = new Set(junctionRails(junc))
       const extras = [...rails].filter((sid) => !named.has(sid))
       if (extras.some((sid) => continuesABranch(net, junc, sid))) {
-        if (!turnIntoDoubleSlip(net, junc)) net.junctions.delete(junc.id)
+        if (!turnIntoDoubleSlip(net, junc)) {
+          net.junctions.delete(junc.id)
+          invalidateJunctionIndex(net)
+        }
         continue
       }
       if (junc.kind === 'turnout' && extras.length === 1) addThirdBranch(net, junc, extras[0])
@@ -887,6 +895,7 @@ export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId
   if (moved) {
     if (findJunctionAtNode(net, keepNodeId)) net.junctions.delete(moved.id)
     else moved.nodeId = keepNodeId
+    invalidateJunctionIndex(net)
   }
 
   net.nodes.delete(removeNodeId)

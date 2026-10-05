@@ -43,7 +43,8 @@ import {
   findJunctionAtNode,
   findJunctionBySegment,
 } from '@domain/models/junction'
-import { computeTrackSections, findSectionBySegment } from '@domain/models/sections'
+import { networkDerived } from '@infrastructure/render/networkDerived'
+import { findSectionBySegment } from '@domain/models/sections'
 import {
   computeFreeformParallelTurnout,
   applyFreeformParallelTurnout,
@@ -1828,7 +1829,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
         const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
-          const sections = computeTrackSections(store.network, store.sectionMeta)
+          const sections = networkDerived(store.network, store.sectionMeta).sections
           const clickedSection = findSectionBySegment(sections, segId)
 
           if (clickedSection) {
@@ -1911,7 +1912,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         cam.x -= dx / cam.scale
         cam.y -= dy / cam.scale
         draw()
-        store.notify()
+        // Only the camera moved: no panel has anything new to show
+        store.notifyView()
         return
       }
 
@@ -2266,7 +2268,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       cam.x -= dx / cam.scale
       cam.y -= dy / cam.scale
       draw()
-      store.notify()
+      // Panning moves the camera alone; a train item dragged over the canvas is followed by the panels
+      if (store.draggingTrainItem) store.notify()
+      else store.notifyView()
     }
 
     const onUp = (e: PointerEvent) => {
@@ -2481,10 +2485,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         } else {
           store.updateLocomotivePreview(world)
         }
+        draw()
+        store.notify()
+        return
       }
 
+      // The camera and the snap point under the cursor, which only the canvas draws: no panel has
+      // anything new to show
       draw()
-      store.notify()
+      store.notifyView()
     }
 
     const onContextMenu = (e: Event) => e.preventDefault()
@@ -2494,7 +2503,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const hitTol = 14 / store.camera.scale
       const segId = hitSegment(store.network, world, hitTol)
       if (segId) {
-        const sections = computeTrackSections(store.network, store.sectionMeta)
+        const sections = networkDerived(store.network, store.sectionMeta).sections
         const clickedSection = findSectionBySegment(sections, segId)
         if (clickedSection) {
           const rect = canvas.getBoundingClientRect()
