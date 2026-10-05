@@ -8,6 +8,15 @@
  */
 
 import type { Junction, Network, Point, SegmentId } from './types'
+import {
+  BRAKE_PIPE_FULL_SERVICE,
+  DEFAULT_DRIVING_ENVIRONMENT,
+  PHYSICS_STEP,
+  TRACTION_NOTCHES,
+  stepTrainDynamics,
+  type BrakeCommand,
+  type DrivingEnvironment,
+} from './trainDynamics'
 import type {
   Locomotive,
   TrackPosition,
@@ -38,6 +47,7 @@ import {
   UNIT_COUPLING_GAP,
   bodyWidth,
   bogieDistance,
+  consistMaxSpeed,
   endOverhang,
   isRollingStockModel,
   jointKind,
@@ -92,49 +102,70 @@ export interface TrainSet {
   vehicles: Vehicle[]
   /** 1 = forward (lead advances nose-first), -1 = reverse */
   direction: 1 | -1
-  /** Current speed in m/s */
+  /** Current speed in m/s, always ≥ 0: `direction` says which way */
   currentSpeed: number
-  /** Max speed m/s */
+  /** Maximum speed m/s of the rolling stock: no tractive effort above it */
   maxSpeed: number
-  /** Acceleration m/s² at full traction (notch = MAX_NOTCH) */
-  acceleration: number
-  /** Braking deceleration m/s² at full service brake (notch = -MAX_NOTCH) */
-  braking: number
-  /** Emergency braking deceleration m/s² */
-  emergencyBraking: number
-  /** Coasting friction deceleration m/s² */
-  coastingDecel: number
-  /** Reverser position; can only be moved at standstill with traction off */
+  /**
+   * Reverser position; can only be moved at standstill with traction off. It sets the way the
+   * tractive effort pushes: the train itself may roll the other way (see `direction`).
+   */
   reverser: Reverser
-  /** Combined power/brake handle: 1..MAX_NOTCH traction, 0 neutral, -1..-MAX_NOTCH service brake */
+  /** Traction handle: 0 (N) … MAX_NOTCH, each notch an equal share of the available effort */
   notch: number
   /** Emergency brake latched until the train has stopped */
   emergencyBrake: boolean
+  /** Brake pipe pressure in bar: BRAKE_PIPE_RELEASED … BRAKE_PIPE_FULL_SERVICE, 0 in emergency */
+  brakePipe: number
+  /** Filling of the brake cylinders, 0 (released) … 1 (full): follows the brake pipe with a delay */
+  brakeCylinder: number
+  /** Seconds empty brake cylinders have been waiting to fill since the brake was applied (dead time) */
+  brakeLag: number
+  /** Position of the brake handle (impulse valve), see `BrakeCommand` */
+  brakeCommand: BrakeCommand
+  /** Share of the available tractive effort applied, 0…1: follows the notch with a ramp */
+  tractionEffort: number
+  /** Speed (m/s) at which the last tick ran the train into a buffer stop or another train, else 0 */
+  impactSpeed: number
 }
 
 export type Reverser = 'forward' | 'neutral' | 'reverse'
 
-/** Number of traction notches and of service brake notches on the combined handle */
-export const MAX_NOTCH = 5
+/** Number of traction notches on the handle */
+export const MAX_NOTCH = TRACTION_NOTCHES
 
 /** Below this speed (m/s) the train counts as stopped */
 const STANDSTILL_SPEED = 0.001
 
-/** Build a stationary TrainSet with default dynamics and controls at rest */
+/**
+ * Brakes applied, as a train is left standing: brake pipe at full service pressure and cylinders
+ * full, so that it holds on a ramp until the driver releases them.
+ */
+function applyParkedBrake(train: TrainSet): void {
+  train.emergencyBrake = false
+  train.brakePipe = BRAKE_PIPE_FULL_SERVICE
+  train.brakeCylinder = 1
+  train.brakeLag = 0
+  train.brakeCommand = 'hold'
+}
+
+/** Build a stationary TrainSet: brakes applied, handle on N, reverser in neutral */
 export function makeTrainSet(id: TrainSetId, vehicles: Vehicle[]): TrainSet {
   return {
     id,
     vehicles,
     direction: 1,
     currentSpeed: 0,
-    maxSpeed: 500 / 3.6,
-    acceleration: 5.5,
-    braking: 10.0,
-    emergencyBraking: 20.0,
-    coastingDecel: 0.5,
+    maxSpeed: consistMaxSpeed(vehicles),
     reverser: 'neutral',
     notch: 0,
     emergencyBrake: false,
+    brakePipe: BRAKE_PIPE_FULL_SERVICE,
+    brakeCylinder: 1,
+    brakeLag: 0,
+    brakeCommand: 'hold',
+    tractionEffort: 0,
+    impactSpeed: 0,
   }
 }
 
@@ -203,64 +234,45 @@ export function shiftReverser(train: TrainSet, step: 1 | -1): boolean {
 }
 
 /**
- * Put the combined handle on a notch (clamped to ±MAX_NOTCH).
+ * Put the traction handle on a notch (clamped to 0…MAX_NOTCH).
  * While the emergency brake is latched the handle is locked until the train has stopped;
  * moving it at standstill releases the emergency brake.
  */
 export function setNotch(train: TrainSet, notch: number): boolean {
-  if (train.emergencyBrake) {
-    if (!isTrainStopped(train)) return false
-    train.emergencyBrake = false
-  }
-  train.notch = Math.max(-MAX_NOTCH, Math.min(MAX_NOTCH, Math.round(notch)))
+  if (train.emergencyBrake && !releaseEmergencyBrake(train)) return false
+  train.notch = Math.max(0, Math.min(MAX_NOTCH, Math.round(notch)))
   return true
 }
 
-/** Latch the emergency brake: traction is cut and the handle drops to full service brake */
+/**
+ * Latch the emergency brake: the brake pipe is vented, the traction is cut and the handle comes
+ * back to N. Nothing can be released before the train has stopped.
+ */
 export function triggerEmergencyBrake(train: TrainSet): void {
   train.emergencyBrake = true
-  train.notch = -MAX_NOTCH
+  train.notch = 0
+  train.tractionEffort = 0
+  train.brakeCommand = 'hold'
 }
 
-/** Release the emergency brake; only possible once the train has stopped */
+/**
+ * Release the emergency brake; only possible once the train has stopped. The brake stays applied
+ * at full service pressure: the driver releases it like any other application.
+ */
 export function releaseEmergencyBrake(train: TrainSet): boolean {
   if (!isTrainStopped(train)) return false
-  train.emergencyBrake = false
+  if (train.emergencyBrake) applyParkedBrake(train)
   return true
 }
 
-/** Distance (m) needed to stop from the current speed at full service brake */
-export function stoppingDistance(train: TrainSet): number {
-  return (train.currentSpeed * train.currentSpeed) / (2 * train.braking)
-}
-
-/** Commanded state in the shape the debug overlay expects: sign of the command and its magnitudes */
-export function trainDriveTelemetry(train: TrainSet): { throttle: 1 | 0 | -1; acceleration: number; braking: number } {
-  const accel = commandedAcceleration(train)
-  return {
-    throttle: accel > 0 ? 1 : accel < 0 ? -1 : 0,
-    acceleration: Math.max(accel, 0),
-    braking: Math.max(-accel, 0),
-  }
-}
-
-/** Stop the train and put every control back at rest (neutral reverser, handle on N) */
+/** Stop the train and put every control back at rest: brakes applied, handle on N, reverser in neutral */
 export function resetTrainControls(train: TrainSet): void {
   train.currentSpeed = 0
   train.notch = 0
   train.reverser = 'neutral'
-  train.emergencyBrake = false
-}
-
-/**
- * Acceleration commanded by the controls, in m/s² along the travel direction:
- * positive = traction, negative = braking, 0 = coasting.
- */
-export function commandedAcceleration(train: TrainSet): number {
-  if (train.emergencyBrake) return -train.emergencyBraking
-  if (train.notch < 0) return (train.notch / MAX_NOTCH) * train.braking
-  if (train.notch > 0 && train.reverser !== 'neutral') return (train.notch / MAX_NOTCH) * train.acceleration
-  return 0
+  train.tractionEffort = 0
+  train.impactSpeed = 0
+  applyParkedBrake(train)
 }
 
 // ─── Simulation ───────────────────────────────────────────────────────────────
@@ -501,9 +513,28 @@ export function advanceTrainSet(
 }
 
 /**
- * Run one physics tick (dt seconds) on a TrainSet.
- * Updates currentSpeed from the driving controls, then calls advanceTrainSet.
- * Returns false when the train is stopped by an end of track or by one of `others`.
+ * True when the leading end of the train, running in its `direction`, stands right against the
+ * end of the track or a coupling gap away from one of `others`: it cannot move that way at all.
+ */
+function isBlockedAhead(net: Network, train: TrainSet, others: TrainSet[], occupancy?: TrainOccupancyCache): boolean {
+  const reach = 0.01
+  const left = trackLeftAhead(net, train, reach)
+  if (left !== null && left < 1e-6) return true
+  const obstacles = others.filter((other) => other !== train && other.id !== train.id && other.vehicles.length > 0)
+  if (obstacles.length === 0) return false
+  const free = freeDistanceAhead(net, train, reach + COUPLING_GAP, obstacles, occupancy)
+  return free !== null && free - COUPLING_GAP < 1e-6
+}
+
+/**
+ * Run one physics tick (dt seconds) on a TrainSet: the controls, the air brake and the speed are
+ * integrated with a fixed step of at most `PHYSICS_STEP` (a long `dt` is cut into equal steps, so
+ * the result does not depend on the frame rate), and the train is moved along the track. `env`
+ * turns the track levels into slopes.
+ *
+ * Returns false when the train is stopped by an end of track or by one of `others`: either it ran
+ * into it during this tick — `train.impactSpeed` then holds the speed of the impact — or it stands
+ * against it and is pushed onto it (by gravity or by its own traction; `impactSpeed` is 0).
  */
 export function tickTrainSet(
   net: Network,
@@ -511,24 +542,35 @@ export function tickTrainSet(
   dt: number,
   others: TrainSet[] = [],
   occupancy?: TrainOccupancyCache,
+  env: DrivingEnvironment = DEFAULT_DRIVING_ENVIRONMENT,
 ): boolean {
-  const accel = commandedAcceleration(train)
+  train.impactSpeed = 0
+  if (train.vehicles.length === 0 || !(dt > 0)) return true
 
-  let speed = train.currentSpeed
-
-  if (accel !== 0) {
-    speed = Math.max(0, Math.min(speed + accel * dt, train.maxSpeed))
-  } else {
-    // coasting
-    speed = Math.max(speed - train.coastingDecel * dt, 0)
+  // The obstacle check reads `train.direction`, which the physics only flips once it lets go
+  const isBlocked = (direction: 1 | -1): boolean => {
+    const previous = train.direction
+    train.direction = direction
+    const blocked = isBlockedAhead(net, train, others, occupancy)
+    train.direction = previous
+    return blocked
   }
 
-  train.currentSpeed = speed
-
-  if (isTrainStopped(train)) return true // stopped, no movement needed
-
-  const dist = speed * dt
-  return advanceTrainSet(net, train, dist, others, occupancy)
+  const steps = Math.max(1, Math.ceil(dt / PHYSICS_STEP - 1e-9))
+  const h = dt / steps
+  let free = true
+  for (let i = 0; i < steps; i++) {
+    const step = stepTrainDynamics(net, train, h, env, isBlocked)
+    if (step.blocked) {
+      free = false
+    } else if (step.distance > 0 && !advanceTrainSet(net, train, step.distance, others, occupancy)) {
+      // Ran into the end of the track or another train: the train stops dead against it
+      train.impactSpeed = Math.max(train.impactSpeed, train.currentSpeed)
+      train.currentSpeed = 0
+      free = false
+    }
+  }
+  return free
 }
 
 // ─── Coupling ─────────────────────────────────────────────────────────────────
@@ -667,7 +709,7 @@ export function reverseTrainSet(train: TrainSet): TrainSet {
  */
 export function switchDrivingCab(train: TrainSet): TrainSet | null {
   const tail = train.vehicles[train.vehicles.length - 1]
-  if (train.vehicles.length < 2 || tail.kind !== 'loco' || train.currentSpeed !== 0) return null
+  if (train.vehicles.length < 2 || tail.kind !== 'loco' || !isTrainStopped(train)) return null
   const switched = reverseTrainSet(train)
   resetTrainControls(switched)
   switched.direction = 1
@@ -797,10 +839,14 @@ export function coupleTrains(
   if (!aRearPos || !bFrontPos) return trains
   if (dist2(aRearPos, bFrontPos) > MAX_COUPLE_DISTANCE) return trains
 
+  // The merged train keeps the controls of `a`; its brake pipe now runs through both rakes, so the
+  // brake is as applied as the more applied of the two
   const merged: TrainSet = {
     ...a,
     id: generateId('train'),
     vehicles: [...a.vehicles, ...b.vehicles],
+    brakePipe: Math.min(a.brakePipe, b.brakePipe),
+    brakeCylinder: Math.max(a.brakeCylinder, b.brakeCylinder),
   }
 
   // Lay the merged rake out again so the new joint gets its spacing (a shared bogie between two
@@ -1190,7 +1236,7 @@ export function steerTrainSetJunction(
 
 // ─── Persistence & network consistency ────────────────────────────────────────
 
-/** Saved form of a train: where each vehicle stands. Driving state (speed, handle, reverser) is not kept. */
+/** Saved form of a train: where each vehicle stands. Driving state (speed, handle, reverser, brake) is not kept. */
 export interface SerializedTrain {
   id: TrainSetId
   direction: 1 | -1
@@ -1278,7 +1324,7 @@ export function pruneTrainsToNetwork(net: Network, trains: TrainSet[]): TrainSet
 }
 
 /**
- * Rebuild trains from saved data on a network: every train comes back stopped with its controls at rest,
+ * Rebuild trains from saved data on a network: every train comes back stopped, brakes applied and controls at rest,
  * and anything malformed or standing on a missing segment is dropped. Each rake is laid out again
  * from its lead, so a save made with another vehicle geometry is realigned on the current one.
  */

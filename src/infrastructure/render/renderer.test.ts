@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import {
@@ -13,8 +13,12 @@ import {
   subdivideCurve,
   isInactiveBranchAtNode,
   TURNOUT_ZONE_LENGTH,
+  telemetryKinematics,
+  trainSetTelemetry,
 } from '@infrastructure/render/renderer'
-import { createTrainSet, findCouplerSnap, getAllCouplerPoints, vehicleRearEndPos, MAX_NOTCH } from '@domain/models/train'
+import { createTrainSet, findCouplerSnap, getAllCouplerPoints, vehicleRearEndPos } from '@domain/models/train'
+import * as trainDynamicsModel from '@domain/models/trainDynamics'
+import type { TrainDynamics } from '@domain/models/trainDynamics'
 import { createLocomotive } from '@domain/models/locomotive'
 import { addJunction, toggleJunction } from '@domain/models/junction'
 import { bezierPoint } from '@domain/geometry/curve'
@@ -339,23 +343,137 @@ describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
       expect(fillCalls.some(t => typeof t === 'string' && t.includes('a = +5.5 m/s²'))).toBe(true)
     })
 
-    it('renders TrainSet with debug skeleton and dynamic vectors without error', () => {
-      const net = createNetwork()
-      const n1 = addNode(net, { x: 0, y: 0 })
-      const n2 = addNode(net, { x: 200, y: 0 })
-      addSegment(net, n1.id, n2.id)
+    describe('TrainSet debug vectors read from the physics', () => {
+      /** What `trainDynamics` answers in these tests: the drawing must show it as it is */
+      function physicsSays(values: Partial<TrainDynamics>) {
+        return vi.spyOn(trainDynamicsModel, 'trainDynamics').mockReturnValue({
+          mass: 424000,
+          tractionForce: 0,
+          brakeForce: 0,
+          resistanceForce: 0,
+          gradeForce: 0,
+          curveForce: 0,
+          acceleration: 0,
+          gradientPermille: 0,
+          tractionEffort: 0,
+          brakePipeBar: 5,
+          brakeCylinderBar: 0,
+          stoppingDistance: 0,
+          lateralAcceleration: 0,
+          ...values,
+        })
+      }
 
-      const ts = createTrainSet(net, { x: 50, y: 0 }, 'loco')!
-      ts.currentSpeed = 25
-      ts.notch = -MAX_NOTCH
+      /** A locomotive running at `speed` m/s towards the end of a straight track, `room` metres ahead of its bogie */
+      function drawnTexts(speed: number, room: number): string[] {
+        const net = createNetwork()
+        const n1 = addNode(net, { x: 0, y: 0 })
+        const n2 = addNode(net, { x: 200, y: 0 })
+        addSegment(net, n1.id, n2.id)
+        const ts = createTrainSet(net, { x: 200 - room, y: 0 }, 'loco')!
+        ts.currentSpeed = speed
+        const mockCtx = createMockContext()
+        renderTrainSet(mockCtx, createCamera(), 800, 600, net, ts, false, false, true)
+        return vi.mocked(mockCtx.fillText).mock.calls.map(c => String(c[0]))
+      }
 
-      const cam = createCamera()
-      const mockCtx = createMockContext()
+      afterEach(() => {
+        vi.restoreAllMocks()
+      })
 
-      renderTrainSet(mockCtx, cam, 800, 600, net, ts, false, false, true)
-      expect(mockCtx.fillText).toHaveBeenCalled()
-      const fillCalls = vi.mocked(mockCtx.fillText).mock.calls.map(c => c[0])
-      expect(fillCalls.some(t => typeof t === 'string' && t.includes('FREINAGE'))).toBe(true)
+      it('shows the real acceleration and the real stopping distance of a braking train', () => {
+        physicsSays({ brakeCylinderBar: 3.8, brakePipeBar: 3.5, acceleration: -1.1, stoppingDistance: 284 })
+        const texts = drawnTexts(25, 150)
+        expect(texts.some(t => t.includes('FREINAGE'))).toBe(true)
+        expect(texts.some(t => t.includes('a = -1.1 m/s²'))).toBe(true)
+        expect(texts.some(t => t.includes('Distance d\'arrêt : 284.0 m'))).toBe(true)
+      })
+
+      it('shows a train under power as pulling, with the acceleration the physics gives', () => {
+        physicsSays({ tractionEffort: 0.6, acceleration: 0.32, stoppingDistance: 90 })
+        const texts = drawnTexts(25, 150)
+        expect(texts.some(t => t.includes('TRACTION'))).toBe(true)
+        expect(texts.some(t => t.includes('a = +0.3 m/s²'))).toBe(true)
+      })
+
+      it('a coasting train has a finite stopping distance and no standing collision alert', () => {
+        // Regression: outside braking the distance was v² / (2 × 0) = ∞, hence a permanent alert
+        physicsSays({ acceleration: -0.03, stoppingDistance: 12 })
+        const texts = drawnTexts(5, 40)
+        expect(texts.some(t => t.includes('INERTIE'))).toBe(true)
+        expect(texts.some(t => t.includes('Infinity'))).toBe(false)
+        expect(texts.some(t => t.includes('Distance d\'arrêt : 12.0 m'))).toBe(true)
+        expect(texts.some(t => t.includes('Fin de voie'))).toBe(true)
+        expect(texts.some(t => t.includes('COLLISION'))).toBe(false)
+      })
+
+      it('raises the collision alert when the stopping distance exceeds the track left', () => {
+        physicsSays({ acceleration: -0.03, stoppingDistance: 300 })
+        const texts = drawnTexts(25, 40)
+        expect(texts.some(t => t.includes('COLLISION'))).toBe(true)
+      })
+
+      it('draws a stopping distance of several kilometres down to its end', () => {
+        physicsSays({ acceleration: -0.03, stoppingDistance: 3300 })
+        const net = createNetwork()
+        const n1 = addNode(net, { x: 0, y: 0 })
+        const n2 = addNode(net, { x: 6000, y: 0 })
+        addSegment(net, n1.id, n2.id)
+        const ts = createTrainSet(net, { x: 100, y: 0 }, 'loco')!
+        ts.currentSpeed = 83
+        const mockCtx = createMockContext()
+        const cam = createCamera()
+        cam.scale = 1
+        renderTrainSet(mockCtx, cam, 800, 600, net, ts, false, false, true)
+
+        // The tape ends 3300 m ahead of the leading bogie, not where the sampling gives up
+        const xs = vi.mocked(mockCtx.lineTo).mock.calls.map(c => c[0] + cam.x - 400)
+        const lead = ts.vehicles[0].front
+        const leadX = lead.t * 6000
+        expect(Math.max(...xs)).toBeGreaterThan(leadX + 3290)
+        expect(Math.max(...xs)).toBeLessThan(leadX + 3310)
+      })
+
+      it('asks the physics with the environment it is given', () => {
+        const dynamics = physicsSays({ acceleration: 0.2, stoppingDistance: 55, tractionEffort: 1 })
+        const net = createNetwork()
+        const n1 = addNode(net, { x: 0, y: 0 })
+        const n2 = addNode(net, { x: 200, y: 0 })
+        addSegment(net, n1.id, n2.id)
+        const ts = createTrainSet(net, { x: 50, y: 0 }, 'loco')!
+        ts.currentSpeed = 12
+
+        expect(trainSetTelemetry(net, ts, { levelHeight: 4.5 })).toEqual({
+          speed: 12,
+          maxSpeed: ts.maxSpeed,
+          throttle: 1,
+          realAcceleration: 0.2,
+          stoppingDistance: 55,
+        })
+        expect(dynamics).toHaveBeenCalledWith(net, ts, { levelHeight: 4.5 })
+      })
+    })
+
+    describe('telemetryKinematics', () => {
+      it('takes the real values when the physics gives them', () => {
+        expect(telemetryKinematics({ speed: 30, throttle: 1, acceleration: 5.5, braking: 10, realAcceleration: -0.4, stoppingDistance: 410 }))
+          .toEqual({ acceleration: -0.4, stoppingDistance: 410 })
+      })
+
+      it('rebuilds them from the controls of the legacy locomotive', () => {
+        expect(telemetryKinematics({ speed: 20, throttle: 1, acceleration: 5.5, braking: 10 })).toEqual({ acceleration: 5.5, stoppingDistance: 20 })
+        expect(telemetryKinematics({ speed: 20, throttle: -1, acceleration: 5.5, braking: 10 })).toEqual({ acceleration: -10, stoppingDistance: 20 })
+        expect(telemetryKinematics({ speed: 20, throttle: 0, acceleration: 5.5, braking: 10 })).toEqual({ acceleration: -0.5, stoppingDistance: 20 })
+      })
+
+      it('never makes up an infinite or undefined distance', () => {
+        // A braking of 0 is not replaced by `??`
+        expect(telemetryKinematics({ speed: 20, throttle: 0, braking: 0 }).stoppingDistance).toBe(20)
+        expect(telemetryKinematics({ speed: 20, stoppingDistance: NaN, realAcceleration: NaN })).toEqual({ acceleration: 0, stoppingDistance: 0 })
+        expect(telemetryKinematics(undefined)).toEqual({ acceleration: 0, stoppingDistance: 0 })
+        // Only the physics may say that the train will not stop
+        expect(telemetryKinematics({ speed: 20, stoppingDistance: Infinity }).stoppingDistance).toBe(Infinity)
+      })
     })
 
     it('draws an articulated rake as plain outlines, each bogie once, with no 0.00 m label on a shared bogie', () => {

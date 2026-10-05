@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { EditorStore } from './editorStore'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EditorStore, IMPACT_REPORT_SPEED, trainImpactMessage } from './editorStore'
+import * as trainModel from '@domain/models/train'
+import * as trainDynamicsModel from '@domain/models/trainDynamics'
 import { addNode, addSegment, addCurveSegment, resetIdCounter } from '@domain/models/network'
 import { applyNodeTransform, collectAffectedVias } from '@domain/geometry/nodeTransform'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
@@ -422,6 +424,10 @@ describe('EditorStore persistence', () => {
       return store
     }
 
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
     it('selects the train on entering play mode with its controls at rest', () => {
       const store = makeDrivingStore()
       const train = store.selectedTrain!
@@ -429,23 +435,121 @@ describe('EditorStore persistence', () => {
       expect(train.notch).toBe(0)
     })
 
-    it('steps the handle one notch at a time and drives the train', () => {
+    it('puts every train at rest, brakes applied, on entering play mode', () => {
+      const store = makeDrivingStore()
+      store.togglePlayMode()
+      expect(store.placeTrainLoco({ x: 400, y: 0 })).toBe(true)
+      expect(store.trains).toHaveLength(2)
+
+      // The state a train leaves from is the domain's: the store only has to ask for it
+      const reset = vi.spyOn(trainModel, 'resetTrainControls')
+      store.togglePlayMode()
+      expect(reset.mock.calls.map(([t]) => t.id).sort()).toEqual(store.trains.map((t) => t.id).sort())
+    })
+
+    it('steps the traction handle one notch at a time, from N to P5 and no further', () => {
       const store = makeDrivingStore()
       const train = store.selectedTrain!
-      store.shiftSelectedTrainReverser(1)
-      expect(train.reverser).toBe('forward')
 
       store.stepSelectedTrainNotch(1)
       store.stepSelectedTrainNotch(1)
       expect(train.notch).toBe(2)
-
-      const tBefore = train.vehicles[0].front.t
-      store.tickAllTrains(1)
-      expect(train.currentSpeed).toBeCloseTo((2 / 5) * train.acceleration, 5)
-      expect(train.vehicles[0].front.t).toBeGreaterThan(tBefore)
-
       store.stepSelectedTrainNotch(-1)
       expect(train.notch).toBe(1)
+
+      // No brake notches below N any more: the brake has its own handle
+      for (let i = 0; i < 4; i++) store.stepSelectedTrainNotch(-1)
+      expect(train.notch).toBe(0)
+      store.setSelectedTrainNotch(-3)
+      expect(train.notch).toBe(0)
+
+      for (let i = 0; i < 9; i++) store.stepSelectedTrainNotch(1)
+      expect(train.notch).toBe(trainModel.MAX_NOTCH)
+      store.setSelectedTrainNotch(12)
+      expect(train.notch).toBe(trainModel.MAX_NOTCH)
+    })
+
+    it('moves the brake handle of the driven train and tells the interface', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      const setBrake = vi.spyOn(trainDynamicsModel, 'setBrakeCommand')
+      let notified = 0
+      store.subscribe(() => { notified++ })
+
+      store.setSelectedTrainBrakeCommand('release')
+      expect(setBrake).toHaveBeenLastCalledWith(train, 'release')
+      expect(train.brakeCommand).toBe('release')
+      store.setSelectedTrainBrakeCommand('apply')
+      expect(train.brakeCommand).toBe('apply')
+      store.setSelectedTrainBrakeCommand('hold')
+      expect(train.brakeCommand).toBe('hold')
+      expect(notified).toBe(3)
+
+      // Asking for the position the handle is already in changes nothing
+      store.setSelectedTrainBrakeCommand('hold')
+      expect(setBrake).toHaveBeenCalledTimes(3)
+      expect(notified).toBe(3)
+    })
+
+    it('simulates every train on each step, also at rest, with the height of a track level', () => {
+      const store = makeDrivingStore()
+      store.togglePlayMode()
+      expect(store.placeTrainLoco({ x: 400, y: 0 })).toBe(true)
+      store.setGradientSettings({ levelHeight: 4.5 })
+      store.togglePlayMode()
+      const tick = vi.spyOn(trainModel, 'tickTrainSet').mockReturnValue(true)
+
+      // Both trains are stopped with the handle on N: brakes released on a slope, they must be able to roll
+      expect(store.trains.every((t) => t.currentSpeed === 0 && t.notch === 0)).toBe(true)
+      store.tickAllTrains(0.1)
+
+      expect(tick.mock.calls.map(([, t]) => t.id).sort()).toEqual(store.trains.map((t) => t.id).sort())
+      for (const [net, , dt, others, , env] of tick.mock.calls) {
+        expect(net).toBe(store.network)
+        expect(dt).toBe(0.1)
+        expect(others).toBe(store.trains)
+        expect(env).toEqual({ levelHeight: 4.5 })
+      }
+    })
+
+    it('does not simulate outside play mode', () => {
+      const store = makeDrivingStore()
+      store.togglePlayMode()
+      const tick = vi.spyOn(trainModel, 'tickTrainSet').mockReturnValue(true)
+      store.tickAllTrains(0.1)
+      expect(tick).not.toHaveBeenCalled()
+    })
+
+    it('lets go of the brake handle of a train that is no longer driven', () => {
+      const store = makeDrivingStore()
+      store.togglePlayMode()
+      expect(store.placeTrainLoco({ x: 400, y: 0 })).toBe(true)
+      store.togglePlayMode()
+      vi.spyOn(trainModel, 'tickTrainSet').mockReturnValue(true)
+      const first = store.selectedTrain!
+      const second = store.trains.find((t) => t !== first)!
+
+      store.setSelectedTrainBrakeCommand('release')
+      store.tickAllTrains(0.1)
+      expect(first.brakeCommand).toBe('release')
+
+      // The driver takes the other train with the key still down
+      store.selectTrainById(second.id)
+      store.tickAllTrains(0.1)
+      expect(first.brakeCommand).toBe('hold')
+    })
+
+    it('reads what it shows of the driven train from the physics', () => {
+      const store = makeDrivingStore()
+      store.setGradientSettings({ levelHeight: 4.5 })
+      const dynamics = vi.spyOn(trainDynamicsModel, 'trainDynamics')
+
+      const shown = store.selectedTrainDynamics
+      expect(dynamics).toHaveBeenCalledWith(store.network, store.selectedTrain, { levelHeight: 4.5 })
+      expect(shown).toBe(dynamics.mock.results[0].value)
+
+      store.selectTrainById(null)
+      expect(store.selectedTrainDynamics).toBeNull()
     })
 
     it('refuses to throw the reverser while the train is moving', () => {
@@ -459,7 +563,7 @@ describe('EditorStore persistence', () => {
       expect(train.currentSpeed).toBe(10)
     })
 
-    it('emergency brake stops the train and can only be released once stopped', () => {
+    it('latches the emergency brake until the train has stopped', () => {
       const store = makeDrivingStore()
       const train = store.selectedTrain!
       store.setSelectedTrainReverser('forward')
@@ -474,24 +578,62 @@ describe('EditorStore persistence', () => {
       store.toggleSelectedTrainEmergencyBrake()
       expect(train.emergencyBrake).toBe(true)
 
-      store.tickAllTrains(0.1)
-      expect(train.currentSpeed).toBeLessThan(30)
-      for (let i = 0; i < 30; i++) store.tickAllTrains(0.1)
-      expect(train.currentSpeed).toBe(0)
-
+      train.currentSpeed = 0
       store.toggleSelectedTrainEmergencyBrake()
       expect(train.emergencyBrake).toBe(false)
     })
 
-    it('stops dead and cuts traction at the end of the track', () => {
+    it('leaves a train stopped by an obstacle to the domain: no speed or handle forced by the store', () => {
       const store = makeDrivingStore()
       const train = store.selectedTrain!
       store.setSelectedTrainReverser('forward')
-      store.setSelectedTrainNotch(5)
-      train.currentSpeed = train.maxSpeed
-      for (let i = 0; i < 200 && train.currentSpeed > 0; i++) store.tickAllTrains(0.1)
-      expect(train.currentSpeed).toBe(0)
-      expect(train.notch).toBe(0)
+      store.setSelectedTrainNotch(3)
+      // The domain reports the obstacle and has already settled the train's speed
+      vi.spyOn(trainModel, 'tickTrainSet').mockImplementation((_net, t) => {
+        t.currentSpeed = 0.4
+        return false
+      })
+
+      store.tickAllTrains(0.1)
+      expect(train.currentSpeed).toBe(0.4)
+      expect(train.notch).toBe(3)
+      expect(store.locomotiveCurrentSpeed).toBe(0.4)
+    })
+
+    it('reports an impact above 5 km/h once, with its speed', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      const impacts: number[] = []
+      store.onTrainImpact = (t, speed) => {
+        expect(t).toBe(train)
+        impacts.push(speed)
+      }
+      let impactSpeed = 0
+      vi.spyOn(trainModel, 'tickTrainSet').mockImplementation((_net, t) => {
+        t.impactSpeed = impactSpeed
+        return impactSpeed === 0
+      })
+
+      store.tickAllTrains(0.1)
+      expect(impacts).toEqual([])
+
+      // A touch at walking pace is not worth a message
+      impactSpeed = IMPACT_REPORT_SPEED * 0.9
+      store.tickAllTrains(0.1)
+      expect(impacts).toEqual([])
+
+      impactSpeed = 8
+      store.tickAllTrains(0.1)
+      store.tickAllTrains(0.1)
+      expect(impacts).toEqual([8])
+
+      // Once the train has come off the obstacle, the next impact is a new one
+      impactSpeed = 0
+      store.tickAllTrains(0.1)
+      impactSpeed = 3
+      store.tickAllTrains(0.1)
+      expect(impacts).toEqual([8, 3])
+      expect(trainImpactMessage(8)).toBe('Choc à 29 km/h')
     })
 
     it('puts every control back at rest when leaving play mode', () => {

@@ -4,9 +4,9 @@ Nettoyé le 2026-10-05 : les chantiers terminés ont été retirés (leur plan e
 
 ---
 
-# À valider — Physique de conduite réaliste
+# En cours — Physique de conduite réaliste
 
-Branche `feature/track-levels` (ou une branche dédiée, au choix de l'utilisateur). Plan rédigé le 2026-10-05 après recherche ; **rien n'est codé**. Sources et chiffres détaillés : `tasks/recherche-traction.md`, `tasks/recherche-freinage.md`. Pas de commit tant que l'utilisateur ne le demande pas.
+Branche `feature/driving-physics` (partie de `developement`). Plan validé le 2026-10-05, rédigé après recherche. Sources et chiffres détaillés : `tasks/recherche-traction.md`, `tasks/recherche-freinage.md` ; script de référence : `tasks/recherche-traction-sim.py`. Pas de commit tant que l'utilisateur ne le demande pas.
 
 ## Ce qui change pour le joueur
 
@@ -86,34 +86,35 @@ Les lettres désignent la position des touches (clavier QWERTY), comme pour les 
 
 ### Socle commun (moi, avant les agents)
 
-- [ ] 0.1 Types et signatures : données physiques dans `RollingStockSpec`, état du frein dans `TrainSet` (`brakePipe`, `brakeCylinder`, commande de frein, effort appliqué), `DrivingEnvironment` (`levelHeight`), `TrainDynamics` (forces, accélération réelle, pente, pressions, distance d'arrêt, accélération transversale)
-- [ ] 0.2 Script de référence de la recherche (`sim.py`) recopié dans `tasks/` pour vérifier l'implémentation contre les mêmes chiffres
+- [x] 0.1 Types et signatures : données physiques dans `RollingStockSpec`, état du frein dans `TrainSet` (`brakePipe`, `brakeCylinder`, commande de frein, effort appliqué), `DrivingEnvironment` (`levelHeight`), `TrainDynamics` (forces, accélération réelle, pente, pressions, distance d'arrêt, accélération transversale)
+- [x] 0.2 Script de référence de la recherche (`sim.py`) recopié dans `tasks/` pour vérifier l'implémentation contre les mêmes chiffres
 
 ### Agent A — domaine
 
-- [ ] A1. `rollingStock.ts` : données par modèle, `consistMass`, `consistPower`, `consistMaxEffort`, `adhesiveMass`, `consistResistance(v)` ; tests (rame de 424 t, 8 800 kW, 212 kN ; R(300) ≈ 60 kN, R(100) ≈ 11 kN)
-- [ ] A2. Forces (`train.ts` ou un fichier `trainDynamics.ts`) : traction, adhérence, résistance, pente moyennée sur la rame, courbe ; `trainDynamics(net, train, env)` renvoie le détail
-- [ ] A3. Frein à air : conduite générale, cylindres, décélération visée par vitesse, plafond d'adhérence, urgence
-- [ ] A4. Intégration : pas fixe, forces dissipatives qui retiennent à l'arrêt, basculement du sens en dérive, vitesse ramenée exactement à zéro quand le frein tient
-- [ ] A5. `tickTrainSet` et `advanceTrainSet` : collision vérifiée aussi quand la rame recule en dérive ; butoir et obstacle retiennent la rame sans tremblement ; vitesse du choc renvoyée
-- [ ] A6. `stoppingDistance` par intégration (serrage maximal de service, délai compris, pente actuelle) ; accélération transversale `v²/R` exposée par véhicule (point d'accroche du futur plan dévers)
-- [ ] A7. Commandes : cran de traction 0…5, serrer / desserrer, urgence ; état de départ « frein serré » ; `resetTrainControls`, attelage, dételage et changement de cabine remis d'aplomb
-- [ ] A8. Tests de contrôle (voir plus bas) et réécriture des 13 tests qui figent les valeurs actuelles
+- [x] A1. `rollingStock.ts` : données par modèle, `consistMass`, `consistPower`, `consistMaxEffort`, `adhesiveMass`, `consistResistance(v)` ; tests (rame de 424 t, 8 800 kW, 212 kN ; R(300) ≈ 60 kN, R(100) ≈ 11 kN)
+- [x] A2. Forces (`train.ts` ou un fichier `trainDynamics.ts`) : traction, adhérence, résistance, pente moyennée sur la rame, courbe ; `trainDynamics(net, train, env)` renvoie le détail
+- [x] A3. Frein à air : conduite générale, cylindres, décélération visée par vitesse, plafond d'adhérence, urgence
+- [x] A4. Intégration : pas fixe, forces dissipatives qui retiennent à l'arrêt, basculement du sens en dérive, vitesse ramenée exactement à zéro quand le frein tient
+- [x] A5. `tickTrainSet` et `advanceTrainSet` : collision vérifiée aussi quand la rame recule en dérive ; butoir et obstacle retiennent la rame sans tremblement ; vitesse du choc renvoyée
+- [x] A6. `stoppingDistance` par intégration (serrage maximal de service, délai compris, pente actuelle) ; accélération transversale `v²/R` exposée par véhicule (point d'accroche du futur plan dévers)
+- [x] A7. Commandes : cran de traction 0…5, serrer / desserrer, urgence ; état de départ « frein serré » ; `resetTrainControls`, attelage, dételage et changement de cabine remis d'aplomb
+- [x] A8. Tests de contrôle (voir plus bas) et réécriture des 13 tests qui figent les valeurs actuelles
 
 ### Agent B — store, clavier, HUD, rendu
 
-- [ ] B1. Boucle du store : tous les trains simulés en conduite, `levelHeight` transmis, fin de l'arrêt net imposé par le store, entrée en conduite freins serrés
-- [ ] B2. Clavier : actions « serrer » et « desserrer » maintenues (appui / relâchement), catalogue de raccourcis, fenêtre d'aide
-- [ ] B3. HUD : deux manomètres (conduite générale, cylindres de frein), effort de traction en %, accélération **réelle**, pente sous la rame en ‰, distance d'arrêt réelle dans l'unité du projet, cadran gradué jusqu'à la vitesse maximale du modèle
-- [ ] B4. Rendu debug : vecteur d'accélération et ruban d'arrêt lus dans `TrainDynamics` (corrige au passage la distance d'arrêt infinie hors freinage)
-- [ ] B5. Choc contre un butoir ou un autre train au-dessus de quelques km/h : message à l'écran
-- [ ] B6. Tests du store et du clavier
+- [x] B1. Boucle du store : tous les trains simulés en conduite, `levelHeight` transmis, fin de l'arrêt net imposé par le store, entrée en conduite freins serrés
+- [x] B2. Clavier : actions « serrer » et « desserrer » maintenues (appui / relâchement), catalogue de raccourcis, fenêtre d'aide
+- [x] B3. HUD : deux manomètres (conduite générale, cylindres de frein), effort de traction en %, accélération **réelle**, pente sous la rame en ‰, distance d'arrêt réelle dans l'unité du projet, cadran gradué jusqu'à la vitesse maximale du modèle
+- [x] B4. Rendu debug : vecteur d'accélération et ruban d'arrêt lus dans `TrainDynamics` (corrige au passage la distance d'arrêt infinie hors freinage)
+- [x] B5. Choc contre un butoir ou un autre train au-dessus de quelques km/h : message à l'écran
+- [x] B6. Tests du store et du clavier
 
 ### Vérification finale
 
-- [ ] `npm test`, `npm run typecheck`, `npm run build`, relecture du diff
-- [ ] Comparaison au script de référence : mêmes temps et distances à 2 % près
-- [ ] Navigateur : départ arrêté, montée en vitesse, arrêt de service, urgence, rampe de 35 ‰ dans les deux sens, dérive frein desserré, manomètres
+- [x] `npm test`, `npm run typecheck`, `npm run build`, relecture du diff
+- [x] Comparaison au script de référence : mêmes temps et distances à 2 % près
+- [x] Navigateur sans écran : départ freins serrés, desserrage, traction P5, serrage, urgence, manomètres
+- [ ] Contrôle à l'œil par l'utilisateur : rampe de 35 ‰ dans les deux sens, dérive frein desserré, choc contre un heurtoir, boutons du HUD à la souris, lisibilité des manomètres
 
 ## Tests de contrôle
 
@@ -134,7 +135,22 @@ Chiffres du modèle de référence (à reproduire, pas des mesures) : Duplex 0 �
 
 Comportements : frein serré, la rame tient sur 35 ‰ ; frein desserré sans traction, elle part en arrière ; P5 la fait démarrer en rampe de 35 ‰ ; une rame sans motrice ne tracte pas ; même résultat à 1 % près avec un pas d'affichage de 1/60 s ou de 0,1 s.
 
-## Décisions prises, à confirmer
+## Revue (2026-10-05)
+
+- `npm test` : 889 tests verts (45 fichiers, fichiers d'une autre session compris) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
+- Tests de contrôle, tous verts : urgence 300 → 0 en 3 344 m et 73,8 s (attendu 3 300 m ± 5 %, 74 s) ; urgence 200 / 250 / 160 → 0 en 1 365 / 2 193 / 870 m ; service maximal 320 → 0 en 4 450 m ; Duplex 0 → 300 km/h en 291,5 s sur 15,26 km (référence 289 s, 15,3 km) ; équilibre à 184 km/h en rampe de 35 ‰ ; résistance 60,4 kN à 300 km/h ; même résultat à 0,2 % près entre un pas de 1/60 s et de 0,1 s.
+- Vu dans un navigateur sans écran, avec une motrice seule : entrée en conduite freins serrés (3,5 bar, cylindres pleins), desserrage en maintenant Q (5,0 bar, cylindres vides), P5 jusqu'à 32 km/h, serrage en maintenant E (3,9 bar, cylindres à 2,5 bar, −0,73 m/s²), urgence (conduite à 0). Aucune erreur dans la console.
+- Non vu à l'écran : rampe et dérive, choc contre un heurtoir, boutons serrer / desserrer à la souris, vue debug.
+- Ajouté à la relecture : la distance d'arrêt s'affiche en mètres puis en kilomètres quelle que soit l'unité du projet (« 3,3 km », pas « 3300000 mm »).
+- Écarts au plan :
+  - remorque du TGV M à 36 t (le tableau du plan se contredisait : 46 t par remorque donnent 550 t, pas 460 t) ;
+  - au-delà de la vitesse maximale, l'effort s'efface sur une bande étroite au lieu d'être coupé net (sinon l'accélération oscille) ;
+  - un desserrage lâché au-dessus de 4,5 bar se termine seul, pour qu'un reste de pression ne coupe pas la traction sans que le joueur le voie ;
+  - sortie d'urgence : la conduite revient directement à 3,5 bar ;
+  - le message de choc passe par un rappel posé par le HUD, pour ne pas faire dépendre le store de l'interface.
+- Restes connus : voir « Conduite » dans les défauts connus.
+
+## Décisions prises
 
 - **Crans de traction conservés**, frein à touches séparées (le manipulateur réel est continu ; les crans restent plus jouables au clavier).
 - **Freins serrés à l'entrée en conduite** plutôt qu'une retenue automatique : c'est le comportement réel, et ça évite qu'un train posé sur une rampe parte tout seul.
@@ -149,6 +165,27 @@ Comportements : frein serré, la rame tient sur 35 ‰ ; frein desserré sans tr
 - Raccordement vertical arrondi au pied et au sommet d'une rampe
 - Pilotage depuis un téléphone (voir « Idées notées »)
 - Mise à l'échelle des trains en HO / N ; retrait de l'ancienne `Locomotive`
+
+---
+
+# Fait — Performance du rendu des voies et des sections (2026-10-05)
+
+Demande : optimiser le rendu, sans rien changer à l'aspect (deux files de rail, pas de ballast ni de traverses). Modifications faites sur `feature/driving-physics`, à séparer au commit.
+
+- [x] Mesure de départ (réseau de 4 000 rails, hors tracé du navigateur) : 21 ms par image en vue rapprochée, 76 ms réseau entier, 56 ms avec deux niveaux — dont 14 ms de `computeTrackSections` recalculé à chaque image et à chaque niveau
+- [x] `render/networkDerived.ts` : sections, index rail → section, conflits de sens et diagnostics gardés d'une image à l'autre, recalculés seulement quand le réseau ou les réglages de section changent (comparaison exacte valeur par valeur, 0,35 ms pour 4 000 rails) ; 9 tests
+- [x] `renderNetwork` : lit ce cache ; section sélectionnée trouvée par l'index au lieu d'un parcours de tous les rails de la section pour chaque rail
+- [x] `Canvas.tsx` : les demandes de redessin d'une même image sont regroupées en un seul tracé (`redraw` dessinait deux fois : une fois lui-même, une fois par sa notification)
+- [x] `npm test` (897), `npm run typecheck`, `npm run build` ; contrôle dans le navigateur sur 1 000 rails et deux niveaux
+
+## Revue
+
+Même réseau de 4 000 rails : 5 ms en vue rapprochée (était 21), 25 ms réseau entier (était 76), 7 ms avec deux niveaux (était 56). Dans le navigateur, 1 000 rails sur deux niveaux : 4,4 ms par image en vue rapprochée, 6 ms réseau entier ; 200 demandes de redessin dans la même image coûtent 4,7 ms au total.
+
+Reste, non fait :
+- Tracé groupé des rails (un seul `stroke` par style au lieu de quatre par rail) : c'est ce qui domine maintenant, mais l'ordre de superposition change légèrement aux traversées — à décider
+- En vue à plusieurs niveaux, le tri des rails visibles est refait à chaque niveau
+- Code de ballast, traverses, éclisses et détails de traversée : écrit, appelé par aucun rendu — à retirer ou à garder, au choix de l'utilisateur
 
 ---
 
@@ -229,12 +266,23 @@ Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été
 - Réseaux déjà enregistrés : gardent le nom « Untitled Network »
 - Thème clair des éléments flottants et styles de boutons non unifiés
 
+## Conduite
+
+- HUD nettement plus haut qu'avant : il défile si la fenêtre est basse ; étiquettes des manomètres serrées (repères 4,5 et 5, valeur sous l'aiguille) ; légende des touches coupée à droite
+- L'accélération affichée ignore les obstacles : une rame poussée contre un heurtoir affiche une accélération non nulle alors qu'elle ne bouge pas
+- La distance d'arrêt suppose la pente actuelle constante et ignore les courbes ; elle est recalculée à chaque image en conduite (coût à surveiller)
+- TGV M : masses, effort, résistance et freinage estimés, faute de données publiées
+- Trains en dimensions et vitesses réelles à toutes les échelles : la physique n'est juste qu'en 1:1
+- Ancienne `Locomotive` : toujours en physique d'arcade (inaccessible depuis l'interface)
+- À l'arrêt en urgence, « un cran de moins » sur N lève le verrou d'urgence
+- Ruban de distance d'arrêt du debug anguleux en courbe serrée (échantillonnage limité à 150 pas)
+
 ## Niveaux et pentes
 
 - Un clic sur une voie sélectionne toute la section : le compteur de niveau lève tous ses nœuds ensemble ; pour n'en lever qu'une partie il faut la sélectionner seule
 - Une soudure ou une découpe entre deux hauteurs distantes de moins d'un demi-niveau aligne la voie sur le nœud conservé : sa pente change sans avertissement
 - Changer d'échelle remet la hauteur d'un niveau et la pente maximale aux valeurs de l'échelle (comme l'entraxe) ; la fenêtre des paramètres marque le projet modifié à chaque enregistrement
-- En vue à plusieurs niveaux, `renderNetwork` (et `computeTrackSections`) tourne une fois par niveau visible plus une : coût à mesurer sur un grand réseau
+- En vue à plusieurs niveaux, `renderNetwork` tourne une fois par niveau visible plus une (les sections ne sont plus recalculées, le tri des rails visibles si)
 - Pointillés du tunnel repris à zéro à chaque morceau de rail ; en vue simplifiée le tunnel n'a pas de style ; pas des traverses légèrement différent de part et d'autre d'une coupe dans le SVG
 - `detectCrossings` ne voit pas un croisement sans nœud qui tombe exactement sur un sommet de la polyligne d'une courbe (défaut ancien, aussi sur des voies à plat)
 - Debug des trains possiblement masqué par un pont ; tablier calé sur la constante `GAUGE`, comme les rails
@@ -276,3 +324,37 @@ Validé le 2026-10-05 (plan : `~/.claude/plans/swirling-foraging-planet.md`, ét
 - Changements visibles : plus d'« aiguillage incomplet » sur une fourche sans tige ; `placeTurnout` ne déclare rien sans tige.
 - Non fait : contrôle dans le navigateur ; aiguilles couplées et appareils à deux tiges (le modèle les permet, aucun outil ne les pose).
 - Restes connus : recul à travers une aiguille fermée (R6), wagons supprimés en coupant sous un train (R5), collisions sur traversée (R15) ; `findJunctionAtNode` linéaire en nombre de tables.
+
+---
+
+# Fait — Refonte de la barre de menus (2026-10-05)
+
+- [x] 1. Menus réorganisés : Fichier (sous-menu Exporter), Édition, Affichage (bascules à coche, sous-menu Thème), Simulation (nouveau), Aide (liens GitHub et notes de version)
+- [x] 2. Composant `MenuBar` : coches, sous-menus, bascule au survol une fois un menu ouvert, flèches / Entrée / Échap ; un menu ouvert retient le clavier
+- [x] 3. Partie droite réduite au badge d'échelle et au bouton de thème
+- [x] 4. Nettoyage : `ShortcutsModal.tsx` et `AboutModal.tsx` extraits, « Supprimer » appelle `store.deleteSelection()`, styles en ligne passés dans `styles.css`
+- [x] 5. Contrôle dans un navigateur sans interface (menus, clavier, thème, fenêtre des raccourcis), test unitaire `Menu.test.ts`
+
+## Revue
+
+- `tsc --noEmit` : aucune erreur dans les fichiers de la barre ; les erreurs restantes viennent du chantier physique en cours (`trainDynamics.ts`, `keybindings.test.ts`).
+- Les raccourcis des actions non reconfigurables (Ctrl+Z, Ctrl+A, Suppr, Ctrl+0, Ctrl+,, R) restent des libellés fixes : ces touches sont câblées dans `useKeyboardShortcuts.ts`.
+
+---
+
+# Fait — Panneau debug des trains séparé du poste de conduite (2026-10-05)
+
+Demande : le debug faisait « bricolé » (grille de mini-boutons à emoji, couleurs en dur) et vivait dans le poste de conduite. Décisions prises avec l'utilisateur : seul le panneau change (pas le dessin sur le canevas), il se déploie en bas à droite au-dessus du poste de conduite.
+
+- [x] `hud/trainDebugLayers.ts` : liste unique des calques (clé, libellé, description) + test de couverture des clés de `trainDebugOptions`
+- [x] `hud/TrainDebugPanel.tsx` : panneau au thème, une ligne-interrupteur de 32 px par calque, raccourci et bouton fermer dans l'en-tête
+- [x] `App.tsx` + `.hud-dock` : le panneau et le poste de conduite sont empilés dans un même conteneur en bas à droite
+- [x] `DrivingHUD.tsx` : grille de sous-options retirée, le bouton ⚙ ouvre/ferme le panneau
+- [x] `Canvas.tsx` : la barre d'échelle se décale aussi quand le panneau est ouvert en édition
+
+## Revue
+
+- Vérifié dans le navigateur (1280×800) : en édition le panneau est seul dans le coin, en pilotage il est au-dessus du poste ; les lignes basculent ; thèmes clair et sombre. `npm run typecheck` passe, `npm test` passe hors `zzperf.tmp.test.ts` (fichier temporaire étranger à ce chantier, délai dépassé).
+- Le panneau est maintenant accessible en édition, ce qui n'était pas le cas avant.
+- Reste hors thème : le poste de conduite lui-même (sombre fixe). Sa ligne « Retour arrière / Urgence » déborde déjà à 220 px.
+- `TrainBuilderPalette.tsx` (monté nulle part) garde une copie de l'ancienne grille : à retirer avec le composant.

@@ -29,6 +29,14 @@ export interface RollingStockSpec {
     /** Body length beyond the bogie pivot on the trailer side */
     rearOverhang: number
     width: number
+    /** Mass in working order, kg */
+    mass: number
+    /** Power at the wheel rims, W */
+    power: number
+    /** Starting tractive effort, N */
+    maxEffort: number
+    /** Mass carried by the driven axles, kg: what the adhesion limit applies to */
+    adhesiveMass: number
   }
   trailer: {
     /** Distance between the two pivots of a trailer (shared bogie to shared bogie) */
@@ -36,12 +44,27 @@ export interface RollingStockSpec {
     /** Extra body length of an end trailer beyond its own bogie, on the power car side */
     endExtension: number
     width: number
+    /** Mass with a normal load of passengers, kg */
+    mass: number
   }
+  /** Trailers between the two power cars of the complete trainset */
+  trailerCount: number
+  /**
+   * Running resistance R = a + b·v + c·v² of the complete trainset on level straight track
+   * (N, N·s/m, N·s²/m², v in m/s). See `consistResistanceCoefficients` for other rakes.
+   */
+  resistance: { a: number; b: number; c: number }
+  /** Maximum speed in service, m/s */
+  maxSpeed: number
 }
 
 /**
  * Lengths over couplers add up to the real trainset: power cars + N trailer pitches + 2 end
  * extensions. Values marked "deduced" or "estimated" do not come from a manufacturer sheet.
+ *
+ * Physical data (see `tasks/recherche-traction.md` §9): the Duplex figures are published ones and
+ * its resistance comes from the SNCF coefficients of the TGV Dasye (same trailers, same nose).
+ * Almost nothing is published for the TGV M: every physical value of it is an estimate.
  */
 export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
   // TGV Duplex / Euroduplex (Ouigo, inOui): M + 8 R + M = 200.19 m
@@ -54,12 +77,20 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       noseOverhang: 5.005, // estimated split of the 8.15 m of overhang
       rearOverhang: 3.145, // estimated, same as the end trailer extension
       width: 2.814,
+      mass: 68_000,
+      power: 4_400_000, // 8 800 kW per trainset under 25 kV
+      maxEffort: 106_000, // 212 kN per trainset
+      adhesiveMass: 68_000, // all four axles driven
     },
     trailer: {
       pitch: 18.7,
       endExtension: 3.145, // deduced: (200.19 − 2 × 22.15 − 8 × 18.70) / 2
       width: 2.904,
+      mass: 36_000, // deduced: (424 t loaded − 2 × 68 t) / 8
     },
+    trailerCount: 8,
+    resistance: { a: 2680, b: 115, c: 6.93 }, // Dasye coefficients scaled to 424 t
+    maxSpeed: 320 / 3.6,
   },
   // TGV M (Avelia Horizon): M + 9 R + M = 202 m, the end extension is the "greffon" module
   tgvm: {
@@ -71,12 +102,21 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
       noseOverhang: 4.07, // estimated
       rearOverhang: 2.55, // estimated
       width: 2.814, // estimated: same as Duplex
+      mass: 68_000, // estimated: same as Duplex
+      power: 3_880_000, // 7 760 kW per trainset at the rims
+      maxEffort: 122_000, // estimated: 244 kN per trainset, unsourced figure
+      adhesiveMass: 68_000, // estimated
     },
     trailer: {
       pitch: 17.7, // deduced: Duplex trailer shortened by 1 m
       endExtension: 3.35, // deduced: (202 − 2 × 18 − 9 × 17.70) / 2
       width: 2.904, // estimated: same as Duplex
+      mass: 36_000, // estimated: (460 t loaded, itself estimated − 2 × 68 t) / 9
     },
+    trailerCount: 9,
+    // estimated: Dasye coefficients scaled to 460 t, aerodynamic term reduced by 13 %
+    resistance: { a: 2910, b: 125, c: 6.03 },
+    maxSpeed: 320 / 3.6,
   },
 }
 
@@ -172,4 +212,82 @@ export function bogieCount(vehicles: readonly StockVehicle[]): number {
     if (jointKind(vehicles[i - 1], vehicles[i]) === 'articulated') count--
   }
   return count
+}
+
+// ─── Physical data of a rake ──────────────────────────────────────────────────
+//
+// Everything below is computed on demand from the vehicles: rakes are recomposed (coupling,
+// uncoupling, vehicles removed) all over the code, so nothing is cached on the train.
+
+/** The complete trainset of a model: power car, trailers, power car turned nose outwards. */
+export function referenceConsist(model: RollingStockModel): StockVehicle[] {
+  return [
+    { kind: 'loco', model },
+    ...Array.from({ length: ROLLING_STOCK[model].trailerCount }, (): StockVehicle => ({ kind: 'wagon', model })),
+    { kind: 'loco', model, flipped: true },
+  ]
+}
+
+/** Mass of a vehicle, kg */
+export function vehicleMass(veh: StockVehicle): number {
+  const spec = stockSpec(veh)
+  return veh.kind === 'loco' ? spec.powerCar.mass : spec.trailer.mass
+}
+
+function sumOver(vehicles: readonly StockVehicle[], value: (veh: StockVehicle) => number): number {
+  return vehicles.reduce((sum, veh) => sum + value(veh), 0)
+}
+
+/** Mass of a rake, kg */
+export function consistMass(vehicles: readonly StockVehicle[]): number {
+  return sumOver(vehicles, vehicleMass)
+}
+
+/** Power at the wheel rims of a rake, W: 0 without a power car */
+export function consistPower(vehicles: readonly StockVehicle[]): number {
+  return sumOver(vehicles, (veh) => (veh.kind === 'loco' ? stockSpec(veh).powerCar.power : 0))
+}
+
+/** Starting tractive effort of a rake, N: 0 without a power car */
+export function consistMaxEffort(vehicles: readonly StockVehicle[]): number {
+  return sumOver(vehicles, (veh) => (veh.kind === 'loco' ? stockSpec(veh).powerCar.maxEffort : 0))
+}
+
+/** Mass on the driven axles of a rake, kg */
+export function adhesiveMass(vehicles: readonly StockVehicle[]): number {
+  return sumOver(vehicles, (veh) => (veh.kind === 'loco' ? stockSpec(veh).powerCar.adhesiveMass : 0))
+}
+
+/** Maximum speed of a rake, m/s: that of its slowest vehicle */
+export function consistMaxSpeed(vehicles: readonly StockVehicle[]): number {
+  if (vehicles.length === 0) return ROLLING_STOCK[DEFAULT_ROLLING_STOCK].maxSpeed
+  return Math.min(...vehicles.map((veh) => stockSpec(veh).maxSpeed))
+}
+
+/**
+ * Coefficients of the running resistance R = a + b·v + c·v² of a rake (N, N·s/m, N·s²/m²).
+ * The complete trainset of a model gets the values of the table. For any other rake — estimated
+ * rule — `a` and `b` (rolling and mechanical losses) follow the mass and `c` (aerodynamic drag)
+ * follows the length, model by model: two coupled trainsets have twice the resistance of one, a
+ * lone power car about a tenth of the drag of its trainset.
+ */
+export function consistResistanceCoefficients(vehicles: readonly StockVehicle[]): { a: number; b: number; c: number } {
+  const total = { a: 0, b: 0, c: 0 }
+  for (const model of Object.keys(ROLLING_STOCK) as RollingStockModel[]) {
+    const own = vehicles.filter((veh) => (veh.model ?? DEFAULT_ROLLING_STOCK) === model)
+    if (own.length === 0) continue
+    const { resistance } = ROLLING_STOCK[model]
+    const reference = referenceConsist(model)
+    const massShare = consistMass(own) / consistMass(reference)
+    total.a += resistance.a * massShare
+    total.b += resistance.b * massShare
+    total.c += resistance.c * (consistLength(own) / consistLength(reference))
+  }
+  return total
+}
+
+/** Running resistance (N) of a rake at `speed` (m/s) on level straight track */
+export function consistResistance(vehicles: readonly StockVehicle[], speed: number): number {
+  const { a, b, c } = consistResistanceCoefficients(vehicles)
+  return a + b * speed + c * speed * speed
 }

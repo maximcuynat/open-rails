@@ -21,8 +21,7 @@ import {
   setNotch,
   triggerEmergencyBrake,
   releaseEmergencyBrake,
-  commandedAcceleration,
-  stoppingDistance,
+  switchDrivingCab,
   MAX_NOTCH,
   makeTrainSet,
   serializeTrains,
@@ -42,7 +41,14 @@ import {
 import { walkForward, snapToNearestTrack, positionOnSegment, tangentOnSegment, findJunctionAhead } from './locomotive'
 import type { TrackPosition } from './locomotive'
 import { removeSegment, addArcCurve } from './network'
-import { ROLLING_STOCK, type RollingStockModel } from './rollingStock'
+import { ROLLING_STOCK, consistMass, consistResistance, type RollingStockModel } from './rollingStock'
+import {
+  BRAKE_PIPE_FIRST_REDUCTION,
+  BRAKE_PIPE_FULL_SERVICE,
+  BRAKE_PIPE_RELEASED,
+  setBrakeCommand,
+  trainDynamics,
+} from './trainDynamics'
 import { addJunction, placeTurnout, autoDetectJunctions, activeBranchOf, turnoutView, setJunctionBranch } from './junction'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
@@ -157,77 +163,138 @@ describe('driving controls', () => {
     return { net, ts }
   }
 
-  it('starts at rest: neutral reverser, handle on N', () => {
+  /** Brake fully released, as after holding the release command for a few seconds */
+  function releaseBrake(ts: TrainSet) {
+    ts.brakePipe = BRAKE_PIPE_RELEASED
+    ts.brakeCylinder = 0
+  }
+
+  it('starts at rest: brakes applied, neutral reverser, handle on N', () => {
     const { ts } = makeTrain()
     expect(ts.reverser).toBe('neutral')
     expect(ts.notch).toBe(0)
     expect(ts.emergencyBrake).toBe(false)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(ts.brakeCylinder).toBe(1)
+    expect(ts.brakeCommand).toBe('hold')
+    expect(ts.tractionEffort).toBe(0)
+    expect(ts.maxSpeed).toBeCloseTo(320 / 3.6, 9)
   })
 
   it('gives no traction while the reverser is in neutral', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     setNotch(ts, MAX_NOTCH)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBe(0)
-  })
-
-  it('accelerates proportionally to the traction notch', () => {
-    const { net, ts } = makeTrain()
-    setReverser(ts, 'forward')
-    setNotch(ts, 1)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(ts.acceleration / MAX_NOTCH, 5)
-
-    ts.currentSpeed = 0
-    setNotch(ts, MAX_NOTCH)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(ts.acceleration, 5)
-  })
-
-  it('brakes proportionally to the brake notch and never goes below zero', () => {
-    const { net, ts } = makeTrain()
-    setReverser(ts, 'forward')
-    ts.currentSpeed = 20
-    setNotch(ts, -2)
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(20 - (2 / MAX_NOTCH) * ts.braking, 5)
-
-    setNotch(ts, -MAX_NOTCH)
     tickTrainSet(net, ts, 10)
     expect(ts.currentSpeed).toBe(0)
+    expect(ts.tractionEffort).toBe(0)
   })
 
-  it('coasts on N with the rolling resistance only', () => {
+  it('gives no traction while the brake is applied', () => {
     const { net, ts } = makeTrain()
     setReverser(ts, 'forward')
-    ts.currentSpeed = 10
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(10 - ts.coastingDecel, 5)
+    setNotch(ts, MAX_NOTCH)
+    tickTrainSet(net, ts, 10)
+    expect(ts.currentSpeed).toBe(0)
+    expect(ts.tractionEffort).toBe(0)
   })
 
-  it('stoppingDistance matches the distance actually covered at full service brake', () => {
+  it('pulls proportionally to the traction notch, the effort building up in 5 s', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
+    setReverser(ts, 'forward')
+    setNotch(ts, 1)
+    tickTrainSet(net, ts, 0.5)
+    expect(ts.tractionEffort).toBeCloseTo(0.1, 6)
+    tickTrainSet(net, ts, 4.5)
+    expect(ts.tractionEffort).toBeCloseTo(1 / MAX_NOTCH, 6)
+    const oneNotch = trainDynamics(net, ts)
+
+    setNotch(ts, MAX_NOTCH)
+    tickTrainSet(net, ts, 3.9)
+    expect(ts.tractionEffort).toBeLessThan(1)
+    tickTrainSet(net, ts, 0.2)
+    expect(ts.tractionEffort).toBe(1)
+    const full = trainDynamics(net, ts)
+
+    // A lone power car: 106 kN of starting effort
+    expect(full.tractionForce).toBeCloseTo(106_000, 0)
+    expect(oneNotch.tractionForce).toBeCloseTo(full.tractionForce / MAX_NOTCH, 0)
+    expect(full.acceleration).toBeGreaterThan(oneNotch.acceleration)
+  })
+
+  it('brakes harder as the brake pipe empties and stops exactly at zero', () => {
+    const { net, ts } = makeTrain()
+    releaseBrake(ts)
     setReverser(ts, 'forward')
     ts.currentSpeed = 20
-    expect(stoppingDistance(ts)).toBeCloseTo(20, 5) // 20² / (2 × 10)
 
-    setNotch(ts, -MAX_NOTCH)
-    const t0 = ts.vehicles[0].front.t
-    for (let i = 0; i < 4000; i++) tickTrainSet(net, ts, 0.001)
+    // A short pull on the handle: first reduction only, a light application
+    setBrakeCommand(ts, 'apply')
+    tickTrainSet(net, ts, 1 / 60)
+    setBrakeCommand(ts, 'hold')
+    tickTrainSet(net, ts, 4)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FIRST_REDUCTION)
+    const light = trainDynamics(net, ts)
+    expect(light.brakeForce).toBeGreaterThan(0)
+    expect(light.acceleration).toBeLessThan(0)
+
+    setBrakeCommand(ts, 'apply')
+    tickTrainSet(net, ts, 4)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    const full = trainDynamics(net, ts)
+    expect(full.brakeForce).toBeGreaterThan(4 * light.brakeForce)
+    expect(full.acceleration).toBeCloseTo(-1.1, 2) // full service below 170 km/h
+
+    tickTrainSet(net, ts, 20)
     expect(ts.currentSpeed).toBe(0)
-    expect((ts.vehicles[0].front.t - t0) * 2000).toBeCloseTo(20, 1)
+    expect(ts.direction).toBe(1)
   })
 
-  it('clamps the handle to ±MAX_NOTCH', () => {
+  it('coasts on N with the running resistance only', () => {
+    const { net, ts } = makeTrain()
+    releaseBrake(ts)
+    setReverser(ts, 'forward')
+    ts.currentSpeed = 10
+    const resistance = consistResistance(ts.vehicles, 10)
+    const dynamics = trainDynamics(net, ts)
+    expect(dynamics.resistanceForce).toBeCloseTo(resistance, 6)
+    expect(dynamics.acceleration).toBeCloseTo(-resistance / (1.04 * consistMass(ts.vehicles)), 9)
+    tickTrainSet(net, ts, 1)
+    expect(ts.currentSpeed).toBeCloseTo(10 + dynamics.acceleration, 3)
+    expect(ts.currentSpeed).toBeLessThan(10)
+  })
+
+  it('the stopping distance matches the distance actually covered at full service brake', () => {
+    const { net, ts } = makeTrain()
+    releaseBrake(ts)
+    setReverser(ts, 'forward')
+    ts.currentSpeed = 20
+    const predicted = trainDynamics(net, ts).stoppingDistance
+    // 2 s of equivalent application time at 20 m/s, then 1.1 m/s² down to rest
+    expect(predicted).toBeGreaterThan(20 * 20 / (2 * 1.1) + 30)
+    expect(predicted).toBeLessThan(20 * 20 / (2 * 1.1) + 45)
+
+    setBrakeCommand(ts, 'apply')
+    const t0 = ts.vehicles[0].front.t
+    for (let i = 0; i < 4000 && ts.currentSpeed > 0; i++) tickTrainSet(net, ts, 1 / 60)
+    expect(ts.currentSpeed).toBe(0)
+    const covered = (ts.vehicles[0].front.t - t0) * 2000
+    expect(Math.abs(covered - predicted) / predicted).toBeLessThan(0.005)
+    expect(trainDynamics(net, ts).stoppingDistance).toBe(0)
+  })
+
+  it('clamps the handle to 0…MAX_NOTCH', () => {
     const { ts } = makeTrain()
     setNotch(ts, 99)
     expect(ts.notch).toBe(MAX_NOTCH)
     setNotch(ts, -99)
-    expect(ts.notch).toBe(-MAX_NOTCH)
+    expect(ts.notch).toBe(0)
   })
 
   it('moves forward or backward according to the reverser', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     // Single segment laid along +x, so the lead bogie's t grows with x
     const frontX = () => ts.vehicles[0].front.t
 
@@ -236,6 +303,7 @@ describe('driving controls', () => {
     const x0 = frontX()
     tickTrainSet(net, ts, 1)
     expect(frontX()).toBeGreaterThan(x0)
+    expect(ts.direction).toBe(1)
 
     ts.currentSpeed = 0
     setNotch(ts, 0)
@@ -244,6 +312,7 @@ describe('driving controls', () => {
     const x1 = frontX()
     tickTrainSet(net, ts, 1)
     expect(frontX()).toBeLessThan(x1)
+    expect(ts.direction).toBe(-1)
   })
 
   it('reverses a multi-vehicle rake with every vehicle following', () => {
@@ -251,6 +320,7 @@ describe('driving controls', () => {
     const wagon = createTrainSet(net, { x: 900, y: 0 }, 'wagon')!
     ts.vehicles.push(...wagon.vehicles)
     advanceTrainSet(net, ts, 0) // settle the wagon behind the loco
+    releaseBrake(ts)
 
     const before = ts.vehicles.map(v => v.front.t)
     const gap = before[0] - before[1]
@@ -264,6 +334,7 @@ describe('driving controls', () => {
 
   it('reversing backs the train up without turning the loco body around', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     const body = () => getTrainSetVisuals(net, ts)!.vehicles[0].tgvDetails!.polygon
 
     setReverser(ts, 'forward')
@@ -303,30 +374,41 @@ describe('driving controls', () => {
     expect(shiftReverser(ts, -1)).toBe(false)
   })
 
-  it('emergency brake cuts traction, locks the handle and only releases at standstill', () => {
+  it('emergency brake vents the pipe, cuts traction, locks the controls and only releases at standstill', () => {
     const { net, ts } = makeTrain()
+    releaseBrake(ts)
     setReverser(ts, 'forward')
     setNotch(ts, MAX_NOTCH)
+    ts.tractionEffort = 1
     ts.currentSpeed = 30
 
     triggerEmergencyBrake(ts)
-    expect(commandedAcceleration(ts)).toBe(-ts.emergencyBraking)
-    expect(ts.emergencyBraking).toBeGreaterThan(ts.braking)
+    expect(ts.notch).toBe(0)
+    expect(ts.tractionEffort).toBe(0)
 
-    // Locked while moving
+    // Locked while moving: neither the handle, nor the brake valve, nor the release
     expect(setNotch(ts, MAX_NOTCH)).toBe(false)
     expect(releaseEmergencyBrake(ts)).toBe(false)
+    setBrakeCommand(ts, 'release')
+    expect(ts.brakeCommand).toBe('hold')
 
-    tickTrainSet(net, ts, 1)
-    expect(ts.currentSpeed).toBeCloseTo(30 - ts.emergencyBraking, 5)
-    tickTrainSet(net, ts, 5)
+    tickTrainSet(net, ts, 4)
+    expect(ts.brakePipe).toBe(0)
+    expect(ts.brakeCylinder).toBe(1)
+    const emergency = trainDynamics(net, ts)
+    expect(emergency.tractionForce).toBe(0)
+    expect(emergency.acceleration).toBeLessThan(-1.25) // stronger than the 1.1 m/s² of full service
+    tickTrainSet(net, ts, 30)
     expect(ts.currentSpeed).toBe(0)
 
-    // Still latched after the stop, with the handle on full brake
+    // Still latched after the stop; released, the brake stays applied at full service
     expect(ts.emergencyBrake).toBe(true)
-    expect(ts.notch).toBe(-MAX_NOTCH)
     expect(releaseEmergencyBrake(ts)).toBe(true)
     expect(ts.emergencyBrake).toBe(false)
+    expect(ts.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(ts.brakeCylinder).toBe(1)
+    setBrakeCommand(ts, 'release')
+    expect(ts.brakeCommand).toBe('release')
   })
 
   it('moving the handle at standstill releases the emergency brake', () => {
@@ -337,21 +419,51 @@ describe('driving controls', () => {
     expect(ts.notch).toBe(0)
   })
 
-  it('decoupled rear half is left with its controls at rest', () => {
+  it('decoupled rear half is left with its controls at rest and its brakes applied', () => {
     const { net, ts } = makeTrain()
     // Two trainsets coupled together: only a power car to power car joint can be split
     const second = createTrainSet(net, { x: 900, y: 0 }, 'loco')!
     const coupled = { ...ts, vehicles: [...ts.vehicles, ...second.vehicles] }
+    releaseBrake(coupled)
     setReverser(coupled, 'forward')
     setNotch(coupled, 3)
+    coupled.tractionEffort = 0.6
     coupled.currentSpeed = 12
 
     const [front, rear] = decoupleAt(coupled, 0)!
     expect(front.notch).toBe(3)
     expect(front.currentSpeed).toBe(12)
+    expect(front.brakePipe).toBe(BRAKE_PIPE_RELEASED)
     expect(rear.notch).toBe(0)
     expect(rear.reverser).toBe('neutral')
     expect(rear.currentSpeed).toBe(0)
+    expect(rear.tractionEffort).toBe(0)
+    expect(rear.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(rear.brakeCylinder).toBe(1)
+  })
+
+  it('a train coupled to a braked one is braked, and changing cab leaves the brakes applied', () => {
+    const { net, segId } = makeStraightNetwork(1000)
+    const a = makeTrainSet('A', [createVehicle(net, segId, 0.5, 'loco')!])
+    const b = makeTrainSet('B', [{ ...createVehicle(net, segId, 0.4, 'loco')!, flipped: true }])
+    // Bring B's nose-less end up to A's tail
+    b.direction = 1
+    for (let i = 0; i < 400; i++) advanceTrainSet(net, b, 0.5, [a, b])
+    releaseBrake(a)
+
+    const [merged] = coupleTrains(net, [a, b], a.id, b.id)
+    expect(merged.vehicles).toHaveLength(2)
+    expect(merged.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(merged.brakeCylinder).toBe(1)
+
+    releaseBrake(merged)
+    merged.currentSpeed = 0.0005 // creeping, below the standstill threshold
+    const switched = switchDrivingCab(merged)!
+    expect(switched.currentSpeed).toBe(0)
+    expect(switched.brakePipe).toBe(BRAKE_PIPE_FULL_SERVICE)
+    expect(switched.brakeCylinder).toBe(1)
+    merged.currentSpeed = 1
+    expect(switchDrivingCab(merged)).toBeNull()
   })
 })
 
@@ -915,14 +1027,28 @@ describe('collision between trains', () => {
     const { net, segId } = makeStraightNetwork(1000)
     const a = consist(net, segId, 0.3, 0, 1, 'A')
     const b = consist(net, segId, 0.36, 0, 1, 'B') // its tail is some 40 m ahead of A's nose
+    a.brakePipe = BRAKE_PIPE_RELEASED
+    a.brakeCylinder = 0
     setReverser(a, 'forward')
     setNotch(a, MAX_NOTCH)
 
     let stopped = false
-    for (let i = 0; i < 600 && !stopped; i++) stopped = !tickTrainSet(net, a, 1 / 60, [a, b])
+    for (let i = 0; i < 1200 && !stopped; i++) stopped = !tickTrainSet(net, a, 1 / 60, [a, b])
 
     expect(stopped).toBe(true)
     expect(rearEnd(net, b).x - frontEnd(net, a).x).toBeCloseTo(COUPLING_GAP, 6)
+    // Stopped dead by the contact, at the speed it had reached
+    expect(a.currentSpeed).toBe(0)
+    expect(a.impactSpeed).toBeGreaterThan(5)
+
+    // Still pulling against B: it stays where it is, without a new impact at every tick
+    const before = JSON.stringify(a.vehicles)
+    for (let i = 0; i < 60; i++) {
+      expect(tickTrainSet(net, a, 1 / 60, [a, b])).toBe(false)
+      expect(a.currentSpeed).toBe(0)
+      expect(a.impactSpeed).toBe(0)
+    }
+    expect(JSON.stringify(a.vehicles)).toBe(before)
   })
 })
 

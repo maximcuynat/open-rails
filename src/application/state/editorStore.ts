@@ -37,8 +37,10 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import { setBrakeCommand, trainDynamics, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
+  MAX_NOTCH,
   makeTrainSet,
   setReverser,
   shiftReverser,
@@ -90,6 +92,14 @@ export const TRAIN_PLACEMENT_REFUSED = 'Pose impossible ici : approchez le curse
 
 /** Feedback shown when a junction is not thrown because a train stands over its points. */
 export const JUNCTION_OCCUPIED_REFUSED = 'Aiguillage occupé par un train : manœuvre impossible'
+
+/** Impact speed (m/s) above which hitting a buffer stop or another train is reported: 5 km/h */
+export const IMPACT_REPORT_SPEED = 5 / 3.6
+
+/** Feedback shown when a train hits an obstacle at `speed` m/s */
+export function trainImpactMessage(speed: number): string {
+  return `Choc à ${Math.round(speed * 3.6)} km/h`
+}
 
 export type ThemeMode = 'light' | 'dark' | 'auto'
 
@@ -179,6 +189,10 @@ export class EditorStore {
   scalePreset: ScalePresetId = '1:1'
   gauge: number = 1.435 // rail gauge in meters (UIC standard 1.435m, HO: 0.0165m, N: 0.009m)
   trackSpacing: number = 3.80 // standard double-track center-to-center spacing in meters
+  /** Called when a driven train hits an obstacle faster than IMPACT_REPORT_SPEED (speed in m/s) */
+  onTrainImpact: ((train: TrainSet, speed: number) => void) | null = null
+  /** Trains whose current impact has already been reported */
+  private impactReported = new Set<string>()
   levelHeight: number = 6 // height of one track level in world meters (6 m at 1:1, scaled down for model scales)
   maxGradient: number = 35 // steepest slope allowed, in ‰ (a ramp above it is reported)
   showDimensions: boolean = true // live CAD dimensioning HUD overlay
@@ -222,8 +236,8 @@ export class EditorStore {
   selectedTrainId: string | null = null
   /** ID of the specific vehicle (loco or wagon) currently selected within the train */
   selectedTrainVehicleId: string | null = null
-  /** Train tool submode: 'place' (place loco or wagon), 'select' (inspect / drive), or 'delete' (hover red outline & click to delete) */
-  trainToolSubMode: 'select' | 'place' | 'delete' = 'place'
+  /** Train tool submode: 'select' (inspect / drive, the default so a click never places by accident), 'place' (place loco or wagon), or 'delete' (hover red outline & click to delete) */
+  trainToolSubMode: 'select' | 'place' | 'delete' = 'select'
   /** Vehicle currently hovered under cursor in train delete tool */
   hoveredTrainDeleteVehicle: { train: TrainSet; vehicleId: string; kind: VehicleKind } | null = null
   /** Train placement heading orientation: 1 = forward along track segment, -1 = reversed */
@@ -1321,7 +1335,7 @@ export class EditorStore {
         this.trainToolSubMode = 'select'
       } else {
         this.tool = 'select'
-        this.trainToolSubMode = 'place'
+        this.trainToolSubMode = 'select'
       }
       this.trainChainId = null
       this.draggingTrainItem = null
@@ -2063,6 +2077,9 @@ export class EditorStore {
       if (this.trains.length > 0 && !this.selectedTrain) {
         this.selectTrainById(this.trains[0].id)
       }
+      // Every train starts at rest with its brakes applied: the driver releases them to leave
+      for (const t of this.trains) resetTrainControls(t)
+      this.impactReported.clear()
       if (this.followLocomotiveCamera) {
         this.focusOnLocomotive()
       }
@@ -2553,16 +2570,39 @@ export class EditorStore {
     return this.trains.find(t => t.id === this.selectedTrainId) ?? null
   }
 
-  /** Put the selected train's combined handle on a notch (+ traction, 0 neutral, - brake) */
-  setSelectedTrainNotch = (notch: number): void => {
-    const train = this.selectedTrain
-    if (train && setNotch(train, notch)) this.notify()
+  /** What the track gives the driving physics beyond its plan geometry */
+  get drivingEnvironment(): DrivingEnvironment {
+    return { levelHeight: this.levelHeight }
   }
 
-  /** Move the selected train's handle by one notch towards traction (1) or brake (-1) */
+  /** Forces, pressures and stopping distance of the selected train, as the physics sees them now */
+  get selectedTrainDynamics(): TrainDynamics | null {
+    const train = this.selectedTrain
+    return train ? trainDynamics(this.network, train, this.drivingEnvironment) : null
+  }
+
+  /** Put the selected train's traction handle on a notch: 0 (N) … MAX_NOTCH (P5) */
+  setSelectedTrainNotch = (notch: number): void => {
+    const train = this.selectedTrain
+    if (train && setNotch(train, Math.max(0, Math.min(MAX_NOTCH, notch)))) this.notify()
+  }
+
+  /** Move the selected train's traction handle by one notch; it stops at N and at P5 */
   stepSelectedTrainNotch = (step: 1 | -1): void => {
     const train = this.selectedTrain
     if (train) this.setSelectedTrainNotch(train.notch + step)
+  }
+
+  /**
+   * Move the selected train's brake handle: `apply` and `release` act for as long as they are
+   * held, `hold` keeps the pressure where it is.
+   */
+  setSelectedTrainBrakeCommand = (command: BrakeCommand): void => {
+    const train = this.selectedTrain
+    if (!train || train.brakeCommand === command) return
+    setBrakeCommand(train, command)
+    // The domain refuses the handle while the emergency brake is latched
+    if (train.brakeCommand === command) this.notify()
   }
 
   /** Set the selected train's reverser (refused while moving or in traction) */
@@ -2606,7 +2646,7 @@ export class EditorStore {
   /** Exit train mode back to standard rail layout mode */
   exitTrainMode = (): void => {
     this.tool = 'select'
-    this.trainToolSubMode = 'place'
+    this.trainToolSubMode = 'select'
     this.isTrainSelected = false
     this.trainChainId = null
     this.locomotivePreview = null
@@ -2670,19 +2710,31 @@ export class EditorStore {
     return nearest
   }
 
-  /** Tick all TrainSets that are in play mode */
+  /** Tell the interface, once per impact, that a train ran into a buffer stop or another train */
+  private reportImpact(train: TrainSet): void {
+    if (train.impactSpeed <= IMPACT_REPORT_SPEED) {
+      this.impactReported.delete(train.id)
+      return
+    }
+    if (this.impactReported.has(train.id)) return
+    this.impactReported.add(train.id)
+    this.onTrainImpact?.(train, train.impactSpeed)
+  }
+
+  /**
+   * Run one simulation step on every TrainSet while driving. A train at rest is simulated too:
+   * with its brakes released on a slope it has to be able to roll away.
+   */
   tickAllTrains = (dt: number): void => {
     if (!this.isPlayMode || dt <= 0) return
     const occupancy: TrainOccupancyCache = new Map()
+    const env = this.drivingEnvironment
     for (const train of this.trains) {
-      if (train.currentSpeed > 0 || train.notch > 0) {
-        const moved = tickTrainSet(this.network, train, dt, this.trains, occupancy)
-        if (!moved) {
-          // End of track or contact with another train: stop dead and cut traction
-          train.currentSpeed = 0
-          train.notch = Math.min(train.notch, 0)
-        }
-      }
+      // Nobody holds the brake handle of a train that is not driven
+      if (train.id !== this.selectedTrainId && train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
+      // Stopping against an obstacle, holding at rest and rolling back are the domain's business
+      tickTrainSet(this.network, train, dt, this.trains, occupancy, env)
+      this.reportImpact(train)
     }
     // Sync telemetry to legacy fields
     if (this.selectedTrain) {
