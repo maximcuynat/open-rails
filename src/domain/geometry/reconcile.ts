@@ -249,6 +249,23 @@ function heightsApart(net: Network, s1: Segment, s2: Segment): boolean {
   return gap >= LEVEL_CLEARANCE
 }
 
+interface SegmentBox {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
+/** Box holding a rail, null when one of its nodes is missing */
+function segmentBox(net: Network, seg: Segment): SegmentBox | null {
+  const a = net.nodes.get(seg.from)
+  const b = net.nodes.get(seg.to)
+  if (!a || !b) return null
+  const xs = seg.via ? [a.pos.x, b.pos.x, seg.via.x] : [a.pos.x, b.pos.x]
+  const ys = seg.via ? [a.pos.y, b.pos.y, seg.via.y] : [a.pos.y, b.pos.y]
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) }
+}
+
 interface ReconcileCandidate {
   type: 'weld' | 'split' | 'cross'
   nodeId?: NodeId
@@ -297,6 +314,10 @@ export function reconcileNetworkIntersections(
     const nodeList = Array.from(net.nodes.values())
     const segList = Array.from(net.segments.values())
 
+    // Box of each rail (a curve lies inside the box of its control points), worked out once: most
+    // nodes and rails of a large network are far apart, and are set aside on it alone
+    const boxes = segList.map((seg) => segmentBox(net, seg))
+
     for (const node of nodeList) {
       if (!net.nodes.has(node.id)) continue
       // A node only meets the rails at its height; a lone node has none yet and meets any
@@ -304,7 +325,16 @@ export function reconcileNetworkIntersections(
       const height = nodeLevel(node)
       const meets = (other: number): boolean => lone || levelsMeet(height, other)
 
-      for (const seg of segList) {
+      for (let k = 0; k < segList.length; k++) {
+        const seg = segList[k]
+        const box = boxes[k]
+        if (
+          box &&
+          (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
+            node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
+        ) {
+          continue
+        }
         if (!net.segments.has(seg.id)) continue
         if (seg.from === node.id || seg.to === node.id) continue
         // Sibling/adjacent branches of the same node diverge slowly near apex, do not split each other
@@ -393,6 +423,11 @@ export function reconcileNetworkIntersections(
       for (let j = i + 1; j < segList.length; j++) {
         const s1 = segList[i]
         const s2 = segList[j]
+        const box1 = boxes[i]
+        const box2 = boxes[j]
+        if (box1 && box2 && (box1.maxX < box2.minX || box1.minX > box2.maxX || box1.maxY < box2.minY || box1.minY > box2.maxY)) {
+          continue
+        }
         if (!net.segments.has(s1.id) || !net.segments.has(s2.id)) continue
         // One passes clear over the other along its whole length: a bridge, not a crossing
         if (heightsApart(net, s1, s2)) continue
@@ -405,21 +440,6 @@ export function reconcileNetworkIntersections(
         const n2A = net.nodes.get(s2.from)
         const n2B = net.nodes.get(s2.to)
         if (!n1A || !n1B || !n2A || !n2B) continue
-
-        // Fast AABB pre-check
-        const s1MinX = Math.min(n1A.pos.x, n1B.pos.x, s1.via ? s1.via.x : Infinity)
-        const s1MaxX = Math.max(n1A.pos.x, n1B.pos.x, s1.via ? s1.via.x : -Infinity)
-        const s1MinY = Math.min(n1A.pos.y, n1B.pos.y, s1.via ? s1.via.y : Infinity)
-        const s1MaxY = Math.max(n1A.pos.y, n1B.pos.y, s1.via ? s1.via.y : -Infinity)
-
-        const s2MinX = Math.min(n2A.pos.x, n2B.pos.x, s2.via ? s2.via.x : Infinity)
-        const s2MaxX = Math.max(n2A.pos.x, n2B.pos.x, s2.via ? s2.via.x : -Infinity)
-        const s2MinY = Math.min(n2A.pos.y, n2B.pos.y, s2.via ? s2.via.y : Infinity)
-        const s2MaxY = Math.max(n2A.pos.y, n2B.pos.y, s2.via ? s2.via.y : -Infinity)
-
-        if (s1MaxX < s2MinX || s1MinX > s2MaxX || s1MaxY < s2MinY || s1MinY > s2MaxY) {
-          continue
-        }
 
         for (const res of findSegmentCrossings(s1, n1A.pos, n1B.pos, s2, n2A.pos, n2B.pos, shareNode)) {
           // A crossing at a rail end is a node-on-segment case (weld or split), handled above

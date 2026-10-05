@@ -26,6 +26,13 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
         </p>
         <p>Ce logiciel est fourni sans aucune garantie.</p>
         <p>
+          Les réseaux d'exemple tirés de gares réelles viennent d'OpenStreetMap : ©{' '}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">
+            les contributeurs d'OpenStreetMap
+          </a>
+          , sous licence ODbL.
+        </p>
+        <p>
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">Code source sur GitHub</a>
           {' · '}
           <a href={RELEASE_NOTES_URL} target="_blank" rel="noopener noreferrer">

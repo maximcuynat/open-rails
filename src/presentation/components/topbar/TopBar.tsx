@@ -10,6 +10,7 @@ import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
+import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -28,6 +29,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(store.projectName)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [pendingExample, setPendingExample] = useState<ExampleNetwork | null>(null)
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showAboutModal, setShowAboutModal] = useState(false)
   const [showRemoteModal, setShowRemoteModal] = useState(false)
@@ -53,6 +55,11 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
         {
+          id: 'examples',
+          label: 'Exemples',
+          submenu: EXAMPLES.map((example) => ({ id: `${EXAMPLE_ITEM_PREFIX}${example.id}`, label: example.label })),
+        },
+        {
           id: 'export',
           label: 'Exporter',
           separatorAfter: true,
@@ -65,6 +72,16 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'settings', label: 'Paramètres du réseau…', shortcut: 'Ctrl+,' },
       ],
       onSelect: (id) => {
+        if (id.startsWith(EXAMPLE_ITEM_PREFIX)) {
+          const example = EXAMPLES.find((e) => e.id === id.slice(EXAMPLE_ITEM_PREFIX.length))
+          if (!example) return
+          if (store.network.nodes.size > 0 || store.network.segments.size > 0) {
+            setPendingExample(example)
+          } else {
+            openExample(store, example, onFitView)
+          }
+          return
+        }
         switch (id) {
           case 'new':
             if (store.network.nodes.size > 0 || store.network.segments.size > 0) {
@@ -366,6 +383,19 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       >
         <p>Voulez-vous réinitialiser le plan actuel ? Toutes les voies non exportées seront effacées.</p>
       </Modal>
+      <Modal
+        isOpen={pendingExample !== null}
+        title={`Ouvrir l'exemple « ${pendingExample?.label ?? ''} »`}
+        confirmLabel="Ouvrir l'exemple"
+        confirmVariant="danger"
+        onClose={() => setPendingExample(null)}
+        onConfirm={() => {
+          if (pendingExample) openExample(store, pendingExample, onFitView)
+        }}
+      >
+        <p>{pendingExample?.description}</p>
+        <p>L'exemple remplace le plan actuel : toutes les voies non exportées seront effacées.</p>
+      </Modal>
       <AboutModal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} />
       <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
@@ -376,6 +406,20 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       />
     </>
   )
+}
+
+/** Menu ids of the example networks: this prefix, then the id of the example */
+const EXAMPLE_ITEM_PREFIX = 'example:'
+
+/** Replace the current network with an example, then frame it (an example carries no camera) */
+async function openExample(store: EditorStore, example: ExampleNetwork, onFitView: () => void): Promise<void> {
+  try {
+    store.loadFromData(await loadExample(example))
+    onFitView()
+    showToast(`Exemple « ${example.label} » ouvert`, 'success')
+  } catch {
+    showToast("Impossible de charger l'exemple", 'error')
+  }
 }
 
 // --- Import / export helpers (JSON / SVG / PNG) ---
