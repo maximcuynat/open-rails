@@ -1,4 +1,5 @@
 import type { Network, NodeId, Point, Segment, SegmentId } from './types'
+import { invalidateJunctionIndex } from './routing'
 import { addNode, levelsMeet, nodeLevel, segmentHeightAt, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from './network'
 import { discretizeCurve } from '../geometry/curve'
 import { segmentTangentAt } from '../geometry/tangent'
@@ -216,6 +217,7 @@ export function separateLevelsAtNode(
   for (const junc of [...net.junctions.values()]) {
     if (junc.nodeId === nodeId) net.junctions.delete(junc.id)
   }
+  invalidateJunctionIndex(net)
   return twin.id
 }
 

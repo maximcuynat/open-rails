@@ -3,7 +3,9 @@ import { createNetwork, addNode, addSegment, addCurveSegment, removeNode, remove
 import {
   activeBranchOf,
   addJunction,
+  declareTurnout,
   placeTurnout,
+  removeJunction,
   setJunctionBranch,
   splitSegment,
   syncJunctions,
@@ -11,7 +13,7 @@ import {
   turnoutView,
   weldNodes,
 } from './junction'
-import { exitsOf, isPassageOpen, isRailClosedAt, openExit } from './routing'
+import { exitsOf, findJunctionAtNode, invalidateJunctionIndex, isPassageOpen, isRailClosedAt, openExit } from './routing'
 import { advanceTrainSet, createVehicle, makeTrainSet, setReverser } from './train'
 import { positionOnSegment } from './locomotive'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
@@ -447,5 +449,144 @@ describe('route tables stay as declared', () => {
     expect(setReverser(train, 'reverse')).toBe(true)
     expect(advanceTrainSet(net, train, 3)).toBe(true)
     bogies().forEach((p, i) => expect(Math.hypot(p.x - before[i].x, p.y - before[i].y)).toBeLessThan(3.1))
+  })
+})
+
+describe('finding the table of a node', () => {
+  /** The answer of a plain reading of the tables, in order */
+  const scan = (net: Network, nodeId: string) => [...net.junctions.values()].find((j) => j.nodeId === nodeId)
+
+  const expectSameAsScan = (net: Network) => {
+    for (const nodeId of net.nodes.keys()) expect(findJunctionAtNode(net, nodeId)).toBe(scan(net, nodeId))
+  }
+
+  /** Two turnouts along a line: a ─ b ─ c ─ d, a branch leaving b and another leaving c */
+  function twoTurnouts() {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 30, y: 0 })
+    const c = addNode(net, { x: 60, y: 0 })
+    const d = addNode(net, { x: 90, y: 0 })
+    const ab = addSegment(net, a.id, b.id)!
+    const bc = addSegment(net, b.id, c.id)!
+    const cd = addSegment(net, c.id, d.id)!
+    const e = addNode(net, { x: 60, y: 3 })
+    const f = addNode(net, { x: 90, y: 3 })
+    const be = addSegment(net, b.id, e.id)!
+    const cf = addSegment(net, c.id, f.id)!
+    const atB = declareTurnout(net, { nodeId: b.id, stemSegmentId: ab.id, straightSegmentId: bc.id, divergingSegmentId: be.id })
+    const atC = declareTurnout(net, { nodeId: c.id, stemSegmentId: bc.id, straightSegmentId: cd.id, divergingSegmentId: cf.id })
+    return { net, a, b, c, d, e, f, ab, bc, cd, be, cf, atB, atC }
+  }
+
+  it('gives the table of each node, and nothing for the others', () => {
+    const { net, a, b, c, atB, atC } = twoTurnouts()
+    expect(findJunctionAtNode(net, b.id)).toBe(atB)
+    expect(findJunctionAtNode(net, c.id)).toBe(atC)
+    expect(findJunctionAtNode(net, a.id)).toBeUndefined()
+    expect(findJunctionAtNode(net, 'n_missing')).toBeUndefined()
+    expectSameAsScan(net)
+  })
+
+  it('follows a table declared, declared again and removed', () => {
+    const { net, b, c, ab, bc, be, atB } = twoTurnouts()
+    expect(findJunctionAtNode(net, b.id)).toBe(atB)
+
+    removeJunction(net, atB.id)
+    expect(findJunctionAtNode(net, b.id)).toBeUndefined()
+    expectSameAsScan(net)
+
+    const again = declareTurnout(net, { nodeId: b.id, stemSegmentId: ab.id, straightSegmentId: bc.id, divergingSegmentId: be.id })
+    expect(findJunctionAtNode(net, b.id)).toBe(again)
+
+    // Declared a second time on the same node: the new table replaces the old one under the same id
+    const replaced = declareTurnout(net, { nodeId: b.id, stemSegmentId: ab.id, straightSegmentId: be.id, divergingSegmentId: bc.id })
+    expect(replaced.id).toBe(again.id)
+    expect(findJunctionAtNode(net, b.id)).toBe(replaced)
+    expect(findJunctionAtNode(net, c.id)).toBe(scan(net, c.id))
+  })
+
+  it('follows the tables through syncJunctions', () => {
+    const { net, b, c, be } = twoTurnouts()
+    expect(findJunctionAtNode(net, b.id)).toBeDefined()
+
+    // The branch of the first turnout goes: its table goes with it
+    removeSegment(net, be.id)
+    syncJunctions(net)
+    expect(findJunctionAtNode(net, b.id)).toBeUndefined()
+    expect(findJunctionAtNode(net, c.id)).toBeDefined()
+    expectSameAsScan(net)
+
+    // A new fork gets a table
+    const g = addNode(net, { x: 60, y: -3 })
+    addSegment(net, b.id, g.id)
+    syncJunctions(net)
+    expect(findJunctionAtNode(net, b.id)).toBeDefined()
+    expectSameAsScan(net)
+  })
+
+  it('sees a table written or removed straight in the map', () => {
+    const { net, a, b, c, ab, atB, atC } = twoTurnouts()
+    expect(findJunctionAtNode(net, a.id)).toBeUndefined()
+
+    net.junctions.delete(atB.id)
+    expect(findJunctionAtNode(net, b.id)).toBeUndefined()
+
+    net.junctions.set('j_direct', { id: 'j_direct', nodeId: a.id, kind: 'turnout', passages: [{ a: ab.id, b: ab.id }], positions: [[0]], active: 0 })
+    expect(findJunctionAtNode(net, a.id)).toBe(net.junctions.get('j_direct'))
+
+    // Replaced under the same id: the number of tables does not change, the table does
+    const other = { ...atC, passages: [...atC.passages] }
+    net.junctions.set(atC.id, other)
+    expect(findJunctionAtNode(net, c.id)).toBe(other)
+
+    net.junctions.clear()
+    expectSameAsScan(net)
+  })
+
+  it('sees a table moved to another node in place', () => {
+    const { net, a, b, atB } = twoTurnouts()
+    expect(findJunctionAtNode(net, b.id)).toBe(atB)
+    expect(findJunctionAtNode(net, a.id)).toBeUndefined()
+
+    atB.nodeId = a.id
+    // Found gone from the node it was on without being told
+    expect(findJunctionAtNode(net, b.id)).toBeUndefined()
+    expect(findJunctionAtNode(net, a.id)).toBe(atB)
+
+    // One table goes while another appears elsewhere: only a call tells the index
+    net.junctions.delete(atB.id)
+    net.junctions.set('j_other', { ...atB, id: 'j_other', nodeId: b.id })
+    invalidateJunctionIndex(net)
+    expectSameAsScan(net)
+  })
+
+  it('gives the first table when a node has two', () => {
+    const { net, b, atB } = twoTurnouts()
+    net.junctions.set('j_twin', { ...atB, id: 'j_twin' })
+    expect(findJunctionAtNode(net, b.id)).toBe(atB)
+    net.junctions.delete(atB.id)
+    expect(findJunctionAtNode(net, b.id)).toBe(net.junctions.get('j_twin'))
+  })
+
+  it('follows the table of a node merged into another', () => {
+    const { net, b, e, atB } = twoTurnouts()
+    expect(findJunctionAtNode(net, b.id)).toBe(atB)
+    // A node apart, then b is merged into it: the table follows its rails there
+    const keep = addNode(net, { x: 30, y: 0.01 })
+    expect(findJunctionAtNode(net, keep.id)).toBeUndefined()
+    weldNodes(net, keep.id, b.id)
+    expect(findJunctionAtNode(net, keep.id)).toBe(atB)
+    expect(findJunctionAtNode(net, b.id)).toBeUndefined()
+    expect(findJunctionAtNode(net, e.id)).toBeUndefined()
+    expectSameAsScan(net)
+  })
+
+  it('keeps separate networks apart', () => {
+    const one = twoTurnouts()
+    const two = twoTurnouts()
+    expect(findJunctionAtNode(one.net, one.b.id)).toBe(one.atB)
+    expect(findJunctionAtNode(two.net, two.b.id)).toBe(two.atB)
+    expect(findJunctionAtNode(two.net, one.b.id)).toBeUndefined()
   })
 })

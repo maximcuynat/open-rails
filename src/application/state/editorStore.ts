@@ -66,7 +66,7 @@ import { isConsolePreference, type ConsolePreference } from '@application/consol
 import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
 import type { Junction, JunctionId, Network, Point, Selection, Segment, SpeedZone } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
-import { computeTrackSections } from '@domain/models/sections'
+import { networkDerived } from '@infrastructure/render/networkDerived'
 import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
 import type { GradientLimits } from '@domain/services/kinematicDiagnostics'
 import type { Locomotive } from '@domain/models/locomotive'
@@ -937,7 +937,7 @@ export class EditorStore {
       this.sectionMeta,
       this.gridMode,
       this.gridSpacing,
-      computeTrackSections(this.network, this.sectionMeta),
+      networkDerived(this.network, this.sectionMeta).sections,
       this.unit,
       this.scalePreset,
       this.gauge,
@@ -958,7 +958,7 @@ export class EditorStore {
    * Immediately save layout state to localStorage.
    */
   savePersistedState = (): void => {
-    const sections = computeTrackSections(this.network, this.sectionMeta)
+    const sections = networkDerived(this.network, this.sectionMeta).sections
     saveNetworkToStorage(
       this.network,
       this.projectName,
@@ -1031,6 +1031,16 @@ export class EditorStore {
     cleanSignals(this.network)
     this.syncTrainsWithNetwork()
     this.version++
+    this.listeners.forEach((l) => l())
+  }
+
+  /**
+   * Tell the canvas and the mini-map that the camera moved, and nothing else: the version the React
+   * components follow stays the same, so no panel is rendered again, and the network is not
+   * checked. Only for a change no component shows — none reads the camera while rendering. Anything
+   * else changed with it calls `notify`.
+   */
+  notifyView = (): void => {
     this.listeners.forEach((l) => l())
   }
 

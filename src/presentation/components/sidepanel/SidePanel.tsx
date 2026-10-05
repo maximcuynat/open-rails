@@ -1,21 +1,18 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
 import { doubleSlipView, findJunctionAtNode, findJunctionBySegment, turnoutView, type DoubleSlipSide } from '@domain/models/junction'
 import { leaveDirection } from '@domain/models/routing'
 import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
-import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
-  computeTrackSections,
   findSectionBySegment,
-  detectDirectionConflicts,
   type TrackSection,
   type SectionType,
   type SectionDirection,
   SECTION_COLORS,
 } from '@domain/models/sections'
-import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
+import { networkDerived } from '@infrastructure/render/networkDerived'
 import type { EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
 import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedLimits'
@@ -403,9 +400,11 @@ function NetworkPanel({ store }: { store: EditorStore }) {
       ? `${(totalLen / 1000).toFixed(2)} m`
       : `${totalLen.toFixed(0)} mm`
 
-  const deadEnds = detectDeadEnds(net).length
-  const loops = detectLoops(net).length
-  const components = detectConnectedComponents(net).length
+  // Kept with the network: none of the three is worked out again while the track does not change
+  const derived = networkDerived(net, store.sectionMeta)
+  const deadEnds = derived.deadEnds().length
+  const loops = derived.loops().length
+  const components = derived.components().length
 
   return (
     <>
@@ -603,7 +602,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   }
 
   const isDeadEnd = adj.length === 1
-  const kinematicIssues = analyzeKinematics(store.network, store.gauge, {
+  const kinematicIssues = networkDerived(store.network, store.sectionMeta).kinematicIssues(store.gauge, {
     levelHeight: store.levelHeight,
     maxGradient: store.maxGradient,
   }).filter((i) => i.nodeId === nodeId)
@@ -807,7 +806,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             <Field label="P4 (Ouest)" value={`(${crossing.frogs.p4.x.toFixed(1)}, ${crossing.frogs.p4.y.toFixed(1)})`} />
           </div>
           {(() => {
-            const trackSections = computeTrackSections(store.network, store.sectionMeta)
+            const trackSections = networkDerived(store.network, store.sectionMeta).sections
             const crossingSecs = trackSections.filter((s) => s.nodeIds.includes(nodeId))
             if (crossingSecs.length >= 2) {
               return (
@@ -915,7 +914,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
     store.deleteSelection()
   }
 
-  const allSections = computeTrackSections(store.network, store.sectionMeta)
+  const allSections = networkDerived(store.network, store.sectionMeta).sections
   const currentSection = findSectionBySegment(allSections, segId)
   // Null for a straight rail: nothing more is shown
   const cant = curveCant(store.network, seg, store.lineSettings)
@@ -1101,8 +1100,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
     store.setSectionMeta(section.id, { color: col })
   }
 
-  const allSections = computeTrackSections(store.network, store.sectionMeta)
-  const conflicts = detectDirectionConflicts(store.network, allSections)
+  const { conflicts } = networkDerived(store.network, store.sectionMeta)
   const myConflict = conflicts.find((c) => c.sectionA.id === section.id || c.sectionB.id === section.id)
 
   return (
@@ -1575,10 +1573,10 @@ function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStor
 }
 
 
-export function SidePanel({ store }: { store: EditorStore }) {
-  const isOpen = store.isSidePanelOpen
+/** What the inspector shows for the current selection */
+function InspectorContent({ store }: { store: EditorStore }) {
   const sel = store.selection
-  const allSections = computeTrackSections(store.network, store.sectionMeta)
+  const allSections = networkDerived(store.network, store.sectionMeta).sections
 
   // Check if selection matches an entire track section
   const matchingSection = allSections.find((sec) => {
@@ -1617,7 +1615,16 @@ export function SidePanel({ store }: { store: EditorStore }) {
   } else {
     content = <NetworkPanel store={store} />
   }
+  return content
+}
 
+export function SidePanel({ store }: { store: EditorStore }) {
+  const isOpen = store.isSidePanelOpen
+  // A closed inspector is off screen: its content is left as it was when it closed, so that it
+  // slides away unchanged, and nothing is worked out for it until it opens again. React skips an
+  // element it is handed a second time.
+  const content = useRef<ReactNode>(null)
+  if (isOpen) content.current = <InspectorContent store={store} />
 
   return (
     <>
@@ -1654,7 +1661,7 @@ export function SidePanel({ store }: { store: EditorStore }) {
             </svg>
           </button>
         </div>
-        <div className="sp-content">{content}</div>
+        <div className="sp-content">{content.current}</div>
       </div>
     </>
   )

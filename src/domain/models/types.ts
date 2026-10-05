@@ -144,7 +144,11 @@ export interface Network {
   segments: Map<SegmentId, Segment>
   /** Adjacency: nodeId -> list of segment ids connected to it. */
   adjacency: Map<NodeId, SegmentId[]>
-  /** Junctions: junctionId -> Junction definition */
+  /**
+   * Junctions: junctionId -> Junction definition. `findJunctionAtNode` answers from an index of
+   * this map: code that adds, removes or moves a table without the helpers of `models/junction.ts`
+   * calls `invalidateJunctionIndex` afterwards.
+   */
   junctions: Map<JunctionId, Junction>
   /** Speed limits laid on the track (see `models/speedZones.ts`) */
   speedZones: Map<SpeedZoneId, SpeedZone>
