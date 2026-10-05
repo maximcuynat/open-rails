@@ -241,8 +241,46 @@ kbd {
   text-align: left;
 }
 
-.menu-item:hover:not(.disabled) {
+.menu-row {
+  position: relative;
+}
+
+/* Hover and arrow keys move the same highlight */
+.menu-item.active {
   background: var(--panel-2);
+}
+
+.menu-item-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  margin-right: -8px;
+  color: var(--accent);
+}
+
+.menu-item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.menu-item-shortcut {
+  font-family: inherit;
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.menu-item-arrow {
+  flex: none;
+  opacity: 0.6;
+}
+
+.menu-submenu {
+  top: -5px;
+  left: 100%;
+  margin-top: 0;
+  margin-left: 2px;
+  min-width: 170px;
 }
 
 .menu-item.disabled {
@@ -280,23 +318,28 @@ kbd {
   background: var(--panel-2);
 }
 
-.tb-version {
-  padding: 3px 6px;
-  border: none;
+.tb-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
+  background: var(--panel);
   color: var(--ink);
+  font-family: inherit;
   font-size: 11px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.7;
-  text-decoration: none;
+  cursor: pointer;
 }
 
-.tb-version:hover {
+.tb-scale:hover {
   background: var(--panel-2);
-  opacity: 1;
+}
+
+.tb-scale-board {
+  opacity: 0.75;
+  font-weight: 400;
 }
 
 .about-body {
@@ -1499,6 +1542,18 @@ kbd {
   gap: 8px 16px;
   align-items: center;
   font-size: var(--font-size-sm);
+}
+
+.shortcuts-section {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.shortcuts-note {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  opacity: 0.8;
 }
 
 .shortcut-kbd {
