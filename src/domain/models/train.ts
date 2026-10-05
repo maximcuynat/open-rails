@@ -19,6 +19,7 @@ import {
   type DrivingEnvironment,
 } from './trainDynamics'
 import type {
+  JunctionAhead,
   Locomotive,
   TrackPosition,
   WalkTrace,
@@ -29,6 +30,7 @@ import type {
 } from './locomotive'
 import {
   steerJunction,
+  findJunctionAhead,
   findUpcomingJunction,
   segmentPartialLength,
   walkBackward,
@@ -713,14 +715,19 @@ export function reverseTrainSet(train: TrainSet): TrainSet {
   return { ...train, vehicles }
 }
 
+/** True when `switchDrivingCab` would hand the controls over: a stopped rake with a power car at its tail */
+export function canSwitchDrivingCab(train: TrainSet): boolean {
+  const tail = train.vehicles[train.vehicles.length - 1]
+  return train.vehicles.length >= 2 && tail.kind === 'loco' && isTrainStopped(train)
+}
+
 /**
  * Hand the controls over to the cab at the other end of the rake: the tail power car becomes
  * the lead. Nothing moves and no body turns around, only the driving end changes, so
  * "forward" now heads the other way. Refused while moving, or when the tail is not a power car.
  */
 export function switchDrivingCab(train: TrainSet): TrainSet | null {
-  const tail = train.vehicles[train.vehicles.length - 1]
-  if (train.vehicles.length < 2 || tail.kind !== 'loco' || !isTrainStopped(train)) return null
+  if (!canSwitchDrivingCab(train)) return null
   const switched = reverseTrainSet(train)
   resetTrainControls(switched)
   switched.direction = 1
@@ -1243,6 +1250,54 @@ export function steerTrainSetJunction(
   const upcoming = findUpcomingJunction(net, probe)
   if (!upcoming || isJunctionOccupied(net, upcoming.junction, trains)) return false
   return steerJunction(net, probe, steerDirection)
+}
+
+/**
+ * Side the open route leaves on at a turnout met by its points, seen in the travel direction:
+ * `left` when the points are set to the leftmost branch, `right` to the rightmost. `null` when
+ * neither applies: the middle route of a three-way turnout, or a turnout met by one of its
+ * branches (the route does not fork there, it only is open or closed).
+ */
+export function openRouteSide(ahead: JunctionAhead): 'left' | 'right' | null {
+  if (!ahead.facing) return null
+  const index = ahead.branches.indexOf(ahead.activeBranch)
+  if (index === 0) return 'left'
+  if (index === ahead.branches.length - 1) return 'right'
+  return null
+}
+
+/** The turnout the steering commands act on, as a driver needs to know it */
+export interface TurnoutAhead {
+  /** Track distance from the start of the route to the points, m */
+  distance: number
+  side: 'left' | 'right' | null
+  /** A vehicle stands over the points: the turnout cannot be thrown */
+  locked: boolean
+}
+
+/**
+ * The turnout `steerJunction` would throw for a route starting at `start`: the first one on the
+ * route, met by its points or by a branch. `null` when the route reaches none.
+ */
+export function turnoutAhead(
+  net: Network,
+  start: TrackPosition,
+  travelDirection: 1 | -1,
+  trains: TrainSet[],
+): TurnoutAhead | null {
+  const ahead = findJunctionAhead(net, start, travelDirection)
+  if (!ahead) return null
+  return {
+    distance: Math.max(0, ahead.distance),
+    side: openRouteSide(ahead),
+    locked: isJunctionOccupied(net, ahead.junction, trains),
+  }
+}
+
+/** The turnout `steerTrainSetJunction` would throw for this train, measured from its leading bogie */
+export function trainTurnoutAhead(net: Network, train: TrainSet, trains: TrainSet[] = [train]): TurnoutAhead | null {
+  const start = trainRouteStart(train)
+  return start ? turnoutAhead(net, start, 1, trains) : null
 }
 
 // ─── Persistence & network consistency ────────────────────────────────────────

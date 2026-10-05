@@ -233,7 +233,7 @@ export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
   const action = findAction(store.keybindings, 'drive', { code: e.code, key: e.key, shiftKey: false })
   if (action === 'drive.brakeApply' || action === 'drive.brakeRelease') {
     // Releasing a brake key leaves the pressure where it is, unless the other key has taken over
-    if (store.selectedTrain?.brakeCommand === HELD_BRAKE_COMMAND[action]) {
+    if (store.heldBrakeCommand('local') === HELD_BRAKE_COMMAND[action]) {
       e.preventDefault()
       store.setSelectedTrainBrakeCommand('hold')
     }

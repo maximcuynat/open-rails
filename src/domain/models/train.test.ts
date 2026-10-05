@@ -29,6 +29,9 @@ import {
   deserializeTrains,
   pruneTrainsToNetwork,
   steerTrainSetJunction,
+  trainTurnoutAhead,
+  openRouteSide,
+  canSwitchDrivingCab,
   trackLeftAhead,
   trainRouteStart,
   isJunctionOccupied,
@@ -40,7 +43,7 @@ import {
   type VehicleKind,
 } from './train'
 import { walkForward, snapToNearestTrack, positionOnSegment, tangentOnSegment, findJunctionAhead } from './locomotive'
-import type { TrackPosition } from './locomotive'
+import type { JunctionAhead, TrackPosition } from './locomotive'
 import { removeSegment, addArcCurve } from './network'
 import { ROLLING_STOCK, consistMass, consistResistance, type RollingStockModel } from './rollingStock'
 import {
@@ -488,6 +491,10 @@ describe('driving controls', () => {
     expect(switched.brakeCylinder).toBe(1)
     merged.currentSpeed = 1
     expect(switchDrivingCab(merged)).toBeNull()
+    expect(canSwitchDrivingCab(merged)).toBe(false)
+    expect(canSwitchDrivingCab(switched)).toBe(true)
+    // No power car at the other end
+    expect(canSwitchDrivingCab(a)).toBe(false)
   })
 })
 
@@ -893,6 +900,47 @@ describe('steerTrainSetJunction', () => {
     expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
     expect(activeBranchOf(junction)).toBe('straight')
+  })
+
+  it('tells the turnout ahead: its distance, the side of the open route, whether it is occupied', () => {
+    const { net, sStem, junction } = yNetwork()
+    // Nose towards the apex (+x), lead bogie somewhere before x = 300
+    const train = makeTrainSet('t', [createVehicle(net, sStem.id, 0.5, 'loco', 1)!])
+    const lead = positionOnSegment(net, train.vehicles[0].front.segId, train.vehicles[0].front.t)!
+
+    // The diverging branch goes to +y: on the right of a train heading +x (y grows downwards)
+    const ahead = trainTurnoutAhead(net, train)!
+    expect(ahead.distance).toBeCloseTo(300 - lead.x, 6)
+    expect(ahead).toMatchObject({ side: 'left', locked: false })
+
+    steerTrainSetJunction(net, train, 'right')
+    expect(activeBranchOf(junction)).toBe('diverging')
+    expect(trainTurnoutAhead(net, train)!.side).toBe('right')
+
+    // Another train standing over the points locks them
+    const other = makeTrainSet('o', [createVehicle(net, sStem.id, 0.99, 'loco', 1)!])
+    expect(trainTurnoutAhead(net, train, [train, other])!.locked).toBe(true)
+    expect(trainTurnoutAhead(net, train)!.locked).toBe(false)
+  })
+
+  it('gives no side for a turnout met by a branch, and nothing when the route reaches none', () => {
+    const { net, junction } = yNetwork()
+    const sStraight = turnoutView(net, junction)!.straightSegmentId
+    // On the straight branch, nose towards the apex (-x)
+    const trailing = makeTrainSet('t', [createVehicle(net, sStraight, 0.5, 'loco', -1)!])
+    expect(trainTurnoutAhead(net, trailing)).toMatchObject({ side: null, locked: false })
+    // Nose away from the apex: the route runs to the end of the track
+    const leaving = makeTrainSet('t', [createVehicle(net, sStraight, 0.5, 'loco', 1)!])
+    expect(trainTurnoutAhead(net, leaving)).toBeNull()
+    expect(trainTurnoutAhead(net, makeTrainSet('empty', []))).toBeNull()
+  })
+
+  it('gives no side for the middle route of a three-way turnout', () => {
+    const ahead = { facing: true, branches: ['left', 'straight', 'right'], activeBranch: 'straight' } as JunctionAhead
+    expect(openRouteSide(ahead)).toBeNull()
+    expect(openRouteSide({ ...ahead, activeBranch: 'left' })).toBe('left')
+    expect(openRouteSide({ ...ahead, activeBranch: 'right' })).toBe('right')
+    expect(openRouteSide({ ...ahead, facing: false, activeBranch: 'left' })).toBeNull()
   })
 
   it('does nothing for an empty train', () => {

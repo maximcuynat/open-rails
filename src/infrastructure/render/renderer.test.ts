@@ -828,6 +828,23 @@ describe('Canvas display rules (driving view, gizmo, placement)', () => {
     expect(labelX(232)).toBe(labelX() - 232)
     expect(labelX(0)).toBe(labelX())
   })
+
+  it('the scale bar moves up by the height reserved at the bottom (console along the bottom)', () => {
+    const cam = createCamera(0, 0, 2)
+    const draw = (bottomInset?: number) => {
+      const ctx = { ...createMockContext(), arcTo: vi.fn() } as unknown as CanvasRenderingContext2D
+      renderScaleBar(ctx, cam, 800, 600, 0, bottomInset)
+      return {
+        label: vi.mocked(ctx.fillText).mock.calls[0],
+        bar: vi.mocked(ctx.moveTo).mock.calls.map(([, y]) => y),
+      }
+    }
+    const base = draw()
+    const lifted = draw(188)
+    expect(lifted.label[1]).toBe(base.label[1])
+    expect(lifted.label[2]).toBe(base.label[2] - 188)
+    expect(lifted.bar).toEqual(base.bar.map((y) => y - 188))
+  })
 })
 
 describe('renderDrivingRoute', () => {

@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { MenuBar, type MenuDef } from './Menu'
 import { AboutModal, REPO_URL, RELEASE_NOTES_URL } from './AboutModal'
 import { ShortcutsModal } from './ShortcutsModal'
+import { RemoteDeskModal, remoteDeskUnavailable } from './RemoteDeskModal'
 import type { EditorStore, ThemeMode } from '@application/state/editorStore'
+import type { RemoteSession } from '@application/remote/remoteSession'
 import { exportSVG } from '@infrastructure/export/exportSvg'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
@@ -17,15 +19,18 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 
 interface TopBarProps {
   store: EditorStore
+  /** The phone desk session, opened from the Simulation menu */
+  remote: RemoteSession
   onFitView: () => void
 }
 
-export function TopBar({ store, onFitView }: TopBarProps) {
+export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState(store.projectName)
   const [showNewModal, setShowNewModal] = useState(false)
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showAboutModal, setShowAboutModal] = useState(false)
+  const [showRemoteModal, setShowRemoteModal] = useState(false)
 
   const commitName = () => {
     setEditingName(false)
@@ -150,6 +155,16 @@ export function TopBar({ store, onFitView }: TopBarProps) {
             { id: 'theme-dark', label: 'Sombre', checked: store.theme === 'dark' },
           ],
         },
+        {
+          id: 'console',
+          label: 'Console de conduite',
+          submenu: [
+            { id: 'console-auto', label: 'Automatique', checked: store.consolePreference === 'auto' },
+            { id: 'console-band', label: 'Bandeau', checked: store.consolePreference === 'band' },
+            { id: 'console-screen', label: 'Écran de bord', checked: store.consolePreference === 'screen' },
+            { id: 'console-levers', label: 'Manettes', checked: store.consolePreference === 'levers' },
+          ],
+        },
       ],
       onSelect: (id) => {
         switch (id) {
@@ -187,6 +202,18 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           case 'theme-dark':
             store.setTheme('dark')
             break
+          case 'console-auto':
+            store.setConsolePreference('auto')
+            break
+          case 'console-band':
+            store.setConsolePreference('band')
+            break
+          case 'console-screen':
+            store.setConsolePreference('screen')
+            break
+          case 'console-levers':
+            store.setConsolePreference('levers')
+            break
         }
       },
     },
@@ -198,13 +225,18 @@ export function TopBar({ store, onFitView }: TopBarProps) {
           label: store.isPlayMode ? 'Quitter la conduite' : 'Prendre les commandes',
           shortcut: store.shortcutLabel('sim.togglePlay'),
           disabled: !hasTrain,
-          separatorAfter: true,
         },
+        { id: 'remote-desk', label: 'Pupitre sur téléphone…', separatorAfter: true },
         { id: 'toggle-train-debug', label: 'Squelette des trains', checked: store.showTrainDebug, shortcut: store.shortcutLabel('train.debug') },
       ],
       onSelect: (id) => {
         if (id === 'toggle-play') store.togglePlayMode()
         else if (id === 'toggle-train-debug') store.toggleTrainDebug()
+        else if (id === 'remote-desk') {
+          // A new room each time the session is opened; an open one is shown again as it is
+          if (!remoteDeskUnavailable()) remote.open()
+          setShowRemoteModal(true)
+        }
       },
     },
     {
@@ -327,6 +359,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
         <p>Voulez-vous réinitialiser le plan actuel ? Toutes les voies non exportées seront effacées.</p>
       </Modal>
       <AboutModal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} />
+      <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
       <SettingsModal
         store={store}

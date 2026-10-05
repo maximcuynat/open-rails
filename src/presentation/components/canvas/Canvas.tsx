@@ -63,7 +63,7 @@ import {
   getGizmoAnchor,
   gizmoFootprint,
 } from './gizmo'
-import { DRIVING_HUD_FOOTPRINT } from '../hud/DrivingHUD'
+import { arrangeConsole } from '../console/consoleLayout'
 import { wheelIntent } from './wheelIntent'
 import {
   findNearestNode,
@@ -839,8 +839,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       )
     }
 
-    // The console and the debug panel sit in the bottom-right corner: the scale bar moves left of them
-    renderScaleBar(ctx, cam, rect.width, rect.height, store.isPlayMode || store.showTrainDebug ? DRIVING_HUD_FOOTPRINT : 0)
+    // The scale bar keeps clear of the driving console and of the debug panel
+    const { scaleBar } = arrangeConsole(rect.width, rect.height, store.consolePreference, store.isPlayMode, store.showTrainDebug).placement
+    renderScaleBar(ctx, cam, rect.width, rect.height, scaleBar.right, scaleBar.bottom)
   }, [store])
 
   // Every tool asks for a redraw after each change, often several times for one event (`redraw`

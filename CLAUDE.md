@@ -64,7 +64,18 @@ There are two generations of train model, and both are live:
 - `models/locomotive.ts` — the original single `Locomotive` (fixed TGV consist). It also owns the shared track-walking primitives everything else builds on: `TrackPosition` (`segId`, `t`, `forward`), `walkForward` / `walkBackward`, `snapToNearestTrack`, `computeBogieFrame`, junction steering.
 - `models/train.ts` — `TrainSet`, an ordered list of `Vehicle`s (`loco` / `wagon`) that can be coupled and decoupled at runtime. `vehicles[0]` is the lead; `advanceTrainSet` moves it and re-derives every follower with `walkBackward`.
 
-The store carries both (`store.locomotive` and `store.trains`). The simulation loop (`startSimulationLoop`, a `requestAnimationFrame` loop in the store) ticks `trains` when any exist and falls back to the legacy locomotive otherwise, and `tickAllTrains` copies the selected train's speed and throttle back into the legacy `locomotive*` fields because `DrivingHUD` still reads those. New train work should target `TrainSet`.
+The store carries both (`store.locomotive` and `store.trains`). The simulation loop (`startSimulationLoop`, a `requestAnimationFrame` loop in the store) ticks `trains` when any exist and falls back to the legacy locomotive otherwise, and `tickAllTrains` copies the selected train's speed and throttle back into the legacy `locomotive*` fields because the legacy console state still reads those. New train work should target `TrainSet`.
+
+### Driving console and phone desk
+
+A driving console never reads the store. It receives a `ConsoleState` and emits `ConsoleCommand`s, both plain JSON and declared in `application/console/consoleContract.ts`; `buildConsoleState` / `buildFleet` read the store and `applyConsoleCommand` is the only way a console acts on it. That is what lets the same components run on the PC and on a phone.
+
+- `presentation/components/console/` — the shared instruments and the three layouts (`band`, `screen`, `levers`); `chooseConsoleLayout` picks one from the canvas size unless the `consolePreference` setting forces one. `hud/DrivingDock.tsx` is the PC container and the only part that touches the store.
+- `application/remote/` — the phone link: `protocol.ts` (messages, strict validation of everything received), `remoteHost.ts` (PC side, sends the fleet and the state, falls back to brake `hold` when the phone goes silent), `remoteDesk.ts` (phone side), `remoteSession.ts` (opens and closes a session on the PC). `infrastructure/remote/webSocketLink.ts` is the browser transport.
+- `tools/remote-relay/` — a WebSocket relay that pairs one PC and one phone per room code. It is a Vite plugin (`vite.config.ts`), so it only exists under `npm run dev` / `npm run preview`: the phone desk does not work on the static GitHub Pages build. `ws` is a dev dependency.
+- `presentation/remote/` — the page a phone gets when the URL carries `?pupitre=CODE` (`main.tsx` loads it instead of `App`, without the editor bundle).
+
+A field added to `ConsoleState` must also be added to the validation in `protocol.ts`, or it is dropped on the way to the phone. The plan and what is left to do are in `tasks/plan-console-conduite.md`.
 
 ## Tests
 
