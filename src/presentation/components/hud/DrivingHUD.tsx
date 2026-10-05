@@ -27,7 +27,10 @@ interface DrivingHUDProps {
   store: EditorStore
 }
 
-const HUD_WIDTH = 220
+/** The console is laid out at this width, in its own pixels, then magnified as a whole */
+const HUD_BASE_WIDTH = 220
+const HUD_SCALE = 1.4
+const HUD_WIDTH = HUD_BASE_WIDTH * HUD_SCALE
 const HUD_MARGIN = 12
 /** Width the dock (console, debug panel) takes at the bottom-right of the canvas: what is drawn there moves left of it. */
 export const DRIVING_HUD_FOOTPRINT = HUD_WIDTH + HUD_MARGIN
@@ -288,6 +291,7 @@ export function DrivingHUD({ store }: DrivingHUDProps) {
       style={{
         // Placed by the `.hud-dock` it sits in (bottom-right corner of the canvas area)
         flexShrink: 0,
+        zoom: HUD_SCALE,
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',

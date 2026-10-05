@@ -1992,7 +1992,7 @@ kbd {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  width: 220px; /* HUD_WIDTH in DrivingHUD.tsx */
+  width: 308px; /* HUD_WIDTH in DrivingHUD.tsx */
   max-height: calc(100% - 24px);
   overflow-y: auto;
   display: flex;
