@@ -4,112 +4,179 @@ Nettoyé le 2026-10-05 : les chantiers terminés ont été retirés (leur plan e
 
 ---
 
-# En cours — Pentes (rampes entre deux niveaux)
+# À valider — Physique de conduite réaliste
 
-Branche `feature/track-levels`. Plan validé le 2026-10-05, avec un visuel sobre (voir agent B). Suite des niveaux de voie (commits `41f3383`, `ffa1cc9`). Pas de commit tant que l'utilisateur ne le demande pas.
+Branche `feature/track-levels` (ou une branche dédiée, au choix de l'utilisateur). Plan rédigé le 2026-10-05 après recherche ; **rien n'est codé**. Sources et chiffres détaillés : `tasks/recherche-traction.md`, `tasks/recherche-freinage.md`. Pas de commit tant que l'utilisateur ne le demande pas.
 
-## Principe
+## Ce qui change pour le joueur
 
-La hauteur devient une propriété des **nœuds**, plus des segments : `RailNode.level?` (absent = 0, nombre décimal, en « niveaux »). Un segment va de la hauteur de son nœud de départ à celle de son nœud d'arrivée :
+- Le train a une masse, une puissance et une résistance à l'avancement : il accélère fort au départ, de moins en moins vite ensuite (0 → 300 km/h en près de 5 minutes pour un Duplex), et ralentit tout seul très lentement en roue libre.
+- La pente compte, en montée comme en descente : 35 ‰ retirent ou ajoutent 0,34 m/s². Un Duplex à pleine puissance ne tient qu'environ 185 km/h dans une rampe de 35 ‰.
+- Le frein est un frein à air : on serre et on desserre, la pression de la conduite générale descend ou remonte, les cylindres suivent avec un délai. Un arrêt d'urgence depuis 300 km/h prend 3,3 km et 74 s, pas 170 m.
+- À l'arrêt sur une rampe, un train frein desserré part en dérive. En entrant en conduite, tous les trains sont freins serrés : il faut desserrer pour partir.
 
-- deux bouts à la même hauteur : voie à plat (sol, pont ou tunnel), comme aujourd'hui ;
-- deux bouts à des hauteurs différentes : **rampe**, sans rien stocker de plus.
+## Modèle
 
-Conséquences voulues :
+Équation (sens positif = sens de marche) : `k · m · dv/dt = F_traction − F_frein − R(v) − F_pente − F_courbe`
 
-- relier un nœud de pont à un nœud au sol crée la rampe toute seule ;
-- monter une voie monte ses nœuds, donc les voies voisines deviennent ses rampes ;
-- un changement de niveau brutal n'est plus représentable (plus de « falaise » avec culée au milieu d'une ligne) ;
-- couper une rampe donne un nœud à la hauteur intermédiaire : chaque morceau garde sa part de la montée.
+| Terme | Formule | Origine |
+|---|---|---|
+| Masses tournantes | `k = 1,04` | thèse Bosquet, confirmé |
+| Traction | `F = commande × min(F_max, P/v, μ(v) · m_adhérente · g)`, nulle sans motrice et au-delà de la vitesse maximale | fiches Alstom / SNCF |
+| Adhérence (rail sec) | `μ = 7,5/(V+44) + 0,161`, V en km/h, plafonnée à 0,30 | Curtius-Kniffler |
+| Résistance | `R = A + B·v + C·v²` ; A et B suivent la masse, C la longueur de la rame | base SNCF Thor (Dasye) |
+| Pente | `F = m · g · (z_tête − z_queue) / L_rame` : moyenne sur toute la rame, adoucit les cassures de profil | usage courant, forme retenue par nous |
+| Courbe | `F = m · g · 0,8 / R` (R en m) : négligeable sur LGV, sensible sous 1 000 m | Rochard & Schmid |
+| Frein | décélération visée selon la vitesse × remplissage des cylindres, plafonnée par l'adhérence (`0,15 g`, décroissante au-delà de 250 km/h) | STI, EPSF |
 
-Règle unique, qui remplace « partager un niveau » : deux voies n'interagissent (croisement, soudure, découpe, doublon) que si, **à l'endroit où elles se rencontrent**, leurs hauteurs diffèrent de moins d'un demi-niveau (`LEVEL_CLEARANCE = 0.5`). Une rampe croise donc une voie au sol près de son pied et passe au-dessus près de son sommet.
+Forces dissipatives (frein, résistance) : elles s'opposent au mouvement et, à l'arrêt, retiennent le train jusqu'à leur maximum. C'est ce qui permet à la fois la tenue en pente frein serré et la dérive frein desserré.
 
-La hauteur le long d'un segment est interpolée linéairement sur son paramètre `t` (exact à la découpe, approximation assumée sur une courbe de Bézier).
+### Données par modèle (`rollingStock.ts`)
 
-Pente = dénivelé × hauteur d'un niveau ÷ longueur du segment, en ‰. Deux réglages du projet, convertis selon l'échelle et modifiables dans les paramètres :
+| | TGV Duplex | TGV M | Confiance |
+|---|---|---|---|
+| Motrice : masse / puissance / effort max | 68 t / 4 400 kW / 106 kN | 68 t / 3 880 kW / 122 kN | Duplex confirmé ; effort du TGV M non sourcé |
+| Remorque : masse en charge | 36 t (rame de 424 t) | ≈ 46 t (rame de 460 t estimée) | TGV M estimé |
+| Résistance, rame complète | A 2 680 N, B 115 N·s/m, C 6,93 N·s²/m² | A 2 910, B 125, C 6,03 | Duplex : une source solide ; TGV M estimé |
+| Vitesse maximale | 320 km/h | 320 km/h | confirmé |
 
-- `levelHeight` : hauteur d'un niveau, 6 m en réel (≈ 6,9 cm en HO) ;
-- `maxGradient` : pente maximale, 35 ‰.
+Masse, puissance, effort et résistance d'une rame sont **calculés à la demande** à partir de ses véhicules (aucune valeur en cache : les rames sont recomposées à huit endroits du code). Une rame sans motrice n'a aucun effort ; deux rames attelées additionnent tout.
 
-À 35 ‰, monter d'un niveau demande environ 171 m de rampe en réel, 1,97 m en HO.
+### Frein à air
 
-## Pourquoi changer le modèle qui vient d'être commité
+- État par train : pression de la **conduite générale** (5,0 bar desserré, 4,5 bar à la première dépression, 3,5 bar au serrage maximal, 0 en urgence) et remplissage des **cylindres de frein** (0 à 100 %, affiché en bar).
+- Commande à impulsions, comme le robinet réel et comme Train Sim World : tant que « serrer » est tenu, la conduite se vide (à fond en 3,5 s) ; tant que « desserrer » est tenu, elle se regonfle (à fond en 4 s) ; relâché, la pression reste où elle est.
+- Les cylindres suivent la dépression avec un délai (temps mort 0,5 s, montée 3 s, desserrage 4 à 5 s) : c'est ce délai qui donne les distances d'arrêt réelles.
+- Décélération visée, rail sec, en palier (m/s²) :
 
-`Segment.level` ne peut pas décrire une rampe sans un second champ par segment, et rien n'y garantit que deux rampes consécutives se raccordent à la même hauteur. Avec la hauteur sur les nœuds, la continuité est acquise par construction et les rampes n'ont pas besoin d'être créées ni entretenues. Le coût : reprendre les helpers de niveau (une soixantaine d'appels, surtout mécanique) et relire les sauvegardes faites avec `Segment.level`.
+| | > 300 km/h | 300–230 | 230–170 | < 170 |
+|---|---|---|---|---|
+| Serrage maximal de service | 0,75 | 0,85 | 1,00 | 1,10 |
+| Urgence | 0,81 | 0,98 | 1,14 | 1,30 |
 
-## Phase 1 — Migration du modèle, sans élément graphique nouveau (un agent, avant les deux autres)
+  Interpolée entre les tranches, proportionnelle au remplissage des cylindres. Ces valeurs sont des décélérations totales : la résistance à l'avancement en est retranchée pour ne pas la compter deux fois.
+- Urgence : vidange de la conduite, traction coupée, desserrage impossible avant l'arrêt (verrou actuel conservé).
+- La traction est coupée dès que le frein est serré, comme sur le matériel réel.
 
-- [x] 1.1 `types.ts` : `RailNode.level?` ; `Segment.level` retiré du modèle (lu seulement à l'ouverture d'une ancienne sauvegarde)
-- [x] 1.2 `network.ts` : `nodeLevel(node)`, `segmentEndLevels(net, seg)`, `segmentHeightAt(net, seg, t)`, `isRamp(net, seg)`, `segmentBand(net, seg)` (niveau de dessin : le bout le plus haut, ou le plus bas pour une voie sous le sol), `setNodesLevel(net, ids, level)` ; `segmentLevel` / `nodeLevels` / `branchLevel` / `setSegmentsLevel` remplacés
-- [x] 1.3 Tous les appelants adaptés (réconciliation, croisements, pointage, gabarits, store, rendu, export, interface) en gardant le comportement actuel pour les voies à plat
-- [x] 1.4 Persistance : `level` sur `SerializedNode` (écrit seulement s'il est non nul) ; ancienne sauvegarde avec `level` sur les segments : chaque nœud prend, parmi les niveaux de ses rails, celui qui est le plus éloigné du sol
-- [x] 1.5 Les 684 tests passent, adaptés seulement là où ils posent `seg.level` à la main ; `npm run typecheck`, `npm run build`
+### Traction
 
-## Phase 2 — Agent A : domaine, sauvegarde, store
+- Le manipulateur garde ses crans, de N à P5 (20 % d'effort par cran). Les crans négatifs B1…B5 disparaissent : le frein a ses propres touches.
+- L'effort monte progressivement (0 à 100 % en 5 s), pas d'à-coup.
+- L'inverseur garde ses règles (changement à l'arrêt seulement). Il fixe le sens de l'effort moteur ; le sens réel du mouvement peut s'en écarter quand la rame dérive.
 
-- [x] A1. Règle de hauteur dans la réconciliation (`reconcile.ts`) : candidats `cross`, `split`, `weld` et doublons décidés sur l'écart de hauteur au point de rencontre ; `weldNodes` garde la hauteur du nœud conservé
-- [x] A2. Croisements (`crossing.ts`) : `detectCrossings` sur la même règle ; `separateLevelsAtNode` inchangé dans son rôle (le nœud jumeau reçoit la hauteur de la voie du dessus)
-- [x] A3. Découpe et fusion : le nœud créé par une découpe prend la hauteur interpolée ; `dissolveNode` refuse de supprimer un nœud dont la hauteur n'est pas alignée avec ses deux voisins (sinon la pente changerait sans le dire)
-- [x] A4. Pose : un nœud créé en prolongeant une voie prend la hauteur du nœud de départ ; arriver sur un nœud existant d'une autre hauteur donne une rampe ; gabarits (`constructionTemplates.ts`) et voie parallèle recopient les hauteurs
-- [x] A5. Pente (`network.ts` ou `services/`) : `segmentGradient(net, seg, levelHeight)` en ‰, signée dans le sens du segment ; `spreadGradient(net, segmentIds)` : sur une suite de rails bout à bout, répartit le dénivelé entre les deux extrémités au prorata des longueurs
-- [x] A6. Diagnostic (`kinematicDiagnostics.ts`) : nouveau type « pente trop forte » quand un segment dépasse `maxGradient`
-- [x] A7. Store : `levelHeight`, `maxGradient` (valeurs par défaut dans `SCALE_PRESETS`, sauvegardés avec le projet) ; `shiftSelectionLevel(delta)` agit sur les nœuds des rails sélectionnés, ou sur les nœuds sélectionnés seuls ; `spreadSelectionGradient()` ; même enchaînement que les autres éditions (trains gardés en place, réconciliation, historique, `notify()`)
-- [x] A8. Pointage : à distance égale, la voie la plus haute **à cet endroit** l'emporte
-- [x] A9. Tests pour chaque point
+### Intégration
 
-## Phase 2 — Agent B : visuel et interface
+- Pas de calcul fixe d'au plus 1/30 s : un pas d'affichage long est découpé, le résultat ne dépend plus de la fluidité.
+- La vitesse reste positive avec un sens séparé, comme aujourd'hui ; le sens bascule tout seul quand la rame repart en arrière.
+- Tous les trains sont simulés en conduite, y compris à l'arrêt (aujourd'hui un train arrêté sans traction est ignoré).
 
-Consigne de l'utilisateur (2026-10-05) : visuel très sobre, on garde le dessin actuel. Juste les rails, pas de traverses ni d'élément nouveau ; pointillés légers pour les tunnels ; pont comme aujourd'hui.
+## Touches (réassignables)
 
-- [x] B1. Ordre de dessin par `segmentBand` ; un véhicule est dessiné avec le segment qui le porte
-- [x] B2. Rampe : rails seuls. Le style existant s'applique simplement à la partie de la rampe qui est réellement au-dessus ou au-dessous : tablier actuel là où la hauteur dépasse un demi-niveau (c'est ce qui masque la voie du dessous), pointillés actuels du tunnel là où elle passe sous un demi-niveau. Culée actuelle au début du tablier. Aucun talus, hachure, portail, chevron ni étiquette
-- [x] B3. Export SVG : même règle
-- [x] B4. Interface :
-  - `SegmentPanel` : niveau de départ et d'arrivée, dénivelé en mètres, pente en ‰ (rouge si trop forte)
-  - `NodePanel` : compteur « Niveau » du nœud
-  - barre contextuelle : le compteur agit sur la sélection (rails ou nœuds), il affiche « 0 à +1 » sur une rampe ; action « Lisser la pente » active quand la sélection est une suite de rails dont les deux bouts ne sont pas à la même hauteur ; mêmes règles de stabilité que le reste de la barre
-  - paramètres : « Hauteur d'un niveau » et « Pente maximale »
-- [x] B5. Pente trop forte : signalée sur le canevas par le marqueur de diagnostic existant, sans dessin nouveau
-- [x] B6. Tests de rendu (contexte enregistreur de `trackLevels.test.ts`), de la barre contextuelle et de l'export
+| Action | Défaut | Aujourd'hui |
+|---|---|---|
+| Traction : un cran de plus / de moins | A / D (et ↑ / ↓) | inchangé, mais D ne descend plus sous N |
+| Serrer le frein (maintenu) | E | nouveau |
+| Desserrer le frein (maintenu) | Q | nouveau |
+| Freinage d'urgence | Retour arrière | inchangé |
+| Inverseur | W / S | inchangé |
 
-## Vérification finale
+Les lettres désignent la position des touches (clavier QWERTY), comme pour les commandes actuelles.
 
-- [x] `npm test`, `npm run typecheck`, `npm run build`
-- [x] Relecture du diff complet
-- [x] Navigateur sans écran : pont avec deux rampes, tunnel avec ses deux descentes, rampe trop raide signalée, ancienne sauvegarde relue, barre contextuelle
-- [ ] Contrôle à l'œil par l'utilisateur : panneaux segment et nœud, paramètres, « Lisser la pente » en vrai, export SVG, train sur une rampe
+## Étapes
 
-## Tests clés
+### Socle commun (moi, avant les agents)
 
-- Relier un nœud de niveau 1 à un nœud au sol : un seul rail, pente = 6 m ÷ longueur ; le couper au milieu donne un nœud à 0,5 et deux rails de même pente
-- Une rampe 0 → 1 croisée par une voie au sol à 20 % de sa longueur : croisement créé ; à 80 % : aucun nœud, la voie passe dessous
-- Monter une voie isolée entre deux voisines : les deux voisines deviennent des rampes, aucune géométrie ne bouge, les trains restent en place
-- Diamant → pont → diamant toujours réversible
-- « Lisser la pente » sur trois rails de longueurs différentes : même pente sur les trois
-- Pente au-delà de `maxGradient` : diagnostic présent ; en deçà : absent
-- Ancienne sauvegarde (`level` sur les segments) relue sans perdre de pont ; sauvegarde → chargement → hauteurs identiques, y compris décimales
-- Réseau sans aucune hauteur : mêmes appels de dessin et même fichier de sauvegarde qu'avant
+- [ ] 0.1 Types et signatures : données physiques dans `RollingStockSpec`, état du frein dans `TrainSet` (`brakePipe`, `brakeCylinder`, commande de frein, effort appliqué), `DrivingEnvironment` (`levelHeight`), `TrainDynamics` (forces, accélération réelle, pente, pressions, distance d'arrêt, accélération transversale)
+- [ ] 0.2 Script de référence de la recherche (`sim.py`) recopié dans `tasks/` pour vérifier l'implémentation contre les mêmes chiffres
 
-## Revue (2026-10-05)
+### Agent A — domaine
 
-- `npm test` : 767 tests verts (39 fichiers) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
-- Vu dans un navigateur sans écran : rampe en rails seuls jusqu'à mi-hauteur puis tablier actuel avec sa culée ; tunnel en pointillés seulement sous un demi-niveau ; marqueur « Pente 60 ‰ » au pied d'une rampe de 100 m ; fichier à l'ancien format relu avec son pont et ses voisines devenues rampes ; compteur « 0 à +1 » et « Lisser la pente » dans la barre.
-- Non vu à l'écran : panneaux segment et nœud, fenêtre des paramètres, « Lisser la pente » exécuté à la souris, export SVG, train sur une rampe (tous couverts par des tests de logique, pas d'interface).
-- Ajouté à la relecture : « Lisser la pente » n'est proposé que si les deux bouts de la suite sont à des hauteurs différentes ; sur un pont entier avec ses deux rampes il l'aurait aplati jusqu'au sol.
-- Écarts au plan :
-  - l'ordre de dessin se fait par morceau de rail coupé aux demi-niveaux (`levelPieces.ts`), pas par rail entier ;
-  - `detectCrossings` en courbe garde une hauteur estimée sur la polyligne (écart d'environ un millième du dénivelé) ;
-  - le calcul de pente et le diagnostic ont été posés avant les agents ; la pente est affichée à une décimale.
-- Corrigé au passage : évitement posé sur une rampe (la voie principale garde sa pente), boucle de retournement posée à la hauteur de son nœud d'entrée.
-- Restes connus : voir « Niveaux et pentes » dans les défauts connus.
+- [ ] A1. `rollingStock.ts` : données par modèle, `consistMass`, `consistPower`, `consistMaxEffort`, `adhesiveMass`, `consistResistance(v)` ; tests (rame de 424 t, 8 800 kW, 212 kN ; R(300) ≈ 60 kN, R(100) ≈ 11 kN)
+- [ ] A2. Forces (`train.ts` ou un fichier `trainDynamics.ts`) : traction, adhérence, résistance, pente moyennée sur la rame, courbe ; `trainDynamics(net, train, env)` renvoie le détail
+- [ ] A3. Frein à air : conduite générale, cylindres, décélération visée par vitesse, plafond d'adhérence, urgence
+- [ ] A4. Intégration : pas fixe, forces dissipatives qui retiennent à l'arrêt, basculement du sens en dérive, vitesse ramenée exactement à zéro quand le frein tient
+- [ ] A5. `tickTrainSet` et `advanceTrainSet` : collision vérifiée aussi quand la rame recule en dérive ; butoir et obstacle retiennent la rame sans tremblement ; vitesse du choc renvoyée
+- [ ] A6. `stoppingDistance` par intégration (serrage maximal de service, délai compris, pente actuelle) ; accélération transversale `v²/R` exposée par véhicule (point d'accroche du futur plan dévers)
+- [ ] A7. Commandes : cran de traction 0…5, serrer / desserrer, urgence ; état de départ « frein serré » ; `resetTrainControls`, attelage, dételage et changement de cabine remis d'aplomb
+- [ ] A8. Tests de contrôle (voir plus bas) et réécriture des 13 tests qui figent les valeurs actuelles
+
+### Agent B — store, clavier, HUD, rendu
+
+- [ ] B1. Boucle du store : tous les trains simulés en conduite, `levelHeight` transmis, fin de l'arrêt net imposé par le store, entrée en conduite freins serrés
+- [ ] B2. Clavier : actions « serrer » et « desserrer » maintenues (appui / relâchement), catalogue de raccourcis, fenêtre d'aide
+- [ ] B3. HUD : deux manomètres (conduite générale, cylindres de frein), effort de traction en %, accélération **réelle**, pente sous la rame en ‰, distance d'arrêt réelle dans l'unité du projet, cadran gradué jusqu'à la vitesse maximale du modèle
+- [ ] B4. Rendu debug : vecteur d'accélération et ruban d'arrêt lus dans `TrainDynamics` (corrige au passage la distance d'arrêt infinie hors freinage)
+- [ ] B5. Choc contre un butoir ou un autre train au-dessus de quelques km/h : message à l'écran
+- [ ] B6. Tests du store et du clavier
+
+### Vérification finale
+
+- [ ] `npm test`, `npm run typecheck`, `npm run build`, relecture du diff
+- [ ] Comparaison au script de référence : mêmes temps et distances à 2 % près
+- [ ] Navigateur : départ arrêté, montée en vitesse, arrêt de service, urgence, rampe de 35 ‰ dans les deux sens, dérive frein desserré, manomètres
+
+## Tests de contrôle
+
+Chiffres réels ou réglementaires :
+
+| Test | Attendu | Origine |
+|---|---|---|
+| Urgence 300 → 0, palier | 3 300 m ± 5 %, ≈ 74 s | TGV réel, KTX-I |
+| Urgence 200 → 0 / 250 → 0 / 160 → 0 | ≤ 1 500 / 2 430 / 1 250 m | STI, EPSF |
+| Serrage maximal de service 320 → 0 | ≤ 5 300 m | EPSF (lignes TVM) |
+| Urgence à 230 km/h en descente de 35 ‰ | la rame s'arrête | cas d'étude EPSF |
+| Accélération moyenne 0–40 / 0–120 / 0–160 km/h | ≥ 0,40 / 0,32 / 0,17 m/s² | STI |
+| Accélération résiduelle à 320 km/h | ≥ 0,05 m/s² | STI |
+| Résistance à 300 et 100 km/h | ≈ 60 et ≈ 12 kN | SNCF |
+| Rampe de 35 ‰ sur une rame de 430 t | 148 kN | calcul, repris dans la thèse |
+
+Chiffres du modèle de référence (à reproduire, pas des mesures) : Duplex 0 → 300 km/h en 289 s sur 15,3 km ; vitesse d'équilibre de 184 km/h en rampe de 35 ‰ ; roue libre depuis 300 km/h : 250 km/h après 119 s et 9 km.
+
+Comportements : frein serré, la rame tient sur 35 ‰ ; frein desserré sans traction, elle part en arrière ; P5 la fait démarrer en rampe de 35 ‰ ; une rame sans motrice ne tracte pas ; même résultat à 1 % près avec un pas d'affichage de 1/60 s ou de 0,1 s.
+
+## Décisions prises, à confirmer
+
+- **Crans de traction conservés**, frein à touches séparées (le manipulateur réel est continu ; les crans restent plus jouables au clavier).
+- **Freins serrés à l'entrée en conduite** plutôt qu'une retenue automatique : c'est le comportement réel, et ça évite qu'un train posé sur une rampe parte tout seul.
+- **TGV M** : mêmes courbes de freinage que le Duplex, masse et résistance estimées. Presque rien n'est publié ; les valeurs sont étiquetées comme estimées dans le code.
+- **Ancienne `Locomotive`** : laissée telle quelle avec sa physique d'arcade. Elle n'est plus accessible depuis l'interface ; la retirer est un nettoyage à part.
+- **Échelles HO / N** : les trains restent en dimensions et vitesses réelles quelle que soit l'échelle, comme aujourd'hui. La physique n'est juste qu'en 1:1.
 
 ## Hors périmètre
 
-- Habillage des rampes (talus, hachures, portail de tunnel, chevrons et étiquette de pente sur le canevas) : écarté pour l'instant à la demande de l'utilisateur
-- Effet de la pente sur la conduite (ralentir en montée, accélérer en descente)
-- Alerte de gabarit quand une voie passe au-dessus d'une autre avec moins d'un niveau de dégagement
-- Raccordement vertical arrondi au pied et au sommet d'une rampe (la pente change d'un coup au nœud)
-- Import OSM, fond de carte, projection
+- Dévers et vitesse limite en courbe : plan dédié ci-dessous
+- Vitesse imposée (régulateur de vitesse du TGV), répartition frein électrique / frein à disques, rail mouillé
+- Raccordement vertical arrondi au pied et au sommet d'une rampe
+- Pilotage depuis un téléphone (voir « Idées notées »)
+- Mise à l'échelle des trains en HO / N ; retrait de l'ancienne `Locomotive`
+
+---
+
+# Ensuite — Dévers et vitesse limite en courbe (plan dédié)
+
+À faire après la physique de conduite. Recherche faite le 2026-10-05 (`tasks/recherche-devers.md`). Ébauche à détailler et à valider le moment venu.
+
+## Principe
+
+- Le dévers ne change pas la vitesse du train : il fixe la vitesse à laquelle une courbe peut être prise. `V_max = √((dévers + insuffisance admise) × R / 11,8)` (km/h, mm, m).
+- Il dépend de la ligne : il faut d'abord une **vitesse limite par section de voie** (héritée d'une vitesse de ligne du projet) et un **type de ligne** (classique ou LGV).
+- Le dévers de chaque courbe est **calculé automatiquement** à partir du rayon et de la vitesse de la ligne (règle SNCF : environ la moitié du dévers d'équilibre sur ligne classique, 70 % sur LGV, plafonné à 160 ou 180 mm), et l'utilisateur peut le corriger.
+- En conduite : accélération transversale non compensée calculée à chaque instant, puis trois niveaux — inconfort, danger, renversement.
+
+## Étapes prévues
+
+- [ ] 1. Données : vitesse limite et type de ligne par section (`sectionMeta`), vitesse de ligne du projet, dévers optionnel par segment courbe, insuffisance admise par matériel ; sauvegarde
+- [ ] 2. Domaine : dévers d'équilibre, règle de calcul automatique, vitesse maximale d'une courbe, limite effective d'une section (la plus basse des deux), rampe de dévers aux extrémités de l'arc
+- [ ] 3. Conduite : insuffisance et accélération transversale sous chaque véhicule (à partir de l'accélération `v²/R` exposée par la physique), seuils inconfort / danger / renversement, déraillement
+- [ ] 4. Diagnostic d'édition : courbe trop serrée pour la vitesse de sa section, signalée comme une pente trop forte
+- [ ] 5. Interface : vitesse limite dans le panneau de section, dévers et vitesse maximale dans le panneau du segment, vitesse limite et survitesse dans le HUD
+- [ ] 6. Tests sur les cas réels : Eckwersheim (945 m, 163 mm : limite 160 km/h, renversement vers 235 km/h), LGV Sud-Est (4 000 m à 300 km/h), ligne classique (1 000 m à 160 km/h)
+
+## Points à trancher au moment du plan
+
+- Modèles de voies miniatures (HO / N) : les courbes de catalogue sont bien plus serrées que la réalité (730 mm en HO ≈ 28 km/h réels) ; la contrainte devra y être désactivée ou seulement indicative
+- Courbes de raccordement : absentes du tracé ; règle minimale proposée par la recherche (dévers qui monte sur une longueur dépendant de la vitesse, à cheval sur le point de tangence)
+- Seuil de renversement : calé sur un seul accident et un seul matériel, à laisser réglable
 
 ---
 
@@ -119,6 +186,13 @@ Consigne de l'utilisateur (2026-10-05) : visuel très sobre, on garde le dessin 
 - [ ] Contrôle dans le navigateur des rames TGV articulées (sélecteur de modèle, rendu en contour)
 - [ ] Traiter la branche `feature/curve-angle-rotation-gizmo` (conflits attendus sur `gizmo.ts` et `ToolBar.tsx`)
 - [ ] Arrêt net au butoir (de la vitesse courante à 0) : choix à faire par l'utilisateur
+
+## Idées notées (pas encore planifiées)
+
+- **Piloter son train depuis son téléphone** (demandé le 2026-10-05, à faire après la physique de conduite). Le téléphone ouvre une page simple (manette : traction, frein avec pression, inverseur, urgence, vitesse) et se connecte au navigateur qui fait tourner la simulation, par exemple en scannant un QR code affiché à l'écran. Points à trancher au moment du plan :
+  - le site est statique (GitHub Pages), donc pas de serveur à nous : soit une liaison directe entre les deux navigateurs (WebRTC, avec un petit service public pour la mise en relation), soit un relais WebSocket à héberger ;
+  - le navigateur de bureau reste le seul à simuler ; le téléphone n'envoie que des commandes et reçoit la télémétrie ;
+  - retour haptique (vibration) et capteurs du téléphone pour l'immersion, si le navigateur mobile le permet.
 
 Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été vérifié dans le navigateur à ce jour : il n'y a pas de test d'interface.
 
