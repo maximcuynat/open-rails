@@ -101,7 +101,9 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
       return
     } else if (e.key === 'Tab') {
       e.preventDefault()
-      if (!store.selectedTrain) store.flipLocomotiveDirection()
+      // TrainSet: take the cab at the other end; legacy locomotive: turn around
+      if (store.selectedTrain) store.switchSelectedTrainCab()
+      else store.flipLocomotiveDirection()
       return
     }
     const action = hasModifier ? null : findAction(store.keybindings, 'drive', e)

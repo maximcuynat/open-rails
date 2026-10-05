@@ -675,3 +675,80 @@ describe('EditorStore trains on reshaped rails', () => {
     expect(fractions()).toEqual(before)
   })
 })
+
+describe('EditorStore driving cab switch', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+  })
+
+  function storeWithTrainset(tailKind: 'loco' | 'wagon' = 'loco'): EditorStore {
+    const { store, segId } = storeWithStraightTrack(400)
+    const lead = createVehicle(store.network, segId, 0.6, 'loco')!
+    const tail = tailKind === 'loco'
+      ? { ...lead, id: 'm2', kind: 'loco' as const, flipped: true }
+      : { ...lead, id: 'w2', kind: 'wagon' as const }
+    const train = makeTrainSet('t1', [lead, { ...lead, id: 'w1', kind: 'wagon' }, tail])
+    expect(advanceTrainSet(store.network, train, 0)).toBe(true)
+    store.trains = [train]
+    store.selectedTrainId = 't1'
+    return store
+  }
+
+  const bogieXs = (store: EditorStore) =>
+    store.trains[0].vehicles
+      .flatMap((v) => [v.front, v.rear])
+      .map((p) => positionOnSegment(store.network, p.segId, p.t)!.x)
+      .sort((a, b) => a - b)
+
+  it('hands the controls to the power car at the other end without moving or turning anything', () => {
+    const store = storeWithTrainset()
+    const before = bogieXs(store)
+    const noseOf = (id: string) => {
+      const train = store.trains[0]
+      const i = train.vehicles.findIndex((v) => v.id === id)
+      return vehicleFrontEndPos(store.network, train.vehicles[i], train.vehicles[i + 1] ?? null)!.x
+    }
+    const leadId = store.trains[0].vehicles[0].id
+    const leadNoseBefore = noseOf(leadId)
+
+    expect(store.switchSelectedTrainCab()).toBe(true)
+
+    const train = store.trains[0]
+    expect(train.id).toBe('t1')
+    expect(train.vehicles.map((v) => v.id)).toEqual(['m2', 'w1', leadId])
+    expect(train.vehicles[0].flipped).toBeFalsy()
+    expect(train.reverser).toBe('neutral')
+    bogieXs(store).forEach((x, i) => expect(x).toBeCloseTo(before[i], 6))
+    // The former lead still points its nose the same way: it is now the flipped tail
+    expect(train.vehicles[2].flipped).toBe(true)
+    expect(vehicleRearEndPos(store.network, train.vehicles[2], train.vehicles[1])!.x).toBeCloseTo(leadNoseBefore, 6)
+  })
+
+  it('forward now heads the other way', () => {
+    const store = storeWithTrainset()
+    const xOfLead = () => {
+      const p = store.trains[0].vehicles[0].front
+      return positionOnSegment(store.network, p.segId, p.t)!.x
+    }
+    const firstCabX = xOfLead()
+    store.switchSelectedTrainCab()
+    const secondCabX = xOfLead()
+    expect(secondCabX).toBeLessThan(firstCabX)
+
+    expect(advanceTrainSet(store.network, store.trains[0], 10)).toBe(true)
+    expect(xOfLead()).toBeCloseTo(secondCabX - 10, 6)
+  })
+
+  it('is refused while moving, and when the other end is not a power car', () => {
+    const moving = storeWithTrainset()
+    moving.trains[0].currentSpeed = 3
+    expect(moving.switchSelectedTrainCab()).toBe(false)
+    expect(moving.trains[0].vehicles[0].kind).toBe('loco')
+    expect(moving.trains[0].vehicles[2].id).toBe('m2')
+
+    const noTailCab = storeWithTrainset('wagon')
+    expect(noTailCab.switchSelectedTrainCab()).toBe(false)
+    expect(noTailCab.trains[0].vehicles[2].id).toBe('w2')
+  })
+})

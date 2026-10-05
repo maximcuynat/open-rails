@@ -47,6 +47,7 @@ import {
   createVehicle,
   findCouplerSnap,
   advanceTrainSet,
+  switchDrivingCab,
   trainAnchors,
   realignTrains,
   tickTrainSet,
@@ -2048,6 +2049,29 @@ export class EditorStore {
     if (upcoming && this.isJunctionOccupied(upcoming.junction)) return
     steerJunction(this.network, this.locomotive, steerDirection)
     this.notify()
+  }
+
+  /**
+   * Take the controls from the cab at the other end of the driven train (stopped trains only).
+   * Returns false when there is no power car at the other end or the train is moving.
+   */
+  switchSelectedTrainCab = (): boolean => {
+    const train = this.selectedTrain
+    const switched = train && switchDrivingCab(train)
+    if (!train || !switched) return false
+    this.trains = this.trains.map((t) => (t === train ? switched : t))
+    this.selectedTrainVehicleId = switched.vehicles[0].id
+    this.refreshCouplerPoints()
+    if (this.isPlayMode && this.followLocomotiveCamera) {
+      const lead = switched.vehicles[0].front
+      const pos = positionOnSegment(this.network, lead.segId, lead.t)
+      if (pos) {
+        this.camera.x = pos.x
+        this.camera.y = pos.y
+      }
+    }
+    this.notify()
+    return true
   }
 
   /**

@@ -629,6 +629,20 @@ export function reverseTrainSet(train: TrainSet): TrainSet {
 }
 
 /**
+ * Hand the controls over to the cab at the other end of the rake: the tail power car becomes
+ * the lead. Nothing moves and no body turns around, only the driving end changes, so
+ * "forward" now heads the other way. Refused while moving, or when the tail is not a power car.
+ */
+export function switchDrivingCab(train: TrainSet): TrainSet | null {
+  const tail = train.vehicles[train.vehicles.length - 1]
+  if (train.vehicles.length < 2 || tail.kind !== 'loco' || train.currentSpeed !== 0) return null
+  const switched = reverseTrainSet(train)
+  resetTrainControls(switched)
+  switched.direction = 1
+  return switched
+}
+
+/**
  * A stopped train whose locomotives are all turned around is reversed, so that "forward" drives it
  * nose first (a tail locomotive uncoupled from its rake becomes an ordinary train).
  */
