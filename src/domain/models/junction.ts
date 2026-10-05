@@ -1,4 +1,4 @@
-import { generateId, addNode, addSegment, addCurveSegment, removeSegment } from './network'
+import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, removeSegment } from './network'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
 import { segmentTangentAt, isTraversableDeflection } from '../geometry/tangent'
@@ -544,12 +544,9 @@ export function splitSegment(
       midNode.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
     }
     // Replace straight A-B with A-mid and mid-B
-    const ancestorId = seg.parentSegmentId ?? segmentId
     removeSegment(net, segmentId, false)
-    const seg1 = addSegment(net, nodeA.id, midNode.id)!
-    const seg2 = addSegment(net, midNode.id, nodeB.id)!
-    seg1.parentSegmentId = ancestorId
-    seg2.parentSegmentId = ancestorId
+    const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id)!
+    const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id)!
     return { midNode, seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -584,12 +581,9 @@ export function splitSegment(
     }
     midNode.pos = bt
 
-    const ancestorId = seg.parentSegmentId ?? segmentId
     removeSegment(net, segmentId, false)
-    const seg1 = addCurveSegment(net, nodeA.id, midNode.id, q0)!
-    const seg2 = addCurveSegment(net, midNode.id, nodeB.id, q1)!
-    seg1.parentSegmentId = ancestorId
-    seg2.parentSegmentId = ancestorId
+    const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id, q0)!
+    const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id, q1)!
     return { midNode, seg1, seg2 }
   }
 

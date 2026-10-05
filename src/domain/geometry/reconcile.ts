@@ -2,7 +2,7 @@ import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from '../mo
 import { bezierPoint, bezierDerivative1, closestCurveParam, discretizeCurve } from './curve'
 import { isCrossingAngle } from '../models/crossing'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
-import { addNode, addSegment, addCurveSegment, removeSegment, removeDuplicateSegments } from '../models/network'
+import { addNode, addChildSegment, removeSegment, removeDuplicateSegments, nodeLevels, segmentLevel } from '../models/network'
 
 /**
  * Split an existing segment at an existing node that lies on it.
@@ -34,14 +34,10 @@ export function splitSegmentAtNode(
       const t = at ?? Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
       node.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
     }
-    const ancestorId = seg.parentSegmentId ?? segmentId
     removeSegment(net, segmentId, false)
     // A half that already exists (the node sits on a superimposed rail) is reused as it is
-    const known = new Set(net.segments.keys())
-    const seg1 = addSegment(net, nodeA.id, node.id)!
-    const seg2 = addSegment(net, node.id, nodeB.id)!
-    if (!known.has(seg1.id)) seg1.parentSegmentId = ancestorId
-    if (!known.has(seg2.id)) seg2.parentSegmentId = ancestorId
+    const seg1 = addChildSegment(net, seg, nodeA.id, node.id)!
+    const seg2 = addChildSegment(net, seg, node.id, nodeB.id)!
     return { seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -63,13 +59,9 @@ export function splitSegmentAtNode(
     }
     node.pos = bt
 
-    const ancestorId = seg.parentSegmentId ?? segmentId
     removeSegment(net, segmentId, false)
-    const known = new Set(net.segments.keys())
-    const seg1 = addCurveSegment(net, nodeA.id, node.id, q0)!
-    const seg2 = addCurveSegment(net, node.id, nodeB.id, q1)!
-    if (!known.has(seg1.id)) seg1.parentSegmentId = ancestorId
-    if (!known.has(seg2.id)) seg2.parentSegmentId = ancestorId
+    const seg1 = addChildSegment(net, seg, nodeA.id, node.id, q0)!
+    const seg2 = addChildSegment(net, seg, node.id, nodeB.id, q1)!
     return { seg1, seg2 }
   }
   return null
@@ -257,6 +249,9 @@ interface ReconcileCandidate {
  * 5. Leaves a single rail over any stretch of track: superimposed rails split and weld each
  *    other like any other rail, and the duplicates this produces are dropped (older one kept).
  * 6. Automatically detects all turnouts (degree 3) and crossings (degree 4).
+ *
+ * All of the above only applies between rails that share a level (see `Segment.level`): a rail
+ * passing over or under another one is left alone, and two nodes stacked at a bridge stay apart.
  */
 export function reconcileNetworkIntersections(
   net: Network,
@@ -276,10 +271,13 @@ export function reconcileNetworkIntersections(
 
     for (const node of nodeList) {
       if (!net.nodes.has(node.id)) continue
+      // A node only meets the rails of a level it is on; a lone node is on none yet and meets any
+      const levels = nodeLevels(net, node.id)
 
       for (const seg of segList) {
         if (!net.segments.has(seg.id)) continue
         if (seg.from === node.id || seg.to === node.id) continue
+        if (levels.size > 0 && !levels.has(segmentLevel(seg))) continue
         // Sibling/adjacent branches of the same node diverge slowly near apex, do not split each other
         if (isSiblingBranch(net, node, seg)) continue
 
@@ -362,6 +360,8 @@ export function reconcileNetworkIntersections(
         const s1 = segList[i]
         const s2 = segList[j]
         if (!net.segments.has(s1.id) || !net.segments.has(s2.id)) continue
+        // One passes over the other: a bridge, not a crossing
+        if (segmentLevel(s1) !== segmentLevel(s2)) continue
         // Two straights out of a shared node cannot meet again; a curve can (it crosses a track twice)
         const shareNode = s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to
         if (shareNode && s1.kind === 'straight' && s2.kind === 'straight') continue

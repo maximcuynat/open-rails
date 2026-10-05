@@ -1,5 +1,5 @@
 import type { Network, NodeId, Point, Segment, SegmentId, Junction } from './types'
-import { generateId } from './network'
+import { generateId, isCloserOrAbove, segmentLevel } from './network'
 import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength, isTransitionAllowed } from '../services/pathfinding'
 import { setJunctionBranch, findJunctionAtNode } from './junction'
@@ -1311,6 +1311,7 @@ export function snapToNearestTrack(
   let closestSegId: SegmentId | null = null
   let closestT = 0
   let minDist = maxDist
+  let closestLevel = 0
 
   for (const seg of net.segments.values()) {
     const proj = projectOnSegment(net, seg, worldPos)
@@ -1318,8 +1319,11 @@ export function snapToNearestTrack(
     const { t, point: p } = proj
 
     const dist = Math.hypot(p.x - worldPos.x, p.y - worldPos.y)
-    if (dist < minDist) {
+    if (dist >= maxDist) continue
+    // Of two stacked rails, the one on top (the one that is seen) is picked
+    if (closestSegId === null || isCloserOrAbove(dist, segmentLevel(seg), minDist, closestLevel)) {
       minDist = dist
+      closestLevel = segmentLevel(seg)
       closestSegId = seg.id
       closestT = t
     }

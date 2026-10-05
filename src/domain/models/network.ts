@@ -49,6 +49,7 @@ const SAME_RAIL_EPSILON = 1e-9
  * The rail that already joins two nodes with the same geometry, in either orientation:
  * a straight when `via` is omitted, otherwise a curve whose control point is within `viaTolerance`.
  * A straight and a curve, or two different curves, between the same nodes are different rails.
+ * With `level`, only a rail on that level counts; without it, a rail on any level does.
  */
 export function findSameRail(
   net: Network,
@@ -56,10 +57,13 @@ export function findSameRail(
   b: NodeId,
   via?: Point,
   viaTolerance = SAME_RAIL_EPSILON,
+  level?: number,
 ): Segment | undefined {
   for (const sid of net.adjacency.get(a) ?? []) {
     const s = net.segments.get(sid)
     if (!s || !((s.from === a && s.to === b) || (s.from === b && s.to === a))) continue
+    // A rail stacked on another level is another rail
+    if (level !== undefined && segmentLevel(s) !== level) continue
     if (!via) {
       if (s.kind === 'straight' || !s.via) return s
     } else if (s.kind === 'curve' && s.via && Math.hypot(s.via.x - via.x, s.via.y - via.y) <= viaTolerance) {
@@ -70,18 +74,86 @@ export function findSameRail(
 }
 
 /**
- * Join two nodes with a straight rail. There is never more than one straight between two nodes:
- * when one exists already (in either orientation) it is returned instead of a second one.
+ * Join two nodes with a straight rail on `level`. There is never more than one straight per level
+ * between two nodes: when one exists already (in either orientation) it is returned instead of a
+ * second one.
  */
-export function addSegment(net: Network, from: NodeId, to: NodeId): Segment | null {
+export function addSegment(net: Network, from: NodeId, to: NodeId, level = 0): Segment | null {
   if (from === to) return null
   if (!net.nodes.has(from) || !net.nodes.has(to)) return null
-  const existing = findSameRail(net, from, to)
+  const existing = findSameRail(net, from, to, undefined, SAME_RAIL_EPSILON, level)
   if (existing) return existing
   const seg: Segment = { id: generateId('s'), from, to, kind: 'straight' }
+  if (level !== 0) seg.level = level
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
+  return seg
+}
+
+export const MIN_LEVEL = -5
+export const MAX_LEVEL = 5
+
+/** Stacking level of a rail: 0 on the ground, above for a bridge, below for a tunnel. */
+export function segmentLevel(seg: Segment): number {
+  return seg.level ?? 0
+}
+
+/** Levels a node touches, from the rails ending there (two on a ramp, none for a lone node). */
+export function nodeLevels(net: Network, nodeId: NodeId): Set<number> {
+  const levels = new Set<number>()
+  for (const sid of net.adjacency.get(nodeId) ?? []) {
+    const seg = net.segments.get(sid)
+    if (seg) levels.add(segmentLevel(seg))
+  }
+  return levels
+}
+
+/**
+ * Level of the track a node belongs to, for a rail that branches off it: the level of its rails
+ * when they agree, the ground for a lone node or the foot of a ramp.
+ */
+export function branchLevel(net: Network, nodeId: NodeId): number {
+  const levels = nodeLevels(net, nodeId)
+  return levels.size === 1 ? [...levels][0] : 0
+}
+
+/**
+ * Put rails on `level` (rounded and clamped to MIN_LEVEL…MAX_LEVEL). Ground level is stored as
+ * no field at all, so that a network without bridges serializes as it always did.
+ * Returns the number of rails whose level changed.
+ */
+export function setSegmentsLevel(net: Network, ids: Iterable<SegmentId>, level: number): number {
+  const target = Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, Math.round(level)))
+  let changed = 0
+  for (const id of ids) {
+    const seg = net.segments.get(id)
+    if (!seg || segmentLevel(seg) === target) continue
+    if (target === 0) delete seg.level
+    else seg.level = target
+    changed++
+  }
+  return changed
+}
+
+/**
+ * Lay a rail that replaces (part of) `parent`, which was cut or merged: straight, or curved with
+ * `via`. It is the one place where a rail hands down what its pieces keep — its level and its
+ * ancestry (`ancestorId`, by default the parent's own ancestor). When the same rail already lies
+ * there on that level it is returned as it is, with its own ancestry.
+ */
+export function addChildSegment(
+  net: Network,
+  parent: Segment,
+  from: NodeId,
+  to: NodeId,
+  via?: Point,
+  ancestorId: SegmentId = parent.parentSegmentId ?? parent.id,
+): Segment | null {
+  const before = net.segments.size
+  const level = segmentLevel(parent)
+  const seg = via ? addCurveSegment(net, from, to, via, level) : addSegment(net, from, to, level)
+  if (seg && net.segments.size > before) seg.parentSegmentId = ancestorId
   return seg
 }
 
@@ -90,13 +162,15 @@ export function addCurveSegment(
   from: NodeId,
   to: NodeId,
   via: Point,
+  level = 0,
 ): Segment | null {
   if (from === to) return null
   if (!net.nodes.has(from) || !net.nodes.has(to)) return null
   // Same rule as addSegment: the identical curve is not laid a second time
-  const existing = findSameRail(net, from, to, via)
+  const existing = findSameRail(net, from, to, via, SAME_RAIL_EPSILON, level)
   if (existing) return existing
   const seg: Segment = { id: generateId('s'), from, to, kind: 'curve', via: { ...via } }
+  if (level !== 0) seg.level = level
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
@@ -107,7 +181,8 @@ export function addCurveSegment(
  * Drop the rails laid on top of another one between the same two nodes: a second straight, or a
  * curve whose control point is within `tolerance` of an earlier curve (and within 1 % of the chord,
  * so that a loose tolerance does not merge two genuinely different curves). The older rail is kept,
- * since trains may stand on it. Returns the number of rails removed.
+ * since trains may stand on it. Rails on different levels are stacked, not duplicated: both stay.
+ * Returns the number of rails removed.
  */
 export function removeDuplicateSegments(net: Network, tolerance: number): number {
   let removed = 0
@@ -122,6 +197,7 @@ export function removeDuplicateSegments(net: Network, tolerance: number): number
     for (const sid of [...(net.adjacency.get(seg.from) ?? [])]) {
       const other = net.segments.get(sid)
       if (!other || other.id === seg.id) continue
+      if (segmentLevel(other) !== segmentLevel(seg)) continue
       if (!((other.from === seg.from && other.to === seg.to) || (other.from === seg.to && other.to === seg.from))) continue
       const otherIsCurve = other.kind === 'curve' && !!other.via
       if (isCurve !== otherIsCurve) continue
@@ -142,6 +218,7 @@ export function addCurveChain(
   from: NodeId,
   to: NodeId,
   pieces: CurvePiece[],
+  level = 0,
 ): { segments: Segment[]; nodes: RailNode[] } | null {
   if (from === to || pieces.length === 0) return null
   if (!net.nodes.has(from) || !net.nodes.has(to)) return null
@@ -152,7 +229,7 @@ export function addCurveChain(
     const isLast = i === pieces.length - 1
     const nextId = isLast ? to : addNode(net, pieces[i].end).id
     if (!isLast) nodes.push(net.nodes.get(nextId)!)
-    const seg = addCurveSegment(net, prevId, nextId, pieces[i].via)
+    const seg = addCurveSegment(net, prevId, nextId, pieces[i].via, level)
     if (seg) segments.push(seg)
     prevId = nextId
   }
@@ -168,11 +245,12 @@ export function addArcCurve(
   from: NodeId,
   to: NodeId,
   via: Point,
+  level = 0,
 ): { segments: Segment[]; nodes: RailNode[] } | null {
   const a = net.nodes.get(from)
   const b = net.nodes.get(to)
   if (!a || !b) return null
-  return addCurveChain(net, from, to, splitCurveIntoArcPieces(a.pos, via, b.pos))
+  return addCurveChain(net, from, to, splitCurveIntoArcPieces(a.pos, via, b.pos), level)
 }
 
 export function removeNode(net: Network, id: NodeId): void {
@@ -199,7 +277,8 @@ export function removeNode(net: Network, id: NodeId): void {
  * Dissolve an intermediate degree-2 node aligned between two straight segments.
  * Removes the intermediate node and replaces the two collinear straight segments
  * with a single continuous straight segment connecting the outer endpoints directly.
- * Returns the newly created segment if dissolved, or null if the node cannot be dissolved.
+ * Returns the newly created segment if dissolved, or null if the node cannot be dissolved
+ * (two rails on different levels are not merged: the node is where the ramp changes level).
  */
 export function dissolveNode(
   net: Network,
@@ -218,6 +297,7 @@ export function dissolveNode(
 
   // Both segments must be straight
   if (s1.kind !== 'straight' || s2.kind !== 'straight') return null
+  if (segmentLevel(s1) !== segmentLevel(s2)) return null
 
   const otherId1 = s1.from === id ? s1.to : s1.from
   const otherId2 = s2.from === id ? s2.to : s2.from
@@ -262,10 +342,8 @@ export function dissolveNode(
 
   // Connect node1 and node2 directly with a straight segment. When a straight already joins them
   // it takes over as it is: its own heritage is not overwritten.
-  const existing = findSameRail(net, otherId1, otherId2)
-  const newSeg = existing ?? addSegment(net, otherId1, otherId2)
+  const newSeg = addChildSegment(net, s1, otherId1, otherId2, undefined, parentId)
   if (newSeg) {
-    if (!existing) newSeg.parentSegmentId = parentId
 
     // Update any junctions that were referencing s1 or s2
     for (const junc of net.junctions.values()) {
@@ -369,24 +447,42 @@ export function distToSegment(p: Point, a: Point, b: Point): number {
   return dist(p, { x: a.x + t * dx, y: a.y + t * dy })
 }
 
-/** Find the closest node to a point within a max radius. */
+/**
+ * Distances closer than this (meters) are a tie when picking what is under the pointer: of two
+ * stacked rails or nodes, the one on top — the one that is seen — is picked.
+ */
+export const LEVEL_TIE_EPSILON = 1e-6
+
+/** True when a candidate at distance `d` on `level` beats the best one so far */
+export function isCloserOrAbove(d: number, level: number, bestD: number, bestLevel: number): boolean {
+  if (level === bestLevel) return d < bestD
+  return level > bestLevel ? d <= bestD + LEVEL_TIE_EPSILON : d < bestD - LEVEL_TIE_EPSILON
+}
+
+/** Find the closest node to a point within a max radius (the upper one of two stacked nodes). */
 export function hitNode(net: Network, pos: Point, maxDist: number): NodeId | null {
   let best: NodeId | null = null
   let bestD = maxDist
+  let bestLevel = 0
   for (const node of net.nodes.values()) {
     const d = dist(pos, node.pos)
-    if (d < bestD) {
+    if (d >= maxDist) continue
+    const levels = nodeLevels(net, node.id)
+    const level = levels.size > 0 ? Math.max(...levels) : 0
+    if (best === null || isCloserOrAbove(d, level, bestD, bestLevel)) {
       bestD = d
+      bestLevel = level
       best = node.id
     }
   }
   return best
 }
 
-/** Find the closest segment to a point within a max distance. */
+/** Find the closest segment to a point within a max distance (the upper one of two stacked rails). */
 export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId | null {
   let best: SegmentId | null = null
   let bestD = maxDist
+  let bestLevel = 0
   for (const seg of net.segments.values()) {
     const a = net.nodes.get(seg.from)
     const b = net.nodes.get(seg.to)
@@ -395,8 +491,10 @@ export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId
       seg.kind === 'curve' && seg.via
         ? distToCurve(pos, a.pos, seg.via, b.pos)
         : distToSegment(pos, a.pos, b.pos)
-    if (d < bestD) {
+    if (d >= maxDist) continue
+    if (best === null || isCloserOrAbove(d, segmentLevel(seg), bestD, bestLevel)) {
       bestD = d
+      bestLevel = segmentLevel(seg)
       best = seg.id
     }
   }

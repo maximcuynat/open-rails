@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorStore, JUNCTION_OCCUPIED_REFUSED } from '@application/state/editorStore'
-import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
+import { addNode, addSegment, resetIdCounter, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { findJunctionAtNode } from '@domain/models/junction'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { showToast } from '../common/Toast'
@@ -131,7 +131,7 @@ describe('contextual bar — select tool', () => {
 
     const items = bar(store)
     expect(label(items)).toBe('Voie')
-    expect(actionLabels(items)).toEqual(['Scinder', 'Voie double', 'Supprimer'])
+    expect(actionLabels(items)).toEqual(['Scinder', 'Monter', 'Descendre', 'Voie double', 'Supprimer'])
 
     action(items, 'parallel').run()
     expect(store.network.segments.size).toBe(2)
@@ -144,6 +144,88 @@ describe('contextual bar — select tool', () => {
     expect(label(bar(store))).toBe('3 voies')
     action(bar(store), 'delete').run()
     expect(store.network.segments.size).toBe(0)
+  })
+})
+
+describe('contextual bar — track levels', () => {
+  it('Monter and Descendre shift the selected rails by one level, on a multiple selection too', () => {
+    const { store, b, seg } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 })
+    const next = addSegment(store.network, b.id, c.id)!
+    const shift = vi.spyOn(store, 'shiftSelectionLevel')
+
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    action(bar(store), 'level-up').run()
+    expect(shift).toHaveBeenLastCalledWith(1)
+    action(bar(store), 'level-down').run()
+    expect(shift).toHaveBeenLastCalledWith(-1)
+
+    // A bridge is several rails: the same two actions on the whole selection
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
+    const items = bar(store)
+    expect(label(items)).toBe('2 voies')
+    expect(actionLabels(items)).toEqual(['Scinder', 'Monter', 'Descendre', 'Voie double', 'Supprimer'])
+    action(items, 'level-up').run()
+    expect(shift).toHaveBeenLastCalledWith(1)
+    expect(shift).toHaveBeenCalledTimes(3)
+    // The selection is what the store acts on
+    expect([...store.selection.segments]).toEqual([seg.id, next.id])
+  })
+
+  it('a track picked with its nodes (a click on a track) gets Monter and Descendre too; nodes alone do not', () => {
+    const { store, seg } = storeWithTrack()
+    const shift = vi.spyOn(store, 'shiftSelectionLevel')
+
+    store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set([seg.id]) })
+    const items = bar(store)
+    expect(actionLabels(items)).toContain('Monter')
+    expect(actionLabels(items)).toContain('Descendre')
+    action(items, 'level-up').run()
+    expect(shift).toHaveBeenLastCalledWith(1)
+
+    store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set() })
+    expect(actionLabels(bar(store))).not.toContain('Monter')
+  })
+
+  it('on the ground no level is shown; a bridge or a tunnel shows its level', () => {
+    const { store, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    expect(bar(store).some((i) => i.kind === 'value' && i.id === 'level')).toBe(false)
+
+    seg.level = 1
+    expect(value(bar(store), 'level')).toMatchObject({ caption: 'Niveau', text: 'Pont +1' })
+    seg.level = -2
+    expect(value(bar(store), 'level').text).toBe('Tunnel −2')
+  })
+
+  it('a selection across several levels shows the span', () => {
+    const { store, b, seg } = storeWithTrack()
+    const c = addNode(store.network, { x: 400, y: 0 })
+    const next = addSegment(store.network, b.id, c.id)!
+    next.level = 1
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
+    expect(value(bar(store), 'level').text).toBe('Sol à Pont +1')
+  })
+
+  it('Monter is disabled at the top level and Descendre at the bottom one', () => {
+    const { store, b, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    expect(action(bar(store), 'level-up').disabled).toBe(false)
+    expect(action(bar(store), 'level-down').disabled).toBe(false)
+
+    seg.level = MAX_LEVEL
+    expect(action(bar(store), 'level-up').disabled).toBe(true)
+    expect(action(bar(store), 'level-down').disabled).toBe(false)
+    seg.level = MIN_LEVEL
+    expect(action(bar(store), 'level-up').disabled).toBe(false)
+    expect(action(bar(store), 'level-down').disabled).toBe(true)
+
+    // Mixed selection: an action stays available as long as one rail can still move
+    const c = addNode(store.network, { x: 400, y: 0 })
+    const next = addSegment(store.network, b.id, c.id)!
+    seg.level = MAX_LEVEL
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
+    expect(action(bar(store), 'level-up').disabled).toBe(false)
   })
 })
 

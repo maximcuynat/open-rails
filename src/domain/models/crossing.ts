@@ -1,4 +1,5 @@
-import type { Network, Point, Segment } from './types'
+import type { Network, NodeId, Point, Segment } from './types'
+import { addNode, segmentLevel } from './network'
 import { discretizeCurve } from '../geometry/curve'
 import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
@@ -124,6 +125,107 @@ export function intersectSegments(
   return null
 }
 
+type ThroughTrack = [Segment, Segment]
+
+/**
+ * The two through tracks of a degree-4 node: its four rails paired by opposite directions (their
+ * tangents at the node, so that a curve pairs with its own continuation and not with its chord).
+ * `dirs` is the direction in which the first rail of each track leaves the node.
+ * Null when the node is not an X of two tracks running through.
+ */
+export function throughTracksAtNode(
+  net: Network,
+  nodeId: NodeId,
+): { tracks: [ThroughTrack, ThroughTrack]; dirs: [Point, Point] } | null {
+  const adj = net.adjacency.get(nodeId) ?? []
+  if (adj.length !== 4) return null
+  const segs = adj.map((id) => net.segments.get(id)).filter((s): s is Segment => !!s)
+  if (segs.length !== 4) return null
+
+  const dirs: Point[] = []
+  for (const s of segs) {
+    const tan = segmentTangentAt(net, s, nodeId)
+    if (!tan) return null
+    dirs.push(s.from === nodeId ? tan : { x: -tan.x, y: -tan.y })
+  }
+
+  // Pair directions that are roughly opposite (dot product close to -1)
+  let partner = -1
+  let minDot = 1
+  for (let j = 1; j < 4; j++) {
+    const dot = dirs[0].x * dirs[j].x + dirs[0].y * dirs[j].y
+    if (dot < minDot) {
+      minDot = dot
+      partner = j
+    }
+  }
+  if (partner < 0 || minDot >= -0.7) return null
+  const [r0, r1] = [1, 2, 3].filter((idx) => idx !== partner)
+  if (dirs[r0].x * dirs[r1].x + dirs[r0].y * dirs[r1].y >= -0.7) return null
+
+  return {
+    tracks: [
+      [segs[0], segs[partner]],
+      [segs[r0], segs[r1]],
+    ],
+    dirs: [dirs[0], dirs[r0]],
+  }
+}
+
+/** True when the two tracks have a level in common, i.e. when they meet */
+function shareLevel(a: ThroughTrack, b: ThroughTrack): boolean {
+  return a.some((sa) => b.some((sb) => segmentLevel(sa) === segmentLevel(sb)))
+}
+
+/**
+ * Turn a level crossing into a bridge: when the two tracks running through a degree-4 node have no
+ * level in common, the upper one is moved onto a twin node at the same place, so that nothing
+ * joins them any more. The rails keep their ids and their shape (trains on them do not move), and
+ * reconcile leaves the two stacked nodes apart for as long as their levels differ.
+ * Returns the twin node id, or null when the node is not such a crossing.
+ */
+export function separateLevelsAtNode(net: Network, nodeId: NodeId): NodeId | null {
+  const node = net.nodes.get(nodeId)
+  const through = node && throughTracksAtNode(net, nodeId)
+  if (!node || !through) return null
+  const [a, b] = through.tracks
+  if (shareLevel(a, b)) return null
+
+  const top = (track: ThroughTrack) => Math.max(segmentLevel(track[0]), segmentLevel(track[1]))
+  const upper = top(a) > top(b) ? a : b
+  const twin = addNode(net, node.pos)
+  const stay = net.adjacency.get(nodeId)!
+  for (const seg of upper) {
+    if (seg.from === nodeId) seg.from = twin.id
+    if (seg.to === nodeId) seg.to = twin.id
+    stay.splice(stay.indexOf(seg.id), 1)
+    net.adjacency.get(twin.id)!.push(seg.id)
+  }
+
+  // A plain node is left on each track: no points here any more, and the junctions at the far end
+  // of the moved rails now look at the twin
+  const moved = new Set(upper.map((seg) => seg.id))
+  for (const junc of [...net.junctions.values()]) {
+    if (junc.nodeId === nodeId) {
+      net.junctions.delete(junc.id)
+      continue
+    }
+    if (junc.straightNodeId === nodeId && moved.has(junc.straightSegmentId)) junc.straightNodeId = twin.id
+    if (junc.divergingNodeId === nodeId && moved.has(junc.divergingSegmentId)) junc.divergingNodeId = twin.id
+    if (
+      junc.divergingRightNodeId === nodeId &&
+      junc.divergingRightSegmentId &&
+      moved.has(junc.divergingRightSegmentId)
+    ) {
+      junc.divergingRightNodeId = twin.id
+    }
+    if (junc.stemNodeId === nodeId && upper.some((seg) => seg.from === junc.nodeId || seg.to === junc.nodeId)) {
+      junc.stemNodeId = twin.id
+    }
+  }
+  return twin.id
+}
+
 /**
  * Automatically inspect the network to detect railway crossings (diamond crossings):
  * 1. Geometric intersections between distinct segments that cross each other.
@@ -144,38 +246,14 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
   for (const node of net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length === 4) {
-      const segs = adj.map((id) => net.segments.get(id)).filter((s): s is Segment => !!s)
-      if (segs.length !== 4) continue
-
-      // Normalized direction in which each segment leaves the node (its tangent there, so that
-      // a curve through the crossing pairs with its own continuation and not with its chord)
-      const dirs: Point[] = []
-      for (const s of segs) {
-        const tan = segmentTangentAt(net, s, node.id)
-        if (!tan) continue
-        dirs.push(s.from === node.id ? tan : { x: -tan.x, y: -tan.y })
-      }
-      if (dirs.length !== 4) continue
-
-      // Pair directions that are roughly opposite (dot product close to -1)
-      let pairA1 = 0,
-        pairA2 = -1,
-        minDotA = 1
-      for (let j = 1; j < 4; j++) {
-        const dot = dirs[0].x * dirs[j].x + dirs[0].y * dirs[j].y
-        if (dot < minDotA) {
-          minDotA = dot
-          pairA2 = j
-        }
-      }
-
-      if (pairA2 > 0 && minDotA < -0.7) {
-        const remaining = [1, 2, 3].filter((idx) => idx !== pairA2)
-        const dotB = dirs[remaining[0]].x * dirs[remaining[1]].x + dirs[remaining[0]].y * dirs[remaining[1]].y
-        if (dotB < -0.7) {
+      const through = throughTracksAtNode(net, node.id)
+      if (through) {
+        const { tracks, dirs } = through
+        // Two tracks stacked on one node without a level in common do not cross
+        if (shareLevel(tracks[0], tracks[1])) {
           // Found two through lines crossing at node.pos!
-          const u1 = dirs[pairA1]
-          const u2 = dirs[remaining[0]]
+          const u1 = dirs[0]
+          const u2 = dirs[1]
           const dot12 = Math.abs(u1.x * u2.x + u1.y * u2.y)
           const angleRad = Math.acos(Math.min(1, Math.max(0, dot12)))
           const angleDeg = (angleRad * 180) / Math.PI
@@ -195,8 +273,8 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
                 angleRad,
                 track1Dir: u1,
                 track2Dir: u2,
-                seg1Id: segs[pairA1].id,
-                seg2Id: segs[remaining[0]].id,
+                seg1Id: tracks[0][0].id,
+                seg2Id: tracks[1][0].id,
                 nodeId: node.id,
                 frogs,
                 radius: r + 15,
@@ -218,6 +296,8 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
 
       // Skip segments sharing an endpoint
       if (s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to) continue
+      // One passes over the other: a bridge, not a crossing
+      if (segmentLevel(s1) !== segmentLevel(s2)) continue
 
       const n1A = net.nodes.get(s1.from)
       const n1B = net.nodes.get(s1.to)

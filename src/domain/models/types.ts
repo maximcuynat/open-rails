@@ -22,6 +22,11 @@ export interface Segment {
   via?: Point
   /** Parent segment ID if this segment was split from another segment */
   parentSegmentId?: SegmentId
+  /**
+   * Stacking level (bridge > 0, tunnel < 0), absent on the ground. Two rails only interact
+   * (crossing, weld, split, duplicate) where they share a level. Read it with `segmentLevel`.
+   */
+  level?: number
 }
 
 export type JunctionId = string

@@ -8,6 +8,7 @@ import { segmentTangentAt } from '@domain/geometry/tangent'
 import { computeTrackSections, findSectionBySegment, detectDirectionConflicts, isRenamedSection, type SectionMetadata } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
+import { nodeLevels, segmentLevel } from '@domain/models/network'
 
 /** Choose a grid spacing (in world units) that keeps cells ~40–80 px on screen. */
 export function pickSpacing(scale: number): number {
@@ -489,6 +490,248 @@ export interface RenderNetworkOptions {
   quietNodeIds?: ReadonlySet<string>
   /** Rail gauge of the layout: scales the distance thresholds of the diagnostics */
   gauge?: number
+  /**
+   * Draw only one part of the network: the rails (with their bridge decks), or everything that
+   * sits on top of them (badges, signs, nodes, diagnostics). Absent: both, in one call.
+   * Used to slip the trains between two track levels (`renderNetworkWithTrains`).
+   */
+  part?: 'tracks' | 'overlays'
+  /** Rails of this level only (see `segmentLevel`). Absent: every level, lowest first. */
+  level?: number
+}
+
+// ─────────────────── Track levels (bridges and tunnels) ───────────────────
+
+/** Bridge deck width, in metres for a standard-gauge track: wider than the ballast it carries. */
+export const DECK_WIDTH = BALLAST_WIDTH * 1.45
+/** Width of the parapet drawn along each edge of a bridge deck. */
+export const DECK_PARAPET_WIDTH = 0.30
+/** Opacity of a rail below ground (tunnel). */
+export const TUNNEL_ALPHA = 0.4
+/** Dash pattern (screen px) of a rail below ground. */
+export const TUNNEL_DASH = [6, 5]
+/** Opacity of a vehicle running in a tunnel. */
+export const TUNNEL_VEHICLE_ALPHA = 0.35
+
+/** Levels `above` (excluded) to `upTo` (included): what one pass of the layered drawing covers. */
+export interface LevelBand {
+  above: number
+  upTo: number
+}
+
+export function inLevelBand(level: number, band?: LevelBand): boolean {
+  return !band || (level > band.above && level <= band.upTo)
+}
+
+/** Level of the rail a bogie stands on. */
+export function trackPositionLevel(net: Network, pos: { segId: string }): number {
+  const seg = net.segments.get(pos.segId)
+  return seg ? segmentLevel(seg) : 0
+}
+
+/** Level of a vehicle: the rail under its bogies, the higher of the two when it straddles a ramp. */
+export function vehicleLevel(net: Network, vehicle: { front: { segId: string }; rear: { segId: string } }): number {
+  return Math.max(trackPositionLevel(net, vehicle.front), trackPositionLevel(net, vehicle.rear))
+}
+
+function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
+  const visible: Segment[] = []
+  for (const seg of net.segments.values()) {
+    const a = net.nodes.get(seg.from)
+    const b = net.nodes.get(seg.to)
+    if (!a || !b) continue
+    if (isSegmentInBounds(a.pos, b.pos, seg.via, bounds)) visible.push(seg)
+  }
+  return visible
+}
+
+/** Segments split by level, lowest level first; the order inside a level is kept. */
+function groupSegmentsByLevel(segs: Segment[]): { level: number; segs: Segment[] }[] {
+  if (segs.length === 0) return []
+  const first = segmentLevel(segs[0])
+  // A network on a single level (every network without a bridge): one group, nothing to sort
+  if (segs.every((seg) => segmentLevel(seg) === first)) return [{ level: first, segs }]
+  const byLevel = new Map<number, Segment[]>()
+  for (const seg of segs) {
+    const level = segmentLevel(seg)
+    const group = byLevel.get(level)
+    if (group) group.push(seg)
+    else byLevel.set(level, [seg])
+  }
+  return [...byLevel.entries()].sort((x, y) => x[0] - y[0]).map(([level, group]) => ({ level, segs: group }))
+}
+
+/** Levels of the rails in view, lowest first. A network without bridge or tunnel gives `[0]`. */
+export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: number): number[] {
+  let hasLevels = false
+  for (const seg of net.segments.values()) {
+    if (seg.level) {
+      hasLevels = true
+      break
+    }
+  }
+  if (!hasLevels) return [0]
+  const levels = new Set<number>()
+  for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) levels.add(segmentLevel(seg))
+  return [...levels].sort((x, y) => x - y)
+}
+
+function traceCenterline(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  a: Point,
+  b: Point,
+  via?: Point,
+): void {
+  ctx.beginPath()
+  ctx.moveTo((a.x - cam.x) * cam.scale + vw / 2, (a.y - cam.y) * cam.scale + vh / 2)
+  const bx = (b.x - cam.x) * cam.scale + vw / 2
+  const by = (b.y - cam.y) * cam.scale + vh / 2
+  if (via) {
+    ctx.quadraticCurveTo((via.x - cam.x) * cam.scale + vw / 2, (via.y - cam.y) * cam.scale + vh / 2, bx, by)
+  } else {
+    ctx.lineTo(bx, by)
+  }
+}
+
+/**
+ * Bridge decks of the rails of one level above ground: an opaque band wider than the ballast,
+ * with a parapet along each edge, that hides whatever runs below. Drawn before the rails it
+ * carries. Where the deck meets a lower rail (ramp node) it ends on an abutment: a closing line
+ * and two splayed wing walls, the usual map symbol of a bridge end.
+ */
+export function renderBridgeDecks(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  segs: Segment[],
+  level: number,
+  gauge: number = GAUGE,
+): void {
+  if (level <= 0 || segs.length === 0) return
+  const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
+  const ink = getCanvasStyle(ctx.canvas, '--ink', '#1a1a1a')
+  const edge = getCanvasStyle(ctx.canvas, '--rail', '#526071')
+
+  const s = cam.scale
+  const ratio = gauge / GAUGE
+  const halfDeck = (DECK_WIDTH * ratio) / 2
+  const deckPx = DECK_WIDTH * ratio * s
+  const parapetPx = Math.max(1, DECK_PARAPET_WIDTH * ratio * s)
+
+  const ends = (seg: Segment) => {
+    const a = net.nodes.get(seg.from)
+    const b = net.nodes.get(seg.to)
+    return a && b ? { a, b, via: seg.kind === 'curve' ? seg.via : undefined } : null
+  }
+
+  ctx.save()
+  ctx.lineCap = 'butt'
+  ctx.lineJoin = 'miter'
+
+  // Parapets: the full width in the rail colour, the deck itself is laid over its middle. All the
+  // parapets first, so that the deck of one span never gets cut by the edge of the next.
+  ctx.strokeStyle = edge
+  ctx.lineWidth = deckPx
+  for (const seg of segs) {
+    const e = ends(seg)
+    if (!e) continue
+    traceCenterline(ctx, cam, vw, vh, e.a.pos, e.b.pos, e.via)
+    ctx.stroke()
+  }
+
+  // Deck: the background colour (opaque, it hides the lower rails), lightly tinted with the ink
+  // so that it reads as a slab in the light theme as in the dark one.
+  ctx.lineWidth = Math.max(1, deckPx - 2 * parapetPx)
+  for (const seg of segs) {
+    const e = ends(seg)
+    if (!e) continue
+    traceCenterline(ctx, cam, vw, vh, e.a.pos, e.b.pos, e.via)
+    ctx.strokeStyle = paper
+    ctx.globalAlpha = 1
+    ctx.stroke()
+    ctx.strokeStyle = ink
+    ctx.globalAlpha = 0.08
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+
+  // Abutments at the ramp nodes
+  ctx.strokeStyle = edge
+  ctx.lineWidth = Math.max(1.5, parapetPx * 1.5)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  const wing = halfDeck * 0.6
+  for (const seg of segs) {
+    for (const nodeId of [seg.from, seg.to]) {
+      const node = net.nodes.get(nodeId)
+      if (!node) continue
+      let ramp = false
+      for (const other of nodeLevels(net, nodeId)) {
+        if (other < level) ramp = true
+      }
+      if (!ramp) continue
+      // `tangent` points from the node into the deck: the wings splay the other way
+      const { tangent, normal } = getNodeSegmentEndVector(net, seg, nodeId)
+      const corner = (side: 1 | -1): Point => ({
+        x: node.pos.x + normal.x * halfDeck * side,
+        y: node.pos.y + normal.y * halfDeck * side,
+      })
+      const tip = (side: 1 | -1): Point => {
+        const c = corner(side)
+        return { x: c.x + (normal.x * side - tangent.x) * wing, y: c.y + (normal.y * side - tangent.y) * wing }
+      }
+      const pts = [tip(1), corner(1), corner(-1), tip(-1)].map((p) => w2s(p, cam, vw, vh))
+      ctx.beginPath()
+      ctx.moveTo(pts[0][0], pts[0][1])
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1])
+      ctx.stroke()
+    }
+  }
+
+  ctx.restore()
+}
+
+/**
+ * The network and the trains together. On a single visible level this is what it always was:
+ * the whole network, `drawOverTracks`, then the trains on top. As soon as two levels are in
+ * view the drawing is interleaved, lowest level first — the rails of a level, then the vehicles
+ * standing on it — so that a train passing under a bridge is hidden by its deck; the overlays of
+ * the network (badges, signs, nodes, diagnostics) and `drawOverTracks` then come once, last.
+ */
+export function renderNetworkWithTrains(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  vw: number,
+  vh: number,
+  net: Network,
+  selection: Selection,
+  sectionMeta: Record<string, SectionMetadata> | undefined,
+  options: RenderNetworkOptions | undefined,
+  drawTrains: (band?: LevelBand) => void,
+  drawOverTracks?: () => void,
+): void {
+  const levels = visibleTrackLevels(net, cam, vw, vh)
+  if (levels.length <= 1) {
+    renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, options)
+    drawOverTracks?.()
+    drawTrains()
+    return
+  }
+  levels.forEach((level, i) => {
+    renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'tracks', level })
+    // The outer bands are open-ended: a vehicle whose own rail is out of view is still drawn
+    drawTrains({
+      above: i === 0 ? -Infinity : levels[i - 1],
+      upTo: i === levels.length - 1 ? Infinity : level,
+    })
+  })
+  renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'overlays' })
+  drawOverTracks?.()
 }
 
 export function renderNetwork(
@@ -516,19 +759,27 @@ export function renderNetwork(
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
   const trackSections = computeTrackSections(net, sectionMeta)
-  const visibleSegments: Segment[] = []
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    if (isSegmentInBounds(a.pos, b.pos, seg.via, bounds)) {
-      visibleSegments.push(seg)
-    }
-  }
+  const visibleSegments = segmentsInBounds(net, bounds)
 
-  if (simplified) {
+  // Rails are drawn level by level, lowest first, so that a bridge covers what runs below it.
+  // Without bridge or tunnel there is a single group: the whole network, in its own order.
+  const allGroups = groupSegmentsByLevel(visibleSegments)
+  const levelGroups = options?.level === undefined ? allGroups : allGroups.filter((g) => g.level === options.level)
+  // Each rail joint belongs to one level only when several are drawn
+  const jointsByLevel = allGroups.length > 1 || options?.level !== undefined
+
+  const drawSimplifiedTracks = (segs: Segment[], level: number): void => {
     // Draw simplified single-line representation for low zoom levels
-    for (const seg of visibleSegments) {
+    const lineW = Math.max(2.5, 0.8 * cam.scale)
+    // A rail above ground gets an edging in the background colour: it reads as passing over
+    const halo = (): void => {
+      if (level <= 0) return
+      ctx.strokeStyle = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
+      ctx.lineWidth = lineW + 4
+      ctx.lineCap = 'butt'
+      ctx.stroke()
+    }
+    for (const seg of segs) {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
       if (!a || !b) continue
@@ -545,10 +796,6 @@ export function renderNetwork(
           ctx.setLineDash([5, 4])
         }
 
-        ctx.strokeStyle = secColor
-        ctx.lineWidth = Math.max(2.5, 0.8 * cam.scale)
-        ctx.lineCap = 'round'
-
         if (seg.kind === 'curve' && seg.via) {
           const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
           const p0x = (sub.p0.x - cam.x) * cam.scale + vw / 2
@@ -561,7 +808,6 @@ export function renderNetwork(
           ctx.beginPath()
           ctx.moveTo(p0x, p0y)
           ctx.quadraticCurveTo(vx, vy, p2x, p2y)
-          ctx.stroke()
         } else {
           const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
           const ax = (sub.a.x - cam.x) * cam.scale + vw / 2
@@ -572,17 +818,28 @@ export function renderNetwork(
           ctx.beginPath()
           ctx.moveTo(ax, ay)
           ctx.lineTo(bx, by)
-          ctx.stroke()
         }
+
+        halo()
+        ctx.strokeStyle = secColor
+        ctx.lineWidth = lineW
+        ctx.lineCap = 'round'
+        ctx.stroke()
 
         ctx.restore()
       }
     }
-  } else {
+  }
+
+  const drawDetailedTracks = (segs: Segment[], level: number): void => {
+    // 0. BRIDGE DECK under the rails of a level above ground
+    renderBridgeDecks(ctx, cam, vw, vh, net, segs, level, GAUGE)
+    const tunnel = level < 0
+
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
     if (!hideSectionCenterline) {
-      for (const seg of visibleSegments) {
+      for (const seg of segs) {
         const a = net.nodes.get(seg.from)
         const b = net.nodes.get(seg.to)
         if (!a || !b) continue
@@ -595,7 +852,7 @@ export function renderNetwork(
         ctx.strokeStyle = secColor
         const isStation = sec?.type === 'station_stop'
         ctx.lineWidth = isStation ? Math.max(2.5, Math.min(5.0, 0.6 * cam.scale)) : Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
-        ctx.globalAlpha = isSecSelected ? 0.95 : isStation ? 0.8 : 0.45
+        ctx.globalAlpha = (isSecSelected ? 0.95 : isStation ? 0.8 : 0.45) * (tunnel ? TUNNEL_ALPHA : 1)
         ctx.lineCap = 'round'
         if (isStation) {
           ctx.setLineDash([8, 4])
@@ -619,7 +876,7 @@ export function renderNetwork(
     }
 
     // 2. PURE RAIL RENDERING
-    for (const seg of visibleSegments) {
+    for (const seg of segs) {
       const a = net.nodes.get(seg.from)
       const b = net.nodes.get(seg.to)
       if (!a || !b) continue
@@ -631,6 +888,11 @@ export function renderNetwork(
         ctx.save()
         if (inter.isTurnout) {
           ctx.globalAlpha = 0.4
+        }
+        if (tunnel) {
+          // Below ground: dimmed and dashed
+          ctx.globalAlpha = TUNNEL_ALPHA * (inter.isTurnout ? 0.4 : 1)
+          ctx.setLineDash(TUNNEL_DASH)
         }
 
         if (seg.kind === 'curve' && seg.via) {
@@ -645,8 +907,23 @@ export function renderNetwork(
       }
     }
     // Connect rails and create smooth dynamic miter joints at nodes
-    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE)
+    if (tunnel) {
+      ctx.save()
+      ctx.globalAlpha = TUNNEL_ALPHA
+    }
+    renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE, jointsByLevel ? level : undefined)
+    if (tunnel) ctx.restore()
+  }
 
+  if (options?.part !== 'overlays') {
+    for (const group of levelGroups) {
+      if (simplified) drawSimplifiedTracks(group.segs, group.level)
+      else drawDetailedTracks(group.segs, group.level)
+    }
+  }
+  if (options?.part === 'tracks') return
+
+  if (!simplified) {
     // 3. SECTION BADGES (LOD: multi-level representation according to cam.scale)
     // - Scale < 1.0 (Macro view): hide all labels unless the section is actively selected
     // - 1.0 <= Scale < 3.0 (Overview): compact badge (name + arrow) only if section is >= 45px on screen
@@ -1909,6 +2186,8 @@ export function renderRailJoints(
   accent: string,
   bounds?: ViewportBounds,
   gauge: number = GAUGE,
+  /** Only the joints of this level; a joint between two levels (ramp) goes with the higher one */
+  level?: number,
 ): void {
   const s = cam.scale
   const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
@@ -1929,6 +2208,7 @@ export function renderRailJoints(
     const pairs = getConnectedEndPairs(node, ends, cam, vw, vh, gauge)
 
     for (const p of pairs) {
+      if (level !== undefined && Math.max(trackPositionLevel(net, p.e1), trackPositionLevel(net, p.e2)) !== level) continue
       const isSel = p.e1.selected || p.e2.selected
       const isDim = p.e1.isInactive || p.e2.isInactive
       const col = isSel ? accent : railColor
@@ -4786,6 +5066,9 @@ function drawTrainSetBody(
 
 /**
  * Render a complete TrainSet from the fleet on the canvas.
+ * With `band`, only what stands on those track levels is drawn (one pass of the layered drawing,
+ * see `renderNetworkWithTrains`); the debug overlay comes with the highest vehicle of the train.
+ * A vehicle below ground (tunnel) is dimmed.
  */
 export function renderTrainSet(
   ctx: CanvasRenderingContext2D,
@@ -4800,6 +5083,7 @@ export function renderTrainSet(
   telemetry?: TrainTelemetry,
   selectedVehicleId?: string | null,
   deleteVehicleId?: string | null,
+  band?: LevelBand,
 ): void {
   const visuals = getTrainSetVisuals(net, train)
   if (!visuals) return
@@ -4812,6 +5096,33 @@ export function renderTrainSet(
     ctx.globalAlpha = 0.45
   }
 
+  // Track level of each vehicle, and of the train as a whole (its highest vehicle)
+  const levelById = new Map<string, number>()
+  let topLevel = -Infinity
+  for (const veh of train.vehicles) {
+    const level = vehicleLevel(net, veh)
+    levelById.set(veh.id, level)
+    if (level > topLevel) topLevel = level
+  }
+  const levelOf = (vehicleId: string): number => levelById.get(vehicleId) ?? 0
+  // A gangway hangs between two vehicles: it follows the higher one
+  const gangwayLevel = (index: number): number =>
+    visuals.accordions.length === train.vehicles.length - 1
+      ? Math.max(levelOf(train.vehicles[index].id), levelOf(train.vehicles[index + 1].id))
+      : topLevel
+  /** Draw a part standing on `level`: skipped outside the band of this pass, dimmed in a tunnel */
+  const atLevel = (level: number, draw: () => void): void => {
+    if (!inLevelBand(level, band)) return
+    if (level >= 0) {
+      draw()
+      return
+    }
+    ctx.save()
+    ctx.globalAlpha = (isGhost ? 0.45 : 1) * TUNNEL_VEHICLE_ALPHA
+    draw()
+    ctx.restore()
+  }
+
   // Selection outline for entire train
   if (isSelected && !isGhost && !isDebugSkeleton) {
     ctx.save()
@@ -4819,7 +5130,7 @@ export function renderTrainSet(
     ctx.lineWidth = 1.5
     ctx.lineJoin = 'round'
     for (const v of visuals.vehicles) {
-      if (v.polygon.length > 0) {
+      if (v.polygon.length > 0 && inLevelBand(levelOf(v.id), band)) {
         ctx.beginPath()
         ctx.moveTo(toSx(v.polygon[0]), toSy(v.polygon[0]))
         for (let pi = 1; pi < v.polygon.length; pi++) {
@@ -4835,7 +5146,7 @@ export function renderTrainSet(
   // Targeted vehicle highlight (when a specific car or loco in the train is selected)
   if (selectedVehicleId && !isGhost) {
     const selV = visuals.vehicles.find(v => v.id === selectedVehicleId)
-    if (selV && selV.polygon.length > 0) {
+    if (selV && selV.polygon.length > 0 && inLevelBand(levelOf(selV.id), band)) {
       ctx.save()
       ctx.strokeStyle = '#f59e0b'
       ctx.lineWidth = 2.5
@@ -4852,24 +5163,32 @@ export function renderTrainSet(
   }
 
   // 1. Bogies: each physical bogie once (two trailers share one), the first is the lead bogie
+  // A bogie is at the level of its own rail
   for (let i = 0; i < visuals.bogies.length; i++) {
-    drawTrainSetBogie(ctx, cam, toSx, toSy, visuals.bogies[i], i === 0, isGhost)
+    const bogie = visuals.bogies[i]
+    atLevel(bogie.pos ? trackPositionLevel(net, bogie.pos) : topLevel, () => {
+      drawTrainSetBogie(ctx, cam, toSx, toSy, bogie, i === 0, isGhost)
+    })
   }
 
   // 2. Accordions
-  for (const acc of visuals.accordions) {
-    drawTrainSetAccordion(ctx, cam, toSx, toSy, acc, isGhost)
+  for (let i = 0; i < visuals.accordions.length; i++) {
+    atLevel(gangwayLevel(i), () => {
+      drawTrainSetAccordion(ctx, cam, toSx, toSy, visuals.accordions[i], isGhost)
+    })
   }
 
   // 3. Vehicles
   for (const v of visuals.vehicles) {
-    drawTrainSetBody(ctx, cam, toSx, toSy, v.polygon, isDebugSkeleton, telemetry)
+    atLevel(levelOf(v.id), () => {
+      drawTrainSetBody(ctx, cam, toSx, toSy, v.polygon, isDebugSkeleton, telemetry)
+    })
   }
 
   // 3.5 Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
   if (deleteVehicleId && !isGhost) {
     const delV = visuals.vehicles.find(v => v.id === deleteVehicleId)
-    if (delV && delV.polygon.length > 0) {
+    if (delV && delV.polygon.length > 0 && inLevelBand(levelOf(delV.id), band)) {
       ctx.save()
       ctx.shadowColor = 'rgba(239, 68, 68, 0.85)'
       ctx.shadowBlur = 10
@@ -4915,7 +5234,7 @@ export function renderTrainSet(
   }
 
   // 4. Debug skeleton
-  if (isDebugSkeleton) {
+  if (isDebugSkeleton && inLevelBand(topLevel, band)) {
     ctx.save()
     const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
     ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`

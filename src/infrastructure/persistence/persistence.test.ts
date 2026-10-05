@@ -262,3 +262,62 @@ describe('persistence module', () => {
     })
   })
 })
+
+describe('track levels', () => {
+  beforeEach(() => resetIdCounter(0))
+
+  /** A ground track along x and a track along y on `level`, crossing at the origin without a node */
+  function crossed(level: number) {
+    const net = createNetwork()
+    const w = addNode(net, { x: -100, y: 0 })
+    const e = addNode(net, { x: 100, y: 0 })
+    const s = addNode(net, { x: 0, y: -100 })
+    const n = addNode(net, { x: 0, y: 100 })
+    const ground = addSegment(net, w.id, e.id)!
+    const other = addSegment(net, s.id, n.id, level)!
+    return { net, ground, other }
+  }
+
+  it('writes the level of a rail only when it is off the ground', () => {
+    const { net, ground, other } = crossed(2)
+    const data = serializeNetwork(net)
+
+    const saved = (id: string) => data.segments.find((seg) => seg.id === id)!
+    expect(saved(other.id).level).toBe(2)
+    expect('level' in saved(ground.id)).toBe(false)
+  })
+
+  it('round-trips levels, and loading does not put a node under the bridge', () => {
+    const { net, ground, other } = crossed(-1)
+    const restored = deserializeNetwork(JSON.parse(JSON.stringify(serializeNetwork(net)))).network
+
+    expect(restored.nodes.size).toBe(4)
+    expect([...restored.segments.keys()]).toEqual([ground.id, other.id])
+    expect(restored.segments.get(other.id)!.level).toBe(-1)
+    expect(restored.segments.get(ground.id)!.level).toBeUndefined()
+  })
+
+  it('a file without levels loads as it always did: the crossing gets its node and no rail gets a level', () => {
+    const { net } = crossed(0)
+    const data = JSON.parse(JSON.stringify(serializeNetwork(net)))
+    expect(JSON.stringify(data)).not.toContain('level')
+
+    const restored = deserializeNetwork(data).network
+
+    expect(restored.nodes.size).toBe(5)
+    expect(restored.segments.size).toBe(4)
+    for (const seg of restored.segments.values()) expect('level' in seg).toBe(false)
+    // Saving it again adds nothing to the file
+    expect(JSON.stringify(serializeNetwork(restored))).not.toContain('level')
+  })
+
+  it('ignores a level that is not a whole number within the allowed range', () => {
+    const { net, other } = crossed(1)
+    for (const bad of [1.5, 99, -6, '1', null, NaN]) {
+      const data = JSON.parse(JSON.stringify(serializeNetwork(net)))
+      data.segments.find((seg: { id: string }) => seg.id === other.id).level = bad
+      const restored = deserializeNetwork(data).network
+      for (const seg of restored.segments.values()) expect(seg.level).toBeUndefined()
+    }
+  })
+})

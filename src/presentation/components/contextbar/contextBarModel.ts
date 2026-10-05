@@ -1,8 +1,10 @@
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { findJunctionAtNode } from '@domain/models/junction'
+import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatAngle } from '@domain/models/units'
 import { showToast } from '../common/Toast'
+import { levelLabel, levelRange } from '../common/trackLevel'
 import { getGizmoAnchor } from '../canvas/gizmo'
 import {
   describeCurve,
@@ -98,6 +100,37 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
     run: () => { store.createParallelTrackFromSelection() },
   }
 
+  // Track level (bridge / tunnel). Each rail moves from its own level, so a whole bridge (several
+  // rails) goes up in one click; the level itself is shown as soon as a rail has left the ground.
+  const range = levelRange(store.network, segments) ?? { min: 0, max: 0 }
+  const levelValue: ContextBarItem[] =
+    range.min !== 0 || range.max !== 0
+      ? [{
+          kind: 'value',
+          id: 'level',
+          caption: 'Niveau',
+          text: range.min === range.max ? levelLabel(range.min) : `${levelLabel(range.min)} à ${levelLabel(range.max)}`,
+        }]
+      : []
+  const levelActions: ContextBarItem[] = [
+    {
+      kind: 'action',
+      id: 'level-up',
+      label: 'Monter',
+      title: 'Monter la sélection d’un niveau : elle passe au-dessus des autres voies (pont)',
+      disabled: range.min >= MAX_LEVEL,
+      run: () => { store.shiftSelectionLevel(1) },
+    },
+    {
+      kind: 'action',
+      id: 'level-down',
+      label: 'Descendre',
+      title: 'Descendre la sélection d’un niveau : elle passe sous les autres voies (tunnel)',
+      disabled: range.max <= MIN_LEVEL,
+      run: () => { store.shiftSelectionLevel(-1) },
+    },
+  ]
+
   if (nodes.size > 0) {
     const single = nodes.size === 1 && segments.size === 0
     items.push({ kind: 'label', text: single ? 'Nœud' : nodes.size === 1 ? 'Sélection' : `${nodes.size} nœuds` })
@@ -140,12 +173,15 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
         )
       }
     }
+    // A click on a track selects its nodes along with its rails: the level applies to those rails
+    if (segments.size > 0) items.push(...levelValue, ...levelActions)
     if (store.canCreateParallelTrack) items.push(parallel)
     items.push(remove)
     return items
   }
 
   items.push({ kind: 'label', text: segments.size === 1 ? 'Voie' : `${segments.size} voies` })
+  items.push(...levelValue)
   items.push({
     kind: 'action',
     id: 'split',
@@ -161,6 +197,7 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
       }
     },
   })
+  items.push(...levelActions)
   items.push(parallel, remove)
   return items
 }

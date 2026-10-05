@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
 import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
+import { MAX_LEVEL, MIN_LEVEL, segmentLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
 import {
@@ -16,6 +17,7 @@ import {
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { levelLabel } from '../common/trackLevel'
 
 function PanelHeader({ children }: { children: ReactNode }) {
   return <div className="sp-header">{children}</div>
@@ -27,6 +29,49 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
       <span className="sp-field-label">{label}</span>
       <span className="sp-field-value">{value}</span>
     </div>
+  )
+}
+
+/** Track level of the selected rail, with − / + to send it under or over the other tracks. */
+function LevelField({ store, level }: { store: EditorStore; level: number }) {
+  const stepButton = (delta: 1 | -1, disabled: boolean) => (
+    <button
+      type="button"
+      style={{
+        width: '22px',
+        height: '22px',
+        padding: 0,
+        fontSize: '13px',
+        fontWeight: 700,
+        lineHeight: 1,
+        borderRadius: '4px',
+        border: '1px solid var(--border)',
+        background: 'var(--paper)',
+        color: 'var(--ink)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.4 : 1,
+      }}
+      disabled={disabled}
+      onClick={() => { store.shiftSelectionLevel(delta) }}
+      title={delta > 0 ? 'Monter d’un niveau (pont)' : 'Descendre d’un niveau (tunnel)'}
+      aria-label={delta > 0 ? 'Monter d’un niveau' : 'Descendre d’un niveau'}
+    >
+      {delta > 0 ? '+' : '−'}
+    </button>
+  )
+  return (
+    <Field
+      label="Niveau"
+      value={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          {stepButton(-1, level <= MIN_LEVEL)}
+          <span style={{ minWidth: '64px', textAlign: 'center', color: level === 0 ? undefined : 'var(--accent)' }}>
+            {levelLabel(level)}
+          </span>
+          {stepButton(1, level >= MAX_LEVEL)}
+        </span>
+      }
+    />
   )
 }
 
@@ -559,6 +604,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
         <Field label="Longueur" value={`${len.toFixed(2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
+        <LevelField store={store} level={segmentLevel(seg)} />
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}

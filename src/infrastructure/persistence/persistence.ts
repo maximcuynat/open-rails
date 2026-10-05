@@ -1,5 +1,5 @@
 import type { Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, syncIdCounter } from '../../domain/models/network'
+import { createNetwork, resetIdCounter, syncIdCounter, segmentLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
 import { findJunctionAtNode } from '../../domain/models/junction'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
@@ -23,6 +23,8 @@ export interface SerializedSegment {
   to: string
   kind: SegmentKind
   via?: { x: number; y: number }
+  /** Stacking level; only written when the rail is off the ground */
+  level?: number
 }
 
 export interface SerializedJunction {
@@ -129,6 +131,7 @@ export function serializeNetwork(
       to: s.to,
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
+      ...(segmentLevel(s) !== 0 ? { level: segmentLevel(s) } : {}),
     })
   }
 
@@ -275,6 +278,10 @@ export function deserializeNetwork(data: SerializedProject): {
           !Number.isNaN(s.via.y)
             ? { x: s.via.x, y: s.via.y }
             : undefined,
+      }
+      // Read before the reconcile pass below, which must not join a bridge to the track under it
+      if (Number.isInteger(s.level) && s.level !== 0 && s.level! >= MIN_LEVEL && s.level! <= MAX_LEVEL) {
+        seg.level = s.level
       }
       net.segments.set(seg.id, seg)
       net.adjacency.get(s.from)?.push(seg.id)
