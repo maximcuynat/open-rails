@@ -230,16 +230,16 @@ describe('track levels — rails', () => {
     expect(tunnel.map((op) => op.dash)).toEqual([TUNNEL_DASH, []])
   })
 
-  it('schematic tier: one line per section in its colour, the levels are not layered', () => {
+  it('schematic tier: one line per section, all in the colour of the rails, the levels are not layered', () => {
     const far = createCamera(100, 0, 0.02)
     const lines = (ops: Op[]) => ops.filter((op) => op.name === 'stroke' && op.start && !isBufferStopStroke(op))
     const strokes = lines(drawPlain(crossingTracks(1).net, far))
-    expect(strokes.map((op) => op.lineWidth)).toEqual([2, 2])
+    // The two tracks in one stroke
+    expect(strokes.map((op) => op.lineWidth)).toEqual([2])
     expect(strokes.map((op) => op.strokeStyle)).not.toContain('#ffffff')
     expect(strokes[0].start![1]).toBeCloseTo(VH / 2 - 50 * 0.02)
-    expect(strokes[1].start![0]).toBeCloseTo(VW / 2 - 100 * 0.02)
 
-    // A track wholly below ground is dimmed
+    // A track wholly below ground is dimmed, in a stroke of its own
     const tunnel = lines(drawPlain(crossingTracks(-1).net, far))
     expect(tunnel.map((op) => op.globalAlpha)).toEqual([TUNNEL_ALPHA, 1])
   })

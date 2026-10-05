@@ -841,7 +841,7 @@ export function renderNetwork(
     if (lod === 'schematic') {
       for (const group of levelGroups) drawTrackUnderlays(group.pieces, group.level)
       // Once for the whole network: the levels are not layered in this tier
-      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { accent })
+      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { rail: railColor, accent })
     } else if (lod === 'line') {
       const paper = levelGroups.some((g) => g.level > 0) ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
       for (const group of levelGroups) {

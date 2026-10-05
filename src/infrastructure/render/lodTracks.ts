@@ -428,14 +428,27 @@ export function decimatePolyline(
 }
 
 export interface SchematicTrackColors {
+  rail: string
   accent: string
 }
 
+/** Distance between two tracks laid side by side, metres: the line of the schematic covers it */
+export const SCHEMATIC_TRACK_SPACING = 4
+
 /**
- * Schematic tier: one polyline per section in the colour of the section (the accent colour when
- * it is selected), one path per colour. The cost follows the number of sections in view and of
- * pixels they cover, not the number of rails. Levels are not layered here: a section wholly below
- * ground is only dimmed.
+ * Width of the line of a track in the schematic, in pixels: wide enough to touch the track next to
+ * it. Tracks side by side thus read as one band — a station as a thick stroke — which thins down to
+ * a single line as the view moves away, the way a map draws a railway from afar.
+ */
+export function schematicLineWidth(scale: number): number {
+  return Math.max(SCHEMATIC_LINE_WIDTH, SCHEMATIC_TRACK_SPACING * scale + 1.5)
+}
+
+/**
+ * Schematic tier: one polyline per section, all in the colour of the rails and in one stroke (the
+ * selected sections over them in the accent colour, the sections wholly below ground dimmed). The
+ * cost follows the number of sections in view and of pixels they cover, not the number of rails.
+ * Levels are not layered here.
  */
 export function renderSchematicTracks(
   ctx: CanvasRenderingContext2D,
@@ -452,23 +465,22 @@ export function renderSchematicTracks(
   const oy = vh / 2 - cam.y * s
 
   // Lines in view, gathered by style. Selected sections come last, on top of the others.
-  const batches = new Map<string, { color: string; tunnel: boolean; lines: SectionPolyline[] }>()
+  const ground: SectionPolyline[] = []
+  const tunnel: SectionPolyline[] = []
   const selected: SectionPolyline[] = []
   for (const line of polylines) {
     if (line.maxX < bounds.minX || line.minX > bounds.maxX || line.maxY < bounds.minY || line.minY > bounds.maxY) continue
-    if (selectedSections.has(line.section)) {
-      selected.push(line)
-      continue
-    }
-    const key = line.tunnel ? `${line.section.color}|t` : line.section.color
-    const batch = batches.get(key)
-    if (batch) batch.lines.push(line)
-    else batches.set(key, { color: line.section.color, tunnel: line.tunnel, lines: [line] })
+    if (selectedSections.has(line.section)) selected.push(line)
+    else if (line.tunnel) tunnel.push(line)
+    else ground.push(line)
   }
-  if (batches.size === 0 && selected.length === 0) return
+  if (ground.length + tunnel.length + selected.length === 0) return
 
   const pts: number[] = []
-  const strokeLines = (lines: SectionPolyline[]): void => {
+  const strokeLines = (lines: SectionPolyline[], color: string, alpha: number): void => {
+    if (lines.length === 0) return
+    ctx.strokeStyle = color
+    ctx.globalAlpha = alpha
     ctx.beginPath()
     for (const line of lines) {
       pts.length = 0
@@ -480,18 +492,11 @@ export function renderSchematicTracks(
   }
 
   ctx.save()
-  ctx.lineWidth = SCHEMATIC_LINE_WIDTH
+  ctx.lineWidth = schematicLineWidth(s)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  for (const batch of batches.values()) {
-    ctx.strokeStyle = batch.color
-    ctx.globalAlpha = batch.tunnel ? TUNNEL_ALPHA : 1
-    strokeLines(batch.lines)
-  }
-  if (selected.length > 0) {
-    ctx.strokeStyle = colors.accent
-    ctx.globalAlpha = 1
-    strokeLines(selected)
-  }
+  strokeLines(tunnel, colors.rail, TUNNEL_ALPHA)
+  strokeLines(ground, colors.rail, 1)
+  strokeLines(selected, colors.accent, 1)
   ctx.restore()
 }
