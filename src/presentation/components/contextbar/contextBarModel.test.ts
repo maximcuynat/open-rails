@@ -1,3 +1,4 @@
+import { computeTrackSections } from '@domain/models/sections'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorStore, JUNCTION_OCCUPIED_REFUSED } from '@application/state/editorStore'
 import { addNode, addSegment, resetIdCounter, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
@@ -143,8 +144,8 @@ describe('contextual bar — select tool', () => {
 
     const items = bar(store)
     expect(label(items)).toBe('Voie')
-    expect(items.map((i) => i.kind)).toEqual(['label', 'stepper', 'action', 'action', 'action', 'action'])
-    expect(actionLabels(items)).toEqual(['Lisser la pente', 'Scinder', 'Voie double', 'Supprimer'])
+    expect(items.map((i) => i.kind)).toEqual(['label', 'stepper', 'action', 'action', 'action', 'action', 'action'])
+    expect(actionLabels(items)).toEqual(['Sens ↔', 'Lisser la pente', 'Scinder', 'Voie double', 'Supprimer'])
 
     action(items, 'parallel').run()
     expect(store.network.segments.size).toBe(2)
@@ -237,6 +238,37 @@ describe('contextual bar — track levels', () => {
     }
   })
 
+  it('« Sens »: next to the level, steps the traffic direction of the selected track in one undo step', () => {
+    const { store, seg } = storeWithTrack()
+    store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set([seg.id]) })
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.id : i.kind))
+    const before = shape()
+    expect(before.indexOf('direction')).toBe(before.indexOf('stepper') + 1)
+    const directionOf = () => computeTrackSections(store.network, store.sectionMeta)[0].direction
+
+    expect(action(bar(store), 'direction')).toMatchObject({ label: 'Sens ↔', active: false, disabled: false })
+    action(bar(store), 'direction').run()
+    expect(directionOf()).toBe('forward')
+    expect(action(bar(store), 'direction')).toMatchObject({ label: 'Sens →', active: true })
+    action(bar(store), 'direction').run()
+    expect(directionOf()).toBe('backward')
+    expect(action(bar(store), 'direction').label).toBe('Sens ←')
+    // Same buttons at the same places whatever the direction
+    expect(shape()).toEqual(before)
+
+    store.undo()
+    expect(directionOf()).toBe('forward')
+    // Undo clears the selection
+    store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
+    action(bar(store), 'direction').run()
+    action(bar(store), 'direction').run()
+    expect(directionOf()).toBe('two_way')
+
+    // Nodes alone have no direction to set
+    store.setSelection({ nodes: new Set([seg.from]), segments: new Set() })
+    expect(shape()).not.toContain('direction')
+  })
+
   it('« Lisser la pente »: always there for rails, greyed out when there is nothing to even out', () => {
     const { store, seg } = storeWithTrack()
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
@@ -252,7 +284,7 @@ describe('contextual bar — track levels', () => {
     expect(action(bar(store), 'spread-gradient').disabled).toBe(false)
     // Same items, same order: only the state of the button changed
     expect(shape()).toEqual(greyed)
-    expect(greyed.indexOf('Lisser la pente')).toBe(greyed.indexOf('stepper') + 1)
+    expect(greyed.indexOf('Lisser la pente')).toBe(greyed.indexOf('stepper') + 2)
 
     action(bar(store), 'spread-gradient').run()
     expect(spread).toHaveBeenCalledTimes(1)

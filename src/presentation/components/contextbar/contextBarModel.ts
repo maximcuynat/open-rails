@@ -3,6 +3,7 @@ import { findJunctionAtNode } from '@domain/models/junction'
 import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatAngle } from '@domain/models/units'
+import { computeTrackSections, findSectionBySegment, type SectionDirection } from '@domain/models/sections'
 import { showToast } from '../common/Toast'
 import { levelRange, levelRangeLabel, nodeLevelRange } from '../common/trackLevel'
 import { getGizmoAnchor } from '../canvas/gizmo'
@@ -49,6 +50,15 @@ export interface ContextBarStep {
   title: string
   run: () => void
   disabled?: boolean
+}
+
+/** The traffic direction button steps through the settings in this order */
+const DIRECTION_CYCLE: Record<SectionDirection, SectionDirection> = { two_way: 'forward', forward: 'backward', backward: 'two_way' }
+const DIRECTION_ARROW: Record<SectionDirection, string> = { two_way: '↔', forward: '→', backward: '←' }
+const DIRECTION_NAME: Record<SectionDirection, string> = {
+  two_way: 'double sens',
+  forward: 'sens unique, dans le sens de pose',
+  backward: 'sens unique, à contresens de la pose',
 }
 
 const VEHICLE_LABEL = { tgv_loco: 'Motrice TGV', tgv_wagon: 'Voiture' } as const
@@ -137,6 +147,25 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
     },
   }
 
+  // Traffic direction of the sections the selected rails belong to. One button that steps through
+  // the three settings; its label has the same width in each, so the buttons after it stay put.
+  const sections = segments.size > 0 ? computeTrackSections(store.network, store.sectionMeta) : []
+  const selectedSections = [
+    ...new Set([...segments].map((sid) => findSectionBySegment(sections, sid)).filter((sec) => sec !== null)),
+  ]
+  const directions = new Set(selectedSections.map((sec) => sec.direction))
+  const currentDirection = directions.size === 1 ? [...directions][0] : null
+  const nextDirection = currentDirection ? DIRECTION_CYCLE[currentDirection] : 'two_way'
+  const direction: ContextBarItem = {
+    kind: 'action',
+    id: 'direction',
+    label: `Sens ${currentDirection ? DIRECTION_ARROW[currentDirection] : '…'}`,
+    title: `Sens de circulation : ${currentDirection ? DIRECTION_NAME[currentDirection] : 'différent selon les voies'}. Cliquer pour passer en ${DIRECTION_NAME[nextDirection]}`,
+    active: currentDirection !== null && currentDirection !== 'two_way',
+    disabled: selectedSections.length === 0,
+    run: () => { store.setSectionsMeta(selectedSections.map((sec) => sec.id), { direction: nextDirection }) },
+  }
+
   // Even out the slope along a run of rails. Always there when rails are selected, greyed out
   // when there is nothing to even out: the buttons after it keep their place
   const spread: ContextBarItem = {
@@ -193,13 +222,13 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
     // A click on a track selects its nodes along with its rails: the level applies to those rails.
     // Nodes alone: to the nodes themselves
     items.push(level)
-    if (segments.size > 0) items.push(spread)
+    if (segments.size > 0) items.push(direction, spread)
     items.push(parallel, remove)
     return items
   }
 
   items.push({ kind: 'label', text: segments.size === 1 ? 'Voie' : `${segments.size} voies` })
-  items.push(level, spread)
+  items.push(level, direction, spread)
   items.push({
     kind: 'action',
     id: 'split',

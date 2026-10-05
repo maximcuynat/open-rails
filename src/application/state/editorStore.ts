@@ -502,22 +502,30 @@ export class EditorStore {
   dirty = false
 
   setSectionMeta = (sectionId: string, meta: Partial<SectionMetadata>): void => {
-    const isCustom = meta.name !== undefined ? true : this.sectionMeta[sectionId]?.isCustomName
-    const updated = {
-      ...this.sectionMeta[sectionId],
-      ...meta,
-      ...(isCustom ? { isCustomName: true } : {}),
-    }
-    this.sectionMeta[sectionId] = updated
+    this.setSectionsMeta([sectionId], meta)
+  }
 
-    // Also associate metadata with individual constituent segment IDs so it survives splits/cuts
-    const segIds = sectionId.split('-')
-    for (const sid of segIds) {
-      if (sid) {
-        this.sectionMeta[sid] = {
-          ...this.sectionMeta[sid],
-          ...meta,
-          ...(isCustom ? { isCustomName: true } : {}),
+  /** Apply the same metadata to several sections as one edit (one undo step) */
+  setSectionsMeta = (sectionIds: string[], meta: Partial<SectionMetadata>): void => {
+    if (sectionIds.length === 0) return
+    for (const sectionId of sectionIds) {
+      const isCustom = meta.name !== undefined ? true : this.sectionMeta[sectionId]?.isCustomName
+      const updated = {
+        ...this.sectionMeta[sectionId],
+        ...meta,
+        ...(isCustom ? { isCustomName: true } : {}),
+      }
+      this.sectionMeta[sectionId] = updated
+
+      // Also associate metadata with individual constituent segment IDs so it survives splits/cuts
+      const segIds = sectionId.split('-')
+      for (const sid of segIds) {
+        if (sid) {
+          this.sectionMeta[sid] = {
+            ...this.sectionMeta[sid],
+            ...meta,
+            ...(isCustom ? { isCustomName: true } : {}),
+          }
         }
       }
     }
