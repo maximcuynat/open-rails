@@ -218,22 +218,42 @@ describe('renderNetwork by tier', () => {
     expect(large.calls.arc).toBeUndefined()
   })
 
-  it('detail tier: still two rails and their heads per rail, the section stripe and the joints', () => {
+  it('detail tier: still two rails and their heads, the section stripe and the joints — the rails of every piece in one stroke', () => {
     const scale = 8
     expect(trackLod(scale, GAUGE)).toBe('detail')
     const { net } = yard(1, 2)
     const { strokes } = tracks(net, scale, 30, 0)
     const railPx = Math.max(1.2, RAIL_WIDTH * scale)
-    // Per rail: the stripe of its section, the two rails, their heads
-    expect(strokes.filter((s) => s.strokeStyle === RAIL && s.lineWidth === railPx && s.lineCap === 'butt')).toHaveLength(2)
+    // The rails of the two pieces in a single stroke; their heads in another
+    const bases = strokes.filter((s) => s.strokeStyle === RAIL && s.lineWidth === railPx && s.lineCap === 'butt')
+    expect(bases).toHaveLength(1)
     // The heads of the rails, and those of the joint between the two
     expect(strokes.filter((s) => s.strokeStyle === '#ffffff').length).toBeGreaterThanOrEqual(2)
-    expect(strokes.length).toBeGreaterThan(6)
-    // The two rails of a straight: one path, either side of the centre line
-    const rails = strokes.find((s) => s.strokeStyle === RAIL && s.lineWidth === railPx)!
-    expect(rails.path.map((c) => c.name)).toEqual(['moveTo', 'lineTo', 'moveTo', 'lineTo'])
-    expect(rails.path[0].args[1]).toBeCloseTo(VH / 2 + (GAUGE / 2) * scale)
-    expect(rails.path[2].args[1]).toBeCloseTo(VH / 2 - (GAUGE / 2) * scale)
+    expect(strokes.length).toBeGreaterThan(4)
+    // Each straight piece: its two rails, either side of the centre line
+    expect(bases[0].path.map((c) => c.name)).toEqual(['moveTo', 'lineTo', 'moveTo', 'lineTo', 'moveTo', 'lineTo', 'moveTo', 'lineTo'])
+    expect(bases[0].path[0].args[1]).toBeCloseTo(VH / 2 + (GAUGE / 2) * scale)
+    expect(bases[0].path[2].args[1]).toBeCloseTo(VH / 2 - (GAUGE / 2) * scale)
+  })
+
+  it('detail tier: a rail of a curve is the curve beside it, tangent to the track at both ends', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 40, y: 4 })
+    addCurveSegment(net, a.id, b.id, { x: 20, y: 0 })
+    const scale = 8
+    const { strokes } = tracks(net, scale, 20, 0)
+    const railPx = Math.max(1.2, RAIL_WIDTH * scale)
+    const base = strokes.find((s) => s.strokeStyle === RAIL && s.lineWidth === railPx)!
+    expect(base.path.map((c) => c.name)).toEqual(['moveTo', 'quadraticCurveTo', 'moveTo', 'quadraticCurveTo'])
+    // The track leaves along +x: its rails start straight above and below its first node
+    const sx = VW / 2 + (0 - 20) * scale
+    expect(base.path[0].args[0]).toBeCloseTo(sx)
+    expect(base.path[0].args[1]).toBeCloseTo(VH / 2 + (GAUGE / 2) * scale)
+    expect(base.path[2].args[0]).toBeCloseTo(sx)
+    expect(base.path[2].args[1]).toBeCloseTo(VH / 2 - (GAUGE / 2) * scale)
+    // … and the control point of each rail is level with its start: same tangent as the track
+    expect(base.path[1].args[1]).toBeCloseTo(base.path[0].args[1])
   })
 
   it('schematic tier: one stroke per section colour, whatever the number of rails', () => {

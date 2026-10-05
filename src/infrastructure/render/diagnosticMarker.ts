@@ -1,3 +1,10 @@
+import { gaugeOnScreen } from './lod'
+import { DIAGNOSTIC_LABEL_FROM_PX } from './lodOverlays'
+import { textWidth } from './textWidth'
+
+/** Gauge the rails of the network are drawn with (m): the one the tiers are read against */
+const STANDARD_GAUGE = 1.435
+
 /**
  * The diagnostic marker of the construction view: a warning diamond on a place of the track, with
  * a short text above it once the zoom allows. Shared by every diagnostic drawn on the network.
@@ -42,9 +49,9 @@ export function drawDiagnosticMarker(
   ctx.fillText('!', sx, sy)
 
   // Label badge above if zoom is reasonable
-  if (scale >= 0.9) {
+  if (gaugeOnScreen(scale, STANDARD_GAUGE) >= DIAGNOSTIC_LABEL_FROM_PX) {
     ctx.font = '600 10px Archivo, system-ui, sans-serif'
-    const tw = ctx.measureText(label).width
+    const tw = textWidth(ctx, label)
     const ty = sy - signR - 10
 
     ctx.fillStyle = badgeColor

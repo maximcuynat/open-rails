@@ -3,8 +3,14 @@
  * (gauge × camera scale, in pixels), not the raw camera scale: the same thresholds hold at 1:1
  * and at every model scale. All the thresholds of the zoomed-out drawing live here.
  */
-export type TrackLod = 'detail' | 'line' | 'schematic'
+export type TrackLod = 'detail' | 'rails' | 'line' | 'schematic'
 
+/**
+ * Below this many pixels between the rails the track is no longer drawn piece by piece: its two
+ * rails are plain strokes, all the rails of the network in a handful of them, and the labels that
+ * name things (sections, speed boards) are left for a closer look
+ */
+export const LOD_RAILS_BELOW_PX = 5
 /** Below this many pixels between the rails they read as one stroke: a rail is drawn as a single line */
 export const LOD_LINE_BELOW_PX = 3
 /** Below this many pixels between the rails the network is a diagram: one polyline per section */
@@ -17,7 +23,8 @@ export function gaugeOnScreen(scale: number, gauge: number): number {
 
 export function trackLod(scale: number, gauge: number): TrackLod {
   const px = gaugeOnScreen(scale, gauge)
-  if (px >= LOD_LINE_BELOW_PX) return 'detail'
+  if (px >= LOD_RAILS_BELOW_PX) return 'detail'
+  if (px >= LOD_LINE_BELOW_PX) return 'rails'
   if (px >= LOD_SCHEMATIC_BELOW_PX) return 'line'
   return 'schematic'
 }
@@ -25,11 +32,11 @@ export function trackLod(scale: number, gauge: number): TrackLod {
 /**
  * Whether the marker of a node is drawn — and, since only what is seen can be grabbed, whether
  * the node can be picked. `degree` is the number of rails at the node.
- * - detail: every node
+ * - detail, rails: every node
  * - line: the selected ones and the ends of track (where a track is carried on)
  * - schematic: the selected ones only
  */
 export function nodeMarkerShown(lod: TrackLod, node: { selected: boolean; degree: number }): boolean {
-  if (lod === 'detail' || node.selected) return true
+  if (lod === 'detail' || lod === 'rails' || node.selected) return true
   return lod === 'line' && node.degree === 1
 }

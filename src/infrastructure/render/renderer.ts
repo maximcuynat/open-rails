@@ -11,25 +11,26 @@ import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicD
 import { networkDerived } from './networkDerived'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
-import { renderLineTracks, renderSchematicTracks } from './lodTracks'
+import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type SectionStripeStyle } from './lodTracks'
 import { gaugeOnScreen, nodeMarkerShown, trackLod } from './lod'
 import {
-  BADGES_ALL_FROM_PX,
   BADGE_FULL_FROM_PX,
   DIAGNOSTIC_CLUSTER_RADIUS_PX,
   DIAGNOSTIC_LABEL_FROM_PX,
   clusterMarkers,
+  diagnosticsClustered,
   placeBadges,
   sectionArrowSegments,
+  sectionBadgeMinLength,
   sectionBadgeWanted,
   type BadgeBox,
   type MarkerSeverity,
 } from './lodOverlays'
+import { textWidth } from './textWidth'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
   deckAbutments,
   groupPiecesByLevel,
-  isWholePiece,
   nodeJointBand,
   segmentLevelPieces,
   trackPositionBand,
@@ -598,15 +599,6 @@ function pieceGeometry(net: Network, piece: TrackPiece): { a: Point; b: Point; v
   return subdivideStraight(from.pos, to.pos, piece.t0, piece.t1)
 }
 
-/** The drawing intervals of a rail (see `getSegmentRenderIntervals`) limited to one of its pieces */
-function pieceRenderIntervals(net: Network, piece: TrackPiece, a: Point, b: Point): SegmentSubInterval[] {
-  const intervals = getSegmentRenderIntervals(net, piece.seg, a, b)
-  if (isWholePiece(piece)) return intervals
-  return intervals
-    .map((inter) => ({ ...inter, t0: Math.max(inter.t0, piece.t0), t1: Math.min(inter.t1, piece.t1) }))
-    .filter((inter) => inter.t1 > inter.t0)
-}
-
 function traceCenterline(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
@@ -808,9 +800,19 @@ export function renderNetwork(
     if (!showsTrackObjects) return
     const alpha = level < 0 ? TUNNEL_ALPHA : 1
     // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
-    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones)
+    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod)
     // Blocks and track held for the trains: stripes beside the rails of this level
     renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, alpha, options?.signals)
+  }
+
+  /** How the stripe of the section of a rail is drawn */
+  const stripeOf = (segId: string): SectionStripeStyle => {
+    const sec = derived.sectionOfSegment.get(segId)
+    return {
+      color: sec?.color ?? '#94a3b8',
+      station: sec?.type === 'station_stop',
+      selected: sec !== undefined && selectedSections.has(sec),
+    }
   }
 
   const drawDetailedTracks = (pieces: TrackPiece[], level: number): void => {
@@ -821,64 +823,11 @@ export function renderNetwork(
     drawTrackUnderlays(pieces, level)
 
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
-    // Draw a subtle, distinct colored stripe in the track center identifying each functional section
-    if (!hideSectionCenterline) {
-      for (const piece of pieces) {
-        const seg = piece.seg
-        const line = pieceGeometry(net, piece)
-        if (!line) continue
+    // A subtle coloured stripe in the middle of the track tells the sections apart: one stroke per colour
+    if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, pieces, level, stripeOf)
 
-        const sec = derived.sectionOfSegment.get(seg.id)
-        const secColor = sec?.color ?? '#94a3b8'
-        const isSecSelected = sec !== undefined && selectedSections.has(sec)
-
-        ctx.save()
-        ctx.strokeStyle = secColor
-        const isStation = sec?.type === 'station_stop'
-        ctx.lineWidth = isStation ? Math.max(2.5, Math.min(5.0, 0.6 * cam.scale)) : Math.max(1.5, Math.min(3.5, 0.4 * cam.scale))
-        ctx.globalAlpha = (isSecSelected ? 0.95 : isStation ? 0.8 : 0.45) * (tunnel ? TUNNEL_ALPHA : 1)
-        ctx.lineCap = 'round'
-        if (isStation) {
-          ctx.setLineDash([8, 4])
-        }
-        traceCenterline(ctx, cam, vw, vh, line.a, line.b, line.via)
-        ctx.stroke()
-        ctx.restore()
-      }
-    }
-
-    // 2. PURE RAIL RENDERING
-    for (const piece of pieces) {
-      const seg = piece.seg
-      const a = net.nodes.get(seg.from)
-      const b = net.nodes.get(seg.to)
-      if (!a || !b) continue
-
-      const selected = selection.segments.has(seg.id)
-      const intervals = pieceRenderIntervals(net, piece, a.pos, b.pos)
-
-      for (const inter of intervals) {
-        ctx.save()
-        if (inter.isTurnout) {
-          ctx.globalAlpha = 0.4
-        }
-        if (tunnel) {
-          // Below ground: dimmed and dashed
-          ctx.globalAlpha = TUNNEL_ALPHA * (inter.isTurnout ? 0.4 : 1)
-          ctx.setLineDash(TUNNEL_DASH)
-        }
-
-        if (seg.kind === 'curve' && seg.via) {
-          const sub = subdivideCurve(a.pos, seg.via, b.pos, inter.t0, inter.t1)
-          renderDetailedCurveRails(ctx, cam, sub.p0, sub.via, sub.p2, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
-        } else {
-          const sub = subdivideStraight(a.pos, b.pos, inter.t0, inter.t1)
-          renderDetailedRailLines(ctx, cam, sub.a, sub.b, vw, vh, selected, railColor, accent, 0, 0, railHeadColor, GAUGE)
-        }
-
-        ctx.restore()
-      }
-    }
+    // 2. PURE RAIL RENDERING: the two rails of every piece, gathered by style
+    renderDetailRails(ctx, cam, vw, vh, net, pieces, level, selection.segments, { rail: railColor, accent, head: railHeadColor }, GAUGE)
     // Connect rails and create smooth dynamic miter joints at nodes
     if (tunnel) {
       ctx.save()
@@ -898,6 +847,14 @@ export function renderNetwork(
       for (const group of levelGroups) {
         drawTrackUnderlays(group.pieces, group.level)
         renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE)
+      }
+    } else if (lod === 'rails') {
+      // The two rails of every track in a handful of strokes, then the stripe of the sections
+      const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
+      for (const group of levelGroups) {
+        drawTrackUnderlays(group.pieces, group.level)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true)
+        if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, group.pieces, group.level, stripeOf)
       }
     } else {
       for (const group of levelGroups) drawDetailedTracks(group.pieces, group.level)
@@ -932,9 +889,10 @@ export function renderNetwork(
       } else {
         if (!sectionBadgeWanted(gaugePx, { selected: isSecSelected, renamed })) continue
 
-        // In overview mode, avoid drawing badges on tiny track fragments (< 45px on screen)
+        // Not on a track too short on screen for this zoom: tiny fragments up close, all but the
+        // long tracks once the drawing is no longer the detailed one
         const secScreenLen = sec.totalLength * cam.scale
-        if (!isSecSelected && gaugePx >= BADGES_ALL_FROM_PX && !fullBadges && secScreenLen < 45) continue
+        if (!isSecSelected && !renamed && secScreenLen < sectionBadgeMinLength(lod, gaugePx)) continue
       }
 
       const midSegIdx = Math.floor(sec.segmentIds.length / 2)
@@ -964,8 +922,7 @@ export function renderNetwork(
         text = `${sec.name}${dirSymbol}`
       }
 
-      const metrics = ctx.measureText(text)
-      const bgW = metrics.width + 12
+      const bgW = textWidth(ctx, text) + 12
       const bgH = 18
       let badgeY = sy - 14
       const keepOut = options?.badgeExclusion
@@ -1014,6 +971,7 @@ export function renderNetwork(
   if (showsTrackObjects) {
     renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
       highlight: options?.speedZones,
+      gauge: GAUGE,
       showOverlaps: !hideConstructionNodes,
     })
     // Signals stand beside the track, above the rails; hidden with the boards at far zoom
@@ -1022,8 +980,8 @@ export function renderNetwork(
 
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
   // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
-  // Detail tier only: further out it is smaller than the stroke of the rail it ends.
-  for (const node of lod === 'detail' ? net.nodes.values() : []) {
+  // Detail and rails tiers only: further out it is smaller than the stroke of the rail it ends.
+  for (const node of lod === 'detail' || lod === 'rails' ? net.nodes.values() : []) {
     if (!isPointInBounds(node.pos, bounds)) continue
     if ((net.adjacency.get(node.id) ?? []).length === 1) {
       renderBufferStop(ctx, cam, node, net, vw, vh, options?.gauge ?? GAUGE)
@@ -1032,15 +990,36 @@ export function renderNetwork(
 
   // 5. NODES (Points d'articulation et sélection)
   if (!hideConstructionNodes) {
+    // The plain joints are by far the most numerous: they are gathered and drawn in two fills,
+    // under the markers that stand out (selection, end of track, crossing)
+    const shown: { sx: number; sy: number; selected: boolean; connectionCount: number }[] = []
+    const plain: number[] = []
     for (const node of net.nodes.values()) {
       if (!isPointInBounds(node.pos, bounds)) continue
-
+      const selected = selection.nodes.has(node.id)
+      const connectionCount = (net.adjacency.get(node.id) ?? []).length
+      if (!nodeMarkerShown(lod, { selected, degree: connectionCount })) continue
       const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
       const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
-      const selected = selection.nodes.has(node.id)
-      const adj = net.adjacency.get(node.id) ?? []
-      const connectionCount = adj.length
-      if (!nodeMarkerShown(lod, { selected, degree: connectionCount })) continue
+      if (!selected && connectionCount !== 0 && connectionCount !== 1 && connectionCount !== 4) plain.push(sx, sy)
+      else shown.push({ sx, sy, selected, connectionCount })
+    }
+    if (plain.length > 0) {
+      // Intermediate joint or junction: neat white dot
+      const discs = (radius: number): void => {
+        ctx.beginPath()
+        for (let i = 0; i < plain.length; i += 2) {
+          ctx.moveTo(plain[i] + radius, plain[i + 1])
+          ctx.arc(plain[i], plain[i + 1], radius, 0, Math.PI * 2)
+        }
+        ctx.fill()
+      }
+      ctx.fillStyle = '#334155'
+      discs(4)
+      ctx.fillStyle = '#ffffff'
+      discs(2.5)
+    }
+    for (const { sx, sy, selected, connectionCount } of shown) {
 
       if (selected) {
         // Selected node: accent ring + central white point
@@ -1095,16 +1074,6 @@ export function renderNetwork(
         ctx.fill()
         ctx.stroke()
         ctx.restore()
-      } else {
-        // Intermediate joint or junction: neat white dot
-        ctx.fillStyle = '#334155'
-        ctx.beginPath()
-        ctx.arc(sx, sy, 4, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillStyle = '#ffffff'
-        ctx.beginPath()
-        ctx.arc(sx, sy, 2.5, 0, Math.PI * 2)
-        ctx.fill()
       }
     }
   }
@@ -1214,7 +1183,7 @@ export function renderNetwork(
       if (lod !== 'schematic') {
         ctx.font = '700 10px Archivo, system-ui, sans-serif'
         const warnText = 'SENS INTERDIT · CONFLIT'
-        const tw = ctx.measureText(warnText).width
+        const tw = textWidth(ctx, warnText)
         const textY = sy - signR - 12
         ctx.fillStyle = '#dc2626'
         ctx.beginPath()
@@ -1232,8 +1201,9 @@ export function renderNetwork(
 
   // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
   if (!hideConstructionNodes) {
-    // One marker per issue, with its label when there is room for it. In the schematic tier the
-    // markers that would pile up are merged into one that shows how many it stands for.
+    // One marker per issue, with its label when there is room for it. Once the rails are no
+    // longer drawn in detail, the markers that would pile up are merged into one that shows how
+    // many it stands for.
     const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
     for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
       if (options?.quietNodeIds?.has(issue.nodeId)) continue
@@ -1247,10 +1217,10 @@ export function renderNetwork(
         label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
       })
     }
-    const drawn = lod !== 'schematic'
+    const drawn = !diagnosticsClustered(lod)
       ? markers
       : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
-        ...c, mark: c.count > 1 ? String(c.count) : '!', label: undefined,
+        ...c, mark: c.count > 1 ? String(c.count) : '!',
       }))
     for (const marker of drawn) {
       const { x: sx, y: sy, label } = marker
@@ -1289,7 +1259,7 @@ export function renderNetwork(
       // Label badge above if zoom is reasonable
       if (label !== undefined) {
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const tw = ctx.measureText(label).width
+        const tw = textWidth(ctx, label)
         const ty = sy - signR - 10
 
         ctx.fillStyle = badgeColor
@@ -2184,6 +2154,8 @@ export function renderRailJoints(
   const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
   const railPx = Math.max(1.2, RAIL_WIDTH * railWidthRatio * s)
   const capRadius = railPx / 2
+  type JointPair = ReturnType<typeof getConnectedEndPairs>[number]
+  const groups: JointPair[][] = [[], [], [], []]
 
   for (const node of net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
@@ -2202,56 +2174,55 @@ export function renderRailJoints(
       if (level !== undefined && nodeJointBand(net, node.id, [p.e1.segId, p.e2.segId]) !== level) continue
       const isSel = p.e1.selected || p.e2.selected
       const isDim = p.e1.isInactive || p.e2.isInactive
-      const col = isSel ? accent : railColor
-
-      ctx.save()
-      if (isDim) ctx.globalAlpha = 0.4
-
-      // Pass 1: Rail base / patin
-      ctx.strokeStyle = col
-      ctx.lineWidth = railPx
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1LScr[0], p.r1LScr[1])
-      ctx.lineTo(p.jLeftScr[0], p.jLeftScr[1])
-      ctx.lineTo(p.r2LScr[0], p.r2LScr[1])
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1RScr[0], p.r1RScr[1])
-      ctx.lineTo(p.jRightScr[0], p.jRightScr[1])
-      ctx.lineTo(p.r2RScr[0], p.r2RScr[1])
-      ctx.stroke()
-
-      // Small anchor caps at vertices to ensure zero subpixel gap
-      ctx.fillStyle = col
-      ctx.beginPath()
-      ctx.arc(p.jLeftScr[0], p.jLeftScr[1], capRadius, 0, Math.PI * 2)
-      ctx.arc(p.jRightScr[0], p.jRightScr[1], capRadius, 0, Math.PI * 2)
-      ctx.fill()
-
-      // Pass 2: Polished steel rail head
-      const headPx = Math.max(0.8, railPx * 0.42)
-      ctx.strokeStyle = isSel ? '#ffffff' : '#ffffff'
-      ctx.lineWidth = headPx
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1LScr[0], p.r1LScr[1])
-      ctx.lineTo(p.jLeftScr[0], p.jLeftScr[1])
-      ctx.lineTo(p.r2LScr[0], p.r2LScr[1])
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.moveTo(p.r1RScr[0], p.r1RScr[1])
-      ctx.lineTo(p.jRightScr[0], p.jRightScr[1])
-      ctx.lineTo(p.r2RScr[0], p.r2RScr[1])
-      ctx.stroke()
-
-      ctx.restore()
+      groups[(isSel ? 1 : 0) + (isDim ? 2 : 0)].push(p)
     }
   }
+
+  // The joints are gathered by style — plain, selected, and both again where the points are set
+  // against the rail — and each style is drawn in one go: bases, caps, then heads
+  const headPx = Math.max(0.8, railPx * 0.42)
+  const trace = (joints: JointPair[]): void => {
+    ctx.beginPath()
+    for (const p of joints) {
+      ctx.moveTo(p.r1LScr[0], p.r1LScr[1])
+      ctx.lineTo(p.jLeftScr[0], p.jLeftScr[1])
+      ctx.lineTo(p.r2LScr[0], p.r2LScr[1])
+      ctx.moveTo(p.r1RScr[0], p.r1RScr[1])
+      ctx.lineTo(p.jRightScr[0], p.jRightScr[1])
+      ctx.lineTo(p.r2RScr[0], p.r2RScr[1])
+    }
+    ctx.stroke()
+  }
+  groups.forEach((joints, style) => {
+    if (joints.length === 0) return
+    const col = style & 1 ? accent : railColor
+    ctx.save()
+    if (style & 2) ctx.globalAlpha *= 0.4
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+
+    // Pass 1: Rail base / patin
+    ctx.strokeStyle = col
+    ctx.lineWidth = railPx
+    trace(joints)
+
+    // Small anchor caps at vertices to ensure zero subpixel gap
+    ctx.fillStyle = col
+    ctx.beginPath()
+    for (const p of joints) {
+      ctx.moveTo(p.jLeftScr[0] + capRadius, p.jLeftScr[1])
+      ctx.arc(p.jLeftScr[0], p.jLeftScr[1], capRadius, 0, Math.PI * 2)
+      ctx.moveTo(p.jRightScr[0] + capRadius, p.jRightScr[1])
+      ctx.arc(p.jRightScr[0], p.jRightScr[1], capRadius, 0, Math.PI * 2)
+    }
+    ctx.fill()
+
+    // Pass 2: Polished steel rail head
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = headPx
+    trace(joints)
+    ctx.restore()
+  })
 }
 
 /**

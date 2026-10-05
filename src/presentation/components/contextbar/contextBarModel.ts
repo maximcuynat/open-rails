@@ -3,7 +3,8 @@ import { findJunctionAtNode } from '@domain/models/junction'
 import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatAngle } from '@domain/models/units'
-import { computeTrackSections, findSectionBySegment, type SectionDirection } from '@domain/models/sections'
+import { networkDerived } from '@infrastructure/render/networkDerived'
+import { findSectionBySegment, type SectionDirection } from '@domain/models/sections'
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
 import { signalBlock } from '@domain/models/signalBlocks'
@@ -174,7 +175,7 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
 
   // Traffic direction of the sections the selected rails belong to. One button that steps through
   // the three settings; its label has the same width in each, so the buttons after it stay put.
-  const sections = segments.size > 0 ? computeTrackSections(store.network, store.sectionMeta) : []
+  const sections = segments.size > 0 ? networkDerived(store.network, store.sectionMeta).sections : []
   const selectedSections = [
     ...new Set([...segments].map((sid) => findSectionBySegment(sections, sid)).filter((sec) => sec !== null)),
   ]
