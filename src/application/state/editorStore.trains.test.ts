@@ -131,7 +131,7 @@ describe('EditorStore trains', () => {
       expect(store.trainChainId).toBe(store.trains[1].id)
     })
 
-    it('Escape first ends the train in progress (train select mode), then leaves the train tool', () => {
+    it('Escape first ends the train in progress (train select mode), then releases it, then leaves the train tool', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
 
@@ -140,6 +140,12 @@ describe('EditorStore trains', () => {
       expect(store.trainToolSubMode).toBe('select')
       expect(store.trainChainId).toBeNull()
       expect(store.trainPlacementPreview).toBeNull()
+      // The train just built stays selected, ready to be driven
+      expect(store.isTrainSelected).toBe(true)
+
+      store.cancelInteraction()
+      expect(store.tool).toBe('locomotive')
+      expect(store.isTrainSelected).toBe(false)
 
       store.cancelInteraction()
       expect(store.tool).toBe('select')
@@ -846,5 +852,45 @@ describe('EditorStore train tool default sub-mode', () => {
     expect(store.tool).toBe('select')
     store.setTool('locomotive')
     expect(store.trainToolSubMode).toBe('select')
+  })
+})
+
+describe('EditorStore Escape on a selected train', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetIdCounter()
+  })
+
+  it('releases the selected train first, then leaves the train tool', () => {
+    const { store } = storeWithStraightTrack()
+    expect(store.placeTrainItem({ x: 500, y: 0 })).toBe(true)
+    const train = store.trains[0]
+
+    store.cancelInteraction() // placement → train selection
+    store.selectTrainById(train.id)
+    expect(store.isTrainSelected).toBe(true)
+
+    store.cancelInteraction() // the train loses the focus, the train tool stays
+    expect(store.tool).toBe('locomotive')
+    expect(store.isTrainSelected).toBe(false)
+    expect(store.selectedTrain).toBeNull()
+    expect(store.selectedTrainVehicleId).toBeNull()
+    expect(store.trains).toHaveLength(1)
+
+    store.cancelInteraction() // nothing selected any more → back to the select tool
+    expect(store.tool).toBe('select')
+  })
+
+  it('releases a train that stays selected in the select tool', () => {
+    const { store } = storeWithStraightTrack()
+    store.placeTrainItem({ x: 500, y: 0 })
+    store.exitTrainMode()
+    store.selectTrainById(store.trains[0].id)
+    expect(store.tool).toBe('select')
+
+    store.cancelInteraction()
+    expect(store.tool).toBe('select')
+    expect(store.isTrainSelected).toBe(false)
+    expect(store.selectedTrain).toBeNull()
   })
 })

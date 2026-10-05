@@ -1325,14 +1325,19 @@ export class EditorStore {
     } else if (this.tool !== 'select') {
       this.setTool('select')
     } else {
+      // A train picked from the select tool is released like any other selection
+      this.releaseTrainSelection()
       this.clearSelection()
     }
     if (this.tool === 'locomotive' || this.tool === 'coupling') {
       // Escape climbs one level at a time: placement (and its train in progress), deletion or
-      // coupling first fall back to the train selection, and only from there to the select tool
+      // coupling first fall back to the train selection, then the selected train is released,
+      // and only from there does it go back to the select tool
       if (this.tool === 'coupling' || this.trainToolSubMode !== 'select') {
         this.tool = 'locomotive'
         this.trainToolSubMode = 'select'
+      } else if (this.isTrainSelected) {
+        this.releaseTrainSelection()
       } else {
         this.tool = 'select'
         this.trainToolSubMode = 'select'
@@ -2428,6 +2433,13 @@ export class EditorStore {
   }
 
   /** Select a train by its id and optionally target a specific vehicle */
+  /** Drop the focus on the selected train and vehicle, without notifying */
+  private releaseTrainSelection(): void {
+    this.selectedTrainId = null
+    this.selectedTrainVehicleId = null
+    this.isTrainSelected = false
+  }
+
   selectTrainById = (id: string | null, vehicleId?: string): void => {
     this.selectedTrainId = id
     this.isTrainSelected = id !== null
