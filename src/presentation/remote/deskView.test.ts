@@ -5,7 +5,9 @@ import {
   BAND_DESIGN,
   NEW_SESSION,
   PORTRAIT_DESIGN,
+  SIGNALS_HEIGHT,
   compositionLabel,
+  deskDesign,
   deskOrientation,
   deskScreen,
   fitStage,
@@ -253,5 +255,28 @@ describe('turnoutView', () => {
 
   it('leaves the buttons usable when the PC does not say', () => {
     expect(turnoutView(undefined)).toEqual({ label: 'Aiguillage suivant', side: null, enabled: true })
+  })
+})
+
+describe('deskDesign', () => {
+  it('is the band on its side and the levers upright, as before, on a network without signal', () => {
+    expect(deskDesign('landscape', state())).toBe(BAND_DESIGN)
+    expect(deskDesign('portrait', state())).toBe(PORTRAIT_DESIGN)
+  })
+
+  it('makes room for the signalling block on a network that has signals', () => {
+    const signals = {
+      level: 'standard' as const,
+      next: null,
+      closedDistance: null,
+      brakeAlert: false,
+      waiting: false,
+      onSight: false,
+      onSightSpeed: 30,
+      passed: null,
+      cab: null,
+    }
+    expect(deskDesign('landscape', state({ signals }))).toEqual({ ...BAND_DESIGN, minHeight: BAND_DESIGN.minHeight + SIGNALS_HEIGHT })
+    expect(deskDesign('portrait', state({ signals }))).toEqual({ ...PORTRAIT_DESIGN, minHeight: PORTRAIT_DESIGN.minHeight + SIGNALS_HEIGHT })
   })
 })

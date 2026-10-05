@@ -1,13 +1,14 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
 import { closestCurveParam, curveLength, distToCurve, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 import { generateId, resetIdCounter } from './ids'
+import { remapSignals } from './signals'
 import { remapSpeedZones } from './speedZones'
 import { duplicateReplacement, mergeReplacements, notifyRailReplaced, removalReplacement, type RailReplacement } from './trackObjects'
 
 export { generateId, resetIdCounter }
 
 /**
- * Scan all node, segment, junction and speed zone IDs in the network and update
+ * Scan all node, segment, junction, speed zone and signal IDs in the network and update
  * idCounter so that any future generateId calls will not collide.
  */
 export function syncIdCounter(net: Network): void {
@@ -23,11 +24,12 @@ export function syncIdCounter(net: Network): void {
   for (const id of net.segments.keys()) scan(id)
   for (const id of net.junctions.keys()) scan(id)
   for (const id of net.speedZones.keys()) scan(id)
+  for (const id of net.signals.keys()) scan(id)
   resetIdCounter(max)
 }
 
 export function createNetwork(): Network {
-  return { nodes: new Map(), segments: new Map(), adjacency: new Map(), junctions: new Map(), speedZones: new Map() }
+  return { nodes: new Map(), segments: new Map(), adjacency: new Map(), junctions: new Map(), speedZones: new Map(), signals: new Map() }
 }
 
 /** Add a node at `pos`, at height `level` (in levels, 0 = ground; see `RailNode.level`). */
@@ -395,7 +397,7 @@ export function dissolveNode(
 /**
  * The one place a rail replacement goes through: "rail `oldId` is replaced by these pieces" (cut in
  * two, merged with its neighbour, dropped as a duplicate of another rail, or — no piece — removed).
- * Everything attached to the track is moved from here: the route tables, the speed zones, and
+ * Everything attached to the track is moved from here: the route tables, the speed zones, the signals, and
  * whoever listens (`onRailReplaced`). Every function that makes a rail disappear must call it,
  * while the pieces are in the network; `models/trackObjects.ts` builds the replacement for each
  * case. A new kind of object held by `Network` is moved by one more line here.
@@ -408,6 +410,7 @@ export function replaceRail(net: Network, replacement: RailReplacement): void {
   }
   replaceJunctionRail(net, replacement.oldId, pieces)
   remapSpeedZones(net, replacement)
+  remapSignals(net, replacement)
   notifyRailReplaced(net, replacement)
 }
 

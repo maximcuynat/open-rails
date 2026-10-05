@@ -1,6 +1,9 @@
 import type { Reverser } from '@domain/models/train'
 import type { BrakeCommand } from '@domain/models/trainDynamics'
 import type { CurveState, Derailment, UpcomingSpeedLimit } from '@domain/models/speedLimits'
+import type { SignallingLevel } from '@domain/models/signals'
+import type { SignalColor, SignalIndication, SlowdownSpeed } from '@domain/models/signalling'
+import type { CabIndicationKind } from '@domain/models/cabSignalling'
 
 /**
  * The contract between a driving console and whatever drives the train. A console only ever sees
@@ -45,6 +48,68 @@ export interface ConsoleGuidance {
   derailed: Derailment | null
 }
 
+/** A signal ahead of the train, as its signalling level shows it (`signalAspect`) */
+export interface ConsoleSignal {
+  /** Distance from the head of the train, m */
+  distance: number
+  /** Colour of the standard level; at the pro level, the colour of the lit lamp(s) */
+  color: SignalColor
+  /** Pro level only: the French indication */
+  indication: SignalIndication | null
+  /** Pro level only: `F` (may be passed on sight after a stop) or `Nf` (never passed closed) */
+  plate: 'F' | 'Nf' | null
+  /** False for a marker board without lamps (cab-signalled line) */
+  lit: boolean
+  /** Name of what is shown: « Voie libre », « Avertissement »… */
+  label: string
+  /**
+   * Pro level, only there when lit: the announcement of points to take at that speed (two yellow
+   * lamps side by side), km/h; the lamps flash for 60
+   */
+  slowdown?: SlowdownSpeed
+  /** Pro level, only there when lit: the reminder of that speed before the points (two yellow lamps one above the other) */
+  reminder?: SlowdownSpeed
+}
+
+/** The target speed shown in the cab of a high-speed line (see `cabSignalling.ts`) */
+export interface ConsoleCabSignal {
+  kind: CabIndicationKind
+  /** km/h; 0 for a stop */
+  speed: number
+  /** The next block will show something more restrictive */
+  flashing: boolean
+  /** Distance to the next marker board, m; `null` when there is none ahead */
+  markerDistance: number | null
+}
+
+/** What the signals say to the driver. Only there on a network that has signals */
+export interface ConsoleSignals {
+  level: SignallingLevel
+  /** The next signal on the route; `null` when none is in sight */
+  next: ConsoleSignal | null
+  /** Distance (m) to the first closed signal on the route when it is not the next one, else `null` */
+  closedDistance: number | null
+  /** A closed signal is nearer than the stopping distance and its margin: brake now */
+  brakeAlert: boolean
+  /** Stopped before a closed path signal, waiting for its route */
+  waiting: boolean
+  /**
+   * Pro level: running on sight, `onSightSpeed` km/h at most — after passing a closed block signal,
+   * or while the cab shows red. The speed limit of `guidance` already counts it
+   */
+  onSight: boolean
+  onSightSpeed: number
+  /** A closed signal was passed against the rules; stays until the next signal is passed properly */
+  passed: { braked: boolean } | null
+  /** Pro level on a high-speed line: the cab display stands for the lineside signals */
+  cab: ConsoleCabSignal | null
+  /**
+   * Only there while it lasts: the train was caught over the speed its cab checks it against
+   * (cab-signalled line), with or without the emergency brake
+   */
+  overspeed?: { braked: boolean }
+}
+
 export interface ConsoleState {
   /** Id of the driven train; `null` for the legacy single locomotive */
   trainId: string | null
@@ -83,6 +148,8 @@ export interface ConsoleState {
   legacyThrottle?: -1 | 0 | 1
   /** Absent for the legacy locomotive, which knows no speed limit, and from a PC of an older version */
   guidance?: ConsoleGuidance
+  /** Absent on a network without signal, for the legacy locomotive, and from a PC of an older version */
+  signals?: ConsoleSignals
 }
 
 /** One train of the layout, for the list a phone picks its train from */

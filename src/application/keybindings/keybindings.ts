@@ -60,6 +60,8 @@ export const ACTIONS = [
   { id: 'tool.pan', label: 'Outil Déplacer la vue', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'h' }, null] },
   { id: 'tool.locomotive', label: 'Outil Train', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'l' }, null] },
   { id: 'tool.speedZone', label: 'Outil Limite de vitesse', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 's' }, null] },
+  { id: 'tool.signalBlock', label: 'Outil Signal de block / Sémaphore', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'b' }, null] },
+  { id: 'tool.signalPath', label: 'Outil Signal de trajectoire / Carré', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'j' }, null] },
   { id: 'edit.toggleJunction', label: 'Basculer l’aiguillage', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 't' }, null] },
   { id: 'edit.parallelTrack', label: 'Créer une voie parallèle', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'd' }, null] },
   { id: 'edit.paramDecrease', label: 'Profil de courbe / rayon d’aiguillage −', group: 'tools', contexts: EDIT, by: 'code', defaults: [{ code: 'BracketLeft' }, null] },

@@ -2,7 +2,7 @@ import type { Network, NodeId, Point, Segment, SegmentId, Junction, TrackSpan } 
 import { generateId, isCloserOrAbove, segmentHeightAt } from './network'
 import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength } from '../services/pathfinding'
-import { setJunctionBranch, findJunctionAtNode, turnoutView, type TurnoutBranch, type TurnoutView } from './junction'
+import { doubleSlipSideOf, doubleSlipView, findJunctionAtNode, openPassage, turnoutView, type TurnoutBranch } from './junction'
 import { openExit, entriesOf, junctionRails } from './routing'
 
 export type LocoId = string
@@ -1046,13 +1046,23 @@ export interface JunctionAhead {
   branches: JunctionBranch[]
   /** The branch of `branches` the points are set to */
   activeBranch: JunctionBranch
+  /** The rail the branches are reached from: the stem of a turnout, the rail of arrival on a double slip */
+  stemSegmentId: SegmentId
+  /** The rail of each branch of `branches` */
+  branchRails: SegmentId[]
 }
 
-/** Branches of a turnout ordered from the leftmost to the rightmost for a train travelling along `heading` */
-function junctionBranchesLeftToRight(net: Network, junction: Junction, view: TurnoutView, heading: Point): JunctionBranch[] {
-  const apex = net.nodes.get(junction.nodeId)
-  const cross = (farNodeId: NodeId | undefined): number => {
-    const other = farNodeId ? net.nodes.get(farNodeId) : undefined
+/** Branches of a device ordered from the leftmost to the rightmost for a train travelling along `heading` */
+function branchesLeftToRight(
+  net: Network,
+  nodeId: NodeId,
+  heading: Point,
+  branches: { branch: JunctionBranch; segId: SegmentId }[],
+): { branch: JunctionBranch; segId: SegmentId }[] {
+  const apex = net.nodes.get(nodeId)
+  const cross = (segId: SegmentId): number => {
+    const seg = net.segments.get(segId)
+    const other = seg ? net.nodes.get(seg.from === nodeId ? seg.to : seg.from) : undefined
     let dir = { x: 1, y: 0 }
     if (apex && other) {
       const dx = other.pos.x - apex.pos.x
@@ -1062,23 +1072,18 @@ function junctionBranchesLeftToRight(net: Network, junction: Junction, view: Tur
     }
     return heading.x * dir.y - heading.y * dir.x
   }
-  const branches: { b: JunctionBranch; c: number }[] = view.hand === 'three_way'
-    ? [
-        { b: 'straight', c: cross(view.straightNodeId) },
-        { b: 'left', c: cross(view.divergingNodeId) },
-        { b: 'right', c: cross(view.divergingRightNodeId) },
-      ]
-    : [
-        { b: 'straight', c: cross(view.straightNodeId) },
-        { b: 'diverging', c: cross(view.divergingNodeId) },
-      ]
   // Lowest cross product is the leftmost branch
-  return branches.sort((a, b) => a.c - b.c).map((item) => item.b)
+  return branches
+    .map((item) => ({ item, c: cross(item.segId) }))
+    .sort((a, b) => a.c - b.c)
+    .map(({ item }) => item)
 }
 
 /**
  * Find the first turnout on the route ahead of a track position (within 10 segments), whether it is
- * met by its points (facing) or by one of its branches (trailing).
+ * met by its points (facing) or by one of its branches (trailing). A double slip is always met by
+ * the points of its far side, which pick the rail the train leaves on; it is open when the points
+ * of the near side are set to the rail the train arrives on.
  */
 export function findJunctionAhead(net: Network, startPos: TrackPosition, travelDirection: 1 | -1): JunctionAhead | null {
   let currentSegId = startPos.segId
@@ -1094,19 +1099,54 @@ export function findJunctionAhead(net: Network, startPos: TrackPosition, travelD
     const exitNodeId = traverseForward ? seg.to : seg.from
     const junction = findJunctionAtNode(net, exitNodeId)
     const view = junction ? turnoutView(net, junction) : null
+    const slip = junction ? doubleSlipView(junction) : null
+    const nearSide = junction && slip ? doubleSlipSideOf(junction, seg.id) : null
+    const headingAtExit = (): Point => {
+      const tangent = tangentOnSegment(net, seg.id, traverseForward ? 1 : 0) ?? { x: 1, y: 0 }
+      return traverseForward ? tangent : { x: -tangent.x, y: -tangent.y }
+    }
     // A track that merely crosses the points of a turnout is not concerned by it
     if (junction && view && junctionRails(junction).includes(seg.id)) {
-      const tangent = tangentOnSegment(net, seg.id, traverseForward ? 1 : 0) ?? { x: 1, y: 0 }
-      const heading = traverseForward ? tangent : { x: -tangent.x, y: -tangent.y }
+      const heading = headingAtExit()
       const facing = seg.id === view.stemSegmentId
+      const names: JunctionBranch[] = view.hand === 'three_way' ? ['straight', 'left', 'right'] : ['straight', 'diverging']
+      const rails = [view.straightSegmentId, view.divergingSegmentId, view.divergingRightSegmentId]
+      const branches = branchesLeftToRight(
+        net,
+        junction.nodeId,
+        heading,
+        names.map((branch, k) => ({ branch, segId: rails[k]! })),
+      )
       return {
         junction,
         distance,
         heading,
         facing,
         open: facing || seg.id === view.activeSegmentId,
-        branches: junctionBranchesLeftToRight(net, junction, view, heading),
+        branches: branches.map((item) => item.branch),
         activeBranch: view.activeBranch,
+        stemSegmentId: view.stemSegmentId,
+        branchRails: branches.map((item) => item.segId),
+      }
+    }
+    if (junction && slip && nearSide !== null) {
+      const heading = headingAtExit()
+      const farSide = nearSide === 0 ? 1 : 0
+      const farRails = slip.sides[farSide]
+      const branches = branchesLeftToRight(net, junction.nodeId, heading, [
+        { branch: 'straight', segId: farRails[0] },
+        { branch: 'diverging', segId: farRails[1] },
+      ])
+      return {
+        junction,
+        distance,
+        heading,
+        facing: true,
+        open: slip.sides[nearSide][slip.active[nearSide]] === seg.id,
+        branches: branches.map((item) => item.branch),
+        activeBranch: slip.active[farSide] === 0 ? 'straight' : 'diverging',
+        stemSegmentId: seg.id,
+        branchRails: branches.map((item) => item.segId),
       }
     }
 
@@ -1143,8 +1183,8 @@ export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'l
   const nextIdx = steerDirection === 'left'
     ? Math.max(0, currentIdx - 1)
     : Math.min(branches.length - 1, currentIdx + 1)
-  setJunctionBranch(junction, branches[nextIdx])
-  return true
+  // On a double slip this also sets the near points to the rail the train arrives on
+  return openPassage(junction, ahead.stemSegmentId, ahead.branchRails[nextIdx])
 }
 
 /** Closest point of one segment to a world position: its parameter `t` and the point itself. */

@@ -11,6 +11,7 @@ import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicD
 import { networkDerived } from './networkDerived'
 import { drawDiagnosticMarker } from './diagnosticMarker'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
+import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
   deckAbutments,
@@ -498,6 +499,8 @@ export interface RenderNetworkOptions {
   gradient?: GradientLimits
   /** Speed zones that stand out (signalling mode). Absent: every zone is drawn plain. */
   speedZones?: SpeedZoneHighlight
+  /** Signals, blocks and what goes with them (see `renderSignalling`). Absent: no signal is drawn. */
+  signals?: SignalRenderOptions
 }
 
 // ─────────────────── Track levels (bridges and tunnels) ───────────────────
@@ -846,6 +849,8 @@ export function renderNetwork(
 
     // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
     renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, tunnel ? TUNNEL_ALPHA : 1, options?.speedZones)
+    // Blocks and track held for the trains: stripes beside the rails of this level
+    renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, tunnel ? TUNNEL_ALPHA : 1, options?.signals)
 
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
@@ -1015,6 +1020,8 @@ export function renderNetwork(
       highlight: options?.speedZones,
       showOverlaps: !hideConstructionNodes,
     })
+    // Signals stand beside the track, above the rails; hidden with the boards at far zoom
+    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, options.signals)
   }
 
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
@@ -4328,7 +4335,7 @@ export function renderDrivingRoute(
       ahead.branches.forEach((b, i) => { if (b !== ahead.activeBranch) drawBranch(i, false) })
       drawBranch(ahead.branches.indexOf(ahead.activeBranch), true)
 
-      drawLabel(distanceLabel, cx, cy - discR - 11)
+      drawLabel(ahead.open ? distanceLabel : `Aiguille fermée · ${distanceLabel}`, cx, cy - discR - 11)
     }
   }
 

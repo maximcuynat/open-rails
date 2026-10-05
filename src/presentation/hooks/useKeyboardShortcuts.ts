@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
-import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
+import type { EditorStore } from '@application/state/editorStore'
 import { findAction, type ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../components/common/Toast'
+import { flipSelectedSignal } from '../components/common/signalActions'
 
 /** Brake handle position held by each of the two brake keys */
 const HELD_BRAKE_COMMAND = { 'drive.brakeApply': 'apply', 'drive.brakeRelease': 'release' } as const
@@ -60,9 +61,11 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
     case 'tool.pan': store.setTool('pan'); return
     case 'tool.locomotive': store.setTool('locomotive'); return
     case 'tool.speedZone': store.setSignalToolSubMode('speedZone'); return
+    case 'tool.signalBlock': store.setSignalToolSubMode('blockSignal'); return
+    case 'tool.signalPath': store.setSignalToolSubMode('pathSignal'); return
     case 'edit.toggleJunction':
       e.preventDefault()
-      if (!store.toggleActiveJunction()) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+      if (!store.toggleActiveJunction()) showToast(store.junctionRefusalMessage, 'warning')
       return
     case 'edit.parallelTrack':
       if (store.tool === 'select' && store.canCreateParallelTrack) {
@@ -216,11 +219,19 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
     } else if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
       e.preventDefault()
       store.flipTrainPlacementDirection()
+    } else if (store.signalPlacementMode) {
+      e.preventDefault()
+      store.flipSignalTool()
     }
   } else if (e.key === 'r' || e.key === 'R') {
     e.preventDefault()
     if (store.tool === 'locomotive' && store.trainToolSubMode === 'place') {
       store.flipTrainPlacementDirection()
+    } else if (store.signalPlacementMode) {
+      // Signal tool in hand: the signal about to be laid speaks to the other direction
+      store.flipSignalTool()
+    } else if (store.selectedSignal) {
+      flipSelectedSignal(store)
     } else if (store.isTrainSelected || store.tool === 'coupling') {
       store.flipLocomotiveDirection()
     } else {

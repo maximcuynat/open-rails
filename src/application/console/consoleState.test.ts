@@ -1,10 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from '@application/state/editorStore'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
-import { addJunction } from '@domain/models/junction'
+import { addJunction, syncJunctions } from '@domain/models/junction'
 import { createLocomotive } from '@domain/models/locomotive'
 import { MAX_NOTCH, MIN_NOTCH } from '@domain/models/train'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { setSignalOptions } from '@domain/models/signals'
+import { ON_SIGHT_SPEED } from '@domain/models/signalling'
+import { addSpeedZone } from '@domain/models/speedZones'
+import { chain, drive, setPoints, signalAt, trainAt } from '@domain/models/signalling.testkit'
+import { decodeMessage, encodeMessage } from '@application/remote/protocol'
+import { newSignalPassed, signalPassedLabel } from '@presentation/components/console/consoleModel'
+import { signalPassedMessage } from '@application/state/editorStore'
 import { brakeTone, buildConsoleState, buildFleet, trainConsoleState } from './consoleState'
 
 function makeStore(): EditorStore {
@@ -347,5 +354,305 @@ describe('fleet list', () => {
       { id: store.trains[0].id, rank: 1, model: 'TGV Duplex', locoCount: 1, wagonCount: 0, speed: 0, driven: false },
       { id: store.trains[1].id, rank: 2, model: 'TGV Duplex', locoCount: 1, wagonCount: 0, speed: 0, driven: true },
     ])
+  })
+})
+
+describe('console state: signals', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+  })
+
+  /** What the phone receives of a state: through the wire and back */
+  const overTheWire = (state: unknown) => {
+    const decoded = decodeMessage(encodeMessage({ t: 'state', state: state as never, ack: 1 }))
+    if (!decoded.ok || decoded.message.t !== 'state') throw new Error('state refused by the protocol')
+    return decoded.message.state
+  }
+
+  /** A line of 4 000 m with block signals for eastbound trains, a driven train at x = 1900 and maybe one standing ahead */
+  function signalledStore(options: { ahead?: number; signalsAt?: number[] } = {}) {
+    const store = new EditorStore()
+    chain(store.network, Array.from({ length: 9 }, (_, i) => ({ x: i * 500, y: 0 })))
+    const signals = (options.signalsAt ?? [2000.5, 3000.5]).map((x) => signalAt(store.network, x, 0, 'east'))
+    store.trains = [trainAt(store.network, 1900, 0, 'east')]
+    if (options.ahead !== undefined) store.trains.push(trainAt(store.network, options.ahead, 0, 'east'))
+    store.markDirty()
+    const train = store.trains[0]
+    store.selectTrainById(train.id)
+    store.togglePlayMode()
+    return { store, train, signals }
+  }
+
+  it('has no `signals` at all on a network without signal: the state is what it always was', () => {
+    const store = makeDrivingStore()
+    run(store, 0.2)
+    const state = buildConsoleState(store)!
+    expect('signals' in state).toBe(false)
+    expect(Object.keys(state).sort()).toEqual([
+      'acceleration', 'brake', 'canSwitchCab', 'emergencyBrake', 'emergencyReleasable', 'gradientPermille', 'guidance',
+      'handleEffort', 'locoCount', 'maxNotch', 'maxSpeed', 'minNotch', 'notch', 'reverser', 'reverserLocked', 'speed',
+      'stopped', 'stoppingDistance', 'trainId', 'upcomingTurnout', 'wagonCount',
+    ])
+    // The pro level and a high-speed line change nothing to that
+    store.setSignallingSettings({ level: 'pro' })
+    store.setLineSettings({ lineType: 'highSpeed', lineSpeed: 300 })
+    expect('signals' in buildConsoleState(store)!).toBe(false)
+    expect(overTheWire(state)).toEqual(state)
+  })
+
+  it('has none for the legacy locomotive', () => {
+    const store = makeStore()
+    signalAt(store.network, 2000, 0, 'east')
+    store.locomotive = createLocomotive(store.network, store.network.segments.keys().next().value!, 0.25)
+    store.togglePlayMode()
+    const state = buildConsoleState(store)
+    if (state) expect('signals' in state).toBe(false)
+  })
+
+  it('tells the next signal with its state and its distance from the head of the train', () => {
+    const { store, train } = signalledStore()
+    drive(train, 5)
+    store.tickAllTrains(0.05)
+    const state = buildConsoleState(store)!
+    const view = store.selectedTrainSignals!
+    expect(state.signals).toEqual({
+      level: 'standard',
+      next: { distance: view.nextSignal!.distance, color: 'green', indication: null, plate: null, lit: true, label: 'Voie libre' },
+      closedDistance: null,
+      brakeAlert: false,
+      waiting: false,
+      onSight: false,
+      onSightSpeed: ON_SIGHT_SPEED,
+      passed: null,
+      cab: null,
+    })
+    expect(state.signals!.next!.distance).toBeGreaterThan(80)
+    expect(state.signals!.next!.distance).toBeLessThan(100)
+    // The phone gets the same thing
+    expect(overTheWire(state)).toEqual(state)
+  })
+
+  it('tells the first closed signal when it is further than the next one, and the brake alert when it comes close', () => {
+    // A train stands at x = 3200: the signal at 3000 is closed, the one at 2000 shows caution
+    const { store, train } = signalledStore({ ahead: 3200 })
+    drive(train, 5)
+    store.tickAllTrains(0.05)
+    const far = buildConsoleState(store)!.signals!
+    expect(far.next).toMatchObject({ color: 'yellow', label: 'Attention' })
+    expect(far.closedDistance).toBeGreaterThan(1050)
+    expect(far.closedDistance).toBeLessThan(1150)
+    expect(far.brakeAlert).toBe(false)
+
+    // Much faster: the closed signal is within the stopping distance and its margin
+    drive(train, 60)
+    store.tickAllTrains(0.05)
+    const fast = buildConsoleState(store)!
+    expect(fast.signals!.brakeAlert).toBe(true)
+    expect(fast.signals!.closedDistance).not.toBeNull()
+    expect(overTheWire(fast)).toEqual(fast)
+  })
+
+  it('does not repeat the closed signal when it is the next one', () => {
+    const { store, train } = signalledStore({ ahead: 2500 })
+    drive(train, 5)
+    store.tickAllTrains(0.05)
+    const signals = buildConsoleState(store)!.signals!
+    expect(signals.next).toMatchObject({ color: 'red', label: 'Arrêt' })
+    expect(signals.closedDistance).toBeNull()
+  })
+
+  it('reads the signals the way the level of the project does', () => {
+    const { store, train } = signalledStore({ ahead: 2500 })
+    store.setSignallingSettings({ level: 'pro' })
+    drive(train, 5)
+    store.tickAllTrains(0.05)
+    const state = buildConsoleState(store)!
+    expect(state.signals).toMatchObject({
+      level: 'pro',
+      next: { color: 'red', indication: 'semaphore', plate: 'F', lit: true, label: 'Sémaphore' },
+      cab: null,
+    })
+    expect(overTheWire(state)).toEqual(state)
+  })
+
+  it('reports a closed signal passed once — to the PC by its callback, to the phone by its states', () => {
+    const { store, train } = signalledStore({ ahead: 2500 })
+    const toasts: string[] = []
+    store.onSignalPassed = (t) => toasts.push(signalPassedMessage(t.signalPassed?.braked ?? false))
+    const announced = new Set<string>()
+    const phone: string[] = []
+    drive(train, 20)
+    for (let i = 0; i < 300; i++) {
+      store.tickAllTrains(0.1)
+      const message = newSignalPassed(announced, overTheWire(buildConsoleState(store)))
+      if (message) phone.push(message)
+    }
+    expect(toasts).toEqual(['Signal fermé franchi : freinage d’urgence'])
+    expect(phone).toEqual(toasts)
+    expect(phone[0]).toBe(signalPassedLabel(true))
+    // The trace stays on the state while the train stands past the signal
+    expect(buildConsoleState(store)!.signals!.passed).toEqual({ braked: true })
+    expect(train.emergencyBrake).toBe(true)
+  })
+
+  it('tells the running on sight after a closed block signal passed at the pro level', () => {
+    const { store, train } = signalledStore({ ahead: 2500 })
+    store.setSignallingSettings({ level: 'pro' })
+    // Come to a stand before the signal at 2000, then pass it
+    store.tickAllTrains(0.05)
+    expect(buildConsoleState(store)!.signals).toMatchObject({ onSight: false })
+    train.reverser = 'forward'
+    store.tickAllTrains(0.05)
+    drive(train, 3)
+    let passed = 0
+    store.onSignalPassed = () => passed++
+    for (let i = 0; i < 2000 && !buildConsoleState(store)!.signals!.onSight; i++) {
+      train.currentSpeed = 3
+      store.tickAllTrains(0.05)
+    }
+    const state = buildConsoleState(store)!
+    expect(state.signals).toMatchObject({ onSight: true, onSightSpeed: 30, passed: null })
+    // The 30 km/h are in the limit the physics gives, the one every console reads
+    expect(state.guidance!.speedLimit).toBe(30)
+    expect(store.selectedTrainDynamics!.speedLimit * 3.6).toBeCloseTo(30, 6)
+    // Passed by the rules: no fault reported, no emergency brake
+    expect(passed).toBe(0)
+    expect(train.emergencyBrake).toBe(false)
+    expect(overTheWire(state)).toEqual(state)
+  })
+
+  it('pro level: tells the announcement and the reminder of points to take on their diverging route, and their limit', () => {
+    // Points at x = 1000 whose branch leaves at a tangent of 0.12 (30 km/h); a block signal at 700, a path signal at 900
+    const store = new EditorStore()
+    const main = chain(store.network, [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 3000, y: 0 }])
+    const branch = chain(store.network, [{ x: 1200, y: 24 }, { x: 3000, y: 24 }], main.nodes[1])
+    syncJunctions(store.network)
+    signalAt(store.network, 700, 0, 'east')
+    signalAt(store.network, 900, 0, 'east', 'protection')
+    signalAt(store.network, 1800, 24, 'east')
+    setPoints(store.network, main.nodes[1], main.rails[0], branch.rails[0])
+    store.trains = [trainAt(store.network, 550, 0, 'east')]
+    store.markDirty()
+    store.setSignallingSettings({ level: 'pro' })
+    const train = store.trains[0]
+    store.selectTrainById(train.id)
+    store.togglePlayMode()
+    drive(train, 10)
+    store.tickAllTrains(0.02)
+
+    const before = buildConsoleState(store)!
+    expect(before.signals!.next).toMatchObject({ indication: 'ralentissement', label: 'Ralentissement 30', color: 'yellow', slowdown: 30, plate: 'F' })
+    expect('reminder' in before.signals!.next!).toBe(false)
+    // The limit of the points is announced like any other
+    expect(before.guidance!.speedLimit).toBe(160)
+    expect(before.guidance!.nextLimit).toMatchObject({ speed: 30 })
+    expect(overTheWire(before)).toEqual(before)
+
+    // Past the block signal: the path signal reminds of it
+    for (let i = 0; i < 400 && buildConsoleState(store)!.signals!.next?.plate !== 'Nf'; i++) {
+      train.currentSpeed = 10
+      store.tickAllTrains(0.05)
+    }
+    const after = buildConsoleState(store)!
+    expect(after.signals!.next).toMatchObject({ indication: 'rappel', label: 'Rappel 30', reminder: 30, plate: 'Nf' })
+    expect(overTheWire(after)).toEqual(after)
+
+    // On the points: 30 km/h is the limit in force
+    for (let i = 0; i < 3000 && buildConsoleState(store)!.guidance!.speedLimit !== 30; i++) {
+      train.currentSpeed = 5
+      store.tickAllTrains(0.05)
+    }
+    expect(buildConsoleState(store)!.guidance!.speedLimit).toBe(30)
+    expect(train.emergencyBrake).toBe(false)
+
+    // The standard level reads the same layout with three colours and no limit at the points
+    store.setSignallingSettings({ level: 'standard' })
+    train.currentSpeed = 5
+    store.tickAllTrains(0.05)
+    const standard = buildConsoleState(store)!
+    expect(standard.guidance!.speedLimit).toBe(160)
+    expect(standard.signals!.next ? 'slowdown' in standard.signals!.next || 'reminder' in standard.signals!.next : false).toBe(false)
+  })
+
+  describe('cab display', () => {
+    /** 9 km of high-speed line, markers every 1 500 m, the driven train at x = 200 and one standing at x = 6200 */
+    function lgvStore() {
+      const store = new EditorStore()
+      chain(store.network, [{ x: 0, y: 0 }, { x: 9000, y: 0 }])
+      for (let x = 1500; x < 9000; x += 1500) {
+        setSignalOptions(store.network, signalAt(store.network, x, 0, 'east').id, { cabMarker: true })
+      }
+      store.trains = [trainAt(store.network, 200, 0, 'east'), trainAt(store.network, 6200, 0, 'east')]
+      store.markDirty()
+      store.setSignallingSettings({ level: 'pro' })
+      store.setLineSettings({ lineType: 'highSpeed', lineSpeed: 300 })
+      const train = store.trains[0]
+      store.selectTrainById(train.id)
+      store.togglePlayMode()
+      return { store, train }
+    }
+
+    it('is shown at the pro level on a high-speed line, with the distance to the next marker', () => {
+      const { store, train } = lgvStore()
+      drive(train, 5)
+      store.tickAllTrains(0.05)
+      const state = buildConsoleState(store)!
+      // Markers at 1500, 3000, 4500 and the closed one at 6000: four free blocks, the last one the
+      // buffer block kept free behind the train ahead — 220 announced
+      expect(state.signals!.cab).toMatchObject({ kind: 'announce', speed: 220, flashing: false })
+      expect(state.signals!.cab!.markerDistance).toBeCloseTo(state.signals!.next!.distance, 6)
+      // The marker itself has no lamp
+      expect(state.signals!.next).toMatchObject({ lit: false, plate: 'F' })
+      expect(overTheWire(state)).toEqual(state)
+    })
+
+    it('is not shown at the standard level, nor on a conventional line', () => {
+      const { store, train } = lgvStore()
+      drive(train, 5)
+      store.tickAllTrains(0.05)
+      store.setSignallingSettings({ level: 'standard' })
+      expect(buildConsoleState(store)!.signals).toMatchObject({ level: 'standard', cab: null })
+      store.setSignallingSettings({ level: 'pro' })
+      store.setLineSettings({ lineType: 'classic', lineSpeed: 160 })
+      expect(buildConsoleState(store)!.signals).toMatchObject({ level: 'pro', cab: null })
+    })
+
+    it('is capped by a speed zone over the train', () => {
+      const { store, train } = lgvStore()
+      const rail = store.network.segments.keys().next().value!
+      addSpeedZone(store.network, [{ segId: rail, t0: 0, t1: 0.1 }], 160)
+      drive(train, 5)
+      store.tickAllTrains(0.05)
+      expect(buildConsoleState(store)!.signals!.cab).toMatchObject({ kind: 'execute', speed: 160, flashing: false })
+    })
+
+    it('reads the same twice, and keeps what it shows until the next marker when the track ahead gets worse', () => {
+      const { store, train } = lgvStore()
+      drive(train, 5)
+      store.tickAllTrains(0.05)
+      expect(buildConsoleState(store)!.signals!.cab).toMatchObject({ kind: 'announce', speed: 220 })
+      // A train appears two blocks ahead: nothing changes in the cab before the next marker
+      store.trains.push(trainAt(store.network, 3200, 0, 'east'))
+      train.currentSpeed = 5
+      store.tickAllTrains(0.05)
+      expect(buildConsoleState(store)!.signals!.cab).toMatchObject({ kind: 'announce', speed: 220 })
+      expect(buildConsoleState(store)!.signals!.cab).toMatchObject({ kind: 'announce', speed: 220 })
+      // It leaves again: nothing was ever shown of it
+      store.trains.pop()
+      train.currentSpeed = 5
+      store.tickAllTrains(0.05)
+      expect(buildConsoleState(store)!.signals!.cab).toMatchObject({ kind: 'announce', speed: 220 })
+    })
+
+    it('shows the line speed of a train that is slower than the line as its own', () => {
+      const { store, train } = lgvStore()
+      store.trains.pop()
+      train.maxSpeed = 200 / 3.6
+      drive(train, 5)
+      store.tickAllTrains(0.05)
+      // Five markers then the end of the track: six blocks, nothing announced
+      expect(buildConsoleState(store)!.signals!.cab).toMatchObject({ kind: 'line', speed: 200 })
+    })
   })
 })

@@ -1,7 +1,10 @@
 import type {
   ConsoleBrake,
   ConsoleCommand,
+  ConsoleCabSignal,
   ConsoleGuidance,
+  ConsoleSignal,
+  ConsoleSignals,
   ConsoleState,
   ConsoleTurnout,
   FleetEntry,
@@ -311,6 +314,90 @@ function readGuidance(value: unknown): ConsoleGuidance | null {
   return { speedLimit: value.speedLimit, nextLimit, curve: value.curve, derailed }
 }
 
+const SIGNALLING_LEVELS = ['standard', 'pro'] as const
+const SIGNAL_COLORS = ['green', 'yellow', 'red'] as const
+const SIGNAL_INDICATIONS = ['voie-libre', 'avertissement', 'semaphore', 'carre', 'ralentissement', 'rappel'] as const
+const SLOWDOWN_SPEEDS = [30, 60] as const
+const SIGNAL_PLATES = ['F', 'Nf'] as const
+const CAB_KINDS = ['line', 'execute', 'announce', 'stop', 'sight'] as const
+/** Speeds on the wire are km/h within this */
+const MAX_SPEED_KMH = 1000
+
+function isDistance(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0
+}
+
+function readSignal(value: unknown): ConsoleSignal | null {
+  if (!isObject(value)) return null
+  if (!isDistance(value.distance) || !isOneOf(value.color, SIGNAL_COLORS)) return null
+  if (value.indication !== null && !isOneOf(value.indication, SIGNAL_INDICATIONS)) return null
+  if (value.plate !== null && !isOneOf(value.plate, SIGNAL_PLATES)) return null
+  if (typeof value.lit !== 'boolean' || !isText(value.label, MAX_LABEL_LENGTH)) return null
+  // Only there when lit; absent from a PC of an older version
+  if (value.slowdown !== undefined && !isOneOf(value.slowdown, SLOWDOWN_SPEEDS)) return null
+  if (value.reminder !== undefined && !isOneOf(value.reminder, SLOWDOWN_SPEEDS)) return null
+  const signal: ConsoleSignal = {
+    distance: value.distance,
+    color: value.color,
+    indication: value.indication,
+    plate: value.plate,
+    lit: value.lit,
+    label: value.label,
+  }
+  if (value.slowdown !== undefined) signal.slowdown = value.slowdown
+  if (value.reminder !== undefined) signal.reminder = value.reminder
+  return signal
+}
+
+function readCabSignal(value: unknown): ConsoleCabSignal | null {
+  if (!isObject(value)) return null
+  if (!isOneOf(value.kind, CAB_KINDS) || !isIntIn(value.speed, 0, MAX_SPEED_KMH)) return null
+  if (typeof value.flashing !== 'boolean') return null
+  if (value.markerDistance !== null && !isDistance(value.markerDistance)) return null
+  return { kind: value.kind, speed: value.speed, flashing: value.flashing, markerDistance: value.markerDistance }
+}
+
+/** What the signals say: read as a whole, `null` when anything in it is off */
+function readSignals(value: unknown): ConsoleSignals | null {
+  if (!isObject(value)) return null
+  if (!isOneOf(value.level, SIGNALLING_LEVELS)) return null
+  let next: ConsoleSignal | null = null
+  if (value.next !== null) {
+    next = readSignal(value.next)
+    if (!next) return null
+  }
+  if (value.closedDistance !== null && !isDistance(value.closedDistance)) return null
+  if (typeof value.brakeAlert !== 'boolean' || typeof value.waiting !== 'boolean' || typeof value.onSight !== 'boolean') return null
+  if (!isIntIn(value.onSightSpeed, 0, MAX_SPEED_KMH)) return null
+  let passed: ConsoleSignals['passed'] = null
+  if (value.passed !== null) {
+    if (!isObject(value.passed) || typeof value.passed.braked !== 'boolean') return null
+    passed = { braked: value.passed.braked }
+  }
+  let cab: ConsoleCabSignal | null = null
+  if (value.cab !== null) {
+    cab = readCabSignal(value.cab)
+    if (!cab) return null
+  }
+  const signals: ConsoleSignals = {
+    level: value.level,
+    next,
+    closedDistance: value.closedDistance,
+    brakeAlert: value.brakeAlert,
+    waiting: value.waiting,
+    onSight: value.onSight,
+    onSightSpeed: value.onSightSpeed,
+    passed,
+    cab,
+  }
+  // Only there while it lasts; absent from a PC of an older version
+  if (value.overspeed !== undefined) {
+    if (!isObject(value.overspeed) || typeof value.overspeed.braked !== 'boolean') return null
+    signals.overspeed = { braked: value.overspeed.braked }
+  }
+  return signals
+}
+
 function readState(value: unknown): ConsoleState | null {
   if (!isObject(value)) return null
   const v = value
@@ -371,6 +458,12 @@ function readState(value: unknown): ConsoleState | null {
     const guidance = readGuidance(v.guidance)
     if (!guidance) return null
     state.guidance = guidance
+  }
+  // Optional too: absent on a network without signal, and from a PC that knows no signalling
+  if (v.signals !== undefined) {
+    const signals = readSignals(v.signals)
+    if (!signals) return null
+    state.signals = signals
   }
   return state
 }

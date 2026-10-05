@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { ConsoleGuidance, ConsoleState, FleetEntry } from '@application/console/consoleContract'
+import type { ConsoleGuidance, ConsoleSignal, ConsoleSignals, ConsoleState, FleetEntry } from '@application/console/consoleContract'
+import { signalPassedMessage } from '@application/state/editorStore'
 import {
   BRAKE_CYLINDER_GAUGE,
   BRAKE_PIPE_GAUGE,
   accelerationLabel,
   accelerationValue,
+  cabView,
   compactKeyLabel,
   consoleView,
   derailmentMessage,
@@ -14,12 +16,17 @@ import {
   gradientLabel,
   guidanceView,
   newDerailment,
+  newSignalPassed,
   notchLabel,
   notchStops,
+  signalHeadView,
+  signalPassedLabel,
+  signalsView,
   speedDialTicks,
   speedMinorTicks,
   speedTone,
   stoppingDistanceLabel,
+  targetLamps,
   turnoutView,
 } from './consoleModel'
 
@@ -180,6 +187,8 @@ describe('console view', () => {
       nextLimit: null,
       curve: null,
       derailment: null,
+      // No signal on the network (state without `signals`): nothing of the signalling is shown
+      signals: null,
     })
   })
 
@@ -375,5 +384,263 @@ describe('speed limits on the console', () => {
     expect(newDerailment(announced, null)).toBeNull()
     expect(newDerailment(announced, { ...derailed, trainId: null })).toBeNull()
     expect(newDerailment(announced, { ...baseState, trainId: 't_9' })).toBeNull()
+  })
+})
+
+describe('signals', () => {
+  const signal = (patch: Partial<ConsoleSignal> = {}): ConsoleSignal => ({
+    distance: 850,
+    color: 'green',
+    indication: null,
+    plate: null,
+    lit: true,
+    label: 'Voie libre',
+    ...patch,
+  })
+  const signals = (patch: Partial<ConsoleSignals> = {}): ConsoleSignals => ({
+    level: 'standard',
+    next: signal(),
+    closedDistance: null,
+    brakeAlert: false,
+    waiting: false,
+    onSight: false,
+    onSightSpeed: 30,
+    passed: null,
+    cab: null,
+    ...patch,
+  })
+  const pro = (patch: Partial<ConsoleSignal>): ConsoleSignal => signal({ plate: 'F', indication: 'voie-libre', ...patch })
+  const withSignals = (patch: Partial<ConsoleSignals> = {}, state: Partial<ConsoleState> = {}): ConsoleState => ({
+    ...baseState,
+    guidance: { speedLimit: 320, nextLimit: null, curve: 'ok', derailed: null },
+    ...state,
+    signals: signals(patch),
+  })
+
+  it('shows nothing at all on a network without signal: every other field of the view is what it was', () => {
+    const plain = consoleView({ ...baseState, guidance: { speedLimit: 160, nextLimit: null, curve: 'ok', derailed: null } }, fleet)
+    expect(plain.signals).toBeNull()
+    // With signals, only `signals` is added: the rest of the view does not change
+    const signalled = consoleView(withSignals({}, { guidance: { speedLimit: 160, nextLimit: null, curve: 'ok', derailed: null } }), fleet)
+    expect({ ...signalled, signals: null }).toEqual(plain)
+    expect(signalled.signals).not.toBeNull()
+  })
+
+  it('shows the next signal of the standard level as one lamp of its colour, with its distance', () => {
+    const view = signalsView(signals())
+    expect(view).toEqual({
+      next: { kind: 'light', lamps: [{ color: 'green', on: true }], plate: null, label: 'Voie libre', color: 'green', distance: '850 m' },
+      cab: null,
+      title: 'Prochain signal',
+      empty: 'Aucun signal en vue',
+      notes: [],
+      brakeAlert: false,
+    })
+    expect(signalsView(signals({ next: signal({ color: 'yellow', label: 'Attention' }) })).next).toMatchObject({
+      lamps: [{ color: 'yellow', on: true }],
+      label: 'Attention',
+    })
+    expect(signalsView(signals({ next: signal({ color: 'red', label: 'Arrêt' }) })).next).toMatchObject({
+      lamps: [{ color: 'red', on: true }],
+      color: 'red',
+    })
+  })
+
+  it('writes the distance to the signal in metres, then in kilometres, like the other distances', () => {
+    const distance = (metres: number) => signalsView(signals({ next: signal({ distance: metres }) })).next!.distance
+    expect(distance(0)).toBe('0 m')
+    expect(distance(849.6)).toBe('850 m')
+    expect(distance(1000)).toBe('1,0 km')
+    expect(distance(2440)).toBe('2,4 km')
+  })
+
+  it('says so when no signal is in sight', () => {
+    const view = signalsView(signals({ next: null }))
+    expect(view.next).toBeNull()
+    expect(view.empty).toBe('Aucun signal en vue')
+    expect(view.notes).toEqual([])
+  })
+
+  it('tells the first closed signal when it is not the next one', () => {
+    const view = signalsView(signals({ next: signal({ color: 'yellow', label: 'Attention' }), closedDistance: 2440 }))
+    expect(view.notes).toEqual([{ tone: 'info', text: 'Signal fermé à 2,4 km' }])
+    expect(view.brakeAlert).toBe(false)
+  })
+
+  it('raises the brake alert first, with the distance to the closed signal', () => {
+    // The next signal is the closed one
+    const near = signalsView(signals({ next: signal({ color: 'red', label: 'Arrêt', distance: 640 }), brakeAlert: true }))
+    expect(near.brakeAlert).toBe(true)
+    expect(near.notes[0]).toEqual({ tone: 'alert', text: 'Freinez : signal fermé à 640 m' })
+    // The closed signal is further than the next one: its own distance, written once
+    const far = signalsView(signals({ next: signal({ color: 'yellow' }), closedDistance: 1800, brakeAlert: true }))
+    expect(far.notes).toEqual([{ tone: 'alert', text: 'Freinez : signal fermé à 1,8 km' }])
+  })
+
+  it('tells a train waiting for its route before a closed path signal', () => {
+    const view = signalsView(signals({ next: signal({ color: 'red', label: 'Arrêt', distance: 40 }), waiting: true }))
+    expect(view.notes).toEqual([{ tone: 'warning', text: 'Attente de l’itinéraire' }])
+  })
+
+  it('orders the notes, the most pressing first', () => {
+    const view = signalsView(signals({ brakeAlert: true, closedDistance: 900, passed: { braked: true }, onSight: true, waiting: true }))
+    expect(view.notes.map((note) => note.text)).toEqual([
+      'Freinez : signal fermé à 900 m',
+      'Signal fermé franchi : freinage d’urgence',
+      'Marche à vue — 30 km/h',
+      'Attente de l’itinéraire',
+    ])
+  })
+
+  describe('pro level', () => {
+    it('lights the lamps of the target for each indication', () => {
+      const lit = (plate: 'F' | 'Nf', indication: ConsoleSignal['indication']) =>
+        targetLamps(plate, indication).map((lamp) => (lamp.on ? lamp.color.toUpperCase() : lamp.color))
+      // Block signal: green, red, yellow from top to bottom
+      expect(lit('F', 'voie-libre')).toEqual(['GREEN', 'red', 'yellow'])
+      expect(lit('F', 'avertissement')).toEqual(['green', 'red', 'YELLOW'])
+      expect(lit('F', 'semaphore')).toEqual(['green', 'RED', 'yellow'])
+      // Path signal: a second red on top, both lit for the carré
+      expect(lit('Nf', 'voie-libre')).toEqual(['red', 'GREEN', 'red', 'yellow'])
+      expect(lit('Nf', 'avertissement')).toEqual(['red', 'green', 'red', 'YELLOW'])
+      expect(lit('Nf', 'carre')).toEqual(['RED', 'green', 'RED', 'yellow'])
+      // A sémaphore shown on a target with two reds is the lower one alone
+      expect(lit('Nf', 'semaphore')).toEqual(['red', 'green', 'RED', 'yellow'])
+    })
+
+    it('shows the next signal as a target seen from the front, with its plate and the name of the indication', () => {
+      expect(signalHeadView(pro({ color: 'yellow', indication: 'avertissement', label: 'Avertissement', distance: 1500 }))).toEqual({
+        kind: 'target',
+        lamps: [{ color: 'green', on: false }, { color: 'red', on: false }, { color: 'yellow', on: true }],
+        plate: 'F',
+        label: 'Avertissement',
+        color: 'yellow',
+        distance: '1,5 km',
+      })
+      const names = (['voie-libre', 'avertissement', 'semaphore'] as const).map(
+        (indication, i) => signalHeadView(pro({ indication, label: ['Voie libre', 'Avertissement', 'Sémaphore'][i] })).label,
+      )
+      expect(names).toEqual(['Voie libre', 'Avertissement', 'Sémaphore'])
+      const carre = signalHeadView(pro({ color: 'red', plate: 'Nf', indication: 'carre', label: 'Carré' }))
+      expect(carre).toMatchObject({ kind: 'target', plate: 'Nf', label: 'Carré' })
+      expect(carre.lamps.filter((lamp) => lamp.on).map((lamp) => lamp.color)).toEqual(['red', 'red'])
+    })
+
+    it('shows a marker board without lamps as a marker, not as a target', () => {
+      expect(signalHeadView(pro({ lit: false, plate: 'Nf', indication: 'carre', color: 'red', label: 'Carré' }))).toEqual({
+        kind: 'marker',
+        lamps: [],
+        plate: 'Nf',
+        label: 'Repère Nf',
+        color: null,
+        distance: '850 m',
+      })
+    })
+
+    it('tells the running on sight; its 30 km/h is the limit in force the domain gives', () => {
+      // The domain counts the running on sight in the speed limit of the train (`signalSpeedCap`):
+      // the console shows the limit of the guidance as it stands
+      const onSight = { guidance: { speedLimit: 30, nextLimit: null, curve: 'ok' as const, derailed: null } }
+      const state = withSignals({ level: 'pro', next: pro({}), onSight: true }, onSight)
+      const view = consoleView({ ...state, speed: 25 / 3.6 }, fleet)
+      expect(view.signals!.notes).toEqual([{ tone: 'warning', text: 'Marche à vue — 30 km/h' }])
+      expect(view.limit).toEqual({ kmh: 30, ratio: 30 / 320, label: '30' })
+      // The colour of the speed follows that limit: orange from 20, red above 30
+      expect(view.speedTone).toBe('near')
+      expect(consoleView({ ...state, speed: 15 / 3.6 }, fleet).speedTone).toBe('normal')
+      expect(consoleView({ ...state, speed: 31 / 3.6 }, fleet).speedTone).toBe('over')
+      // Not on sight: the limit of the track
+      const free = consoleView({ ...withSignals({ level: 'pro', next: pro({}) }), speed: 31 / 3.6 }, fleet)
+      expect(free.limit!.kmh).toBe(320)
+      expect(free.speedTone).toBe('normal')
+    })
+
+    it('adds nothing of its own to the limit: the flag alone does not lower it', () => {
+      // No second computation on the display side: what the domain says is what is shown
+      expect(consoleView(withSignals({ onSight: true }), fleet).limit!.kmh).toBe(320)
+      const state = withSignals({ onSight: true }, { guidance: { speedLimit: 20, nextLimit: null, curve: 'ok', derailed: null } })
+      expect(consoleView(state, fleet).limit!.kmh).toBe(20)
+    })
+
+    it('draws the announcement and the reminder of a diverging route as two yellow lamps apart, flashing for 60', () => {
+      const announce = signalHeadView(pro({ indication: 'ralentissement', color: 'yellow', label: 'Ralentissement 30', slowdown: 30 }))
+      expect(announce.slow).toEqual({ kind: 'slowdown', flashing: false })
+      // None of the lamps of the column is lit for it
+      expect(announce.lamps.every((lamp) => !lamp.on)).toBe(true)
+      expect(announce.label).toBe('Ralentissement 30')
+      const reminder = signalHeadView(pro({ plate: 'Nf', indication: 'rappel', color: 'yellow', label: 'Rappel 60', reminder: 60 }))
+      expect(reminder.slow).toEqual({ kind: 'reminder', flashing: true })
+      expect(reminder.lamps.every((lamp) => !lamp.on)).toBe(true)
+      // With the avertissement the yellow of the column is lit too
+      const both = signalHeadView(pro({ plate: 'Nf', indication: 'avertissement', color: 'yellow', label: 'Avertissement · rappel 30', reminder: 30 }))
+      expect(both.slow).toEqual({ kind: 'reminder', flashing: false })
+      expect(both.lamps.filter((lamp) => lamp.on).map((lamp) => lamp.color)).toEqual(['yellow'])
+      // A signal that shows neither is drawn as it always was
+      expect('slow' in signalHeadView(pro({}))).toBe(false)
+    })
+
+    it('tells an overspeed caught by the cab, with or without the emergency brake', () => {
+      expect(signalsView(signals({ overspeed: { braked: true } })).notes).toEqual([{ tone: 'alert', text: 'Survitesse : freinage d’urgence' }])
+      expect(signalsView(signals({ overspeed: { braked: false } })).notes).toEqual([{ tone: 'alert', text: 'Survitesse' }])
+    })
+  })
+
+  describe('cab display', () => {
+    const cab = (kind: 'line' | 'execute' | 'announce' | 'stop' | 'sight', speed: number, flashing = false, markerDistance: number | null = 1200) =>
+      ({ kind, speed, flashing, markerDistance })
+
+    it('writes three figures in the colours of what they ask', () => {
+      expect(cabView(cab('line', 300))).toEqual({ tone: 'line', figures: '300', flashing: false, label: 'Voie libre', distance: '1,2 km' })
+      expect(cabView(cab('line', 300, true))).toMatchObject({ tone: 'line', flashing: true, label: 'Voie libre, annonce à suivre' })
+      expect(cabView(cab('announce', 270))).toMatchObject({ tone: 'announce', figures: '270', label: 'Annonce 270' })
+      expect(cabView(cab('execute', 160))).toMatchObject({ tone: 'execute', figures: '160', label: 'Exécution 160' })
+      expect(cabView(cab('stop', 0))).toMatchObject({ tone: 'stop', figures: '000', label: 'Arrêt au repère' })
+      expect(cabView(cab('sight', 30))).toMatchObject({ tone: 'sight', figures: '30', label: 'Marche à vue' })
+      expect(cabView(cab('line', 300, false, null)).distance).toBe('—')
+    })
+
+    it('takes the place of the next signal when the cab stands for the lineside signals', () => {
+      const view = signalsView(signals({ level: 'pro', next: pro({ lit: false }), cab: cab('announce', 220) }))
+      expect(view.next).toBeNull()
+      expect(view.cab).toMatchObject({ tone: 'announce', figures: '220' })
+      expect(view.title).toBe('Vitesse en cabine')
+      // Without cab display the marker is shown like any next signal
+      expect(signalsView(signals({ level: 'pro', next: pro({ lit: false }) })).next).toMatchObject({ kind: 'marker' })
+    })
+
+    it('colours the speed like a lower limit ahead while it announces a speed or a stop', () => {
+      const tone = (kmh: number, display: ReturnType<typeof cab> | null) =>
+        consoleView({ ...withSignals({ level: 'pro', cab: display }), speed: kmh / 3.6 }, fleet).speedTone
+      expect(tone(290, null)).toBe('normal')
+      expect(tone(290, cab('line', 300, true))).toBe('normal')
+      expect(tone(290, cab('announce', 270))).toBe('ahead')
+      expect(tone(260, cab('announce', 270))).toBe('normal')
+      expect(tone(60, cab('stop', 0))).toBe('ahead')
+      expect(tone(0, cab('stop', 0))).toBe('normal')
+      // An execution is the limit in force already: nothing more ahead
+      expect(tone(150, cab('execute', 160))).toBe('normal')
+    })
+  })
+
+  it('announces a closed signal passed once, in the words of the PC, and again only for another passing', () => {
+    expect(signalPassedLabel(true)).toBe(signalPassedMessage(true))
+    expect(signalPassedLabel(false)).toBe(signalPassedMessage(false))
+
+    const announced = new Set<string>()
+    const clean = withSignals()
+    const passed = withSignals({ passed: { braked: true } })
+    expect(newSignalPassed(announced, clean)).toBeNull()
+    expect(newSignalPassed(announced, passed)).toBe('Signal fermé franchi : freinage d’urgence')
+    expect(newSignalPassed(announced, passed)).toBeNull()
+    expect(newSignalPassed(announced, passed)).toBeNull()
+    // Another train: its own message
+    expect(newSignalPassed(announced, { ...passed, trainId: 't_2' })).not.toBeNull()
+    // The trace is gone (next signal passed properly), then another closed signal is passed
+    expect(newSignalPassed(announced, clean)).toBeNull()
+    expect(newSignalPassed(announced, withSignals({ passed: { braked: false } }))).toBe('Signal fermé franchi')
+    // Nothing driven, legacy locomotive, network without signal
+    expect(newSignalPassed(announced, null)).toBeNull()
+    expect(newSignalPassed(announced, { ...passed, trainId: null })).toBeNull()
+    expect(newSignalPassed(announced, { ...baseState, trainId: 't_9' })).toBeNull()
   })
 })

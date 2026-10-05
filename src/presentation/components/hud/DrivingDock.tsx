@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
-import { trainImpactMessage, type EditorStore } from '@application/state/editorStore'
+import { overspeedMessage, signalPassedMessage, trainImpactMessage, type EditorStore } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
 import type { ConsoleCommand } from '@application/console/consoleContract'
 import { applyConsoleCommand } from '@application/console/consoleCommands'
@@ -54,6 +54,29 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
     store.onTrainImpact = (_train, speed) => showToast(trainImpactMessage(speed), 'warning')
     return () => {
       store.onTrainImpact = null
+    }
+  }, [store])
+
+  // So does the driven train passing a closed signal against the rules, once per signal passed
+  useEffect(() => {
+    store.onSignalPassed = (train) => {
+      if (train.id !== store.selectedTrainId) return
+      const braked = train.signalPassed?.braked ?? store.signalStopEnforced
+      showToast(signalPassedMessage(braked), braked ? 'error' : 'warning', 6000)
+    }
+    return () => {
+      store.onSignalPassed = null
+    }
+  }, [store])
+
+  // And the driven train caught overspeeding by its cab signalling, once per overspeed
+  useEffect(() => {
+    store.onOverspeed = (train, overspeed) => {
+      if (train.id !== store.selectedTrainId) return
+      showToast(overspeedMessage(overspeed.braked), overspeed.braked ? 'error' : 'warning', 6000)
+    }
+    return () => {
+      store.onOverspeed = null
     }
   }, [store])
 

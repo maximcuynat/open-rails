@@ -145,6 +145,8 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'toggle-snap', label: 'Aimantation', checked: store.snap, shortcut: store.shortcutLabel('view.toggleSnap') },
         { id: 'toggle-dimensions', label: 'Cotes dynamiques', checked: store.showDimensions },
         { id: 'toggle-minimap', label: 'Mini-carte', checked: store.showMinimap },
+        { id: 'toggle-signal-blocks', label: 'Cantons', checked: store.signalBlocksVisible },
+        { id: 'toggle-signal-reservations', label: 'Réservations (en conduite)', checked: store.showSignalReservations },
         { id: 'toggle-inspector', label: 'Inspecteur', checked: store.isSidePanelOpen, shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
         {
           id: 'theme',
@@ -189,6 +191,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'toggle-minimap':
             store.toggleMinimap()
+            break
+          case 'toggle-signal-blocks':
+            store.toggleSignalBlocks()
+            break
+          case 'toggle-signal-reservations':
+            store.toggleSignalReservations()
             break
           case 'toggle-inspector':
             store.toggleSidePanel()

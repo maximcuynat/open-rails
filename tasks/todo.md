@@ -283,7 +283,7 @@ Reste, non fait :
 
 ---
 
-# Fait, à commiter — Limites de vitesse posées sur la voie, dévers et déraillement
+# Fait — Limites de vitesse posées sur la voie, dévers et déraillement (commit `8ad8981`)
 
 Plan rédigé le 2026-10-05 après recherche, corrigé avec les décisions de l'utilisateur ; **rien n'est codé, en attente de son feu vert**. Sources : `tasks/recherche-limites-vitesse.md`, `tasks/recherche-devers.md`, `tasks/audit-objets-de-voie.md`. 1:1 seulement. Branche dédiée à créer à partir de `developement`. Pas de commit tant que l'utilisateur ne le demande pas.
 
@@ -503,7 +503,7 @@ Marqueurs sur le cadran : un repère plein à la limite en cours, un repère cre
 
 ---
 
-# Ensuite — Signalisation : un moteur, deux niveaux (feuille de route, à valider)
+# Fait, à commiter — Signalisation : un moteur, deux niveaux
 
 Recherches du 2026-10-05 : `tasks/recherche-signalisation.md` (signalisation française réelle, règles, dessin) et `tasks/recherche-signalisation-niveaux.md` (monde simple, deux niveaux, palette). Rien n'est codé. Vient après le plan des limites de vitesse, dont il réutilise la brique « objet attaché à la voie » et le mode « Signalisation » de la barre de gauche.
 
@@ -569,16 +569,108 @@ Les rangs 2 et 3 partagent tout le calcul. Chaque rang fera l'objet d'un plan d�
 - **Dérive du réaliste** (block manuel, voies de service, manœuvres) : s'en tenir au block automatique, aux carrés, à la vitesse en cabine et aux ralentissements.
 - **Attentes du public professionnel** : aucune enquête trouvée, cette partie de la recherche est une estimation.
 
-## À trancher par l'utilisateur
+## Décisions de l'utilisateur (2026-10-05)
 
-1. **Un moteur et deux niveaux** (proposé), ou un seul des deux mondes.
-2. **Niveau par défaut d'un nouveau projet** : simple (proposé, plus accessible) ou réaliste.
-3. **Franchissement d'un signal fermé** : freinage d'urgence automatique (proposé, réglable) ou simple alerte.
-4. **Signal à double sens** : deux signaux dos à dos (proposé, c'est aussi le cas réel) ou un seul objet à deux faces.
+1. **Un moteur, deux niveaux.** Niveau standard : deux signaux, block et trajectoire. Niveau **pro** : les signaux français, avec sa propre barre latérale de gauche.
+2. **Niveau par défaut d'un nouveau projet : standard.**
+3. **Franchir un signal fermé déclenche un freinage d'urgence**, réglage activé par défaut et désactivable.
+4. **Signaux à double sens permis** (les TER circulent souvent sur une voie unique parcourue dans les deux sens) ; recherche de confirmation lancée sur la voie unique française.
+5. **Panneaux d'annonce des limites de vitesse : placés automatiquement** à partir des zones, système français, réservés au niveau pro.
+6. Tout faire avec trois agents de code, en autonomie ; l'utilisateur donnera ses retours ensuite.
+
+## Exécution (branche `feature/signalling`, partie de `feature/speed-zones`)
+
+Pas de commit tant que l'utilisateur ne le demande pas.
+
+### Agent 1 — moteur (domaine, sauvegarde, réglages), seul d'abord
+
+- [x] M1. Signaux dans le réseau (`net.signals`) : position sur la voie, sens de lecture, fonction (espacement ou protection), options du niveau pro ; recalés quand un rail est remplacé (brique des zones de vitesse) ; pose à double sens = deux signaux dos à dos
+- [x] M2. Cantons déduits des signaux (toutes branches jusqu'aux signaux suivants de même sens), jamais stockés ; index mis en cache
+- [x] M3. Occupation par les trains ; réservation du trajet par tronçon et par aiguille, libérée derrière la queue ; trajet d'une rame = aiguilles dans leur position du moment ; réservation prolongée devant la rame conduite jusqu'à sa distance d'arrêt
+- [x] M4. État de chaque signal : fermé, attention, ouvert ; signal de trajectoire fermé par défaut, ouvert quand le trajet est libre et réservé ; table des indications du niveau pro (voie libre, avertissement, sémaphore, carré)
+- [x] M5. Aiguille prise dans une réservation : manœuvre refusée
+- [x] M6. Conduite : prochain signal, premier signal fermé sur le trajet et sa distance, alerte de freinage ; freinage d'urgence au franchissement d'un signal fermé (réglage du projet) ; règles du niveau pro (sémaphore franchissable en marche à vue après arrêt, carré jamais)
+- [x] M7. Réglages du projet (`signallingLevel`, freinage au franchissement) et sauvegarde des signaux ; undo / redo ; ancien fichier resauvegardé à l'identique
+- [x] M8. Rapport de contrôle : cantons plus courts que la distance d'arrêt, cantons trop longs, aiguille sans protection
+- [x] M9. Tests
+
+### Agent 2 — construction (barre de gauche, pose, canevas, panneaux)
+
+- [x] C1. Mode « Signalisation » : palette standard (Sélection, Signal de block, Signal de trajectoire, Limite de vitesse, Supprimer) ; au niveau pro, une barre latérale de gauche propre (Sélection, Sémaphore, Carré, Repère de LGV, Limite de vitesse, Supprimer)
+- [x] C2. Pose : aperçu du signal sous le curseur avec sa flèche de sens, du côté de la voie où est le curseur ; touche pour inverser ; option double sens ; glisser le long de la voie = pose en série à espacement réglable ; glisser un signal = le déplacer ; interdits (sur une aiguille)
+- [x] C3. Dessin sobre des signaux, niveau standard (mât et feu, marque distincte pour la trajectoire) et niveau pro (cibles françaises vues de dessus), avec leur état en conduite
+- [x] C4. Affichages à cocher : cantons colorés, réservations ; marqueurs du rapport de contrôle
+- [x] C5. Sélection d'un signal, panneau latéral (type, sens, options, canton), suppression, changement de type
+- [x] C6. Paramètres du projet : niveau de signalisation, freinage au franchissement
+- [x] C7. Panneaux d'annonce des limites, niveau pro : dessinés aux emplacements calculés par le domaine
+- [x] C8. Tests
+
+### Agent 3 — conduite (poste de conduite, pupitre, vitesse en cabine)
+
+- [x] D1. Poste de conduite (les trois variantes et le pupitre du téléphone) : prochain signal et sa distance, premier signal fermé, alerte de freinage, message au franchissement d'un signal fermé
+- [x] D2. Niveau pro : cible du signal vue de face (feux, plaque), règles de marche à vue
+- [x] D3. Emplacement automatique des panneaux d'annonce d'une limite (domaine) : distance d'annonce calculée sur la distance de freinage
+- [x] D4. Vitesse en cabine des LGV (niveau pro, ligne de type LGV) : repères de canton, vitesse-consigne par canton, séquence d'arrêt, affichage dans le poste
+- [x] D5. Tests
+
+### Notes pour les agents 2 et 3
+
+- Voie unique (`tasks/recherche-voie-unique.md`) : le signal à deux faces n'existe pas en France ; « double sens » est une commande de pose qui crée deux signaux dos à dos, chacun dessiné **à gauche de son sens de marche**, donc de part et d'autre de la voie.
+- Piège à signaler au joueur : un signal isolé au milieu d'une voie unique permet un face-à-face ; signal de sortie au bout de chaque voie d'évitement, signal d'entrée avant chaque aiguille, rien entre deux évitements.
+- Idée notée, hors chantier : un outil « évitement signalé » qui pose les six signaux d'un coup.
+- Laissé par le moteur : `oneWay` stocké mais sans effet ; les 30 km/h de la marche à vue ne sont pas imposés (drapeau `onSight` exposé).
+
+### Vérification finale
+
+- [x] `npm test`, `npm run typecheck`, `npm run build`
+- [x] Navigateur sans écran : pose de deux signaux de block et d'un signal de trajectoire avec leurs touches, sens choisi par le côté du curseur, cantons colorés, barre de gauche du niveau pro, sémaphore avec sa plaque F ; en conduite, une rame arrêtée 4 km plus loin : « Attention 1,4 km · Signal fermé à 2,9 km » au niveau standard, cible « Avertissement » avec plaque F au niveau pro
+- [ ] Contrôle à l'œil par l'utilisateur : bifurcation avec signal de trajectoire et réservation, voie unique avec évitements, franchissement d'un signal fermé, pose en série en glissant, déplacement d'un signal, panneaux d'annonce, vitesse en cabine sur LGV, pupitre du téléphone, thème sombre
+- [ ] Aller-retour standard → pro → standard sur un projet réel (testé seulement en automatique)
+
+## Revue (2026-10-05)
+
+- `npm test` : 1607 tests verts (88 fichiers, 253 nouveaux) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
+- Coût mesuré (3 600 rails, 40 signaux, 3 rames) : environ 0,1 ms par pas quand rien ne change, 0,3 ms avec des rames en mouvement ; construction des cantons 19 à 30 ms, une fois par changement de voie ou de signal ; rien sans signal.
+- Ajouté à la relecture : délai du test de croisements `reconcile.test.ts` porté à 20 s. Il dure 3 s seul, avant comme après ce chantier (mesuré sur le commit précédent), et dépassait 5 s quand les 88 fichiers tournent en parallèle.
+- Règles tranchées par le moteur, à confirmer :
+  - une rame réserve devant elle 1,5 × sa distance d'arrêt + 50 m ; elle abandonne sa demande au-delà de 300 m + 2 × sa distance d'arrêt du signal, ou en changeant de sens ;
+  - un signal de protection ne s'ouvre pas si une rame circule en sens contraire sur la pleine voie qui suit (enclenchement de sens, pour la voie unique) ;
+  - une aiguille réservée reste manœuvrable par le conducteur de la rame pour laquelle elle l'est ;
+  - niveau pro : un sémaphore franchi après un arrêt à moins de 200 m devant lui n'est pas une faute ; un carré l'est toujours ;
+  - priorité : premier demandeur servi.
+- Vitesse en cabine (LGV, niveau pro) : séquence simplifiée par nombre de cantons libres (000, 160, 220, 270, vitesse de ligne clignotante, vitesse de ligne) ; pas de canton tampon, pas de palier 80, pas de freinage de survitesse.
+- Panneaux d'annonce : distance `max(300 m ; (v₁² − v₂²) / 1,4)`, losange à partir de 40 km/h de baisse ; pas de panneau pour une baisse due à une courbe seule.
+- Restes connus : voir « Signalisation » dans les défauts connus.
+
+## Second lot — ce qui restait (un agent, demandé le 2026-10-05)
+
+Instantané du premier lot avant ce second lot : arbre git `b2ff5d93fb53b977aae21d7c0592c4d63435c369` (noté pour pouvoir séparer les deux commits).
+
+- [x] R1. Signal de trajectoire à sens unique : infranchissable par l'arrière (l'option existe, elle n'avait pas d'effet), réglable dans le panneau et la barre contextuelle
+- [x] R2. Marche à vue (niveau pro) : les 30 km/h entrent dans la limite de vitesse de la rame calculée par le domaine, jusqu'au signal suivant
+- [x] R3. Signaux de ralentissement pour les voies déviées (niveau pro) : vitesse d'une aiguille en voie déviée d'après son cœur — valeurs basses retenues là où les sources divergent, marquées « estimées » ; limite appliquée de l'aiguille jusqu'au dégagement de la queue ; rappel sur le carré qui précède l'aiguille et annonce sur le signal d'avant (30 et 60 km/h) ; affichage au poste et sur le canevas
+- [x] R4. Vitesse en cabine : canton tampon, palier 80, freinage d'urgence en survitesse (vitesse affichée + 15 km/h au-dessus de 200, + 10 en dessous), soumis au réglage du freinage au franchissement
+- [x] R5. Rapport de contrôle : signal isolé en pleine voie parcourue dans les deux sens, sans son vis-à-vis — seulement si une règle fiable existe, sans faux positif sur un évitement correctement signalé
+- [x] R6. Défauts du premier lot : cantons et réservations dessinés niveau par niveau (ponts) et masquables pendant la pose ; les deux affichages sauvegardés avec le projet ; clic sur deux signaux dos à dos ; signal déplacé ou signalé quand une aiguille est construite à son emplacement ; distance d'arrêt des rames non conduites avec la pente ; obstacle entré par une aiguille vu par la vitesse en cabine ; coût par image de la vitesse en cabine
+- [x] R7. Tests, `npm test`, `npm run typecheck`, `npm run build`
+
+### Revue du second lot (2026-10-05)
+
+- `npm test` : 1707 tests verts (94 fichiers) ; `npm run typecheck` et `npm run build` verts, relancés après le retour de l'agent (repris après une interruption de session).
+- Vu dans un navigateur sans écran, aux deux niveaux : un signal de trajectoire à sens unique dessiné avec sa barre rouge en travers de la voie et conservé à la sauvegarde ; en conduite, ce signal abordé par l'arrière est annoncé comme premier signal fermé (2,3 km), le signal d'avant passe à « Attention » / « Avertissement ». Aucune erreur dans la console.
+- Non vu à l'écran : ralentissement et rappel (cible élargie, clignotement), vitesse en cabine avec canton tampon et survitesse, cantons sous un pont, alternance au clic sur deux signaux dos à dos, pupitre du téléphone.
+- Règles tranchées par l'agent :
+  - sens unique : infranchissable par l'arrière aux deux niveaux (un changement de niveau ne rouvre pas une voie au contresens) ; sans effet sur un signal de block ;
+  - vitesse d'une aiguille en voie déviée : cœur connu → table basse ; sinon rayon de la branche → vitesse en courbe sans dévers ramenée au palier inférieur (30, 60, 90, 120, 160, 220) ; appliquée au niveau pro, sur un réseau qui a des signaux, à l'échelle 1:1 ;
+  - vitesse en cabine : palier 80 seulement devant un repère non franchissable ou une fin de voie (pas de canton tampon) ; survitesse contrôlée sur toutes les rames ;
+  - signal isolé : sur une pleine voie signalée dans les deux sens, un signal d'espacement sans signal de l'autre sens à moins de 100 m ; aucun faux positif sur un évitement à six signaux ni sur une double voie à sens unique par voie (tests).
+- Valeurs estimées, marquées dans le code : table tangente → vitesse (valeurs basses), paliers déduits du rayon, canton de contrôle de chaque palier de survitesse, fin de voie traitée comme un repère non franchissable, plancher de 0,1 m/s² en pente, 100 m pour le vis-à-vis, clignotement à 1 Hz.
+- **Commits** : une autre session a travaillé en même temps sur la traversée-jonction double dans plusieurs des mêmes fichiers (`junction.ts`, `editorStore.ts`, `Canvas.tsx`, `renderer.ts`, `SidePanel.tsx`…) et tout l'arbre est passé dans l'index. L'instantané du premier lot ne suffit donc plus à isoler ce second lot.
+- Restes connus du second lot : traversée-jonction double sans vitesse en voie déviée ; ralentissement et rappel identiques vus de dessus ; fin de voie sur LGV sans repère : « 000 » sans annonce préalable ; une voie de type contresens (signaux denses dans un sens, rares dans l'autre) voit ses signaux d'espacement signalés comme isolés ; `showDimensions` est restauré par l'annulation alors que les deux affichages de signalisation ne le sont pas.
 
 ## Reporté à plus tard
 
-Trains pilotés par le jeu, contrôle de vitesse par balises, panneaux d'annonce des limites le long de la voie, vitesse des aiguillages en voie déviée (avec le rang 6), block manuel, voies de service.
+Trains pilotés par le jeu, contrôle de vitesse par balises, signaux de ralentissement et vitesse des aiguillages en voie déviée (les tables de vitesse trouvées se contredisent), indications clignotantes, block manuel, voies de service.
 
 ---
 
@@ -640,6 +732,22 @@ Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été
 - À l'arrêt en urgence, « un cran de moins » sur N lève le verrou d'urgence (et met maintenant le manipulateur sur B1)
 - Frein électrique : sous 10 km/h le HUD affiche encore « B5 · 100 % » alors que l'effort est nul ; la distance d'arrêt l'ignore ; puissance et vitesse d'effacement estimées
 - Ruban de distance d'arrêt du debug anguleux en courbe serrée (échantillonnage limité à 150 pas)
+
+## Signalisation
+
+- Signal de trajectoire « à sens unique » : option stockée, sans effet
+- Marche à vue à 30 km/h (niveau pro) : affichée au poste, pas imposée par la physique
+- Voie unique sans signal de protection aux entrées : deux rames opposées peuvent se retrouver arrêtées face à face (blocage sans collision) ; le rapport de contrôle signale ces aiguilles
+- Avertissement « signal isolé en pleine voie unique » non fait : pas de règle fiable sans savoir quelles voies sont parcourues dans les deux sens
+- Rame en marche arrière à travers une aiguille prise en talon mal orientée : non testé
+- Distance d'arrêt des rames non conduites estimée sans la pente
+- Un signal déjà posé n'est pas déplacé si une aiguille est construite ensuite à son emplacement
+- Cantons et réservations dessinés au-dessus des ponts (pas niveau par niveau) ; cantons non masquables pendant la pose ; les deux affichages ne sont pas sauvegardés avec le projet
+- Clic sur deux signaux dos à dos pile dans l'axe : prend le premier trouvé
+- Vitesse en cabine : un obstacle entré par une aiguille entre la rame et le prochain repère n'est pas vu ; une passe sur le réseau par image au niveau pro sur LGV
+- Signaux de ralentissement et vitesse des aiguillages en voie déviée : non faits (tables de vitesse contradictoires)
+- Ancienne `Locomotive` : ignorée par la signalisation
+- Idée notée : outil « évitement signalé » qui pose les six signaux d'un coup
 
 ## Limites de vitesse et dévers
 

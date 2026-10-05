@@ -72,4 +72,35 @@ describe('speed zone actions: what the user is told', () => {
     changeZoneSpeed(store, zone.id, zone.speed - 10)
     expect(showToast).toHaveBeenCalledWith(SPEED_ZONE_OVERLAP, 'warning', expect.any(Number))
   })
+
+  it('says it once per zone for as long as it overlaps: not at each step of the speed counter', () => {
+    const store = storeWithTool()
+    clickSpeedZoneTool(store, store.trackPointAt({ x: 100, y: 0 }))
+    clickSpeedZoneTool(store, store.trackPointAt({ x: 600, y: 0 }))
+    const zone = store.selectedSpeedZone!
+    const overlaps = vi.spyOn(store, 'speedZoneOverlapsAnother').mockReturnValue(true)
+    changeZoneSpeed(store, zone.id, zone.speed - 10)
+    changeZoneSpeed(store, zone.id, zone.speed - 10)
+    changeZoneSpeed(store, zone.id, zone.speed + 10)
+    expect(showToast).toHaveBeenCalledTimes(1)
+    // It stops overlapping, then overlaps again: the warning is owed anew
+    overlaps.mockReturnValue(false)
+    changeZoneSpeed(store, zone.id, zone.speed - 10)
+    expect(showToast).toHaveBeenCalledTimes(1)
+    overlaps.mockReturnValue(true)
+    changeZoneSpeed(store, zone.id, zone.speed - 10)
+    changeZoneSpeed(store, zone.id, zone.speed - 10)
+    expect(showToast).toHaveBeenCalledTimes(2)
+  })
+
+  it('a zone laid over a zone already warned for is told too: the warning is per zone', () => {
+    const store = storeWithTool()
+    vi.spyOn(store, 'speedZoneOverlapsAnother').mockReturnValue(true)
+    clickSpeedZoneTool(store, store.trackPointAt({ x: 100, y: 0 }))
+    clickSpeedZoneTool(store, store.trackPointAt({ x: 600, y: 0 }))
+    clickSpeedZoneTool(store, store.trackPointAt({ x: 200, y: 0 }))
+    clickSpeedZoneTool(store, store.trackPointAt({ x: 500, y: 0 }))
+    expect(store.network.speedZones.size).toBe(2)
+    expect(showToast).toHaveBeenCalledTimes(2)
+  })
 })

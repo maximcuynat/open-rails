@@ -16,6 +16,7 @@ import {
   consoleView,
   notchStops,
 } from '@presentation/components/console/consoleModel'
+import { SignalPanel } from '@presentation/components/console/signalParts'
 import { trainTitle } from './deskView'
 
 /**
@@ -58,6 +59,8 @@ export function PortraitDesk({ state, fleet, canSwitchCab, onCommand }: {
           {view.limit && <span className="phone-limit-mark" style={{ left: `${view.limit.ratio * 100}%` }} />}
           {view.nextLimit && <span className="phone-limit-mark is-next" style={{ left: `${view.nextLimit.ratio * 100}%` }} />}
         </div>
+        {/* Only on a network that has signals: it does not come or go while driving */}
+        {view.signals && <SignalPanel signals={view.signals} />}
       </section>
 
       <section className="phone-panel phone-air">

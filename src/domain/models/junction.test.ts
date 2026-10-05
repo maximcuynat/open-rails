@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createNetwork, addNode, addSegment, addCurveSegment } from './network'
+import { createNetwork, addNode, addSegment, addCurveSegment, removeSegment } from './network'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import {
   TURNOUT_SPECS,
@@ -17,8 +17,13 @@ import {
   turnoutHandFlipSegments,
   activeBranchOf,
   turnoutView,
+  doubleSlipView,
+  doubleSlipSideOf,
+  doubleSlipSideToward,
+  throwDoubleSlipSide,
+  openPassage,
 } from './junction'
-import { openExit } from './routing'
+import { isRailClosedAt, openExit } from './routing'
 
 describe('TURNOUT_SPECS', () => {
   it('defines #6 and #4 Kato turnout specs', () => {
@@ -441,5 +446,128 @@ describe('turnoutHandFlipSegments', () => {
       expect([...named].sort()).toEqual(changed.sort())
       expect(changed).toHaveLength(3)
     }
+  })
+})
+
+describe('double slip: two turnouts sharing their points', () => {
+  /**
+   * Four rails at one node, all tangent to the x axis there: a straight and a curve on each side.
+   * `order` is the order in which they are laid, to check that it does not matter.
+   */
+  function buildSlip(order: ('l1' | 'l2' | 'r1' | 'r2')[] = ['l1', 'l2', 'r1', 'r2']) {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const ends = {
+      l1: addNode(net, { x: -100, y: 0 }),
+      l2: addNode(net, { x: -100, y: 12 }),
+      r1: addNode(net, { x: 100, y: 0 }),
+      r2: addNode(net, { x: 100, y: -12 }),
+    }
+    const rails: Record<string, string> = {}
+    for (const name of order) {
+      if (name === 'l1') rails.l1 = addSegment(net, ends.l1.id, apex.id)!.id
+      if (name === 'r1') rails.r1 = addSegment(net, apex.id, ends.r1.id)!.id
+      if (name === 'l2') rails.l2 = addCurveSegment(net, ends.l2.id, apex.id, { x: -50, y: 0 })!.id
+      if (name === 'r2') rails.r2 = addCurveSegment(net, apex.id, ends.r2.id, { x: 50, y: 0 })!.id
+    }
+    return { net, apex, rails }
+  }
+
+  it('gets a table that names the straight rail of each side first, whatever the order of the rails', () => {
+    for (const order of [['l1', 'l2', 'r1', 'r2'], ['r2', 'l2', 'r1', 'l1'], ['l2', 'r2', 'l1', 'r1']] as const) {
+      const { net, apex, rails } = buildSlip([...order])
+      autoDetectJunctions(net)
+      const junc = findJunctionAtNode(net, apex.id)!
+      expect(junc.kind).toBe('double_slip')
+      expect(turnoutView(net, junc)).toBeNull()
+      const view = doubleSlipView(junc)!
+      expect(view.sides).toEqual([[rails.r1, rails.r2], [rails.l1, rails.l2]])
+      expect(view.active).toEqual([0, 0])
+    }
+  })
+
+  it('opens one route at a time and each side is thrown on its own', () => {
+    const { net, apex, rails } = buildSlip()
+    autoDetectJunctions(net)
+    const junc = findJunctionAtNode(net, apex.id)!
+    const right = doubleSlipSideOf(junc, rails.r1)!
+    const left = doubleSlipSideOf(junc, rails.l1)!
+    expect(right).not.toBe(left)
+
+    expect(openExit(net, apex.id, rails.l1)).toBe(rails.r1)
+    expect(openExit(net, apex.id, rails.r1)).toBe(rails.l1)
+    expect(openExit(net, apex.id, rails.l2)).toBeNull()
+    expect(isRailClosedAt(net, rails.l2, apex.id)).toBe(true)
+    expect(isRailClosedAt(net, rails.r2, apex.id)).toBe(true)
+
+    throwDoubleSlipSide(junc, right)
+    expect(openExit(net, apex.id, rails.l1)).toBe(rails.r2)
+    expect(openExit(net, apex.id, rails.r1)).toBeNull()
+
+    throwDoubleSlipSide(junc, left)
+    expect(openExit(net, apex.id, rails.l2)).toBe(rails.r2)
+    expect(openExit(net, apex.id, rails.r2)).toBe(rails.l2)
+    expect(openExit(net, apex.id, rails.l1)).toBeNull()
+
+    throwDoubleSlipSide(junc, right)
+    expect(openExit(net, apex.id, rails.l2)).toBe(rails.r1)
+  })
+
+  it('tells the side that lies towards a point, and opens a passage by its rails', () => {
+    const { net, apex, rails } = buildSlip()
+    autoDetectJunctions(net)
+    const junc = findJunctionAtNode(net, apex.id)!
+    expect(doubleSlipSideToward(net, junc, { x: 5, y: 1 })).toBe(doubleSlipSideOf(junc, rails.r1))
+    expect(doubleSlipSideToward(net, junc, { x: -5, y: 1 })).toBe(doubleSlipSideOf(junc, rails.l1))
+
+    expect(openPassage(junc, rails.r2, rails.l2)).toBe(true)
+    expect(openExit(net, apex.id, rails.l2)).toBe(rails.r2)
+    expect(openPassage(junc, rails.l1, rails.l2)).toBe(false)
+    expect(openExit(net, apex.id, rails.l2)).toBe(rails.r2)
+  })
+
+  it('is what a turnout becomes when a fourth rail leaves along its stem, open on the same route', () => {
+    const { net, apex, rails } = buildSlip(['l1', 'r1', 'r2'])
+    autoDetectJunctions(net)
+    const turnout = findJunctionAtNode(net, apex.id)!
+    expect(turnout.kind).toBe('turnout')
+    setJunctionBranch(turnout, 'diverging')
+    expect(openExit(net, apex.id, rails.l1)).toBe(rails.r2)
+
+    const l2 = addCurveSegment(net, addNode(net, { x: -100, y: 12 }).id, apex.id, { x: -50, y: 0 })!
+    autoDetectJunctions(net)
+    const slip = findJunctionAtNode(net, apex.id)!
+    expect(slip.id).toBe(turnout.id)
+    expect(slip.kind).toBe('double_slip')
+    expect(openExit(net, apex.id, rails.l1)).toBe(rails.r2)
+    expect(openExit(net, apex.id, l2.id)).toBeNull()
+  })
+
+  it('becomes a turnout again when it loses a rail, open on the rail that was', () => {
+    const { net, apex, rails } = buildSlip()
+    autoDetectJunctions(net)
+    const junc = findJunctionAtNode(net, apex.id)!
+    openPassage(junc, rails.l1, rails.r2)
+
+    removeSegment(net, rails.l2)
+    autoDetectJunctions(net)
+    const turnout = findJunctionAtNode(net, apex.id)!
+    expect(turnout.id).toBe(junc.id)
+    const view = turnoutView(net, turnout)!
+    expect(view.stemSegmentId).toBe(rails.l1)
+    expect(view.straightSegmentId).toBe(rails.r1)
+    expect(view.activeSegmentId).toBe(rails.r2)
+  })
+
+  it('is not read in two tracks crossing at a shallow angle', () => {
+    const net = createNetwork()
+    const apex = addNode(net, { x: 0, y: 0 })
+    const tilt = Math.tan((8 * Math.PI) / 180) * 100
+    addSegment(net, addNode(net, { x: -100, y: 0 }).id, apex.id)
+    addSegment(net, apex.id, addNode(net, { x: 100, y: 0 }).id)
+    addSegment(net, addNode(net, { x: -100, y: -tilt }).id, apex.id)
+    addSegment(net, apex.id, addNode(net, { x: 100, y: tilt }).id)
+    autoDetectJunctions(net)
+    expect(findJunctionAtNode(net, apex.id)).toBeUndefined()
   })
 })

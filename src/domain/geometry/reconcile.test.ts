@@ -371,7 +371,8 @@ describe('a curve meeting a track twice', () => {
         }
       }
     }
-  })
+    // Walks four trains through 32 layouts in 25 cm steps: about 3 s alone, more when the whole suite runs in parallel
+  }, 20_000)
 
   it('does not connect a curve that only touches a straight', () => {
     const net = createNetwork()

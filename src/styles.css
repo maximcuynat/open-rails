@@ -699,6 +699,39 @@ kbd {
   background: var(--panel-2);
 }
 
+/* Signalling mode, pro level: a panel of its own, told apart by its edging and its badge */
+.toolbar-signal-pro {
+  border-color: #b45309;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), inset 0 3px 0 #f59e0b;
+}
+
+.tb-level-badge {
+  width: 100%;
+  margin-bottom: 3px;
+  padding: 2px 0;
+  border-radius: 5px;
+  background: #f59e0b;
+  color: #111827;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-align: center;
+  user-select: none;
+}
+
+.toolbar-signal-pro .tb-train-btn.active:not(.tb-display-btn) {
+  background: #f59e0b;
+  border-color: #b45309;
+  color: #111827;
+}
+
+/* Display toggles of the signalling mode: lighter than a tool in hand */
+.tb-train-btn.tb-display-btn.active {
+  background: var(--panel-2);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .tb-back-btn:hover {
   background: var(--paper);
   color: var(--accent);
@@ -843,7 +876,10 @@ kbd {
   cursor: default;
 }
 
-.canvas-wrap canvas.tool-signal.signal-speedZone {
+.canvas-wrap canvas.tool-signal.signal-speedZone,
+.canvas-wrap canvas.tool-signal.signal-blockSignal,
+.canvas-wrap canvas.tool-signal.signal-pathSignal,
+.canvas-wrap canvas.tool-signal.signal-cabMarker {
   cursor: crosshair;
 }
 

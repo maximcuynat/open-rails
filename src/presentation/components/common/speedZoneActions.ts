@@ -14,9 +14,24 @@ export function zoneSpeedLabel(speed: number): string {
   return `${speed} km/h`
 }
 
-/** Warn when the zone shares track with another one */
+/** The zones of each store the overlap warning has been given for, while they still overlap */
+const overlapWarned = new WeakMap<EditorStore, Set<string>>()
+
+/**
+ * Warn when the zone shares track with another one — once per zone for as long as it does: each
+ * step of the speed counter of an overlapping zone does not say it again. The warning is owed
+ * again once the zone has stopped overlapping and overlaps anew.
+ */
 function warnIfOverlapping(store: EditorStore, zoneId: string): void {
-  if (store.speedZoneOverlapsAnother(zoneId)) showToast(SPEED_ZONE_OVERLAP, 'warning', 4500)
+  let warned = overlapWarned.get(store)
+  if (!warned) overlapWarned.set(store, (warned = new Set()))
+  if (!store.speedZoneOverlapsAnother(zoneId)) {
+    warned.delete(zoneId)
+    return
+  }
+  if (warned.has(zoneId)) return
+  warned.add(zoneId)
+  showToast(SPEED_ZONE_OVERLAP, 'warning', 4500)
 }
 
 /** One click of the speed limit tool on a place of the track (null: off the track). */

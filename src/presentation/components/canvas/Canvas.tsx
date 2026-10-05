@@ -75,11 +75,13 @@ import {
   resolveSpeedZoneTool,
   speedZoneAim,
 } from './placementPreview'
-import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
 import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
 import { positionOnSegment } from '@domain/models/locomotive'
 import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
+import { renderSignalToolPreview } from './signalToolPreview'
+import { commitSignalGesture } from '../common/signalActions'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -365,9 +367,23 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       speedZones: store.tool === 'signal' && !store.isPlayMode
         ? {
             selectedId: store.selectedSpeedZone?.id ?? null,
-            dangerId: store.signalToolSubMode === 'delete' ? store.hoveredSpeedZoneId : null,
+            // A signal under the cursor is what the click removes: the zone below it stays plain
+            dangerId: store.signalToolSubMode === 'delete' && !store.hoveredSignalId ? store.hoveredSpeedZoneId : null,
           }
         : undefined,
+      // Signals show everywhere; they are only picked, moved or removed in the signalling mode
+      signals: {
+        level: store.signallingLevel,
+        gauge: store.gauge,
+        line: store.lineSettings,
+        state: store.isPlayMode ? store.signalling : null,
+        selectedId: store.selectedSignal?.id ?? null,
+        dangerId: store.tool === 'signal' && store.signalToolSubMode === 'delete' ? store.hoveredSignalId : null,
+        showBlocks: store.signalBlocksVisible,
+        showReservations: store.signalReservationsVisible,
+        // Construction view only, and not with a signal tool in hand: the preview says enough then
+        report: !store.isPlayMode && store.tool !== 'pan' && store.signalPlacementMode === null,
+      },
     }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
@@ -884,6 +900,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.fillText(labelText, at.x, at.y - 24)
       ctx.restore()
     }
+
+    // 8. Signal tool preview: the signal under the cursor with its arrow and its two blocks, or the row being drawn
+    renderSignalToolPreview(ctx, cam, rect.width, rect.height, store)
 
     // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
     if (gizmoScreen) {
@@ -1678,10 +1697,46 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           redraw()
           return
         }
+        // A signal tool: the button goes down on the track, a click lays one signal and a drag
+        // along the track a row; off the track the drag moves the view
+        if (store.signalPlacementMode) {
+          store.cursorWorld = world
+          if (store.beginSignalGesture(world)) {
+            canvas.setPointerCapture(e.pointerId)
+            stopEdgePan()
+            redraw()
+            return
+          }
+          store.panning = true
+          lastX = e.clientX
+          lastY = e.clientY
+          store.moved = false
+          canvas.setPointerCapture(e.pointerId)
+          canvas.style.cursor = 'grabbing'
+          stopEdgePan()
+          redraw()
+          return
+        }
+        // Signals come before the zones they stand on
+        const signal = store.signalAt(world)
+        if (signal) {
+          if (store.signalToolSubMode === 'delete') {
+            store.deleteSignal(signal.id)
+          } else {
+            store.selectSignal(signal.id)
+            // Holding the button and moving slides it along the track
+            if (store.beginSignalDrag(signal.id)) canvas.setPointerCapture(e.pointerId)
+          }
+          store.updateSignalHover(world)
+          stopEdgePan()
+          redraw()
+          return
+        }
         const zone = store.speedZoneAt(world)
         if (store.signalToolSubMode === 'delete') {
           if (zone) store.deleteSpeedZone(zone.id)
         } else {
+          if (!zone) store.selectSignal(null)
           store.selectSpeedZone(zone?.id ?? null)
         }
         store.updateSpeedZoneHover(world)
@@ -1728,7 +1783,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
           if (existingJunc && store.selection.nodes.has(nodeId) && !isMulti) {
-            if (!store.toggleActiveJunction(existingJunc.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+            if (!store.toggleActiveJunction(existingJunc.id, world)) showToast(store.junctionRefusalMessage, 'warning')
           }
           if (isMulti) {
             const newNodes = new Set(store.selection.nodes)
@@ -2006,6 +2061,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         draw()
       }
 
+      // Signalling mode: a row of signals being drawn, or a signal being slid along the track
+      if (store.signalRowStart) {
+        store.updateSignalGesture(rawWorld)
+        draw()
+        store.notify()
+        return
+      }
+      if (store.signalDrag) {
+        store.dragSignalTo(rawWorld)
+        canvas.style.cursor = 'grabbing'
+        draw()
+        store.notify()
+        return
+      }
+
       // Dragging selected nodes in select tool
       if (store.isDraggingNode && store.dragStartWorld) {
         dragSelectedNodes(rawWorld, store.dragStartWorld)
@@ -2030,8 +2100,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
         // Signalling mode, select and delete sub-modes: the zone under the cursor can be clicked
         if (store.tool === 'signal' && !store.isPlayMode && !store.panning) {
-          const changed = store.updateSpeedZoneHover(rawWorld)
-          canvas.style.cursor = store.hoveredSpeedZoneId ? 'pointer' : isSpaceDown ? 'grab' : ''
+          const signalChanged = store.updateSignalHover(rawWorld)
+          const changed = store.updateSpeedZoneHover(rawWorld) || signalChanged
+          canvas.style.cursor = store.signalPlacementMode
+            ? 'crosshair'
+            : store.hoveredSignalId
+              ? (store.signalToolSubMode === 'select' ? 'grab' : 'pointer')
+              : store.hoveredSpeedZoneId ? 'pointer' : isSpaceDown ? 'grab' : ''
           if (changed) draw()
         }
 
@@ -2148,6 +2223,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.isSpeedZoneTool ||
+          store.signalPlacementMode !== null ||
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
         ) {
@@ -2204,7 +2280,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (segId) {
             store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
           } else {
-            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart) {
+            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart || store.signalRowStart || store.signalDrag) {
               store.cancelInteraction()
             } else {
               store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })
@@ -2219,6 +2295,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (store.draggingTrainItem) {
         const rawWorld = getWorldPos(e.clientX, e.clientY)
         store.endTrainDrag(rawWorld)
+        redraw()
+        return
+      }
+
+      // Signalling mode: the button comes up on a signal tool (one signal, or a row) or on a dragged signal
+      if (store.signalRowStart || store.signalDrag) {
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
+        if (store.signalRowStart) commitSignalGesture(store)
+        else store.endSignalDrag()
+        canvas.style.cursor = isSpaceDown ? 'grab' : ''
         redraw()
         return
       }

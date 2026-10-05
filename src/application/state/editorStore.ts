@@ -5,9 +5,40 @@ import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addS
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
-import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
+import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions, doubleSlipSideToward, throwDoubleSlipSide, type DoubleSlipSide } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { cleanSpeedZones } from '@domain/models/speedZones'
+import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
+import {
+  addSignal,
+  addSignalPair,
+  checkSignalPlacement,
+  flipSignal,
+  moveSignal,
+  removeSignal,
+  setSignalOptions,
+  setSignalRole,
+  signalsRevision,
+  type SignalRefusal,
+} from '@domain/models/signals'
+import type { Signal, SignalRole } from '@domain/models/types'
+import { addSignalRow, moveSignalsOffSwitches, signalForwardFor, signalRowPlaces, slideSignal } from '@domain/services/signalLayout'
+import { signalHeadWorld } from '@infrastructure/render/signalRender'
+import {
+  createSignallingState,
+  estimatedStoppingDistance,
+  isNodeReserved,
+  resetSignalling,
+  signalSpeedCap,
+  trainSignalView,
+  updateSignalling,
+  type SignalPassing,
+  type SignallingOptions,
+  type SignallingState,
+  type TrainSignalView,
+} from '@domain/models/signalling'
+import { isCabSignalled } from '@domain/models/cabSignalling'
+import { tickSignalling, type CabOverspeed } from '@domain/models/trainSignalling'
 import { removeSpeedZone, setSpeedZoneSpeed, speedZonesAt, normalizeZoneSpeed } from '@domain/models/speedZones'
 import { addSpeedZoneBetween } from '@domain/services/speedZoneLayout'
 import type { TrackPoint } from '@domain/services/trackPath'
@@ -21,6 +52,7 @@ import {
   deserializeNetwork,
   serializeNetwork,
   type SerializedProject,
+  type SignalDisplaySettings,
 } from '@infrastructure/persistence/persistence'
 import {
   loadConsolePreference,
@@ -52,7 +84,7 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
-import { setBrakeCommand, trainDynamics, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
+import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
   MAX_NOTCH,
@@ -100,11 +132,47 @@ export type Tool =
   | 'signal'
 
 /**
- * Sub-modes of the signalling mode (tool `signal`), in the order of the toolbar. Signals will be
- * added to this list; `select` and `delete` act on whatever the mode lays on the track.
+ * Sub-modes of the signalling mode (tool `signal`), in the order of the toolbar; `select` and
+ * `delete` act on whatever the mode lays on the track. `blockSignal` lays a block signal (a
+ * sémaphore at the pro level), `pathSignal` a path signal (a carré), `cabMarker` a marker board of a
+ * cab-signalled line (pro level only).
  */
-export const SIGNAL_SUB_MODES = ['select', 'speedZone', 'delete'] as const
+export const SIGNAL_SUB_MODES = ['select', 'blockSignal', 'pathSignal', 'cabMarker', 'speedZone', 'delete'] as const
 export type SignalSubMode = (typeof SIGNAL_SUB_MODES)[number]
+
+/** The sub-modes that lay a signal */
+export type SignalPlacementMode = 'blockSignal' | 'pathSignal' | 'cabMarker'
+
+const isSignalPlacementMode = (mode: SignalSubMode): mode is SignalPlacementMode =>
+  mode === 'blockSignal' || mode === 'pathSignal' || mode === 'cabMarker'
+
+/** The sub-modes a signalling level offers, in the order of its toolbar */
+export function signalSubModesFor(level: SignallingLevel): SignalSubMode[] {
+  return SIGNAL_SUB_MODES.filter((mode) => mode !== 'cabMarker' || level === 'pro')
+}
+
+/** Spacings (m, at standard gauge) the signal tools offer for a row of signals */
+export const SIGNAL_ROW_SPACINGS = [250, 500, 1000, 1500, 2000, 2500] as const
+export const DEFAULT_SIGNAL_ROW_SPACING = 1500
+/** A press and release less than this far apart on screen (px) is a click, not a drag along the track */
+export const SIGNAL_DRAG_THRESHOLD = 8
+
+/** Feedback shown when a row of signals cannot be laid because no track joins its two ends */
+export const SIGNAL_ROW_NO_PATH = 'Aucun chemin ne relie ces deux points de la voie'
+
+/** Where the next click of a signal tool would lay its signal */
+export interface SignalAim {
+  place: TrackPoint
+  /** Direction of travel the signal would speak to (see `Signal.forward`) */
+  forward: boolean
+  /** Why the signal cannot stand there, null when it can */
+  refusal: SignalRefusal | null
+}
+
+/** What a gesture of a signal tool did */
+export type SignalToolResult =
+  | { ok: true; signals: Signal[]; refused: number }
+  | { ok: false; reason: SignalRefusal | 'driving' | 'no-path' }
 
 /** Speed (km/h) of the first zone the speed limit tool lays */
 export const DEFAULT_ZONE_TOOL_SPEED = 80
@@ -132,6 +200,22 @@ export const TRAIN_PLACEMENT_REFUSED = 'Pose impossible ici : approchez le curse
 
 /** Feedback shown when a junction is not thrown because a train stands over its points. */
 export const JUNCTION_OCCUPIED_REFUSED = 'Aiguillage occupé par un train : manœuvre impossible'
+
+/** Feedback shown when a junction is not thrown because it is held for a train that has its route over it. */
+export const JUNCTION_RESERVED_REFUSED = 'Aiguillage réservé pour le trajet d’un train : manœuvre impossible'
+
+/** Why a junction cannot be thrown: a train stands over its points, or it is part of a route held for a train */
+export type JunctionLock = 'occupied' | 'reserved'
+
+/** Feedback shown when a train has passed a closed signal against the rules */
+export function signalPassedMessage(braked: boolean): string {
+  return braked ? 'Signal fermé franchi : freinage d’urgence' : 'Signal fermé franchi'
+}
+
+/** Feedback shown when a train was caught overspeeding by its cab signalling */
+export function overspeedMessage(braked: boolean): string {
+  return braked ? 'Survitesse : freinage d’urgence' : 'Survitesse'
+}
 
 /** Impact speed (m/s) above which hitting a buffer stop or another train is reported: 5 km/h */
 export const IMPACT_REPORT_SPEED = 5 / 3.6
@@ -236,10 +320,25 @@ export class EditorStore {
   onTrainImpact: ((train: TrainSet, speed: number) => void) | null = null
   /** Trains whose current impact has already been reported */
   private impactReported = new Set<string>()
+  /** Called once each time a train passes a closed signal against the rules of the signalling level */
+  onSignalPassed: ((train: TrainSet, passing: SignalPassing) => void) | null = null
+  /** Called once each time a train is caught overspeeding by its cab signalling (pro level, high-speed line) */
+  onOverspeed: ((train: TrainSet, overspeed: CabOverspeed) => void) | null = null
   levelHeight: number = 6 // height of one track level in world meters (6 m at 1:1, scaled down for model scales)
   maxGradient: number = 35 // steepest slope allowed, in ‰ (a ramp above it is reported)
   lineSpeed: number = DEFAULT_LINE_SETTINGS.lineSpeed // ceiling speed of the line, km/h
   lineType: LineType = DEFAULT_LINE_SETTINGS.lineType // conventional or high-speed line: rules for cant
+  /** Signalling level of the project: the same signals read as block / path signals or as French signals */
+  signallingLevel: SignallingLevel = DEFAULT_SIGNALLING_SETTINGS.level
+  /** Passing a closed signal applies the emergency brake */
+  signalStopEnforced: boolean = DEFAULT_SIGNALLING_SETTINGS.stopEnforced
+  /**
+   * What the signals show and the track each train holds: simulation state, brought up to date at
+   * every simulation step while driving (`tickAllTrains`) and empty otherwise. Never saved.
+   */
+  signalling: SignallingState = createSignallingState()
+  /** Why the last junction throw was refused, null when it went through */
+  lastJunctionRefusal: JunctionLock | null = null
   showDimensions: boolean = true // live CAD dimensioning HUD overlay
   isSettingsOpen: boolean = false
 
@@ -333,6 +432,36 @@ export class EditorStore {
   selectedSpeedZoneId: string | null = null
   /** Speed zone under the cursor in the signalling mode (select and delete sub-modes) */
   hoveredSpeedZoneId: string | null = null
+  /** Signal tools: lay two signals back to back, one for each direction of travel */
+  signalToolBothWays = false
+  /** Signal tools: the signal speaks to the direction opposite to the side of the track the cursor is on */
+  signalToolFlipped = false
+  /** Signal tools: distance between the signals of a row, m at standard gauge (see `signalRowSpacing`) */
+  signalToolSpacing: number = DEFAULT_SIGNAL_ROW_SPACING
+  /** Marker board tool (pro level): the board laid is passable (`spacing`, F) or not (`protection`, Nf) */
+  signalToolCabRole: SignalRole = 'spacing'
+  /** Signal tools: where the button went down on the track; a drag from there lays a row */
+  signalRowStart: SignalAim | null = null
+  /** Signal tools: where the drag along the track has got to; null while the gesture is still a click */
+  signalRowEnd: TrackPoint | null = null
+  /** Signal picked in the signalling mode */
+  selectedSignalId: string | null = null
+  /** Signal under the cursor in the signalling mode (select and delete sub-modes) */
+  hoveredSignalId: string | null = null
+  /** The signal being dragged along the track, and where it stood when the drag began */
+  signalDrag: { id: string; origin: { segId: string; t: number; forward: boolean } } | null = null
+  /**
+   * Display: every block as a coloured stripe along the track. Saved with the project when ticked,
+   * restored when it is loaded; a display setting, so undo leaves it alone.
+   */
+  showSignalBlocks = false
+  /** Display, while driving: the track held for each train. Saved and restored like `showSignalBlocks` */
+  showSignalReservations = false
+  /**
+   * The blocks show while a signal is being laid or moved, whatever `showSignalBlocks` says, until
+   * the display is unticked during it: this then stays off for the session. Not saved.
+   */
+  signalBlocksWhilePlacing = true
 
   // Dragging nodes & sections (Select tool)
   isDraggingNode = false
@@ -441,6 +570,8 @@ export class EditorStore {
     this.measureEnd = null
     this.isMeasuring = false
     this.speedZoneStart = null
+    this.signalRowStart = null
+    this.signalRowEnd = null
     this.numericInput = ''
     this.isNumericInputActive = false
     this.pendingEdit = 'none'
@@ -469,8 +600,26 @@ export class EditorStore {
     return this.historyIndex >= 0 && this.historyIndex < this.history.length - 1
   }
 
-  pushHistorySnapshot = (): void => {
+  /** The network whose signals were last checked against its points */
+  private signalsSettledOn: Network | null = null
+
+  /**
+   * Push back the signals that points built by the edit being committed have left too near them
+   * (`moveSignalsOffSwitches`), so that the move is part of the same undo step as the points. Only
+   * done on the network being edited: a project just loaded, an undo step or a new project are
+   * taken as they are (the signalling report names a signal that stands too near points).
+   */
+  private settleSignals(): void {
+    const net = this.network
+    const known = this.signalsSettledOn === net
+    this.signalsSettledOn = net
+    if (known && net.signals.size > 0) moveSignalsOffSwitches(net, this.signalPlacementOptions)
+  }
+
+  /** `settled`: the signals have just been checked against the points (`markDirty` does it before saving) */
+  pushHistorySnapshot = (settled: boolean = false): void => {
     if (this.isUndoingRedoing) return
+    if (!settled) this.settleSignals()
     this.syncTrainsWithNetwork()
     const snapshot = serializeNetwork(
       this.network,
@@ -491,6 +640,7 @@ export class EditorStore {
       this.trains,
       this.gradientLimits,
       this.lineSettings,
+      this.signallingSettings,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
@@ -526,6 +676,7 @@ export class EditorStore {
         }
         this.restoreGradientSettings(res)
         this.restoreLineSettings(res)
+        this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.resetPendingToolState()
@@ -559,6 +710,7 @@ export class EditorStore {
         }
         this.restoreGradientSettings(res)
         this.restoreLineSettings(res)
+        this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.resetPendingToolState()
@@ -711,6 +863,8 @@ export class EditorStore {
     }
     this.restoreGradientSettings(saved)
     this.restoreLineSettings(saved)
+    this.restoreSignallingSettings(saved)
+    this.restoreSignalDisplay(saved)
     if (typeof saved.showDimensions === 'boolean') {
       this.showDimensions = saved.showDimensions
     }
@@ -751,6 +905,8 @@ export class EditorStore {
     }
     this.restoreGradientSettings(res)
     this.restoreLineSettings(res)
+    this.restoreSignallingSettings(res)
+    this.restoreSignalDisplay(res)
     if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
     if (typeof res.boardEnabled === 'boolean') {
       this.boardEnabled = res.boardEnabled
@@ -793,6 +949,8 @@ export class EditorStore {
       this.trains,
       this.gradientLimits,
       this.lineSettings,
+      this.signallingSettings,
+      this.signalDisplaySettings,
     )
   }
 
@@ -820,6 +978,8 @@ export class EditorStore {
       this.trains,
       this.gradientLimits,
       this.lineSettings,
+      this.signallingSettings,
+      this.signalDisplaySettings,
     )
   }
 
@@ -830,6 +990,8 @@ export class EditorStore {
     this.network = createNetwork()
     this.locomotive = null
     this.restoreTrains([])
+    this.restoreSignallingSettings({})
+    this.restoreSignalDisplay({})
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.tool = 'pan'
@@ -866,6 +1028,7 @@ export class EditorStore {
     // The domain moves the zones itself when a rail is replaced; this only drops what would be
     // left on a rail taken out of the graph by other means
     cleanSpeedZones(this.network)
+    cleanSignals(this.network)
     this.syncTrainsWithNetwork()
     this.version++
     this.listeners.forEach((l) => l())
@@ -886,6 +1049,10 @@ export class EditorStore {
       this.signalToolSubMode = 'select'
       this.selectedSpeedZoneId = null
       this.hoveredSpeedZoneId = null
+      this.cancelSignalGesture()
+      this.selectedSignalId = null
+      this.hoveredSignalId = null
+      this.signalToolFlipped = false
     }
     // Entering it drops the track selection: Delete must never reach a rail from there
     if (t === 'signal' && this.tool !== 'signal') this.selection = { nodes: new Set(), segments: new Set() }
@@ -1328,8 +1495,9 @@ export class EditorStore {
 
   markDirty = (): void => {
     this.dirty = true
+    if (!this.isUndoingRedoing) this.settleSignals()
     this.savePersistedState()
-    this.pushHistorySnapshot()
+    this.pushHistorySnapshot(true)
     this.notify()
   }
 
@@ -1378,10 +1546,13 @@ export class EditorStore {
     // Escape is two-step for the track tools: it first cancels what is pending (tool and
     // selection are kept), and only with nothing pending does it go back to the select tool.
     const hadPlacement = this.hasPendingPlacement
+    // A signal being laid or dragged is dropped first (the dragged one goes back where it stood)
+    const hadSignalGesture = this.cancelSignalGesture()
     const hadPending =
       hadPlacement ||
       this.measureStart !== null ||
       this.speedZoneStart !== null ||
+      hadSignalGesture ||
       this.isNumericInputActive ||
       this.isDraggingNode ||
       this.gizmoDragAxis !== null ||
@@ -1480,7 +1651,7 @@ export class EditorStore {
   deleteSelection = (): void => {
     // Signalling mode: the only thing Delete removes is the selected zone
     if (this.tool === 'signal') {
-      this.deleteSelectedSpeedZone()
+      if (!this.deleteSelectedSignal()) this.deleteSelectedSpeedZone()
       return
     }
     if (this.isTrainSelected || this.tool === 'locomotive' || this.tool === 'coupling') {
@@ -1780,6 +1951,12 @@ export class EditorStore {
     this.lineType = saved.lineType ?? DEFAULT_LINE_SETTINGS.lineType
   }
 
+  /** Signalling settings read from a project; one saved without them is on the default ones */
+  private restoreSignallingSettings(saved: { signallingLevel?: SignallingLevel; signalStopEnforced?: boolean }): void {
+    this.signallingLevel = saved.signallingLevel ?? DEFAULT_SIGNALLING_SETTINGS.level
+    this.signalStopEnforced = saved.signalStopEnforced ?? DEFAULT_SIGNALLING_SETTINGS.stopEnforced
+  }
+
   /**
    * Reconcile network topology: heal disconnected branches, auto-split segments
    * at intersecting points/nodes, and auto-detect turnouts & crossings.
@@ -1873,11 +2050,30 @@ export class EditorStore {
   isJunctionOccupied = (junc: Junction): boolean => isJunctionOccupied(this.network, junc, this.trains)
 
   /**
-   * Throw the given junction, or the junction(s) of the current selection.
-   * A junction with a train standing over its points is left as it is; returns false when a throw
-   * was refused for that reason (see JUNCTION_OCCUPIED_REFUSED).
+   * Why the junction cannot be thrown, null when it can: a vehicle stands over its points, or it is
+   * part of the track held for a train (see `signalling`). `exceptTrainId` names a train whose own
+   * reservation does not count: the driver of a train may still set the points ahead of it.
    */
-  toggleActiveJunction = (junctionId?: JunctionId): boolean => {
+  junctionLock = (junc: Junction, exceptTrainId?: string | null): JunctionLock | null => {
+    if (this.isJunctionOccupied(junc)) return 'occupied'
+    return isNodeReserved(this.signalling, junc.nodeId, exceptTrainId) ? 'reserved' : null
+  }
+
+  /** What to tell the user after a refused junction throw (see `lastJunctionRefusal`) */
+  get junctionRefusalMessage(): string {
+    return this.lastJunctionRefusal === 'reserved' ? JUNCTION_RESERVED_REFUSED : JUNCTION_OCCUPIED_REFUSED
+  }
+
+  /**
+   * Throw the given junction, or the junction(s) of the current selection.
+   * A junction with a train standing over its points, or held for the route of a train, is left as
+   * it is; returns false when a throw was refused for that reason: `lastJunctionRefusal` then says
+   * which, and `junctionRefusalMessage` gives the text (JUNCTION_OCCUPIED_REFUSED or
+   * JUNCTION_RESERVED_REFUSED).
+   * A double slip has two sets of points: `near` (a world position) throws the one on that side of
+   * the node, and without it the device goes through its four positions in turn.
+   */
+  toggleActiveJunction = (junctionId?: JunctionId, near?: Point): boolean => {
     let targets: Junction[] = []
     if (junctionId) {
       const junc = this.network.junctions.get(junctionId)
@@ -1897,8 +2093,25 @@ export class EditorStore {
       if (junc) targets = [junc]
     }
 
-    const free = targets.filter((junc) => !this.isJunctionOccupied(junc))
-    for (const junc of free) toggleJunction(junc)
+    return this.throwJunctions(targets, (junc) => {
+      const side = near ? doubleSlipSideToward(this.network, junc, near) : null
+      if (side !== null) throwDoubleSlipSide(junc, side)
+      else toggleJunction(junc)
+    })
+  }
+
+  /** Throw the points of one side of a double slip. Refused like `toggleActiveJunction`. */
+  throwDoubleSlipSide = (junctionId: JunctionId, side: DoubleSlipSide): boolean => {
+    const junc = this.network.junctions.get(junctionId)
+    return this.throwJunctions(junc ? [junc] : [], (target) => throwDoubleSlipSide(target, side))
+  }
+
+  /** Change the position of the junctions that are free to move; returns false when one was not */
+  private throwJunctions(targets: Junction[], change: (junc: Junction) => void): boolean {
+    const locks = targets.map((junc) => this.junctionLock(junc))
+    const free = targets.filter((_, i) => locks[i] === null)
+    this.lastJunctionRefusal = locks.find((lock) => lock !== null) ?? null
+    for (const junc of free) change(junc)
     if (free.length > 0) {
       this.markDirty()
       this.notify()
@@ -1910,7 +2123,8 @@ export class EditorStore {
    * Mirror the diverging branch of the given turnout, or of the turnout of the current selection.
    * It is refused (returns false) while a train stands over the points or anywhere on the track
    * the flip relocates (the diverging branch and the rails attached to its end), which would be
-   * pulled from under its vehicles.
+   * pulled from under its vehicles, or while the turnout is held for the route of a train
+   * (`lastJunctionRefusal` says which).
    */
   toggleTurnoutHandAtSelection = (junctionId?: JunctionId): boolean => {
     let junc: Junction | undefined = junctionId ? this.network.junctions.get(junctionId) : undefined
@@ -1927,8 +2141,12 @@ export class EditorStore {
       }
     }
     if (!junc) return true
-    if (this.isJunctionOccupied(junc)) return false
-    if (isTrackOccupied(this.network, turnoutHandFlipSegments(this.network, junc), this.trains)) return false
+    this.lastJunctionRefusal = this.junctionLock(junc)
+    if (this.lastJunctionRefusal) return false
+    if (isTrackOccupied(this.network, turnoutHandFlipSegments(this.network, junc), this.trains)) {
+      this.lastJunctionRefusal = 'occupied'
+      return false
+    }
     toggleTurnoutHand(this.network, junc.id)
     this.markDirty()
     this.notify()
@@ -2203,6 +2421,9 @@ export class EditorStore {
       // Every train starts at rest with its brakes applied: the driver releases them to leave
       for (const t of this.trains) resetTrainControls(t)
       this.impactReported.clear()
+      // Signals show their state from the first frame
+      resetSignalling(this.signalling)
+      this.refreshSignalling()
       if (this.followLocomotiveCamera) {
         this.focusOnLocomotive()
       }
@@ -2210,6 +2431,7 @@ export class EditorStore {
     } else {
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
+      resetSignalling(this.signalling)
       this.locomotiveCurrentSpeed = 0
       this.locomotiveThrottle = 0
       for (const t of this.trains) resetTrainControls(t)
@@ -2329,7 +2551,9 @@ export class EditorStore {
   steerUpcomingTurnout = (steerDirection: 'left' | 'right'): void => {
     const train = this.selectedTrain
     if (train) {
-      if (steerTrainSetJunction(this.network, train, steerDirection, this.trains)) this.notify()
+      // Points held for another train stay as they are; the driver may still set those held for his own
+      const heldForAnother = (junc: Junction): boolean => isNodeReserved(this.signalling, junc.nodeId, train.id)
+      if (steerTrainSetJunction(this.network, train, steerDirection, this.trains, heldForAnother)) this.notify()
       return
     }
     if (!this.locomotive) return
@@ -2491,6 +2715,7 @@ export class EditorStore {
       this.isPlayMode = false
       this.stopSimulationLoop()
     }
+    resetSignalling(this.signalling)
     this.trains = trains
     this.locomotiveCurrentSpeed = 0
     this.trainChainId = null
@@ -2702,7 +2927,18 @@ export class EditorStore {
 
   /** What the track gives the driving physics beyond its plan geometry */
   get drivingEnvironment(): DrivingEnvironment {
-    return { levelHeight: this.levelHeight, line: this.lineSettings }
+    const env: DrivingEnvironment = { levelHeight: this.levelHeight, line: this.lineSettings }
+    // The pro level weighs on the speed limit of a train; the standard level changes nothing
+    if (this.signallingLevel === 'pro') {
+      env.signalling = { level: 'pro', speedCapOf: (train) => signalSpeedCap(this.signalling, train.id, 'pro') }
+    }
+    return env
+  }
+
+  /** What the signalling engine reads besides the trains: the line, and the free blocks to count on a cab-signalled line */
+  get signallingOptions(): SignallingOptions {
+    const line = this.lineSettings
+    return { line, clearance: isCabSignalled(this.signallingLevel, line) }
   }
 
   /**
@@ -2730,6 +2966,45 @@ export class EditorStore {
     this.lineType = lineType
     this.markDirty()
     this.notify()
+  }
+
+  /** Signalling settings of the project: the level its signals are read at, and what passing a closed one does */
+  get signallingSettings(): SignallingSettings {
+    return { level: this.signallingLevel, stopEnforced: this.signalStopEnforced }
+  }
+
+  /**
+   * Change the signalling level and / or the emergency brake on passing a closed signal. The
+   * signals themselves are not touched: the other level reads the same ones. An unknown level or a
+   * value that is not a boolean is ignored. One undo step when something changed.
+   */
+  setSignallingSettings = (settings: Partial<SignallingSettings>): void => {
+    const level = isSignallingLevel(settings.level) ? settings.level : this.signallingLevel
+    const stopEnforced = typeof settings.stopEnforced === 'boolean' ? settings.stopEnforced : this.signalStopEnforced
+    if (level === this.signallingLevel && stopEnforced === this.signalStopEnforced) return
+    this.signallingLevel = level
+    this.signalStopEnforced = stopEnforced
+    this.markDirty()
+    this.notify()
+  }
+
+  /**
+   * Bring `signalling` up to date with the trains where they stand, outside the simulation step
+   * (which does it itself): no train is braked and no passing is reported. Returns the state.
+   */
+  refreshSignalling = (): SignallingState => {
+    updateSignalling(this.network, this.trains, this.signalling, this.signallingSettings, undefined, this.signallingOptions)
+    return this.signalling
+  }
+
+  /**
+   * What the signals say to the driver of the selected train: next signal, first closed signal,
+   * braking alert (see `trainSignalView`). Null when no train is selected.
+   */
+  get selectedTrainSignals(): TrainSignalView | null {
+    const train = this.selectedTrain
+    if (!train) return null
+    return trainSignalView(this.signalling, train.id, this.selectedTrainDynamics?.stoppingDistance ?? 0)
   }
 
   /**
@@ -2853,6 +3128,11 @@ export class EditorStore {
     this.signalToolSubMode = mode
     this.speedZoneStart = null
     this.hoveredSpeedZoneId = null
+    this.cancelSignalGesture()
+    this.hoveredSignalId = null
+    this.signalToolFlipped = false
+    // A tool in hand: the keys act on what it is about to lay, not on a signal picked earlier
+    if (mode !== 'select') this.selectedSignalId = null
     this.notify()
   }
 
@@ -2863,17 +3143,21 @@ export class EditorStore {
 
   /**
    * One Escape inside the signalling mode with nothing pending: back to its selection sub-mode,
-   * then the selected zone is released. False when there is nothing left but to leave the mode.
+   * then the selected signal or zone is released. False when there is nothing left but to leave the mode.
    */
   private stepBackSignalMode(): boolean {
     if (this.signalToolSubMode !== 'select') {
       this.signalToolSubMode = 'select'
+      this.signalToolFlipped = false
+    } else if (this.selectedSignal) {
+      this.selectedSignalId = null
     } else if (this.selectedSpeedZone) {
       this.selectedSpeedZoneId = null
     } else {
       return false
     }
     this.hoveredSpeedZoneId = null
+    this.hoveredSignalId = null
     this.notify()
     return true
   }
@@ -2889,6 +3173,8 @@ export class EditorStore {
     if (this.isPlayMode || this.tool !== 'signal') return false
     if (id !== null && !this.network.speedZones.has(id)) return false
     this.selectedSpeedZoneId = id
+    // One thing is picked at a time in the signalling mode
+    if (id !== null) this.selectedSignalId = null
     this.notify()
     return true
   }
@@ -2975,6 +3261,397 @@ export class EditorStore {
   deleteSelectedSpeedZone = (): boolean => {
     const zone = this.selectedSpeedZone
     return zone ? this.deleteSpeedZone(zone.id) : false
+  }
+
+  // ─────────────────── Signalling mode: signals ───────────────────
+
+  /** The signal tool in hand, null without one (never while driving; the marker board only at the pro level) */
+  get signalPlacementMode(): SignalPlacementMode | null {
+    if (this.tool !== 'signal' || this.isPlayMode) return null
+    const mode = this.signalToolSubMode
+    if (!isSignalPlacementMode(mode)) return null
+    return mode === 'cabMarker' && this.signallingLevel !== 'pro' ? null : mode
+  }
+
+  /** Role and options of the signal the tool in hand lays; null without a signal tool */
+  get signalToolSpec(): { role: SignalRole; cabMarker: boolean } | null {
+    switch (this.signalPlacementMode) {
+      case 'blockSignal': return { role: 'spacing', cabMarker: false }
+      case 'pathSignal': return { role: 'protection', cabMarker: false }
+      case 'cabMarker': return { role: this.signalToolCabRole, cabMarker: true }
+      default: return null
+    }
+  }
+
+  /** Distance (m) between the signals of a row: `signalToolSpacing` brought to the gauge of the project */
+  get signalRowSpacing(): number {
+    return this.signalToolSpacing * (this.gauge > 0 ? this.gauge / 1.435 : 1)
+  }
+
+  /** A signal is being laid or moved: the blocks then have their own display switch */
+  private get isPlacingSignal(): boolean {
+    return this.signalPlacementMode !== null || this.signalDrag !== null
+  }
+
+  /**
+   * Blocks are shown: the display is ticked — or, while a signal is being laid or moved, it has
+   * not been unticked during it (`signalBlocksWhilePlacing`)
+   */
+  get signalBlocksVisible(): boolean {
+    return this.isPlacingSignal ? this.signalBlocksWhilePlacing : this.showSignalBlocks
+  }
+
+  /** The two displays of the signalling the project remembers */
+  get signalDisplaySettings(): SignalDisplaySettings {
+    return { blocks: this.showSignalBlocks, reservations: this.showSignalReservations }
+  }
+
+  /** Displays of a project just loaded: both off unless it says otherwise */
+  private restoreSignalDisplay(saved: { showSignalBlocks?: boolean; showSignalReservations?: boolean }): void {
+    this.showSignalBlocks = saved.showSignalBlocks === true
+    this.showSignalReservations = saved.showSignalReservations === true
+  }
+
+  /** The track held for each train is shown: the display is ticked, and only while driving */
+  get signalReservationsVisible(): boolean {
+    return this.showSignalReservations && this.isPlayMode
+  }
+
+  /**
+   * Tick or untick the display of the blocks: what the box shows (`signalBlocksVisible`) is what it
+   * flips. With a signal tool in hand that is the display of the blocks during the placement, which
+   * can so be hidden; otherwise the display of the project, saved with it (no undo step).
+   */
+  toggleSignalBlocks = (): void => {
+    if (this.isPlacingSignal) {
+      this.signalBlocksWhilePlacing = !this.signalBlocksWhilePlacing
+    } else {
+      this.showSignalBlocks = !this.showSignalBlocks
+      this.savePersistedState()
+    }
+    this.notify()
+  }
+
+  /** Tick or untick the display of the track held for each train: saved with the project (no undo step) */
+  toggleSignalReservations = (): void => {
+    this.showSignalReservations = !this.showSignalReservations
+    this.savePersistedState()
+    this.notify()
+  }
+
+  setSignalToolBothWays = (on: boolean): void => {
+    this.signalToolBothWays = on
+    this.notify()
+  }
+
+  /** Turn the signal about to be laid round (it then stands across the track from the cursor) */
+  flipSignalTool = (): void => {
+    this.signalToolFlipped = !this.signalToolFlipped
+    if (this.signalRowStart && !this.signalRowEnd) {
+      const { place, forward } = this.signalRowStart
+      this.signalRowStart = this.signalAimFor(place, !forward)
+    }
+    this.notify()
+  }
+
+  /** Spacing of a row of signals: one of `SIGNAL_ROW_SPACINGS` (the nearest one) */
+  setSignalToolSpacing = (spacing: number): void => {
+    if (!Number.isFinite(spacing)) return
+    this.signalToolSpacing = SIGNAL_ROW_SPACINGS.reduce((best, value) =>
+      Math.abs(value - spacing) < Math.abs(best - spacing) ? value : best)
+    this.notify()
+  }
+
+  /** Marker board tool: lay passable boards (`spacing`, F) or boards that are not (`protection`, Nf) */
+  setSignalToolCabRole = (role: SignalRole): void => {
+    if (role !== 'spacing' && role !== 'protection') return
+    this.signalToolCabRole = role
+    this.notify()
+  }
+
+  private get signalPlacementOptions(): { gauge: number } {
+    return { gauge: this.gauge }
+  }
+
+  private signalAimFor(place: TrackPoint, forward: boolean): SignalAim {
+    const options = this.signalPlacementOptions
+    const refusal =
+      checkSignalPlacement(this.network, place, forward, options) ??
+      (this.signalToolBothWays ? checkSignalPlacement(this.network, place, !forward, options) : null)
+    return { place: { segId: place.segId, t: place.t }, forward, refusal }
+  }
+
+  /**
+   * Where a signal tool aims from a world position: the nearest place of the track, for the
+   * direction of travel that has the cursor on its left (a signal stands on the left of the trains
+   * it speaks to) — the other one once the tool is flipped. Null off the track.
+   */
+  signalAimAt = (worldPos: Point, tolerance: number = 30 / this.camera.scale): SignalAim | null => {
+    const place = this.trackPointAt(worldPos, tolerance)
+    if (!place) return null
+    const on = positionOnSegment(this.network, place.segId, place.t)
+    if (!on) return null
+    // Heading whose left-hand side points at the cursor (screen and world share their y axis)
+    const side = { x: worldPos.x - on.x, y: worldPos.y - on.y }
+    const forward = signalForwardFor(this.network, place, { x: -side.y, y: side.x })
+    return this.signalAimFor(place, forward !== this.signalToolFlipped)
+  }
+
+  /**
+   * Lay the signal of the tool in hand at `place` for the direction `forward` — two back to back
+   * with « double sens ». One undo step. Refused while driving, without a signal tool, and where
+   * `checkSignalPlacement` says so.
+   */
+  placeSignal = (place: TrackPoint, forward: boolean): SignalToolResult => {
+    const spec = this.signalToolSpec
+    if (this.isPlayMode || !spec) return { ok: false, reason: 'driving' }
+    const options = { ...this.signalPlacementOptions, cabMarker: spec.cabMarker }
+    let signals: Signal[]
+    if (this.signalToolBothWays) {
+      const laid = addSignalPair(this.network, place, spec.role, options)
+      if (!laid.ok) return laid
+      // The one for the direction asked comes first
+      signals = forward ? laid.signals : [laid.signals[1], laid.signals[0]]
+    } else {
+      const laid = addSignal(this.network, place, forward, spec.role, options)
+      if (!laid.ok) return laid
+      signals = [laid.signal]
+    }
+    this.markDirty()
+    return { ok: true, signals, refused: 0 }
+  }
+
+  /**
+   * Lay a row of signals of the tool in hand from `a` to `b` along the track, one every
+   * `signalRowSpacing`, for trains running from `a` to `b` (and the other way too with « double
+   * sens »). One undo step for the whole row. Places where a signal cannot stand are skipped.
+   */
+  placeSignalRow = (a: TrackPoint, b: TrackPoint): SignalToolResult => {
+    const spec = this.signalToolSpec
+    if (this.isPlayMode || !spec) return { ok: false, reason: 'driving' }
+    if (signalRowPlaces(this.network, a, b, this.signalRowSpacing).length === 0) return { ok: false, reason: 'no-path' }
+    const laid = addSignalRow(this.network, a, b, this.signalRowSpacing, spec.role, {
+      ...this.signalPlacementOptions,
+      cabMarker: spec.cabMarker,
+      bothWays: this.signalToolBothWays,
+    })
+    if (laid.signals.length === 0) return { ok: false, reason: laid.refused[0]?.reason ?? 'off-track' }
+    this.markDirty()
+    return { ok: true, signals: laid.signals, refused: laid.refused.length }
+  }
+
+  /** The places the row being drawn would lay its signals at (empty outside such a drag) */
+  get signalRowPreview(): { place: TrackPoint; forward: boolean }[] {
+    if (!this.signalRowStart || !this.signalRowEnd || !this.signalPlacementMode) return []
+    return signalRowPlaces(this.network, this.signalRowStart.place, this.signalRowEnd, this.signalRowSpacing)
+  }
+
+  /** The button goes down with a signal tool in hand. False off the track: nothing begins. */
+  beginSignalGesture = (worldPos: Point): boolean => {
+    if (!this.signalPlacementMode) return false
+    const aim = this.signalAimAt(worldPos)
+    if (!aim) return false
+    this.signalRowStart = aim
+    this.signalRowEnd = null
+    this.notify()
+    return true
+  }
+
+  /**
+   * The pointer moves with the button down: once the place of the track under it is
+   * `SIGNAL_DRAG_THRESHOLD` px away from the one it went down on, the gesture is a row towards it.
+   */
+  updateSignalGesture = (worldPos: Point): void => {
+    const start = this.signalRowStart
+    if (!start) return
+    const from = positionOnSegment(this.network, start.place.segId, start.place.t)
+    const end = this.trackPointAt(worldPos, 30 / this.camera.scale)
+    const to = end && positionOnSegment(this.network, end.segId, end.t)
+    // Measured between the two places of the track: moving away from the rails is still a click
+    const far = !!from && !!to && Math.hypot(to.x - from.x, to.y - from.y) * this.camera.scale > SIGNAL_DRAG_THRESHOLD
+    this.signalRowEnd = far ? end : null
+  }
+
+  /** The button comes up: one signal for a click, a row for a drag. Null when no gesture was under way. */
+  commitSignalGesture = (): SignalToolResult | null => {
+    const start = this.signalRowStart
+    const end = this.signalRowEnd
+    if (!start) return null
+    this.signalRowStart = null
+    this.signalRowEnd = null
+    const result = end ? this.placeSignalRow(start.place, end) : this.placeSignal(start.place, start.forward)
+    if (!result.ok) this.notify()
+    return result
+  }
+
+  /**
+   * Drop the gesture of a signal tool, or put back the signal being dragged where it stood. True
+   * when there was something to drop.
+   */
+  cancelSignalGesture = (): boolean => {
+    let dropped = false
+    if (this.signalRowStart) {
+      this.signalRowStart = null
+      this.signalRowEnd = null
+      dropped = true
+    }
+    const drag = this.signalDrag
+    if (drag) {
+      this.signalDrag = null
+      moveSignal(this.network, drag.id, drag.origin, drag.origin.forward, this.signalPlacementOptions)
+      dropped = true
+    }
+    return dropped
+  }
+
+  /** The signal picked in the signalling mode; null outside it or once the signal is gone */
+  get selectedSignal(): Signal | null {
+    if (this.tool !== 'signal' || !this.selectedSignalId) return null
+    return this.network.signals.get(this.selectedSignalId) ?? null
+  }
+
+  /** Pick a signal (null: none). Only in the signalling mode, never while driving. */
+  selectSignal = (id: string | null): boolean => {
+    if (this.isPlayMode || this.tool !== 'signal') return false
+    if (id !== null && !this.network.signals.has(id)) return false
+    this.selectedSignalId = id
+    if (id !== null) this.selectedSpeedZoneId = null
+    this.notify()
+    return true
+  }
+
+  /**
+   * The signal whose head, or whose place on the track, is under a world position: the nearest one.
+   * Two signals back to back share their place on the track and stand on either side of it: the
+   * one on the side of the cursor is the nearest. Right on the axis they are as near as each other
+   * (within one pixel): the one after the selected signal is then taken, the one for the direction
+   * of the rail first — clicking again there goes from one to the other, as for zones that overlap.
+   */
+  signalAt = (worldPos: Point, tolerance: number = 12 / this.camera.scale): Signal | null => {
+    const found: { signal: Signal; dist: number }[] = []
+    let bestDist = tolerance
+    for (const signal of this.network.signals.values()) {
+      const head = signalHeadWorld(this.network, signal, this.camera.scale, this.gauge)
+      const foot = positionOnSegment(this.network, signal.segId, signal.t)
+      if (!head || !foot) continue
+      // The head first: two signals back to back share their place on the track
+      const dist = Math.min(
+        Math.hypot(worldPos.x - head.x, worldPos.y - head.y),
+        Math.hypot(worldPos.x - foot.x, worldPos.y - foot.y) + tolerance / 2,
+      )
+      if (dist >= tolerance) continue
+      found.push({ signal, dist })
+      if (dist < bestDist) bestDist = dist
+    }
+    if (found.length === 0) return null
+    const pixel = this.camera.scale > 0 ? 1 / this.camera.scale : 0
+    const nearest = found
+      .filter((entry) => entry.dist <= bestDist + pixel)
+      .map((entry) => entry.signal)
+      .sort((a, b) => Number(b.forward) - Number(a.forward) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    if (nearest.length === 1) return nearest[0]
+    const current = nearest.findIndex((signal) => signal.id === this.selectedSignalId)
+    return nearest[(current + 1) % nearest.length]
+  }
+
+  /** Remember the signal under the cursor (select and delete sub-modes). True when it changed. */
+  updateSignalHover = (worldPos: Point): boolean => {
+    const active = this.tool === 'signal' && !this.isPlayMode
+      && (this.signalToolSubMode === 'select' || this.signalToolSubMode === 'delete')
+    const hovered = active ? this.signalAt(worldPos)?.id ?? null : null
+    if (hovered === this.hoveredSignalId) return false
+    this.hoveredSignalId = hovered
+    return true
+  }
+
+  /** Turn a signal round (one undo step). Returns why not when it cannot be. */
+  flipSignalDirection = (id: string): SignalRefusal | 'driving' | null => {
+    if (this.isPlayMode) return 'driving'
+    const result = flipSignal(this.network, id, this.signalPlacementOptions)
+    if (!result.ok) return result.reason
+    this.markDirty()
+    return null
+  }
+
+  /** Make a signal a block signal (`spacing`) or a path signal (`protection`). One undo step. */
+  changeSignalRole = (id: string, role: SignalRole): boolean => {
+    const signal = this.network.signals.get(id)
+    if (this.isPlayMode || !signal || signal.role === role) return false
+    if (!setSignalRole(this.network, id, role)) return false
+    this.markDirty()
+    return true
+  }
+
+  /** Make a signal a marker board of a cab-signalled line, or a lit signal again. One undo step. */
+  setSignalCabMarker = (id: string, cabMarker: boolean): boolean => {
+    const signal = this.network.signals.get(id)
+    if (this.isPlayMode || !signal || !!signal.cabMarker === cabMarker) return false
+    if (!setSignalOptions(this.network, id, { cabMarker })) return false
+    this.markDirty()
+    return true
+  }
+
+  /**
+   * Make a path signal one-way — a stop no train passes for the trains that meet it from behind — or
+   * a plain one again. One undo step. False while driving, for a block signal (the option only
+   * means something on a path signal) and when nothing changes.
+   */
+  setSignalOneWay = (id: string, oneWay: boolean): boolean => {
+    const signal = this.network.signals.get(id)
+    if (this.isPlayMode || !signal || signal.role !== 'protection' || !!signal.oneWay === oneWay) return false
+    if (!setSignalOptions(this.network, id, { oneWay })) return false
+    this.markDirty()
+    return true
+  }
+
+  /** Remove a signal (one undo step). False while driving or for no signal. */
+  deleteSignal = (id: string): boolean => {
+    if (this.isPlayMode) return false
+    if (this.signalDrag?.id === id) this.signalDrag = null
+    if (!removeSignal(this.network, id)) return false
+    if (this.selectedSignalId === id) this.selectedSignalId = null
+    if (this.hoveredSignalId === id) this.hoveredSignalId = null
+    this.markDirty()
+    return true
+  }
+
+  deleteSelectedSignal = (): boolean => {
+    const signal = this.selectedSignal
+    return signal ? this.deleteSignal(signal.id) : false
+  }
+
+  /** Start dragging a signal along the track (signalling mode, selection sub-mode). */
+  beginSignalDrag = (id: string): boolean => {
+    const signal = this.network.signals.get(id)
+    if (this.isPlayMode || this.tool !== 'signal' || this.signalToolSubMode !== 'select' || !signal) return false
+    this.signalDrag = { id, origin: { segId: signal.segId, t: signal.t, forward: signal.forward } }
+    return true
+  }
+
+  /**
+   * Slide the dragged signal to the place of the track under a world position, keeping the
+   * direction of travel it speaks to. Where it cannot stand it stays where it last could.
+   */
+  dragSignalTo = (worldPos: Point): boolean => {
+    const drag = this.signalDrag
+    if (!drag) return false
+    const place = this.trackPointAt(worldPos, 40 / this.camera.scale)
+    if (!place) return false
+    const before = signalsRevision(this.network)
+    slideSignal(this.network, drag.id, place, this.signalPlacementOptions)
+    return signalsRevision(this.network) !== before
+  }
+
+  /** The button comes up: the move is one undo step. True when the signal ended somewhere else. */
+  endSignalDrag = (): boolean => {
+    const drag = this.signalDrag
+    if (!drag) return false
+    this.signalDrag = null
+    const signal = this.network.signals.get(drag.id)
+    const moved = !!signal
+      && (signal.segId !== drag.origin.segId || signal.t !== drag.origin.t || signal.forward !== drag.origin.forward)
+    if (moved) this.markDirty()
+    return moved
   }
 
   /** Toggle coupling mode on/off */
@@ -3086,6 +3763,29 @@ export class EditorStore {
       // Stopping against an obstacle, holding at rest and rolling back are the domain's business
       tickTrainSet(this.network, train, dt, this.trains, occupancy, env)
       this.reportImpact(train)
+    }
+    // Once every train has moved: what each one holds, what the signals show, the signals passed
+    // (nothing at all on a network without signal)
+    // The driven train holds the track over the stopping distance its physics works out; the
+    // others over the simple estimate, on the slope they stand on
+    const drivenId = this.selectedTrainId
+    let drivenDynamics: TrainDynamics | null = null
+    const dynamicsOfDriven = (train: TrainSet): TrainDynamics => (drivenDynamics ??= trainDynamics(this.network, train, env))
+    const stoppingOf = (train: TrainSet): number | null => {
+      if (train.id === drivenId) return dynamicsOfDriven(train).stoppingDistance
+      if (!(train.currentSpeed > 0)) return null
+      return estimatedStoppingDistance(train.currentSpeed, train.direction * trainSlope(this.network, train, env))
+    }
+    const passings = tickSignalling(this.network, this.trains, this.signalling, this.signallingSettings, stoppingOf, {
+      line: env.line,
+      // The limit of the driven train is already worked out: the overspeed check does not look for it again
+      speedLimitOf: (train) => (train.id === drivenId ? dynamicsOfDriven(train).speedLimit * 3.6 : null),
+      onOverspeed: (train, overspeed) => this.onOverspeed?.(train, overspeed),
+    })
+    for (const passing of passings) {
+      if (!passing.fault) continue
+      const train = this.trains.find((t) => t.id === passing.trainId)
+      if (train) this.onSignalPassed?.(train, passing)
     }
     // Sync telemetry to legacy fields
     if (this.selectedTrain) {

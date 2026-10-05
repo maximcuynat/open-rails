@@ -1,6 +1,7 @@
 import { KeyCap, SpeedTape } from './instruments'
-import { BrakeLever, ConsoleTools, LimitBoard, NextLimitBoard, ReverserControl, SpeedCaption, ThrottleLever, type ConsolePartProps } from './consoleParts'
+import { BrakeLever, LimitBoard, NextLimitBoard, ReverserControl, SpeedCaption, ThrottleLever, type ConsolePartProps } from './consoleParts'
 import { decimal, notchStops } from './consoleModel'
+import { ConsoleToolRow } from './signalParts'
 
 /** Console C — two levers on the right and the speed as a number along the bottom */
 export function LeversConsole(props: ConsolePartProps) {
@@ -8,7 +9,7 @@ export function LeversConsole(props: ConsolePartProps) {
   return (
     <div className="console-stage console-stage-levers">
       <div className="console-levers-main">
-        <ConsoleTools {...props} />
+        <ConsoleToolRow {...props} />
         <div className="console console-speedblock">
           <div className="console-speedblock-num">
             <div className={`console-speedblock-value speed-${view.speedTone}`}>{view.kmh}</div>

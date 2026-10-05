@@ -1,6 +1,7 @@
 import { DistanceBar, ReverserSwitch, RoundDial, VerticalBar } from './instruments'
 import { BrakeHoldButton, ConsoleTools, LimitCorners, type ConsolePartProps } from './consoleParts'
 import { BRAKE_CYLINDER_GAUGE, BRAKE_PIPE_GAUGE, decimal } from './consoleModel'
+import { SignalPanel } from './signalParts'
 
 /** Console B — an on-board screen in the bottom-right corner: needle dial in the middle, fixed zones around it */
 export function ScreenConsole(props: ConsolePartProps) {
@@ -9,6 +10,8 @@ export function ScreenConsole(props: ConsolePartProps) {
   return (
     <div className="console-stage console-stage-screen">
       <div className="console console-screen">
+        {/* Out of the grid, on the top edge of the screen */}
+        {view.signals && <SignalPanel signals={view.signals} />}
         <div className="console-screen-top">
           <span className="console-screen-name">{[view.model, view.composition].filter(Boolean).join(' · ')}</span>
           <ConsoleTools {...props} className="is-inline" />

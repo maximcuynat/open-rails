@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
+import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../common/Toast'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
-import { turnoutView } from '@domain/models/junction'
+import { doubleSlipView, turnoutView } from '@domain/models/junction'
 
 interface ContextMenuProps {
   store: EditorStore
@@ -72,9 +72,11 @@ export function ContextMenu({ store }: ContextMenuProps) {
   const handleDelete = () => {
     const junction = target.type === 'junction' && target.id ? store.network.junctions.get(target.id) : null
     if (junction) {
-      // Removing a turnout = removing its diverging branch at the points; the main line stays
+      // Removing a turnout = removing its diverging branch at the points; the main line stays.
+      // On a double slip that is the diverging rail of each side
       const turnout = turnoutView(store.network, junction)
-      const branches = [turnout?.divergingSegmentId, turnout?.divergingRightSegmentId].filter(
+      const slip = doubleSlipView(junction)
+      const branches = [turnout?.divergingSegmentId, turnout?.divergingRightSegmentId, slip?.sides[0][1], slip?.sides[1][1]].filter(
         (sid): sid is string => !!sid && store.network.segments.has(sid),
       )
       store.selection = { nodes: new Set(), segments: new Set(branches) }
@@ -93,13 +95,16 @@ export function ContextMenu({ store }: ContextMenuProps) {
     store.closeContextMenu()
   }
 
+  const isDoubleSlip =
+    target.type === 'junction' && !!target.id && doubleSlipView(store.network.junctions.get(target.id)) !== null
+
   const handleToggleTurnout = () => {
-    if (!store.toggleActiveJunction(target.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+    if (!store.toggleActiveJunction(target.id, target.worldPos)) showToast(store.junctionRefusalMessage, 'warning')
     store.closeContextMenu()
   }
 
   const handleFlipTurnoutHand = () => {
-    if (target.id && !store.toggleTurnoutHandAtSelection(target.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+    if (target.id && !store.toggleTurnoutHandAtSelection(target.id)) showToast(store.junctionRefusalMessage, 'warning')
     store.closeContextMenu()
   }
 
@@ -154,20 +159,22 @@ export function ContextMenu({ store }: ContextMenuProps) {
 
       {target.type === 'junction' && (
         <>
-          <div className="ctx-header">Aiguillage</div>
+          <div className="ctx-header">{isDoubleSlip ? 'Traversée-jonction' : 'Aiguillage'}</div>
           <button className="ctx-item" onClick={handleToggleTurnout}>
             <span className="ctx-icon">🔀</span>
             <span className="ctx-label">Basculer la voie</span>
             {kbd('edit.toggleJunction')}
           </button>
-          <button className="ctx-item" onClick={handleFlipTurnoutHand}>
-            <span className="ctx-icon">⇄</span>
-            <span className="ctx-label">Inverser déviation G/D</span>
-          </button>
+          {!isDoubleSlip && (
+            <button className="ctx-item" onClick={handleFlipTurnoutHand}>
+              <span className="ctx-icon">⇄</span>
+              <span className="ctx-label">Inverser déviation G/D</span>
+            </button>
+          )}
           <div className="ctx-sep" />
           <button className="ctx-item ctx-danger" onClick={handleDelete}>
             <span className="ctx-icon">🗑</span>
-            <span className="ctx-label">Supprimer l’aiguillage</span>
+            <span className="ctx-label">{isDoubleSlip ? 'Supprimer les voies déviées' : 'Supprimer l’aiguillage'}</span>
             <kbd className="ctx-kbd">Suppr</kbd>
           </button>
         </>

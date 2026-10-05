@@ -9,6 +9,7 @@
 
 import type { Junction, Network, Point, SegmentId } from './types'
 import type { Derailment } from './speedLimits'
+import type { CabOverspeed, SignalPassedAtDanger } from './trainSignalling'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
 import { consistOverturningDeficiency } from './cant'
 import { cantDeficiencyIn, rakeSpeedLimitIn, trackProfile, type TrackProfile } from './trackSpeed'
@@ -143,6 +144,16 @@ export interface TrainSet {
   impactSpeed: number
   /** Set when the train has left the rails in a curve: it cannot move until `rerailTrain` */
   derailed: Derailment | null
+  /**
+   * Set when the train has passed a closed signal against the rules (see `tickSignalling`), until
+   * it passes another signal properly or its controls are reset. Absent or null otherwise.
+   */
+  signalPassed?: SignalPassedAtDanger | null
+  /**
+   * Set when the train was caught over the speed its cab checks it against on a cab-signalled line
+   * (see `tickSignalling`), until it is back under it or its controls are reset. Absent or null otherwise.
+   */
+  overspeed?: CabOverspeed | null
 }
 
 export type Reverser = 'forward' | 'neutral' | 'reverse'
@@ -288,6 +299,8 @@ export function resetTrainControls(train: TrainSet): void {
   train.tractionEffort = 0
   train.electricBrakeEffort = 0
   train.impactSpeed = 0
+  if (train.signalPassed) train.signalPassed = null
+  if (train.overspeed) train.overspeed = null
   applyParkedBrake(train)
   if (train.derailed) {
     train.emergencyBrake = true
@@ -1238,14 +1251,16 @@ export function trainRouteStart(train: TrainSet): TrackPosition | null {
 /**
  * Throw the next facing turnout ahead of the train to the left or right of its travel direction.
  * Running forward the junction is looked up ahead of the lead vehicle; in reverse, behind the last one.
- * Returns false when there is no facing turnout ahead, or when a vehicle of one of `trains`
- * (the train itself by default) stands over its points.
+ * Returns false when there is no facing turnout ahead, when a vehicle of one of `trains`
+ * (the train itself by default) stands over its points, or when `isLocked` says the turnout is
+ * held for another train (see `isNodeReserved` in `signalling.ts`).
  */
 export function steerTrainSetJunction(
   net: Network,
   train: TrainSet,
   steerDirection: 'left' | 'right',
   trains: TrainSet[] = [train],
+  isLocked?: (junction: Junction) => boolean,
 ): boolean {
   if (train.vehicles.length === 0) return false
   const reversing = train.direction === -1
@@ -1261,7 +1276,7 @@ export function steerTrainSetJunction(
     direction: 1,
   }
   const upcoming = findUpcomingJunction(net, probe)
-  if (!upcoming || isJunctionOccupied(net, upcoming.junction, trains)) return false
+  if (!upcoming || isJunctionOccupied(net, upcoming.junction, trains) || isLocked?.(upcoming.junction)) return false
   return steerJunction(net, probe, steerDirection)
 }
 
@@ -1284,33 +1299,40 @@ export interface TurnoutAhead {
   /** Track distance from the start of the route to the points, m */
   distance: number
   side: 'left' | 'right' | null
-  /** A vehicle stands over the points: the turnout cannot be thrown */
+  /** A vehicle stands over the points, or they are held for another train: the turnout cannot be thrown */
   locked: boolean
 }
 
 /**
  * The turnout `steerJunction` would throw for a route starting at `start`: the first one on the
- * route, met by its points or by a branch. `null` when the route reaches none.
+ * route, met by its points or by a branch. `null` when the route reaches none. `isLocked` tells
+ * whether a turnout is held for another train.
  */
 export function turnoutAhead(
   net: Network,
   start: TrackPosition,
   travelDirection: 1 | -1,
   trains: TrainSet[],
+  isLocked?: (junction: Junction) => boolean,
 ): TurnoutAhead | null {
   const ahead = findJunctionAhead(net, start, travelDirection)
   if (!ahead) return null
   return {
     distance: Math.max(0, ahead.distance),
     side: openRouteSide(ahead),
-    locked: isJunctionOccupied(net, ahead.junction, trains),
+    locked: isJunctionOccupied(net, ahead.junction, trains) || !!isLocked?.(ahead.junction),
   }
 }
 
 /** The turnout `steerTrainSetJunction` would throw for this train, measured from its leading bogie */
-export function trainTurnoutAhead(net: Network, train: TrainSet, trains: TrainSet[] = [train]): TurnoutAhead | null {
+export function trainTurnoutAhead(
+  net: Network,
+  train: TrainSet,
+  trains: TrainSet[] = [train],
+  isLocked?: (junction: Junction) => boolean,
+): TurnoutAhead | null {
   const start = trainRouteStart(train)
-  return start ? turnoutAhead(net, start, 1, trains) : null
+  return start ? turnoutAhead(net, start, 1, trains, isLocked) : null
 }
 
 // ─── Persistence & network consistency ────────────────────────────────────────

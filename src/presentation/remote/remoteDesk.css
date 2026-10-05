@@ -535,6 +535,16 @@ html.phone-desk-page body {
   border-color: var(--hud-fg);
 }
 
+/* The signalling block, in the flow of the speed panel and as wide as it */
+.phone-speed > .console-signals {
+  width: auto;
+  background: var(--hud-2);
+  box-shadow: none;
+}
+
+.phone-speed > .console-signals .console-signals-main { font-size: 16px; }
+.phone-speed > .console-signals .console-signals-note { font-size: 13px; }
+
 /* Over the desk, without moving a lever */
 .phone-portrait > .console-derail {
   position: absolute;
@@ -661,6 +671,14 @@ html.phone-desk-page body {
 
 /* --- On its side: the band of the PC, stretched over the height the screen leaves --- */
 .phone-desk .console-tools { display: none; }
+
+/* The tools are gone: the signalling block that rides above them takes their row, in the flow */
+.phone-desk .console-toolrow > .console-signals {
+  position: static;
+  transform: none;
+  width: 300px;
+  box-shadow: none;
+}
 
 .phone-desk .console-stage-band { justify-content: center; }
 

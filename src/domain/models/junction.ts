@@ -3,6 +3,7 @@ import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
 import { isTraversableDeflection } from '../geometry/tangent'
+import { isCrossingAngle } from './crossing'
 import { findJunctionAtNode, junctionRails, leaveDirection } from './routing'
 import type { Junction, JunctionId, Network, NodeId, Passage, Point, RailNode, Segment, SegmentId } from './types'
 
@@ -191,6 +192,107 @@ export function setJunctionBranch(junction: Junction, branch: TurnoutBranch): vo
   setJunctionPosition(junction, index)
 }
 
+/**
+ * Put a device in a position that lets a train pass between two of its rails; it stays as it is
+ * when that passage is already open. Returns false when its table has no such passage.
+ */
+export function openPassage(junction: Junction, railA: SegmentId, railB: SegmentId): boolean {
+  const index = junction.passages.findIndex((p) => (p.a === railA && p.b === railB) || (p.a === railB && p.b === railA))
+  if (index < 0) return false
+  if (junction.positions[junction.active]?.includes(index)) return true
+  const position = junction.positions.findIndex((opened) => opened.includes(index))
+  if (position < 0) return false
+  setJunctionPosition(junction, position)
+  return true
+}
+
+/** One of the two sides of a double slip */
+export type DoubleSlipSide = 0 | 1
+
+/**
+ * A double slip read side by side: two rails on each side of the node, and a set of points on each
+ * side that picks one of them. A train passes between the rail picked on one side and the rail
+ * picked on the other; the two other rails are closed.
+ */
+export interface DoubleSlipView {
+  /** The rails of each side, the straight one first */
+  sides: [[SegmentId, SegmentId], [SegmentId, SegmentId]]
+  /** For each side, the index (0 or 1) of the rail its points are set to */
+  active: [number, number]
+}
+
+/**
+ * Declare a double slip at a node: every rail of one side leads to every rail of the other, and
+ * the passage from `sides[0][i]` to `sides[1][j]` is the only one open in position `2 * i + j`.
+ * Replaces the table the node already had, keeping its id.
+ */
+export function declareDoubleSlip(
+  net: Network,
+  params: { nodeId: NodeId; sides: [[SegmentId, SegmentId], [SegmentId, SegmentId]] },
+): Junction {
+  const [sideA, sideB] = params.sides
+  const junc: Junction = {
+    id: findJunctionAtNode(net, params.nodeId)?.id ?? generateId('j'),
+    nodeId: params.nodeId,
+    kind: 'double_slip',
+    passages: sideA.flatMap((a) => sideB.map((b) => ({ a, b }))),
+    positions: [[0], [1], [2], [3]],
+    active: 0,
+  }
+  net.junctions.set(junc.id, junc)
+  return junc
+}
+
+/** Read a double slip. Returns null for another kind of device, or for a table that is not laid out as one. */
+export function doubleSlipView(junction: Junction | null | undefined): DoubleSlipView | null {
+  if (!junction || junction.kind !== 'double_slip' || junction.passages.length !== 4) return null
+  const [p0, p1, p2, p3] = junction.passages
+  const sideA: [SegmentId, SegmentId] = [p0.a, p2.a]
+  const sideB: [SegmentId, SegmentId] = [p0.b, p1.b]
+  const wellFormed =
+    p1.a === sideA[0] &&
+    p3.a === sideA[1] &&
+    p2.b === sideB[0] &&
+    p3.b === sideB[1] &&
+    new Set([...sideA, ...sideB]).size === 4 &&
+    junction.positions.length === 4 &&
+    junction.positions.every((opened, i) => opened.length === 1 && opened[0] === i)
+  if (!wellFormed) return null
+  return { sides: [sideA, sideB], active: [junction.active >> 1, junction.active & 1] }
+}
+
+/** The side of a double slip a rail belongs to, null when it is not one of its rails */
+export function doubleSlipSideOf(junction: Junction, segId: SegmentId): DoubleSlipSide | null {
+  const view = doubleSlipView(junction)
+  if (!view) return null
+  return view.sides[0].includes(segId) ? 0 : view.sides[1].includes(segId) ? 1 : null
+}
+
+/** Set the points of one side of a double slip to one of its two rails; the other side stays as it is */
+export function setDoubleSlipSide(junction: Junction, side: DoubleSlipSide, railIndex: number): void {
+  const view = doubleSlipView(junction)
+  if (!view || (railIndex !== 0 && railIndex !== 1)) return
+  const active: [number, number] = [view.active[0], view.active[1]]
+  active[side] = railIndex
+  setJunctionPosition(junction, 2 * active[0] + active[1])
+}
+
+/** Throw the points of one side of a double slip to its other rail */
+export function throwDoubleSlipSide(junction: Junction, side: DoubleSlipSide): void {
+  const view = doubleSlipView(junction)
+  if (view) setDoubleSlipSide(junction, side, 1 - view.active[side])
+}
+
+/** The side of a double slip that lies towards a point: the one whose rails leave the node that way */
+export function doubleSlipSideToward(net: Network, junction: Junction, point: Point): DoubleSlipSide | null {
+  const view = doubleSlipView(junction)
+  const apex = net.nodes.get(junction.nodeId)
+  const rail = view ? net.segments.get(view.sides[0][0]) : undefined
+  if (!view || !apex || !rail) return null
+  const ray = leaveDirection(net, rail, junction.nodeId)
+  return ray.x * (point.x - apex.pos.x) + ray.y * (point.y - apex.pos.y) >= 0 ? 0 : 1
+}
+
 /** Find the turnout a rail is a branch of (its stem does not count). */
 export function findJunctionBySegment(net: Network, segId: SegmentId): Junction | undefined {
   for (const junc of net.junctions.values()) {
@@ -341,8 +443,9 @@ function branchDivergence(a: BranchSide, b: BranchSide): number {
 /**
  * Propose the route table of a node from its geometry: a turnout when one rail (the stem) can be
  * left for each of two others, a 3-way for three. Rails that only cross the node are left out of
- * the table. The roles do not depend on the order in which the rails were laid. Returns null when
- * the node is not a fork — no stem, or several.
+ * the table. Four rails that are two turnouts sharing their points make a double slip. The roles
+ * do not depend on the order in which the rails were laid. Returns null when the node is neither
+ * — no stem, or several that are tracks crossing.
  */
 export function proposeJunction(net: Network, nodeId: NodeId): Junction | null {
   const rails = (net.adjacency.get(nodeId) ?? [])
@@ -355,6 +458,7 @@ export function proposeJunction(net: Network, nodeId: NodeId): Junction | null {
   // meeting (a crossing, a converging line): only a single stem makes a fork.
   const continuations = rails.map((_, i) => rails.filter((__, k) => k !== i && isTraversableDeflection(rays[i], rays[k])))
   const stems = rails.filter((_, i) => continuations[i].length >= 2)
+  if (stems.length === 4) return proposeDoubleSlip(net, nodeId)
   if (stems.length !== 1) return null
   const stem = stems[0]
   const branches = continuations[rails.indexOf(stem)]
@@ -365,6 +469,42 @@ export function proposeJunction(net: Network, nodeId: NodeId): Junction | null {
 
   const [straightSegmentId, divergingSegmentId, divergingRightSegmentId] = orderBranches(sides)
   return declareTurnout(net, { nodeId, stemSegmentId: stem.id, straightSegmentId, divergingSegmentId, divergingRightSegmentId })
+}
+
+/**
+ * The two sides of a double slip at a node, when its rails make one: four rails, two leaving each
+ * way along the same line, each of which a train can leave for both rails of the other side. Two
+ * tracks that cross at an angle are not one: there each rail has its own line (see `isCrossingAngle`).
+ * Each side lists its straight rail first; the side that leaves towards +x comes first (+y when they tie).
+ */
+function doubleSlipSides(net: Network, nodeId: NodeId): [[SegmentId, SegmentId], [SegmentId, SegmentId]] | null {
+  const rails = (net.adjacency.get(nodeId) ?? [])
+    .map((sid) => net.segments.get(sid))
+    .filter((seg): seg is Segment => !!seg)
+  if (rails.length !== 4) return null
+  const rays = rails.map((seg) => leaveDirection(net, seg, nodeId))
+  const together = (i: number, k: number) => rays[i].x * rays[k].x + rays[i].y * rays[k].y > 0 && !isCrossingAngle(rays[i], rays[k])
+  const mate = [1, 2, 3].find((k) => together(0, k))
+  if (mate === undefined) return null
+  const groups = [[0, mate], [1, 2, 3].filter((k) => k !== mate)]
+  if (!together(groups[1][0], groups[1][1])) return null
+  if (!groups[0].every((i) => groups[1].every((k) => isTraversableDeflection(rays[i], rays[k])))) return null
+
+  const sides: { ray: Point; rails: [SegmentId, SegmentId] }[] = []
+  for (const [group, facing] of [[groups[0], groups[1]], [groups[1], groups[0]]]) {
+    const measured = branchSides(net, nodeId, rails[facing[0]].id, group.map((i) => rails[i].id))
+    if (!measured) return null
+    const [straight, diverging] = orderStraightFirst(measured[0], measured[1])
+    sides.push({ ray: rays[group[0]], rails: [straight.segId, diverging.segId] })
+  }
+  sides.sort((a, b) => (Math.abs(a.ray.x - b.ray.x) > 1e-9 ? b.ray.x - a.ray.x : b.ray.y - a.ray.y))
+  return [sides[0].rails, sides[1].rails]
+}
+
+/** Propose a double slip at a node whose rails make one (see `doubleSlipSides`), null otherwise */
+function proposeDoubleSlip(net: Network, nodeId: NodeId): Junction | null {
+  const sides = doubleSlipSides(net, nodeId)
+  return sides ? declareDoubleSlip(net, { nodeId, sides }) : null
 }
 
 /**
@@ -416,7 +556,9 @@ function orderStraightFirst(a: BranchSide, b: BranchSide): [BranchSide, BranchSi
  *   turnout, and a turnout left with one branch is removed;
  * - a turnout whose stem gets a third branch becomes a 3-way, open on the same rail;
  * - a turnout one of whose branches is prolonged back through the points is two tracks crossing:
- *   its table is removed, and each track runs straight through;
+ *   its table is removed, and each track runs straight through — unless the fourth rail leaves
+ *   along the stem, which makes a double slip, open on the same passage;
+ * - a double slip that loses a rail becomes a turnout, open on the same rail when it survives;
  * - any other extra rail leaves the table alone and follows the default rule;
  * - a fork that has no table gets the one `proposeJunction` reads from its geometry.
  * Returns the tables of the network.
@@ -439,7 +581,7 @@ export function syncJunctions(net: Network): Junction[] {
       const named = new Set(junctionRails(junc))
       const extras = [...rails].filter((sid) => !named.has(sid))
       if (extras.some((sid) => continuesABranch(net, junc, sid))) {
-        net.junctions.delete(junc.id)
+        if (!turnIntoDoubleSlip(net, junc)) net.junctions.delete(junc.id)
         continue
       }
       if (junc.kind === 'turnout' && extras.length === 1) addThirdBranch(net, junc, extras[0])
@@ -452,19 +594,29 @@ export function syncJunctions(net: Network): Junction[] {
   return [...net.junctions.values()]
 }
 
+/** Make a double slip of a turnout whose node now has the rails of one, open on the same passage. Returns false when it has not. */
+function turnIntoDoubleSlip(net: Network, junc: Junction): boolean {
+  const open = junc.passages[junc.active]
+  const sides = junc.kind === 'turnout' ? doubleSlipSides(net, junc.nodeId) : null
+  if (!sides) return false
+  const slip = declareDoubleSlip(net, { nodeId: junc.nodeId, sides })
+  if (open) openPassage(slip, open.a, open.b)
+  return true
+}
+
 /** Former name of `syncJunctions` */
 export const autoDetectJunctions = syncJunctions
 
 /**
  * Remove from a table the passages that no longer exist: over a rail the node has lost, between a
- * rail and itself, listed twice (two rails that became one), or — on a turnout — bent into a corner
+ * rail and itself, listed twice (two rails that became one), or — on a turnout or a double slip — bent into a corner
  * no train can take. The device stays on the rail that was open when it can. Returns false when it
  * is left without a choice to make (fewer than two positions) and should be removed.
  */
 function dropDeadPassages(net: Network, junc: Junction, rails: Set<SegmentId>): boolean {
   const samePair = (p: Passage, q: Passage) => (p.a === q.a && p.b === q.b) || (p.a === q.b && p.b === q.a)
   const takable = (p: Passage): boolean => {
-    if (!isTurnoutKind(junc)) return true
+    if (!isTurnoutKind(junc) && junc.kind !== 'double_slip') return true
     const a = net.segments.get(p.a)
     const b = net.segments.get(p.b)
     return !!a && !!b && isTraversableDeflection(leaveDirection(net, a, junc.nodeId), leaveDirection(net, b, junc.nodeId))
@@ -496,6 +648,17 @@ function dropDeadPassages(net: Network, junc: Junction, rails: Set<SegmentId>): 
     // What is left is a plain turnout: which branch is the straight one is read again
     junc.kind = 'turnout'
     normalizeTurnoutRoles(net, junc)
+  }
+  if (junc.kind === 'double_slip') {
+    // One side is down to one rail: that rail is the stem of a plain turnout. Anything else is no device we name
+    const stem = passages.length === 2 ? [passages[0].a, passages[0].b].find((sid) => sid === passages[1].a || sid === passages[1].b) : undefined
+    if (stem) {
+      junc.passages = passages.map((p) => ({ a: stem, b: p.a === stem ? p.b : p.a }))
+      junc.kind = 'turnout'
+      normalizeTurnoutRoles(net, junc)
+    } else {
+      junc.kind = 'custom'
+    }
   }
   return true
 }

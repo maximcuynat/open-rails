@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { HalfDial, HalfGauge, KeyCap, NotchScale } from './instruments'
-import { BrakeHoldButton, ConsoleTools, LimitCorners, ReverserControl, SpeedCaption, type ConsolePartProps } from './consoleParts'
+import { BrakeHoldButton, LimitCorners, ReverserControl, SpeedCaption, type ConsolePartProps } from './consoleParts'
+import { ConsoleToolRow } from './signalParts'
 import { BRAKE_CYLINDER_GAUGE, BRAKE_PIPE_GAUGE, notchStops } from './consoleModel'
 
 /** Console A — a desk along the bottom of the window: brake on the left, speed in the middle, traction on the right */
@@ -9,7 +10,7 @@ export function BandConsole(props: ConsolePartProps) {
   const effort = { '--console-effort': `${view.handlePercent}%` } as CSSProperties
   return (
     <div className="console-stage console-stage-band">
-      <ConsoleTools {...props} />
+      <ConsoleToolRow {...props} />
       <div className="console console-band">
         <div className="console-zone">
           <div className="console-zhead">

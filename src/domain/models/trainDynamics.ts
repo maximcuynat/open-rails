@@ -14,6 +14,7 @@
 import type { Network } from './types'
 import type { CurveState, LineSettings, UpcomingSpeedLimit } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
+import type { SignallingLevel } from './signals'
 import { consistAdmittedDeficiency, curveStateFor } from './cant'
 import { rakeSpeedState } from './trackSpeed'
 import type { TrainSet } from './train'
@@ -38,6 +39,14 @@ export interface DrivingEnvironment {
   levelHeight: number
   /** Line speed and line type of the project (`store.lineSettings`); the defaults when absent */
   line?: LineSettings
+  /**
+   * The signalling of the project. At the pro level, on a network that has signals, it weighs on
+   * the speed limit of a train (`TrainDynamics.speedLimit`, `nextSpeedLimit`): points taken on
+   * their diverging route count, and so does `speedCapOf` — the speed (km/h) the signals impose on
+   * a train, `Infinity` for none: 30 km/h while it runs on sight (`signalSpeedCap`).
+   * Nothing at the standard level, nor when absent.
+   */
+  signalling?: { level: SignallingLevel; speedCapOf?: (train: TrainSet) => number }
 }
 
 export const DEFAULT_DRIVING_ENVIRONMENT: DrivingEnvironment = { levelHeight: 6 }
@@ -391,7 +400,7 @@ function railHeight(net: Network, pos: TrackPosition, env: DrivingEnvironment): 
  * tail): the height difference between its first and last bogies over the track between them.
  * Averaging over the whole rake smooths the breaks of the profile.
  */
-function trainSlope(net: Network, train: TrainSet, env: DrivingEnvironment): number {
+export function trainSlope(net: Network, train: TrainSet, env: DrivingEnvironment = DEFAULT_DRIVING_ENVIRONMENT): number {
   const vehicles = train.vehicles
   if (vehicles.length === 0) return 0
   const head = railHeight(net, vehicles[0].front, env)
@@ -532,7 +541,17 @@ export function trainDynamics(net: Network, train: TrainSet, env: DrivingEnviron
   const stoppingDistance = rake.mass > 0 ? integrateStop(rake, train, speed, train.direction * forces.gravity) : 0
   // Limits are written in km/h; the cant, the curve speeds and the overturning only exist at full size
   const line = env.line ?? DEFAULT_LINE_SETTINGS
-  const { limit, next, cantDeficiency } = rakeSpeedState(net, train, speed * 3.6, stoppingDistance, line)
+  // The pro signalling level adds the points taken on their diverging route and the running on sight
+  const signalling = env.signalling
+  const pro = signalling?.level === 'pro' && net.signals.size > 0
+  const { limit, next, cantDeficiency } = rakeSpeedState(
+    net,
+    train,
+    speed * 3.6,
+    stoppingDistance,
+    line,
+    pro ? { turnouts: true, cap: signalling.speedCapOf?.(train) } : undefined,
+  )
 
   return {
     mass: rake.mass,

@@ -8,10 +8,10 @@ import {
 } from '@application/remote/protocol'
 import { DrivingConsole } from '@presentation/components/console/DrivingConsole'
 import { ConsoleIcon } from '@presentation/components/console/instruments'
+import { newSignalPassed } from '@presentation/components/console/consoleModel'
 import {
-  BAND_DESIGN,
-  PORTRAIT_DESIGN,
   compositionLabel,
+  deskDesign,
   deskOrientation,
   deskScreen,
   fitStage,
@@ -57,6 +57,14 @@ export default function RemoteDesk() {
   useEffect(() => {
     setPending(null)
   }, [drivenId, online])
+
+  // A closed signal passed is felt in the hand once, when it happens; the desk keeps its note up
+  const announcedPassings = useRef(new Set<string>())
+  const signalPassed = !!snapshot.state?.signals?.passed
+  useEffect(() => {
+    if (newSignalPassed(announcedPassings.current, snapshot.state)) vibrate([140, 60, 140])
+    // Only when the driven train changes or the trace comes or goes: the state is new ten times a second
+  }, [drivenId, signalPassed])
 
   const command = useCallback((next: ConsoleCommand) => {
     if (!online) return
@@ -342,7 +350,7 @@ function Desk({ screen, fleet, landscape, onCommand }: {
   onCommand: (command: ConsoleCommand) => void
 }) {
   return (
-    <ScaledStage design={landscape ? BAND_DESIGN : PORTRAIT_DESIGN} className={screen.online ? '' : 'is-cut'}>
+    <ScaledStage design={deskDesign(landscape ? 'landscape' : 'portrait', screen.state)} className={screen.online ? '' : 'is-cut'}>
       {/* Remounted when the link drops or comes back: a lever held at that moment lets go */}
       {landscape ? (
         <DrivingConsole key={`band-${screen.online}`} layout="band" state={screen.state} fleet={fleet} onCommand={onCommand} />

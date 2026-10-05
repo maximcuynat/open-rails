@@ -101,6 +101,44 @@ export interface SpeedZone {
   speedByCategory?: Record<string, number>
 }
 
+export type SignalId = string
+
+/**
+ * What a signal is for: `spacing` keeps trains apart on plain track (block signal, French
+ * sémaphore), `protection` guards points or a crossing and stays closed until a train has its
+ * route (path signal, French carré).
+ */
+export type SignalRole = 'spacing' | 'protection'
+
+/**
+ * A signal laid at a place of the track. Only the signals are stored: their blocks, what they show
+ * and the routes they give are worked out from them (`models/signalBlocks.ts`,
+ * `models/signalling.ts`). The same record is read by both signalling levels of a project. It
+ * names a rail, so the domain keeps it in place when the rail is cut or merged and removes it with
+ * the rail (see `replaceRail`). Change it only through the helpers of `models/signals.ts`.
+ */
+export interface Signal {
+  id: SignalId
+  segId: SegmentId
+  /** Parameter on the rail, 0…1 */
+  t: number
+  /**
+   * The direction of travel the signal speaks to: true for trains running the rail from its `from`
+   * node to its `to` node (growing `t`), false for the other way. A train running against it does
+   * not see it.
+   */
+  forward: boolean
+  role: SignalRole
+  /** Pro level: a marker board of a cab-signalled line (LGV), without lights. Kept on the standard level */
+  cabMarker?: boolean
+  /**
+   * A path signal that may not be passed from behind: a train that meets it against its direction
+   * reads it as a closed signal it may not pass, at both levels (see `isOneWayWall`). Kept, without
+   * effect, on a block signal.
+   */
+  oneWay?: boolean
+}
+
 export interface Network {
   nodes: Map<NodeId, RailNode>
   segments: Map<SegmentId, Segment>
@@ -110,6 +148,8 @@ export interface Network {
   junctions: Map<JunctionId, Junction>
   /** Speed limits laid on the track (see `models/speedZones.ts`) */
   speedZones: Map<SpeedZoneId, SpeedZone>
+  /** Signals laid on the track (see `models/signals.ts`) */
+  signals: Map<SignalId, Signal>
 }
 
 export interface Selection {

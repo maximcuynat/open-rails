@@ -674,7 +674,7 @@ describe('context bar: signalling mode', () => {
     store.setTool('signal')
     expect(bar(store)).toEqual([{ kind: 'label', text: 'Signalisation' }])
     store.setSignalToolSubMode('delete')
-    expect(bar(store)).toEqual([{ kind: 'label', text: 'Suppression de limites' }])
+    expect(bar(store)).toEqual([{ kind: 'label', text: 'Suppression de signaux et de limites' }])
   })
 
   it('speed limit tool: start step, then the live length of the way to the cursor', () => {

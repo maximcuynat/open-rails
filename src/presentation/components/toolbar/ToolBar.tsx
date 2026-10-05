@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, type ReactNode } from 'react'
 import type { EditorStore, SignalSubMode, Tool } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
 import { ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import type { SignallingLevel } from '@domain/models/signals'
+import { signalPalette } from './signalPalette'
 
 interface ToolDef {
   id: Tool
@@ -113,9 +115,9 @@ const TOOLS: ToolDef[] = [
   },
   {
     id: 'signal',
-    label: 'Signalisation (limites de vitesse)',
+    label: 'Signalisation (signaux et limites de vitesse)',
     group: 4,
-    // The key goes to the speed limit tool inside the mode
+    // The keys go to the tools inside the mode
     shortcut: null,
     icon: (
       <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -128,52 +130,33 @@ const TOOLS: ToolDef[] = [
   },
 ]
 
-interface SignalToolDef {
-  mode: SignalSubMode
-  label: string
-  hint: string
-  icon: ReactNode
-  danger?: boolean
-  shortcut?: ActionId
-  /** Fixed key shown in the tooltip, when the tool has no rebindable one */
-  fixedKey?: string
-}
+const SIGNAL_ICON_PROPS = {
+  viewBox: '0 0 24 24',
+  width: 18,
+  height: 18,
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2.2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const
 
-/**
- * The tools of the signalling mode, one per sub-mode, in the order of the panel. Signals will be
- * added here, between the speed limit and the deletion.
- */
-const SIGNAL_TOOLS: SignalToolDef[] = [
-  {
-    mode: 'select',
-    label: 'Sélectionner une limite de vitesse',
-    hint: 'Cliquer sur une zone pour la modifier dans l’inspecteur',
-    icon: (
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+/** Icons of the tools of the signalling mode (see `signalPalette` for the tools themselves) */
+const SIGNAL_ICONS: Record<SignallingLevel, Partial<Record<SignalSubMode, ReactNode>>> & { common: Record<'select' | 'speedZone' | 'delete', ReactNode> } = {
+  common: {
+    select: (
+      <svg {...SIGNAL_ICON_PROPS}>
         <path d="M3 3l7 18 3-7 7-3z" />
       </svg>
     ),
-  },
-  {
-    mode: 'speedZone',
-    label: 'Limite de vitesse',
-    hint: 'Un clic sur la voie pour le début de la zone, un clic pour la fin',
-    shortcut: 'tool.speedZone',
-    icon: (
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    speedZone: (
+      <svg {...SIGNAL_ICON_PROPS}>
         <circle cx="12" cy="12" r="9" />
         <path d="M8.5 15.5v-7M12.5 9.5a1.5 1.5 0 0 1 3 0v5a1.5 1.5 0 0 1-3 0z" strokeWidth="1.8" />
       </svg>
     ),
-  },
-  {
-    mode: 'delete',
-    label: 'Supprimer une limite de vitesse',
-    hint: 'Survol rouge et clic pour supprimer la zone',
-    danger: true,
-    fixedKey: 'Suppr',
-    icon: (
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    delete: (
+      <svg {...SIGNAL_ICON_PROPS}>
         <polyline points="3 6 5 6 21 6" />
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
         <line x1="10" y1="11" x2="10" y2="17" />
@@ -181,7 +164,57 @@ const SIGNAL_TOOLS: SignalToolDef[] = [
       </svg>
     ),
   },
-]
+  standard: {
+    // A mast and a round lamp
+    blockSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <circle cx="12" cy="7" r="4.5" />
+        <circle cx="12" cy="7" r="1.3" fill="currentColor" />
+        <path d="M12 11.5V21M8 21h8" />
+      </svg>
+    ),
+    // A mast and a diamond
+    pathSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <path d="M12 2l5.5 5.5L12 13 6.5 7.5z" />
+        <circle cx="12" cy="7.5" r="1.3" fill="currentColor" />
+        <path d="M12 13v8M8 21h8" />
+      </svg>
+    ),
+  },
+  pro: {
+    // Target with one lamp and its plate
+    blockSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <rect x="8" y="2" width="8" height="11" rx="4" />
+        <circle cx="12" cy="7.5" r="1.5" fill="currentColor" />
+        <path d="M12 13v8M9 17h6" />
+      </svg>
+    ),
+    // Target with two lamps
+    pathSignal: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <rect x="8" y="2" width="8" height="13" rx="4" />
+        <circle cx="12" cy="6" r="1.4" fill="currentColor" />
+        <circle cx="12" cy="11" r="1.4" fill="currentColor" />
+        <path d="M12 15v6M9 21h6" />
+      </svg>
+    ),
+    // Square board with a triangle
+    cabMarker: (
+      <svg {...SIGNAL_ICON_PROPS}>
+        <rect x="5" y="3" width="14" height="14" rx="1" />
+        <path d="M9 13l3-6 3 6z" fill="currentColor" />
+        <path d="M12 17v4" />
+      </svg>
+    ),
+  },
+}
+
+function signalIcon(level: SignallingLevel, mode: SignalSubMode): ReactNode {
+  if (mode === 'select' || mode === 'speedZone' || mode === 'delete') return SIGNAL_ICONS.common[mode]
+  return SIGNAL_ICONS[level][mode] ?? SIGNAL_ICONS.pro[mode]
+}
 
 export function ToolBar({ store }: { store: EditorStore }) {
   const kbd = (action: ActionId) => {
@@ -212,6 +245,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
 
   const isTrainMode = store.tool === 'locomotive' || store.tool === 'coupling'
   const isSignalMode = store.tool === 'signal'
+  const palette = signalPalette(store.signallingLevel)
 
   const handleDragStart = (e: React.DragEvent, itemType: 'tgv_loco' | 'tgv_wagon') => {
     e.dataTransfer.setData('application/open-rails-train', itemType)
@@ -345,7 +379,14 @@ export function ToolBar({ store }: { store: EditorStore }) {
       <div className="toolbar-switch-wrapper">
         {isSignalMode ? (
           /* ─── Mode Signalisation ─── */
-          <div className="toolbar-island toolbar-train toolbar-panel-enter" key="signal-toolbar">
+          <div
+            className={`toolbar-island toolbar-train toolbar-panel-enter${palette.badge ? ' toolbar-signal-pro' : ''}`}
+            key={`signal-toolbar-${palette.level}`}
+            aria-label={palette.title}
+          >
+            {palette.badge && (
+              <div className="tb-level-badge" title={palette.title}>{palette.badge}</div>
+            )}
             <div
               className="tb-btn-wrap"
               onMouseEnter={() => setHoverId('back-rails')}
@@ -370,7 +411,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
 
             <div className="tb-sep" />
 
-            {SIGNAL_TOOLS.map((t) => {
+            {palette.tools.map((t) => {
               const id = `signal-${t.mode}`
               const active = store.signalToolSubMode === t.mode
               return (
@@ -387,7 +428,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                     aria-label={t.label}
                     aria-pressed={active}
                   >
-                    {t.icon}
+                    {signalIcon(palette.level, t.mode)}
                   </button>
                   {hoverId === id && (
                     <div className="tb-tooltip">
@@ -400,6 +441,62 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 </div>
               )
             })}
+
+            <div className="tb-sep" />
+
+            {/* Displays: blocks, and the track held for each train while driving */}
+            {([
+              {
+                id: 'signal-blocks',
+                label: 'Afficher les cantons',
+                hint: 'Chaque canton d’une couleur, du côté de son sens de marche · affichés pendant la pose d’un signal, sauf si la case est décochée',
+                active: store.signalBlocksVisible,
+                toggle: store.toggleSignalBlocks,
+                icon: (
+                  <svg {...SIGNAL_ICON_PROPS}>
+                    <path d="M3 8h7" />
+                    <path d="M14 8h7" opacity="0.55" />
+                    <path d="M3 16h4" opacity="0.55" />
+                    <path d="M11 16h10" />
+                  </svg>
+                ),
+              },
+              {
+                id: 'signal-reservations',
+                label: 'Afficher les réservations',
+                hint: 'En conduite : la voie réservée pour chaque rame',
+                active: store.showSignalReservations,
+                toggle: store.toggleSignalReservations,
+                icon: (
+                  <svg {...SIGNAL_ICON_PROPS}>
+                    <rect x="3" y="9" width="8" height="6" rx="1" />
+                    <path d="M13 12h8M18 9l3 3-3 3" />
+                  </svg>
+                ),
+              },
+            ] as const).map((d) => (
+              <div
+                key={d.id}
+                className="tb-btn-wrap"
+                onMouseEnter={() => setHoverId(d.id)}
+                onMouseLeave={() => setHoverId((h) => (h === d.id ? null : h))}
+              >
+                <button
+                  className={`tb-train-btn tb-display-btn${d.active ? ' active' : ''}`}
+                  onClick={() => d.toggle()}
+                  aria-label={d.label}
+                  aria-pressed={d.active}
+                >
+                  {d.icon}
+                </button>
+                {hoverId === d.id && (
+                  <div className="tb-tooltip">
+                    {d.label}
+                    <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>{d.hint}</span>
+                  </div>
+                )}
+              </div>
+            ))}
 
             <div className="tb-sep" />
 

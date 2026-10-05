@@ -43,6 +43,12 @@ export function ShortcutsModal({ store, isOpen, onClose }: ShortcutsModalProps) 
         <div>Trains (pose et sélection)</div>
         <div>{keys('tool.speedZone')}</div>
         <div>Limite de vitesse (mode Signalisation)</div>
+        <div>{keys('tool.signalBlock')}</div>
+        <div>Signal de block / sémaphore (mode Signalisation)</div>
+        <div>{keys('tool.signalPath')}</div>
+        <div>Signal de trajectoire / carré (mode Signalisation)</div>
+        <div><span className="shortcut-kbd">R</span> ou <span className="shortcut-kbd">Tab</span></div>
+        <div>Inverser le sens du signal à poser ; <span className="shortcut-kbd">R</span> retourne le signal sélectionné</div>
         <div className="shortcuts-section">Pose des voies</div>
         <div><span className="shortcut-kbd">0</span>–<span className="shortcut-kbd">9</span> puis <span className="shortcut-kbd">Entrée</span></div>
         <div>Saisir la longueur exacte de la voie droite en cours</div>

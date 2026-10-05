@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CONSOLE_COMMAND_TYPES } from '../console/consoleContract'
-import type { ConsoleCommand, ConsoleState, FleetEntry } from '../console/consoleContract'
+import type { ConsoleCommand, ConsoleSignals, ConsoleState, FleetEntry } from '../console/consoleContract'
 import {
   MAX_FLEET_ENTRIES,
   MAX_MESSAGE_BYTES,
@@ -41,6 +41,18 @@ const STATE: ConsoleState = {
   wagonCount: 8,
   upcomingTurnout: null,
   canSwitchCab: false,
+}
+
+const SIGNALS: ConsoleSignals = {
+  level: 'standard',
+  next: { distance: 850.5, color: 'yellow', indication: null, plate: null, lit: true, label: 'Attention' },
+  closedDistance: null,
+  brakeAlert: false,
+  waiting: false,
+  onSight: false,
+  onSightSpeed: 30,
+  passed: null,
+  cab: null,
 }
 
 const ENTRY: FleetEntry = {
@@ -97,6 +109,26 @@ describe('protocol: round trip', () => {
         state: { ...STATE, guidance: { speedLimit: 160, nextLimit: { speed: 90, distance: 1250.5 }, curve: 'danger', derailed: { speed: 235, limit: 160 } } },
         ack: 3,
       },
+      { t: 'state', state: { ...STATE, signals: SIGNALS }, ack: 3 },
+      {
+        t: 'state',
+        state: {
+          ...STATE,
+          signals: {
+            ...SIGNALS,
+            level: 'pro',
+            next: { distance: 0, color: 'red', indication: 'carre', plate: 'Nf', lit: false, label: 'Carré' },
+            closedDistance: 2440.5,
+            brakeAlert: true,
+            waiting: true,
+            onSight: true,
+            passed: { braked: true },
+            cab: { kind: 'announce', speed: 270, flashing: false, markerDistance: 1200 },
+          },
+        },
+        ack: 3,
+      },
+      { t: 'state', state: { ...STATE, signals: { ...SIGNALS, next: null, cab: { kind: 'stop', speed: 0, flashing: false, markerDistance: null } } }, ack: 3 },
       { t: 'bye' },
       ...COMMANDS.map((c, i): RemoteMessage => ({ t: 'command', seq: i + 1, trainId: 't_1', command: c })),
       { t: 'command', seq: 99, trainId: null, command: { type: 'emergencyBrake' } },
@@ -218,6 +250,55 @@ describe('protocol: rejection', () => {
     expect(decode({ t: 'state', state: STATE })).toEqual(malformed)
     expect(decode({ t: 'state', ack: 0 })).toEqual(malformed)
     expect(decode({ t: 'state', ack: 0, state: [] })).toEqual(malformed)
+  })
+
+  it('takes the signals as optional, and rejects the state when anything in them is wrong', () => {
+    const signals = (patch: object) => decode({ t: 'state', ack: 0, state: { ...STATE, signals: { ...SIGNALS, ...patch } } })
+    const next = (patch: object) => signals({ next: { ...SIGNALS.next, ...patch } })
+    const cab = (patch: object) => signals({ cab: { kind: 'line', speed: 300, flashing: false, markerDistance: 900, ...patch } })
+    // A PC that knows no signalling, or a network without signal: no `signals`, and none comes out
+    const plain = decode({ t: 'state', ack: 0, state: STATE })
+    expect(plain.ok && plain.message.t === 'state' && plain.message.state && 'signals' in plain.message.state).toBe(false)
+    expect(signals({}).ok).toBe(true)
+    expect(signals({ next: null }).ok).toBe(true)
+    expect(cab({}).ok).toBe(true)
+
+    expect(decode({ t: 'state', ack: 0, state: { ...STATE, signals: null } })).toEqual(malformed)
+    expect(decode({ t: 'state', ack: 0, state: { ...STATE, signals: [] } })).toEqual(malformed)
+    expect(signals({ level: 'expert' })).toEqual(malformed)
+    expect(signals({ next: undefined })).toEqual(malformed)
+    expect(signals({ closedDistance: -1 })).toEqual(malformed)
+    expect(signals({ closedDistance: undefined })).toEqual(malformed)
+    expect(signals({ brakeAlert: 1 })).toEqual(malformed)
+    expect(signals({ waiting: undefined })).toEqual(malformed)
+    expect(signals({ onSight: 'yes' })).toEqual(malformed)
+    expect(signals({ onSightSpeed: 30.5 })).toEqual(malformed)
+    expect(signals({ passed: {} })).toEqual(malformed)
+    expect(signals({ passed: true })).toEqual(malformed)
+    expect(signals({ cab: undefined })).toEqual(malformed)
+    expect(next({ distance: -5 })).toEqual(malformed)
+    expect(next({ distance: null })).toEqual(malformed)
+    expect(next({ color: 'blue' })).toEqual(malformed)
+    expect(next({ indication: 'feu-vert' })).toEqual(malformed)
+    // The announcement and the reminder of a diverging route: 30 or 60, or not there at all
+    expect(next({ indication: 'ralentissement', slowdown: 60 }).ok).toBe(true)
+    expect(next({ indication: 'rappel', reminder: 30 }).ok).toBe(true)
+    expect(next({ slowdown: 40 })).toEqual(malformed)
+    expect(next({ reminder: null })).toEqual(malformed)
+    expect(signals({ overspeed: { braked: true } }).ok).toBe(true)
+    expect(signals({ overspeed: true })).toEqual(malformed)
+    expect(signals({ overspeed: {} })).toEqual(malformed)
+    expect(next({ plate: 'A' })).toEqual(malformed)
+    expect(next({ lit: 1 })).toEqual(malformed)
+    expect(next({ label: 'x'.repeat(200) })).toEqual(malformed)
+    expect(cab({ kind: 'rouge' })).toEqual(malformed)
+    expect(cab({ speed: -10 })).toEqual(malformed)
+    expect(cab({ speed: 270.5 })).toEqual(malformed)
+    expect(cab({ flashing: null })).toEqual(malformed)
+    expect(cab({ markerDistance: -1 })).toEqual(malformed)
+    // Unknown fields are dropped, here like everywhere
+    const extra = next({ evil: true })
+    expect(extra.ok && extra.message.t === 'state' && extra.message.state?.signals?.next).toEqual(SIGNALS.next)
   })
 
   it('rejects a fleet as a whole when one entry is wrong or there are too many', () => {

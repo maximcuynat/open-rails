@@ -98,6 +98,19 @@ export interface StageDesign {
 export const BAND_DESIGN: StageDesign = { width: 984, minHeight: 200, maxScale: 1.6 }
 export const PORTRAIT_DESIGN: StageDesign = { width: 390, minHeight: 540, maxScale: 1.8 }
 
+/** Height the signalling block adds to a desk, its gap included (`.console-signals`) */
+export const SIGNALS_HEIGHT = 62
+
+/**
+ * The design a desk is laid out for: the band on its side, the levers upright, both taller on a
+ * network that has signals — the signalling block then sits in the flow, above the band or under
+ * the speed.
+ */
+export function deskDesign(orientation: DeskOrientation, state: Pick<ConsoleState, 'signals'>): StageDesign {
+  const design = orientation === 'landscape' ? BAND_DESIGN : PORTRAIT_DESIGN
+  return state.signals ? { ...design, minHeight: design.minHeight + SIGNALS_HEIGHT } : design
+}
+
 export interface StageFit {
   scale: number
   /** Size of the stage before it is scaled: scaled, it covers the box exactly */

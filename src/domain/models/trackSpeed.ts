@@ -17,10 +17,11 @@ import type { TrackPosition } from './locomotive'
 import { segmentArcLength, segmentPartialLength } from './locomotive'
 import { rakeOccupancy, type PlacedVehicle } from './occupancy'
 import { endOverhang, ROLLING_STOCK, DEFAULT_ROLLING_STOCK } from './rollingStock'
-import { entriesOf, findJunctionAtNode, openExit } from './routing'
+import { entriesOf, findJunctionAtNode, leaveDirection, openExit } from './routing'
 import { speedZonesOnRail, speedZonesRevision } from './speedZones'
 import { TRACK_T_EPSILON } from './trackObjects'
 import { curveDeflection, minCurveRadius } from '../geometry/curve'
+import { transitionDeflectionDeg } from '../geometry/tangent'
 import {
   CANT_RANGE,
   STANDARD_GAUGE,
@@ -511,6 +512,123 @@ export function cantDeficiencyIn(profile: TrackProfile, vehicles: readonly Place
   return worst
 }
 
+// ─────────────────── Points taken on their diverging route ───────────────────
+
+/**
+ * Speed (km/h) of points taken on their diverging route, by the tangent of their crossing: a
+ * steeper crossing than `tangent` is the row above. ESTIMATED: the two tables found disagree for
+ * the common points (0.11 → 30 or 40, 0.085 → 60 or 70, 0.05 → 90 or 100), the lower figure is kept;
+ * only 0.13 → 30, 1/46 → 160 and 1/65 → 220 are confirmed (`tasks/recherche-limites-vitesse.md` §5).
+ */
+export const TURNOUT_TANGENT_SPEEDS: readonly { tangent: number; speed: number }[] = [
+  { tangent: 0.11, speed: 30 },
+  { tangent: 0.085, speed: 60 },
+  { tangent: 0.05, speed: 90 },
+  { tangent: 0.034, speed: 120 },
+  { tangent: 1 / 46, speed: 160 },
+  { tangent: 1 / 65, speed: 220 },
+]
+
+/**
+ * Speed (km/h) of the diverging route of points whose crossing has this tangent
+ * (`TURNOUT_TANGENT_SPEEDS`). A tangent between two rows takes the steeper one, so the lower speed;
+ * flatter than 1/65 there is no limit (ESTIMATED: no such points are described).
+ */
+export function turnoutSpeedForTangent(tangent: number): number {
+  if (!(tangent > 0)) return Infinity
+  // From the flattest crossing up: the first one that is at least as steep
+  for (let i = TURNOUT_TANGENT_SPEEDS.length - 1; i >= 0; i--) {
+    const row = TURNOUT_TANGENT_SPEEDS[i]
+    if (tangent <= row.tangent + 1e-9) return i === TURNOUT_TANGENT_SPEEDS.length - 1 && tangent < row.tangent - 1e-9 ? Infinity : row.speed
+  }
+  return TURNOUT_TANGENT_SPEEDS[0].speed
+}
+
+/**
+ * A speed worked out from a radius, brought down to the speed of the points that allow it: 30, 60,
+ * 90, 120, 160 or 220 km/h, the steps of `TURNOUT_TANGENT_SPEEDS` (ESTIMATED: the signals only know
+ * 30 and 60). Under 30 km/h and above 220 km/h the speed is kept as it is.
+ */
+function turnoutSpeedClass(speed: number): number {
+  let best = -Infinity
+  for (const row of TURNOUT_TANGENT_SPEEDS) {
+    if (row.speed <= speed && row.speed > best) best = row.speed
+  }
+  if (!Number.isFinite(best)) return speed
+  return speed > TURNOUT_TANGENT_SPEEDS[TURNOUT_TANGENT_SPEEDS.length - 1].speed ? speed : best
+}
+
+/** `turnoutPassageSpeed` on a profile already in hand */
+export function turnoutPassageSpeedIn(net: Network, profile: TrackProfile, junction: Junction, railA: SegmentId, railB: SegmentId): number {
+  // Curve speeds are a full-size matter, and so are these
+  if (!profile.line.realScale) return Infinity
+  if (junction.kind !== 'turnout' && junction.kind !== 'three_way') return Infinity
+  const index = junction.passages.findIndex((p) => (p.a === railA && p.b === railB) || (p.a === railB && p.b === railA))
+  // Passage 0 is the straight route: the crossing does not limit it
+  if (index <= 0) return Infinity
+  if (typeof junction.frogNumber === 'number' && junction.frogNumber > 0) return turnoutSpeedForTangent(1 / junction.frogNumber)
+  const passage = junction.passages[index]
+  const curve = profile.rails.get(passage.b)
+  // The tangent is not known: the speed of the curve of the branch, which is laid without cant
+  if (curve) return turnoutSpeedClass(curveSpeedLimit(curve.radius, 0, profile.line.lineType, profile.line.gauge))
+  // A straight branch leaves at an angle, and that angle is the crossing
+  const stem = net.segments.get(passage.a)
+  const branch = net.segments.get(passage.b)
+  if (!stem || !branch) return Infinity
+  const angle = transitionDeflectionDeg(leaveDirection(net, stem, junction.nodeId), leaveDirection(net, branch, junction.nodeId))
+  return turnoutSpeedForTangent(Math.tan((angle * Math.PI) / 180))
+}
+
+/**
+ * Speed limit (km/h) for a train passing between two rails of a turnout or a 3-way: `Infinity` on
+ * its straight route, and for any other device. On a diverging route:
+ * - points laid from a catalog piece (`Junction.frogNumber` stored) have the speed of their
+ *   crossing, tangent 1 / frog number (`turnoutSpeedForTangent`);
+ * - otherwise the tangent is not known and the speed is the one the curve of the diverging branch
+ *   allows without cant (`curveSpeedLimit`), brought down to a speed points exist for;
+ * - a straight diverging branch gives the tangent itself: the angle it leaves at.
+ * `Infinity` off the real scale, like the curve speeds.
+ */
+export function turnoutPassageSpeed(
+  net: Network,
+  junction: Junction,
+  railA: SegmentId,
+  railB: SegmentId,
+  line: LineSettings = DEFAULT_LINE_SETTINGS,
+): number {
+  return turnoutPassageSpeedIn(net, trackProfile(net, line), junction, railA, railB)
+}
+
+/** Lowest speed (km/h) of the diverging routes of a turnout; `Infinity` for another device (see `turnoutPassageSpeed`) */
+export function turnoutDivergingSpeed(net: Network, junction: Junction, line: LineSettings = DEFAULT_LINE_SETTINGS): number {
+  const profile = trackProfile(net, line)
+  let speed = Infinity
+  for (const passage of junction.passages.slice(1)) speed = Math.min(speed, turnoutPassageSpeedIn(net, profile, junction, passage.a, passage.b))
+  return speed
+}
+
+/** Lowest speed of the points a rake stands over on their diverging route, `Infinity` when there are none */
+function turnoutLimitUnder(net: Network, profile: TrackProfile, occupancy: { spans: readonly TrackSpan[]; nodes: readonly NodeId[] }): number {
+  let limit = Infinity
+  for (const nodeId of occupancy.nodes) {
+    if ((net.adjacency.get(nodeId)?.length ?? 0) < 3) continue
+    const junction = findJunctionAtNode(net, nodeId)
+    if (!junction) continue
+    for (let i = 1; i < junction.passages.length; i++) {
+      const passage = junction.passages[i]
+      const branch = net.segments.get(passage.b)
+      if (!branch) continue
+      // The rake is on this branch where it leaves the points
+      const nodeT = branch.from === nodeId ? 0 : 1
+      const over = occupancy.spans.some(
+        (span) => span.segId === branch.id && (Math.abs(span.t0 - nodeT) <= TRACK_T_EPSILON || Math.abs(span.t1 - nodeT) <= TRACK_T_EPSILON),
+      )
+      if (over) limit = Math.min(limit, turnoutPassageSpeedIn(net, profile, junction, passage.a, passage.b))
+    }
+  }
+  return limit
+}
+
 // ─────────────────── Limit at a place and under a rake ───────────────────
 
 /**
@@ -559,6 +677,7 @@ export interface RakeOnTrack {
 
 interface AheadMemo {
   profile: TrackProfile
+  turnouts: boolean
   direction: 1 | -1
   /** Limit the rake ran under when the route was walked, km/h */
   limit: number
@@ -576,7 +695,20 @@ interface RakeMemo {
   profile: TrackProfile | null
   key: string
   limit: number
+  /** Track under the rake when `limit` was worked out */
+  occupancy: { spans: TrackSpan[]; nodes: NodeId[] }
   ahead: AheadMemo | null
+}
+
+/** What else weighs on the limit of a rake */
+export interface RakeLimitOptions {
+  /**
+   * Count the points taken on their diverging route (`turnoutPassageSpeed`): under the rake from
+   * its head reaching them until its tail has cleared them, and ahead of it. The pro signalling level.
+   */
+  turnouts?: boolean
+  /** A ceiling (km/h) that comes from elsewhere than the track: the running on sight of the pro signalling level */
+  cap?: number
 }
 
 const rakeMemos = new WeakMap<object, RakeMemo>()
@@ -584,7 +716,7 @@ const rakeMemos = new WeakMap<object, RakeMemo>()
 function memoOf(rake: RakeOnTrack): RakeMemo {
   let memo = rakeMemos.get(rake)
   if (!memo) {
-    memo = { profile: null, key: '', limit: 0, ahead: null }
+    memo = { profile: null, key: '', limit: 0, occupancy: { spans: [], nodes: [] }, ahead: null }
     rakeMemos.set(rake, memo)
   }
   return memo
@@ -596,12 +728,17 @@ function memoOf(rake: RakeOnTrack): RakeMemo {
  * it, a higher one only once the tail has left the lower — and never above the maximum speed of
  * the rolling stock. Worked out again only when the rake has moved or the track has changed.
  */
-export function rakeSpeedLimit(net: Network, rake: RakeOnTrack, line: LineSettings = DEFAULT_LINE_SETTINGS): number {
-  return rakeSpeedLimitIn(net, trackProfile(net, line), rake)
+export function rakeSpeedLimit(
+  net: Network,
+  rake: RakeOnTrack,
+  line: LineSettings = DEFAULT_LINE_SETTINGS,
+  options: RakeLimitOptions = {},
+): number {
+  return rakeSpeedLimitIn(net, trackProfile(net, line), rake, options)
 }
 
 /** `rakeSpeedLimit` on a profile already in hand */
-export function rakeSpeedLimitIn(net: Network, profile: TrackProfile, rake: RakeOnTrack): number {
+export function rakeSpeedLimitIn(net: Network, profile: TrackProfile, rake: RakeOnTrack, options: RakeLimitOptions = {}): number {
   const stockLimit = rake.maxSpeed * 3.6
   if (rake.vehicles.length === 0) return Math.min(stockLimit, profile.line.lineSpeed)
   const head = rake.vehicles[0].front
@@ -612,9 +749,13 @@ export function rakeSpeedLimitIn(net: Network, profile: TrackProfile, rake: Rake
     trackSpeedStats.occupancyWalks++
     memo.profile = profile
     memo.key = key
-    memo.limit = limitOverSpans(net, profile, rakeOccupancy(net, rake.vehicles).spans)
+    memo.occupancy = rakeOccupancy(net, rake.vehicles)
+    memo.limit = limitOverSpans(net, profile, memo.occupancy.spans)
   }
-  return Math.min(stockLimit, memo.limit)
+  // Not kept: it also depends on the route tables, and few points lie under a rake
+  const turnouts = options.turnouts ? turnoutLimitUnder(net, profile, memo.occupancy) : Infinity
+  const cap = typeof options.cap === 'number' && options.cap > 0 ? options.cap : Infinity
+  return Math.min(stockLimit, memo.limit, turnouts, cap)
 }
 
 // ─────────────────── Limit ahead ───────────────────
@@ -637,7 +778,7 @@ export function lookAheadReach(stoppingDistance: number): number {
 }
 
 /** Where the route starts: the bogie under the leading end, the way it runs on its rail, and the overhang beyond it */
-function routeStart(rake: RakeOnTrack): { segId: SegmentId; t: number; ascending: boolean; overhang: number } | null {
+export function routeStart(rake: RakeOnTrack): { segId: SegmentId; t: number; ascending: boolean; overhang: number } | null {
   const lastIdx = rake.vehicles.length - 1
   if (lastIdx < 0) return null
   if (rake.direction === 1) {
@@ -649,7 +790,7 @@ function routeStart(rake: RakeOnTrack): { segId: SegmentId; t: number; ascending
 }
 
 /** The rail the route goes on by beyond `nodeId`, as `walkForward` (head first) and `walkBackward` (tail first) take it */
-function nextRail(net: Network, nodeId: NodeId, segId: SegmentId, direction: 1 | -1): SegmentId | null {
+export function nextRail(net: Network, nodeId: NodeId, segId: SegmentId, direction: 1 | -1): SegmentId | null {
   if (direction === 1) return openExit(net, nodeId, segId)
   const possible = entriesOf(net, nodeId, segId, { anyPosition: true })
   return possible.length === 1 ? possible[0] : entriesOf(net, nodeId, segId)[0] ?? null
@@ -661,12 +802,14 @@ function walkAhead(
   rake: RakeOnTrack,
   limit: number,
   reach: number,
+  turnouts: boolean,
 ): AheadMemo | null {
   const start = routeStart(rake)
   if (!start) return null
   trackSpeedStats.lookAheadWalks++
   const memo: AheadMemo = {
     profile,
+    turnouts,
     direction: rake.direction,
     limit,
     segId: start.segId,
@@ -682,6 +825,8 @@ function walkAhead(
   /** Distance from the bogie to the place `t` of the current rail */
   let travelled = 0
   const end = start.overhang + reach
+  /** Speed of the points the route has just left on their diverging route: it starts where this rail does */
+  let pointsSpeed = Infinity
 
   for (let i = 0; i < MAX_LOOK_AHEAD_RAILS && travelled <= end; i++) {
     const seg = net.segments.get(segId)
@@ -700,6 +845,7 @@ function walkAhead(
     // The rail the rake stands on is already part of the limit it runs under
     const curveLimit = i > 0 ? profile.rails.get(segId)?.maxSpeed ?? Infinity : Infinity
     if (curveLimit < limit) meet(travelled, curveLimit)
+    if (pointsSpeed < limit) meet(travelled, pointsSpeed)
     for (const stretch of speedZonesOnRail(net, segId)) {
       if (stretch.zone.speed >= limit) continue
       // Where the route enters the stretch, if it still lies ahead on this rail
@@ -719,6 +865,7 @@ function walkAhead(
     const nextId = nextRail(net, exitNode, segId, rake.direction)
     const next = nextId ? net.segments.get(nextId) : undefined
     if (!next) break
+    pointsSpeed = turnouts && junction ? turnoutPassageSpeedIn(net, profile, junction, segId, next.id) : Infinity
     segId = next.id
     ascending = next.from === exitNode
     t = ascending ? 0 : 1
@@ -741,11 +888,19 @@ export function limitAhead(
   limit: number,
   reach: number = MIN_LOOK_AHEAD,
   line: LineSettings = DEFAULT_LINE_SETTINGS,
+  options: RakeLimitOptions = {},
 ): UpcomingSpeedLimit | null {
-  return limitAheadIn(net, trackProfile(net, line), rake, limit, reach)
+  return limitAheadIn(net, trackProfile(net, line), rake, limit, reach, options.turnouts === true)
 }
 
-function limitAheadIn(net: Network, profile: TrackProfile, rake: RakeOnTrack, limit: number, reach: number): UpcomingSpeedLimit | null {
+function limitAheadIn(
+  net: Network,
+  profile: TrackProfile,
+  rake: RakeOnTrack,
+  limit: number,
+  reach: number,
+  turnouts: boolean,
+): UpcomingSpeedLimit | null {
   const start = routeStart(rake)
   if (!start) return null
   const memo = memoOf(rake)
@@ -753,6 +908,7 @@ function limitAheadIn(net: Network, profile: TrackProfile, rake: RakeOnTrack, li
   if (
     kept &&
     kept.profile === profile &&
+    kept.turnouts === turnouts &&
     kept.direction === rake.direction &&
     kept.limit === limit &&
     kept.segId === start.segId &&
@@ -768,7 +924,7 @@ function limitAheadIn(net: Network, profile: TrackProfile, rake: RakeOnTrack, li
     }
     if (kept.walked - moved >= reach) return null
   }
-  const walked = walkAhead(net, profile, rake, limit, reach * LOOK_AHEAD_MARGIN)
+  const walked = walkAhead(net, profile, rake, limit, reach * LOOK_AHEAD_MARGIN, turnouts)
   memo.ahead = walked
   if (!walked?.found || walked.found.distance > reach) return null
   return { ...walked.found }
@@ -795,12 +951,14 @@ export function rakeSpeedState(
   speed: number,
   stoppingDistance: number,
   line: LineSettings = DEFAULT_LINE_SETTINGS,
+  options: RakeLimitOptions = {},
 ): RakeSpeedState {
+  // Same call as before for a rake nothing else weighs on
   const profile = trackProfile(net, line)
-  const limit = rakeSpeedLimitIn(net, profile, rake)
+  const limit = rakeSpeedLimitIn(net, profile, rake, options)
   return {
     limit,
-    next: limitAheadIn(net, profile, rake, limit, lookAheadReach(stoppingDistance)),
+    next: limitAheadIn(net, profile, rake, limit, lookAheadReach(stoppingDistance), options.turnouts === true),
     cantDeficiency: cantDeficiencyIn(profile, rake.vehicles, speed),
   }
 }

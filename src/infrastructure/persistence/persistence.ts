@@ -2,9 +2,17 @@ import type { Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
 import { declareTurnout, findJunctionAtNode, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
+import {
+  DEFAULT_SIGNALLING_SETTINGS,
+  cleanSignals,
+  isSignallingLevel,
+  restoreSignal,
+  type SignallingLevel,
+  type SignallingSettings,
+} from '../../domain/models/signals'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
-import type { Junction, JunctionKind, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
+import type { Junction, JunctionKind, Network, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
 import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
@@ -77,6 +85,18 @@ export interface SerializedSpeedZone {
   spans: { segId: string; t0: number; t1: number }[]
 }
 
+/** Saved signal: where it stands, the direction of travel it speaks to (see `Signal.forward`) and what it is */
+export interface SerializedSignal {
+  id: string
+  segId: string
+  t: number
+  forward: boolean
+  role: SignalRole
+  /** Options of the pro level; only written when set */
+  cabMarker?: boolean
+  oneWay?: boolean
+}
+
 export interface SerializedCamera {
   x: number
   y: number
@@ -136,6 +156,22 @@ export interface SerializedProject {
   trains?: SerializedTrain[]
   /** Speed limits laid on the track (absent when there is none) */
   speedZones?: SerializedSpeedZone[]
+  /** Signals laid on the track (absent when there is none) */
+  signals?: SerializedSignal[]
+  /** Signalling level of the project; only written when it is not the default one */
+  signallingLevel?: SignallingLevel
+  /** Emergency brake on passing a closed signal; only written when it is not the default (on) */
+  signalStopEnforced?: boolean
+  /** Display: the blocks as coloured stripes; only written when ticked (off by default) */
+  showSignalBlocks?: boolean
+  /** Display: the track held for each train while driving; only written when ticked (off by default) */
+  showSignalReservations?: boolean
+}
+
+/** The two displays of the signalling a project remembers; both off by default */
+export interface SignalDisplaySettings {
+  blocks?: boolean
+  reservations?: boolean
 }
 
 /**
@@ -148,7 +184,7 @@ function copySectionMeta(meta: Record<string, any>): Record<string, any> {
 
 /**
  * Serialize a railway network into a pure JSON-friendly data structure.
- * What the network holds itself (rails, route tables, speed zones) is read from `net`.
+ * What the network holds itself (rails, route tables, speed zones, signals) is read from `net`.
  */
 export function serializeNetwork(
   net: Network,
@@ -169,6 +205,8 @@ export function serializeNetwork(
   trains?: TrainSet[],
   gradient?: Partial<GradientLimits>,
   line?: Partial<LineSettings>,
+  signalling?: Partial<SignallingSettings>,
+  signalDisplay?: SignalDisplaySettings,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -211,6 +249,19 @@ export function serializeNetwork(
       id: zone.id,
       speed: zone.speed,
       spans: zone.spans.map((span) => ({ segId: span.segId, t0: span.t0, t1: span.t1 })),
+    })
+  }
+
+  const signals: SerializedSignal[] = []
+  for (const signal of net.signals.values()) {
+    signals.push({
+      id: signal.id,
+      segId: signal.segId,
+      t: signal.t,
+      forward: signal.forward,
+      role: signal.role,
+      ...(signal.cabMarker ? { cabMarker: true } : {}),
+      ...(signal.oneWay ? { oneWay: true } : {}),
     })
   }
 
@@ -282,6 +333,17 @@ export function serializeNetwork(
     boardHeight,
     trains: trains && trains.length > 0 ? serializeTrains(trains) : undefined,
     speedZones: speedZones.length > 0 ? speedZones : undefined,
+    // A project without signal on the default settings carries none of these: it is written back as it was
+    signals: signals.length > 0 ? signals : undefined,
+    signallingLevel:
+      signalling?.level !== undefined && signalling.level !== DEFAULT_SIGNALLING_SETTINGS.level ? signalling.level : undefined,
+    signalStopEnforced:
+      signalling?.stopEnforced !== undefined && signalling.stopEnforced !== DEFAULT_SIGNALLING_SETTINGS.stopEnforced
+        ? signalling.stopEnforced
+        : undefined,
+    // Off by default: a project that shows neither carries neither
+    showSignalBlocks: signalDisplay?.blocks ? true : undefined,
+    showSignalReservations: signalDisplay?.reservations ? true : undefined,
   }
 }
 
@@ -406,6 +468,10 @@ export function deserializeNetwork(data: SerializedProject): {
   maxGradient?: number
   lineSpeed?: number
   lineType?: LineType
+  signallingLevel?: SignallingLevel
+  signalStopEnforced?: boolean
+  showSignalBlocks?: boolean
+  showSignalReservations?: boolean
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -490,11 +556,19 @@ export function deserializeNetwork(data: SerializedProject): {
     for (const z of data.speedZones) restoreZone(net, z)
   }
 
+  // Signals too name rails: put back before the reconcile pass, which keeps each one at its place
+  // on whatever rail it cuts or merges. A record that does not hold together is skipped.
+  if (Array.isArray(data.signals)) {
+    for (const signal of data.signals) restoreSignal(net, signal)
+  }
+
   // 4. Ids generated from here on (by the reconcile pass below) must not reuse the ones just read
   syncIdCounter(net)
 
   // Only now that every id of the file is known: a zone cut in two where a stretch is unusable takes a new id
   cleanSpeedZones(net)
+  // A signal on a rail that is not in the file, or out of 0…1, is dropped
+  cleanSignals(net)
 
   // 5. Reconcile intersections; it ends by bringing the tables in line with the track
   reconcileNetworkIntersections(
@@ -503,12 +577,13 @@ export function deserializeNetwork(data: SerializedProject): {
   )
 
   cleanSpeedZones(net)
+  cleanSignals(net)
   syncIdCounter(net)
 
   // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
   const trains = deserializeTrains(net, data.trains)
   if (trains.length > 0) {
-    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys()]
+    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys(), ...net.signals.keys()]
     for (const train of trains) ids.push(train.id, ...train.vehicles.map((v) => v.id))
     resetIdCounter(Math.max(0, ...ids.map((id) => Number(id.match(/_(\d+)$/)?.[1] ?? 0))))
   }
@@ -539,6 +614,10 @@ export function deserializeNetwork(data: SerializedProject): {
     maxGradient: positiveNumber(data.maxGradient),
     lineSpeed: storedLineSpeed(data.lineSpeed),
     lineType: data.lineType === 'classic' || data.lineType === 'highSpeed' ? data.lineType : undefined,
+    signallingLevel: isSignallingLevel(data.signallingLevel) ? data.signallingLevel : undefined,
+    signalStopEnforced: typeof data.signalStopEnforced === 'boolean' ? data.signalStopEnforced : undefined,
+    showSignalBlocks: data.showSignalBlocks === true ? true : undefined,
+    showSignalReservations: data.showSignalReservations === true ? true : undefined,
     showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
     boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
@@ -607,6 +686,8 @@ export function saveNetworkToStorage(
   trains?: TrainSet[],
   gradient?: Partial<GradientLimits>,
   line?: Partial<LineSettings>,
+  signalling?: Partial<SignallingSettings>,
+  signalDisplay?: SignalDisplaySettings,
 ): boolean {
   try {
     const storage = getStorage()
@@ -630,6 +711,8 @@ export function saveNetworkToStorage(
       trains,
       gradient,
       line,
+      signalling,
+      signalDisplay,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -657,6 +740,10 @@ export function loadNetworkFromStorage(): {
   maxGradient?: number
   lineSpeed?: number
   lineType?: LineType
+  signallingLevel?: SignallingLevel
+  signalStopEnforced?: boolean
+  showSignalBlocks?: boolean
+  showSignalReservations?: boolean
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number

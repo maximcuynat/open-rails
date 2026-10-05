@@ -1,4 +1,14 @@
-import type { ConsoleBrakeTone, ConsoleGuidance, ConsoleState, ConsoleTurnout, FleetEntry } from '@application/console/consoleContract'
+import type {
+  ConsoleBrakeTone,
+  ConsoleCabSignal,
+  ConsoleGuidance,
+  ConsoleSignal,
+  ConsoleSignals,
+  ConsoleState,
+  ConsoleTurnout,
+  FleetEntry,
+} from '@application/console/consoleContract'
+import type { SignalColor } from '@domain/models/signalling'
 import {
   BRAKE_CYLINDER_MAX_BAR,
   BRAKE_PIPE_FIRST_REDUCTION,
@@ -286,16 +296,241 @@ export interface GuidanceView {
   derailment: string | null
 }
 
-export function guidanceView(kmh: number, maxKmh: number, guidance: ConsoleGuidance | undefined): GuidanceView {
+/**
+ * The speed a cab display announces for the next marker, null when it announces none: an
+ * announcement, or 0 for a stop. It colours the speed like a lower limit ahead.
+ */
+export function cabAnnouncedSpeed(signals: ConsoleSignals | undefined): number | null {
+  const cab = signals?.cab
+  if (!cab) return null
+  return cab.kind === 'announce' ? cab.speed : cab.kind === 'stop' ? 0 : null
+}
+
+/**
+ * `signals`, when given, only weighs on the colour of the speed: a cab announcement counts as a
+ * lower limit ahead. The limit in force is the one of `guidance` as it stands: the domain already
+ * counts the running on sight and the points taken on their diverging route in it.
+ */
+export function guidanceView(
+  kmh: number,
+  maxKmh: number,
+  guidance: ConsoleGuidance | undefined,
+  signals?: ConsoleSignals,
+): GuidanceView {
   if (!guidance) return { speedTone: 'normal', limit: null, nextLimit: null, curve: null, derailment: null }
   const next = guidance.nextLimit
+  const limit = guidance.speedLimit
+  const announced = cabAnnouncedSpeed(signals)
+  const ahead = next && announced !== null ? Math.min(next.speed, announced) : next ? next.speed : announced
   return {
-    speedTone: speedTone(kmh, guidance.speedLimit, next ? next.speed : null),
-    limit: limitMark(guidance.speedLimit, maxKmh),
+    speedTone: speedTone(kmh, limit, ahead),
+    limit: limitMark(limit, maxKmh),
     nextLimit: next ? { ...limitMark(next.speed, maxKmh), distance: stoppingDistanceLabel(next.distance) } : null,
     curve: guidance.curve === 'ok' ? null : CURVE_VIEWS[guidance.curve],
     derailment: guidance.derailed ? derailmentMessage(guidance.derailed) : null,
   }
+}
+
+// ─────────────────── Signals ───────────────────
+
+/** One lamp of a signal seen from the front */
+export interface SignalLamp {
+  color: SignalColor
+  on: boolean
+}
+
+/**
+ * The next signal as the console draws it.
+ * - `light`: one coloured lamp (standard level);
+ * - `target`: the French target seen from the front, its lamps from top to bottom, and its plate;
+ * - `marker`: a marker board of a cab-signalled line, which has no lamp.
+ */
+export interface SignalHeadView {
+  kind: 'light' | 'target' | 'marker'
+  lamps: SignalLamp[]
+  plate: 'F' | 'Nf' | null
+  /** « Voie libre », « Avertissement », « Repère Nf »… */
+  label: string
+  /** Colour of what is shown; null for a marker, which shows nothing */
+  color: SignalColor | null
+  /** « 850 m », « 1,2 km » */
+  distance: string
+  /**
+   * Only there when lit (pro level): the two yellow lamps of points to take at 30 or 60 km/h —
+   * `slowdown`, side by side at the top of the target (the announcement); `reminder`, one above
+   * the other on its right (before the points). They flash for 60.
+   */
+  slow?: { kind: 'slowdown' | 'reminder'; flashing: boolean }
+}
+
+/** Lamps of a target from top to bottom: three on a block signal (plate F), a second red on top of a path signal (Nf) */
+const TARGET_LAMPS: Record<'F' | 'Nf', SignalColor[]> = {
+  F: ['green', 'red', 'yellow'],
+  Nf: ['red', 'green', 'red', 'yellow'],
+}
+
+/**
+ * The lamps of a French target and which ones are lit for an indication (the carré lights both
+ * reds). The announcement and the reminder of a diverging route light none of them: their two
+ * yellow lamps stand apart (`SignalHeadView.slow`).
+ */
+export function targetLamps(plate: 'F' | 'Nf', indication: ConsoleSignal['indication']): SignalLamp[] {
+  const lit: SignalColor | null =
+    indication === 'voie-libre'
+      ? 'green'
+      : indication === 'avertissement'
+        ? 'yellow'
+        : indication === 'semaphore' || indication === 'carre'
+          ? 'red'
+          : null
+  const colors = TARGET_LAMPS[plate]
+  // A sémaphore is the lower red alone, even on a target that has two
+  const lowerRed = colors.lastIndexOf('red')
+  return colors.map((color, i) => ({
+    color,
+    on: color === lit && (color !== 'red' || indication === 'carre' || i === lowerRed),
+  }))
+}
+
+export function signalHeadView(signal: ConsoleSignal): SignalHeadView {
+  const distance = stoppingDistanceLabel(signal.distance)
+  if (signal.plate === null || signal.indication === null) {
+    return { kind: 'light', lamps: [{ color: signal.color, on: true }], plate: null, label: signal.label, color: signal.color, distance }
+  }
+  if (!signal.lit) {
+    return { kind: 'marker', lamps: [], plate: signal.plate, label: `Repère ${signal.plate}`, color: null, distance }
+  }
+  const head: SignalHeadView = {
+    kind: 'target',
+    lamps: targetLamps(signal.plate, signal.indication),
+    plate: signal.plate,
+    label: signal.label,
+    color: signal.color,
+    distance,
+  }
+  const speed = signal.reminder ?? signal.slowdown
+  if (speed) head.slow = { kind: signal.reminder ? 'reminder' : 'slowdown', flashing: speed === 60 }
+  return head
+}
+
+/**
+ * The cab display: three figures in a cartouche.
+ * - `line`: the line speed, black on green;
+ * - `execute`: a limit in force, white on black;
+ * - `announce`: a speed not to exceed at the next marker, black on white;
+ * - `stop` (« 000 ») and `sight` (running on sight): on red.
+ */
+export interface CabView {
+  tone: ConsoleCabSignal['kind']
+  /** « 270 », « 000 » */
+  figures: string
+  flashing: boolean
+  /** « Annonce 270 », « Arrêt au prochain repère »… */
+  label: string
+  /** Distance to the next marker board, « — » when there is none ahead */
+  distance: string
+}
+
+export function cabView(cab: ConsoleCabSignal): CabView {
+  const speed = Math.round(cab.speed)
+  const figures = cab.kind === 'stop' ? '000' : String(speed)
+  const label =
+    cab.kind === 'stop'
+      ? 'Arrêt au repère'
+      : cab.kind === 'announce'
+        ? `Annonce ${speed}`
+        : cab.kind === 'execute'
+          ? `Exécution ${speed}`
+          : cab.kind === 'sight'
+            ? 'Marche à vue'
+            : cab.flashing
+              ? 'Voie libre, annonce à suivre'
+              : 'Voie libre'
+  return {
+    tone: cab.kind,
+    figures,
+    flashing: cab.flashing,
+    label,
+    distance: cab.markerDistance === null ? '—' : stoppingDistanceLabel(cab.markerDistance),
+  }
+}
+
+/** `alert`: act now (red). `warning`: a rule to keep in mind (amber). `info`: what lies further ahead */
+export type SignalNoteTone = 'alert' | 'warning' | 'info'
+
+export interface SignalNote {
+  tone: SignalNoteTone
+  text: string
+}
+
+/** « Signal fermé franchi : freinage d’urgence »: same words as the message shown when it happens */
+export function signalPassedLabel(braked: boolean): string {
+  return braked ? 'Signal fermé franchi : freinage d’urgence' : 'Signal fermé franchi'
+}
+
+/** « Survitesse : freinage d’urgence »: same words as the message shown when it happens */
+export function overspeedLabel(braked: boolean): string {
+  return braked ? 'Survitesse : freinage d’urgence' : 'Survitesse'
+}
+
+/** What the consoles show of the signalling */
+export interface SignalsView {
+  /** The next signal; null when none is in sight, or when the cab display stands for it */
+  next: SignalHeadView | null
+  /** The cab display of a high-speed line (pro level); it takes the place of the next signal */
+  cab: CabView | null
+  /** « Prochain signal » or « Vitesse en cabine »: what the block is about */
+  title: string
+  /** First line when there is neither signal nor cab display to show */
+  empty: string
+  /** What the driver has to know besides, the most pressing first; the consoles write the first one */
+  notes: SignalNote[]
+  /** A closed signal is nearer than the stopping distance and its margin */
+  brakeAlert: boolean
+}
+
+export function signalsView(signals: ConsoleSignals): SignalsView {
+  const cab = signals.cab ? cabView(signals.cab) : null
+  const next = signals.next
+  const notes: SignalNote[] = []
+  if (signals.brakeAlert) {
+    // The closed signal is the next one unless another distance is given
+    const metres = signals.closedDistance ?? next?.distance ?? null
+    notes.push({ tone: 'alert', text: metres === null ? 'Freinez : signal fermé' : `Freinez : signal fermé à ${stoppingDistanceLabel(metres)}` })
+  }
+  if (signals.passed) notes.push({ tone: 'alert', text: signalPassedLabel(signals.passed.braked) })
+  if (signals.overspeed) notes.push({ tone: 'alert', text: overspeedLabel(signals.overspeed.braked) })
+  if (signals.onSight) notes.push({ tone: 'warning', text: `Marche à vue — ${signals.onSightSpeed} km/h` })
+  if (signals.waiting) notes.push({ tone: 'warning', text: 'Attente de l’itinéraire' })
+  if (signals.closedDistance !== null && !signals.brakeAlert) {
+    notes.push({ tone: 'info', text: `Signal fermé à ${stoppingDistanceLabel(signals.closedDistance)}` })
+  }
+  return {
+    next: cab || !next ? null : signalHeadView(next),
+    cab,
+    title: cab ? 'Vitesse en cabine' : 'Prochain signal',
+    empty: 'Aucun signal en vue',
+    notes,
+    brakeAlert: signals.brakeAlert,
+  }
+}
+
+/**
+ * The message owed for a closed signal passed by the driven train, once: for a desk that only
+ * sees states (the phone), where nothing calls back when it happens. `announced` remembers the
+ * trains it was given for and forgets a train once its trace is gone. Null when there is nothing
+ * new to say.
+ */
+export function newSignalPassed(announced: Set<string>, state: ConsoleState | null): string | null {
+  if (!state || state.trainId === null) return null
+  const passed = state.signals?.passed
+  if (!passed) {
+    announced.delete(state.trainId)
+    return null
+  }
+  if (announced.has(state.trainId)) return null
+  announced.add(state.trainId)
+  return signalPassedLabel(passed.braked)
 }
 
 export interface ConsoleView extends GuidanceView {
@@ -329,6 +564,8 @@ export interface ConsoleView extends GuidanceView {
   /** Stopped with the brake on: the driver has to release it to leave */
   releaseHint: boolean
   turnout: TurnoutView
+  /** Null on a network without signal: the consoles then show nothing of the signalling */
+  signals: SignalsView | null
 }
 
 /** Everything the three consoles write, from the state and the fleet list */
@@ -341,7 +578,7 @@ export function consoleView(state: ConsoleState, fleet: readonly FleetEntry[]): 
   const kmh = Math.round(state.speed * 3.6)
   const maxKmh = Math.round(state.maxSpeed * 3.6)
   return {
-    ...guidanceView(kmh, maxKmh, state.guidance),
+    ...guidanceView(kmh, maxKmh, state.guidance, state.signals),
     kmh,
     maxKmh,
     speedRatio: Math.max(0, Math.min(1, state.speed / Math.max(state.maxSpeed, 1e-6))),
@@ -362,6 +599,7 @@ export function consoleView(state: ConsoleState, fleet: readonly FleetEntry[]): 
     reverserNeeded: !legacy && state.notch > 0 && state.reverser === 'neutral',
     releaseHint: state.stopped && (tone === 'applied' || tone === 'applying'),
     turnout: turnoutView(state.upcomingTurnout),
+    signals: state.signals ? signalsView(state.signals) : null,
   }
 }
 

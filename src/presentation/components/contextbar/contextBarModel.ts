@@ -1,4 +1,4 @@
-import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
+import type { EditorStore } from '@application/state/editorStore'
 import { findJunctionAtNode } from '@domain/models/junction'
 import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
@@ -6,6 +6,16 @@ import { formatDistance, formatAngle } from '@domain/models/units'
 import { computeTrackSections, findSectionBySegment, type SectionDirection } from '@domain/models/sections'
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
+import { signalBlock } from '@domain/models/signalBlocks'
+import { SIGNAL_ROW_SPACINGS } from '@application/state/editorStore'
+import {
+  SIGNAL_ONE_WAY_TITLE,
+  flipSignal,
+  otherSignalRole,
+  signalRoleLabel,
+  signalRowSpacingChoices,
+  signalTypeLabel,
+} from '../common/signalActions'
 import { showToast } from '../common/Toast'
 import { canLowerZoneSpeed, canRaiseZoneSpeed, changeZoneSpeed, zoneSpeedChoices, zoneSpeedLabel } from '../common/speedZoneActions'
 import { levelRange, levelRangeLabel, nodeLevelRange } from '../common/trackLevel'
@@ -212,26 +222,27 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
       const junction = findJunctionAtNode(store.network, nodeId)
       if (junction) {
         const junctionId = junction.id
-        items.push(
-          {
-            kind: 'action',
-            id: 'toggle-junction',
-            label: 'Aiguiller',
-            title: `Basculer la voie active de l’aiguillage${store.shortcutHint('edit.toggleJunction')}`,
-            run: () => {
-              if (!store.toggleActiveJunction(junctionId)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
-            },
+        items.push({
+          kind: 'action',
+          id: 'toggle-junction',
+          label: 'Aiguiller',
+          title: `Basculer la voie active de l’aiguillage${store.shortcutHint('edit.toggleJunction')}`,
+          run: () => {
+            if (!store.toggleActiveJunction(junctionId)) showToast(store.junctionRefusalMessage, 'warning')
           },
-          {
+        })
+        // Only a plain turnout has a diverging branch to mirror
+        if (junction.kind === 'turnout') {
+          items.push({
             kind: 'action',
             id: 'flip-junction',
             label: 'Inverser D/G',
             title: 'Inverser le côté de déviation de l’aiguillage (droite / gauche)',
             run: () => {
-              if (!store.toggleTurnoutHandAtSelection(junctionId)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+              if (!store.toggleTurnoutHandAtSelection(junctionId)) showToast(store.junctionRefusalMessage, 'warning')
             },
-          },
-        )
+          })
+        }
       }
     }
     // A click on a track selects its nodes along with its rails: the level applies to those rails.
@@ -350,9 +361,83 @@ function zoneSpeedStepper(speed: number, subject: string, set: (speed: number) =
   }
 }
 
-/** Signalling mode: its selection, the speed limit tool and its two clicks, the deletion */
+/** Spacing of a row of signals: picked in the list, or stepped through it with the two buttons */
+function rowSpacingStepper(store: EditorStore): ContextBarItem {
+  const choices = signalRowSpacingChoices(store)
+  const index = SIGNAL_ROW_SPACINGS.findIndex((value) => value === store.signalToolSpacing)
+  const step = (by: number) => () => store.setSignalToolSpacing(SIGNAL_ROW_SPACINGS[index + by])
+  return {
+    kind: 'stepper',
+    id: 'row-spacing',
+    caption: 'Espacement',
+    text: choices[index]?.label ?? '',
+    choices,
+    value: store.signalToolSpacing,
+    pick: (value) => store.setSignalToolSpacing(value),
+    decrease: { title: 'Resserrer les signaux d’une série', disabled: index <= 0, run: step(-1) },
+    increase: { title: 'Espacer les signaux d’une série', disabled: index < 0 || index >= SIGNAL_ROW_SPACINGS.length - 1, run: step(1) },
+  }
+}
+
+/** A signal tool in hand: the same items whatever the gesture, so nothing moves under the pointer */
+function signalToolBar(store: EditorStore, spec: { role: 'spacing' | 'protection'; cabMarker: boolean }): ContextBarItem[] {
+  const level = store.signallingLevel
+  const items: ContextBarItem[] = [
+    { kind: 'label', text: spec.cabMarker ? 'Repère de LGV' : signalRoleLabel(spec.role, level) },
+    {
+      kind: 'action',
+      id: 'flip',
+      label: 'Inverser le sens',
+      title: 'Le signal s’adresse à l’autre sens de marche : il se pose de l’autre côté de la voie (R ou Tab)',
+      active: store.signalToolFlipped,
+      run: () => store.flipSignalTool(),
+    },
+    {
+      kind: 'action',
+      id: 'both-ways',
+      label: 'Double sens',
+      title: 'Poser deux signaux dos à dos, un pour chaque sens de marche (voie parcourue dans les deux sens)',
+      active: store.signalToolBothWays,
+      run: () => store.setSignalToolBothWays(!store.signalToolBothWays),
+    },
+  ]
+  if (spec.cabMarker) {
+    const passable = spec.role === 'spacing'
+    items.push({
+      kind: 'action',
+      id: 'cab-role',
+      label: passable ? 'Plaque F' : 'Plaque Nf',
+      title: passable
+        ? 'Repère franchissable (F). Cliquer pour poser des repères non franchissables (Nf)'
+        : 'Repère non franchissable (Nf). Cliquer pour poser des repères franchissables (F)',
+      active: !passable,
+      run: () => store.setSignalToolCabRole(otherSignalRole(spec.role)),
+    })
+  }
+  items.push(rowSpacingStepper(store))
+  // Always there: what the drag along the track would lay, or how to lay a row
+  const row = store.signalRowPreview
+  const start = store.signalRowStart
+  const end = store.signalRowEnd
+  if (start && end) {
+    const count = row.length * (store.signalToolBothWays ? 2 : 1)
+    items.push(
+      count > 0
+        ? { kind: 'value', id: 'signal-row', caption: 'Série', text: `${count} signaux`, tone: 'accent' }
+        : { kind: 'value', id: 'signal-row', caption: 'Série', text: 'aucun chemin', tone: 'danger' },
+    )
+  } else {
+    items.push({ kind: 'value', id: 'signal-row', caption: 'Série', text: 'glisser le long de la voie' })
+  }
+  return items
+}
+
+/** Signalling mode: its selection, the signal tools, the speed limit tool and its two clicks, the deletion */
 function signalBar(store: EditorStore): ContextBarItem[] {
-  if (store.signalToolSubMode === 'delete') return [{ kind: 'label', text: 'Suppression de limites' }]
+  if (store.signalToolSubMode === 'delete') return [{ kind: 'label', text: 'Suppression de signaux et de limites' }]
+
+  const spec = store.signalToolSpec
+  if (spec) return signalToolBar(store, spec)
 
   if (store.signalToolSubMode === 'speedZone') {
     const speed = zoneSpeedStepper(store.speedZoneToolSpeed, 'de la zone à poser', (v) => store.setSpeedZoneToolSpeed(v))
@@ -366,6 +451,54 @@ function signalBar(store: EditorStore): ContextBarItem[] {
         ? { kind: 'value', id: 'zone-length', caption: 'Longueur', text: formatDistance(preview.path.length, store.unit) }
         : { kind: 'value', id: 'zone-length', text: preview.end ? 'aucun chemin' : 'hors voie', tone: 'danger' },
       finish(store, 'Annuler', 'Annuler la zone en cours (Échap ou clic droit)'),
+    ]
+  }
+
+  const signal = store.selectedSignal
+  if (signal) {
+    const level = store.signallingLevel
+    const block = signalBlock(store.network, signal.id)
+    const other = otherSignalRole(signal.role)
+    return [
+      { kind: 'label', text: signalTypeLabel(signal, level) },
+      {
+        kind: 'action',
+        id: 'flip',
+        label: 'Inverser le sens',
+        title: 'Retourner le signal : il s’adresse à l’autre sens de marche et passe de l’autre côté de la voie (R)',
+        run: () => flipSignal(store, signal.id),
+      },
+      {
+        kind: 'action',
+        id: 'role',
+        label: `En ${signalRoleLabel(other, level).toLowerCase()}`,
+        title: `Changer le type du signal : ${signalRoleLabel(other, level).toLowerCase()}`,
+        run: () => { store.changeSignalRole(signal.id, other) },
+      },
+      // Always there, greyed out on a block signal: the option only means something on a path signal
+      {
+        kind: 'action',
+        id: 'one-way',
+        label: 'Sens unique',
+        title: SIGNAL_ONE_WAY_TITLE[signal.role],
+        active: signal.role === 'protection' && !!signal.oneWay,
+        disabled: signal.role !== 'protection',
+        run: () => { store.setSignalOneWay(signal.id, !signal.oneWay) },
+      },
+      {
+        kind: 'value',
+        id: 'block-length',
+        caption: 'Canton',
+        text: block ? formatDistance(block.length, store.unit) : '—',
+      },
+      {
+        kind: 'action',
+        id: 'delete',
+        label: 'Supprimer',
+        title: 'Supprimer le signal (Suppr ou Retour arrière)',
+        tone: 'danger',
+        run: () => { store.deleteSignal(signal.id) },
+      },
     ]
   }
 

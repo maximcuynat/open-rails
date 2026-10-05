@@ -14,7 +14,27 @@ import {
   type TrainDynamics,
 } from '@domain/models/trainDynamics'
 import { DEFAULT_ROLLING_STOCK, ROLLING_STOCK } from '@domain/models/rollingStock'
-import type { ConsoleBrake, ConsoleBrakeTone, ConsoleGuidance, ConsoleState, ConsoleTurnout, FleetEntry } from './consoleContract'
+import {
+  ON_SIGHT_SPEED,
+  isNodeReserved,
+  signalAspect,
+  trainSignalView,
+  type TrainSignalView,
+} from '@domain/models/signalling'
+import type { SignallingLevel } from '@domain/models/signals'
+import { cabLineSpeed, cabSignal, isCabSignalled, type CabSignal } from '@domain/models/cabSignalling'
+import type { Network } from '@domain/models/types'
+import type {
+  ConsoleBrake,
+  ConsoleBrakeTone,
+  ConsoleCabSignal,
+  ConsoleGuidance,
+  ConsoleSignal,
+  ConsoleSignals,
+  ConsoleState,
+  ConsoleTurnout,
+  FleetEntry,
+} from './consoleContract'
 
 /** Pressure difference (bar) under which a gauge is read as being on its mark */
 const PRESSURE_TOLERANCE = 0.05
@@ -59,14 +79,73 @@ export function trainGuidance(
   }
 }
 
+/** The cab display as the console shows it: plain JSON, whole km/h */
+export function cabConsoleSignal(cab: CabSignal): ConsoleCabSignal {
+  return {
+    kind: cab.indication.kind,
+    speed: Math.round(cab.indication.speed),
+    flashing: cab.indication.flashing,
+    markerDistance: cab.marker ? Math.max(0, cab.marker.distance) : null,
+  }
+}
+
+/**
+ * What the signals say to the driver, as the console shows it: each signal read by the signalling
+ * level of the project (`signalAspect`). Undefined on a network without signal: the console then
+ * shows nothing of the signalling at all.
+ */
+export function trainSignals(
+  net: Network,
+  view: TrainSignalView,
+  level: SignallingLevel,
+  train: Pick<TrainSet, 'signalPassed' | 'overspeed'>,
+  cab: ConsoleCabSignal | null = null,
+): ConsoleSignals | undefined {
+  if (net.signals.size === 0) return undefined
+  const ahead = view.nextSignal
+  const signal = ahead ? net.signals.get(ahead.id) : undefined
+  let next: ConsoleSignal | null = null
+  if (ahead && signal) {
+    const aspect = signalAspect(signal, ahead.state, level, ahead)
+    next = {
+      distance: Math.max(0, ahead.distance),
+      color: aspect.color,
+      indication: aspect.indication,
+      plate: aspect.plate,
+      lit: aspect.lit,
+      label: aspect.label,
+    }
+    // Only there when lit: the state of a signal that shows neither is what it always was
+    if (aspect.slowdown) next.slowdown = aspect.slowdown
+    if (aspect.reminder) next.reminder = aspect.reminder
+  }
+  const closed = view.closedSignal
+  const signals: ConsoleSignals = {
+    level,
+    next,
+    closedDistance: closed && closed.id !== ahead?.id ? Math.max(0, closed.distance) : null,
+    brakeAlert: view.brakeAlert,
+    waiting: view.waitingAt !== null,
+    // The red of the cab is a running on sight too
+    onSight: view.onSight || cab?.kind === 'sight',
+    onSightSpeed: ON_SIGHT_SPEED,
+    passed: train.signalPassed ? { braked: train.signalPassed.braked } : null,
+    cab,
+  }
+  if (train.overspeed) signals.overspeed = { braked: train.overspeed.braked }
+  return signals
+}
+
 /**
  * What a console shows of a train, from the train and what the physics computes for it.
- * `upcomingTurnout` comes from the track ahead, which the train alone does not know.
+ * `upcomingTurnout` comes from the track ahead, which the train alone does not know, and `signals`
+ * from the signalling (`trainSignals`).
  */
 export function trainConsoleState(
   train: TrainSet,
   dynamics: TrainDynamics,
   upcomingTurnout: ConsoleTurnout | null = null,
+  signals?: ConsoleSignals,
 ): ConsoleState {
   const stopped = isTrainStopped(train)
   const brake: ConsoleBrake = {
@@ -75,7 +154,7 @@ export function trainConsoleState(
     pipeBar: dynamics.brakePipeBar,
     cylinderBar: dynamics.brakeCylinderBar,
   }
-  return {
+  const state: ConsoleState = {
     trainId: train.id,
     speed: train.currentSpeed,
     maxSpeed: train.maxSpeed,
@@ -99,6 +178,27 @@ export function trainConsoleState(
     canSwitchCab: canSwitchDrivingCab(train),
     guidance: trainGuidance(train, dynamics),
   }
+  // No key at all without signalling: the state of a network without signal is what it always was
+  if (signals) state.signals = signals
+  return state
+}
+
+/**
+ * The signalling of the driven train, read from the store after the simulation step. The cab
+ * display is read from what the engine counted for the train and from the limit the physics
+ * already worked out: nothing is walked here.
+ */
+function drivenTrainSignals(store: EditorStore, train: TrainSet, dynamics: TrainDynamics): ConsoleSignals | undefined {
+  const net = store.network
+  if (net.signals.size === 0) return undefined
+  const view = trainSignalView(store.signalling, train.id, dynamics.stoppingDistance)
+  const line = store.lineSettings
+  let cab: ConsoleCabSignal | null = null
+  if (isCabSignalled(store.signallingLevel, line)) {
+    const read = cabSignal(store.signalling, train.id, view, Math.round(dynamics.speedLimit * 3.6), cabLineSpeed(line, train.maxSpeed))
+    if (read) cab = cabConsoleSignal(read)
+  }
+  return trainSignals(net, view, store.signallingLevel, train, cab)
 }
 
 /** The reduced state of the legacy single locomotive: a speed and a three-position throttle, no air brake */
@@ -142,7 +242,14 @@ export function buildConsoleState(store: EditorStore): ConsoleState | null {
   const train = store.selectedTrain
   const dynamics = store.selectedTrainDynamics
   if (train && dynamics) {
-    return trainConsoleState(train, dynamics, trainTurnoutAhead(store.network, train, store.trains))
+    // Points held for another train are locked too; the driver may still set those held for his own
+    const heldForAnother = (junction: { nodeId: string }): boolean => isNodeReserved(store.signalling, junction.nodeId, train.id)
+    return trainConsoleState(
+      train,
+      dynamics,
+      trainTurnoutAhead(store.network, train, store.trains, heldForAnother),
+      drivenTrainSignals(store, train, dynamics),
+    )
   }
   const loco = store.locomotive
   // Same end and direction as the steering of the legacy locomotive

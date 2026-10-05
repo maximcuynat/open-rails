@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
-import { findJunctionAtNode, findJunctionBySegment, turnoutView } from '@domain/models/junction'
+import { doubleSlipView, findJunctionAtNode, findJunctionBySegment, turnoutView, type DoubleSlipSide } from '@domain/models/junction'
+import { leaveDirection } from '@domain/models/routing'
 import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
@@ -15,13 +16,17 @@ import {
   SECTION_COLORS,
 } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
-import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
+import type { EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
 import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedLimits'
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
 import { formatDistance, formatRadius } from '@domain/models/units'
-import type { SpeedZone } from '@domain/models/types'
+import type { Signal, SpeedZone } from '@domain/models/types'
+import { signalBlock } from '@domain/models/signalBlocks'
+import { signalReport } from '@domain/models/signalReport'
+import { defaultSignalStatus, signalAspect } from '@domain/models/signalling'
+import { SIGNAL_ONE_WAY_TITLE, flipSignal, otherSignalRole, signalRoleLabel, signalTypeLabel } from '../common/signalActions'
 import { canLowerZoneSpeed, canRaiseZoneSpeed, changeZoneSpeed, zoneSpeedLabel, zoneSpeedChoices } from '../common/speedZoneActions'
 import { levelRange, levelRangeLabel, rampSummary } from '../common/trackLevel'
 
@@ -185,6 +190,126 @@ function SpeedZonePanel({ store, zone }: { store: EditorStore; zone: SpeedZone }
       </button>
     </>
   )
+}
+
+/** A signal picked in the signalling mode: its type, its direction, its block, what the report says of it */
+function SignalPanel({ store, signal }: { store: EditorStore; signal: Signal }) {
+  const level = store.signallingLevel
+  const pro = level === 'pro'
+  const block = signalBlock(store.network, signal.id)
+  const other = otherSignalRole(signal.role)
+  const aspect = signalAspect(signal, defaultSignalStatus(signal).state, level)
+  const entries = signalReport(store.network, { level, line: store.lineSettings }).filter((entry) => entry.signalId === signal.id)
+  const seg = store.network.segments.get(signal.segId)
+  const towards = seg ? (signal.forward ? seg.to : seg.from) : null
+  return (
+    <>
+      <PanelHeader>{signalTypeLabel(signal, level)}</PanelHeader>
+      <div className="sp-section">
+        <Field
+          label="Type"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {signalRoleLabel(signal.role, level)}
+              <button
+                className="sp-btn-compact"
+                onClick={() => store.changeSignalRole(signal.id, other)}
+                title={`Changer le type du signal : ${signalRoleLabel(other, level).toLowerCase()}`}
+              >
+                → {signalRoleLabel(other, level)}
+              </button>
+            </span>
+          }
+        />
+        <Field
+          label="Sens"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              {towards ? `vers ${towards}` : '—'}
+              <button
+                className="sp-btn-compact"
+                onClick={() => flipSignal(store, signal.id)}
+                title="Retourner le signal : il s’adresse à l’autre sens de marche et passe de l’autre côté de la voie (R)"
+              >
+                Inverser
+              </button>
+            </span>
+          }
+        />
+        {pro && <Field label="Plaque" value={aspect.plate ?? '—'} />}
+        <Field label="Au repos" value={aspect.lit ? aspect.label : 'Sans feu'} />
+        {pro && (
+          <label className="settings-checkbox-row" style={{ marginTop: '6px' }}>
+            <input
+              type="checkbox"
+              checked={!!signal.cabMarker}
+              onChange={(e) => store.setSignalCabMarker(signal.id, e.target.checked)}
+            />
+            <span className="settings-checkbox-text">Repère de LGV (signalisation en cabine, sans feu)</span>
+          </label>
+        )}
+        {/* Always there, greyed out on a block signal: the option only means something on a path signal */}
+        <label
+          className="settings-checkbox-row"
+          style={{ marginTop: '6px', opacity: signal.role === 'protection' ? 1 : 0.5 }}
+          title={SIGNAL_ONE_WAY_TITLE[signal.role]}
+        >
+          <input
+            type="checkbox"
+            checked={signal.role === 'protection' && !!signal.oneWay}
+            disabled={signal.role !== 'protection'}
+            onChange={(e) => store.setSignalOneWay(signal.id, e.target.checked)}
+          />
+          <span className="settings-checkbox-text">Sens unique (infranchissable par l’arrière)</span>
+        </label>
+      </div>
+
+      <div className="sp-subheader">Canton</div>
+      <div className="sp-section">
+        {block ? (
+          <>
+            <Field label="Longueur" value={formatDistance(block.length, store.unit)} />
+            {block.maxLength - block.minLength > 1e-6 && (
+              <Field
+                label="Jusqu’au signal suivant"
+                value={`${formatDistance(block.minLength, store.unit)} à ${formatDistance(block.maxLength, store.unit)}`}
+              />
+            )}
+            <Field label="Aiguilles et croisements" value={String(block.nodes.length)} />
+            <Field label="Se termine sur" value={blockEndsLabel(block.boundingSignals.length, block.trackEnds)} />
+          </>
+        ) : (
+          <div className="sp-hint">Canton indisponible.</div>
+        )}
+      </div>
+
+      <div className="sp-subheader">Contrôle</div>
+      {entries.length === 0 ? (
+        <div className="sp-hint">Rien à signaler pour ce signal.</div>
+      ) : (
+        <div className="sp-list">
+          {entries.map((entry, i) => (
+            <div key={`${entry.type}-${i}`} className="sp-list-item" style={{ cursor: 'default' }}>
+              <span className="sp-tag to">!</span>
+              {entry.message}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button className="sp-danger" onClick={() => store.deleteSignal(signal.id)}>
+        Supprimer le signal
+      </button>
+    </>
+  )
+}
+
+/** « 2 signaux et 1 fin de voie » */
+function blockEndsLabel(signals: number, trackEnds: number): string {
+  const parts: string[] = []
+  if (signals > 0) parts.push(`${signals} signal${signals > 1 ? 'aux' : ''}`)
+  if (trackEnds > 0) parts.push(`${trackEnds} fin${trackEnds > 1 ? 's' : ''} de voie`)
+  return parts.length > 0 ? parts.join(' et ') : '—'
 }
 
 /** Cant of a curved rail: automatic or set by hand, and the speed the curve allows with it */
@@ -430,6 +555,15 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
 
   const turnout = turnoutView(store.network, findJunctionAtNode(store.network, nodeId))
   const junction = turnout ? findJunctionAtNode(store.network, nodeId) : undefined
+  const slipJunction = turnout ? undefined : findJunctionAtNode(store.network, nodeId)
+  const slip = doubleSlipView(slipJunction)
+  /** Arrow pointing the way the rails of a side of the double slip leave the node, as seen on screen */
+  const slipSideArrow = (side: DoubleSlipSide): string => {
+    const seg = slip ? store.network.segments.get(slip.sides[side][0]) : undefined
+    if (!seg) return ''
+    const ray = leaveDirection(store.network, seg, nodeId)
+    return Math.abs(ray.x) >= Math.abs(ray.y) ? (ray.x > 0 ? '→' : '←') : ray.y > 0 ? '↓' : '↑'
+  }
   const crossing = detectCrossings(store.network).find((c) => c.nodeId === nodeId)
 
   const [x, setX] = useState(node.pos.x)
@@ -588,7 +722,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                 color: 'var(--ink)',
                 cursor: 'pointer',
               }}
-              onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning') }}
+              onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(store.junctionRefusalMessage, 'warning') }}
               title={`Basculer l'aiguillage${store.shortcutHint('edit.toggleJunction')}`}
             >
               Aiguiller{store.shortcutHint('edit.toggleJunction')}
@@ -608,13 +742,52 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                   cursor: 'pointer',
                 }}
                 onClick={() => {
-                  if (!store.toggleTurnoutHandAtSelection(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')
+                  if (!store.toggleTurnoutHandAtSelection(junction.id)) showToast(store.junctionRefusalMessage, 'warning')
                 }}
                 title="Inverser le côté de déviation"
               >
                 Inverser {turnout?.hand === 'left' ? 'D' : 'G'}
               </button>
             )}
+          </div>
+        </>
+      )}
+      {slipJunction && slip && (
+        <>
+          <div className="sp-subheader">Traversée-jonction</div>
+          <div className="sp-section">
+            {([0, 1] as const).map((side) => (
+              <Field
+                key={side}
+                label={`Pointes ${slipSideArrow(side)}`}
+                value={slip.active[side] === 0 ? 'Voie directe' : 'Voie déviée'}
+              />
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '6px', padding: '0 14px 10px' }}>
+            {([0, 1] as const).map((side) => (
+              <button
+                key={side}
+                className="sp-btn-compact"
+                style={{
+                  flex: 1,
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  borderRadius: '4px',
+                  border: '1px solid var(--border)',
+                  background: 'var(--panel-2)',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                }}
+                onClick={() => {
+                  if (!store.throwDoubleSlipSide(slipJunction.id, side)) showToast(store.junctionRefusalMessage, 'warning')
+                }}
+                title="Basculer les pointes de ce côté du nœud"
+              >
+                Aiguiller {slipSideArrow(side)}
+              </button>
+            ))}
           </div>
         </>
       )}
@@ -871,7 +1044,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
               color: 'var(--ink)',
               cursor: 'pointer',
             }}
-            onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning') }}
+            onClick={() => { if (!store.toggleActiveJunction(junction.id)) showToast(store.junctionRefusalMessage, 'warning') }}
             title={`Basculer l'aiguillage${store.shortcutHint('edit.toggleJunction')}`}
           >
             Aiguiller{store.shortcutHint('edit.toggleJunction')}
@@ -1420,7 +1593,11 @@ export function SidePanel({ store }: { store: EditorStore }) {
 
   let content: ReactNode
   const speedZone = store.selectedSpeedZone
-  if (speedZone) {
+  const signal = store.selectedSignal
+  if (signal) {
+    // Signalling mode: the picked signal comes before anything else
+    content = <SignalPanel key={signal.id} store={store} signal={signal} />
+  } else if (speedZone) {
     // Signalling mode: the picked zone comes before anything else
     content = <SpeedZonePanel key={speedZone.id} store={store} zone={speedZone} />
   } else if (sel.nodes.size === 2 && sel.segments.size === 0) {
