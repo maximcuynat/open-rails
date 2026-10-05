@@ -859,6 +859,8 @@ kbd {
 }
 
 .cb-label {
+  /* Room for « 12 nœuds »: going from one selection to the next does not shift the buttons */
+  min-width: 58px;
   padding: 0 6px;
   font-weight: 700;
   white-space: nowrap;
@@ -873,6 +875,36 @@ kbd {
   border-radius: 6px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  /* Its min-width is ratcheted up by ContextBar: the text stays put inside the wider slot */
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+/* Two buttons around a value in a slot of constant width: they never move between clicks */
+.cb-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+}
+
+.cb-btn.cb-step {
+  width: 26px;
+  padding: 4px 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cb-step-value {
+  box-sizing: border-box;
+  width: 78px;
+  padding: 3px 4px;
+  background: var(--panel-2);
+  border-radius: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .cb-value.cb-accent {

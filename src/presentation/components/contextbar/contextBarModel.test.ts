@@ -10,6 +10,7 @@ vi.mock('../common/Toast', () => ({ showToast: vi.fn() }))
 
 type Action = Extract<ContextBarItem, { kind: 'action' }>
 type Value = Extract<ContextBarItem, { kind: 'value' }>
+type Stepper = Extract<ContextBarItem, { kind: 'stepper' }>
 
 const bar = (store: EditorStore): ContextBarItem[] => {
   const items = buildContextBar(store)
@@ -28,6 +29,12 @@ const action = (items: ContextBarItem[], id: string): Action => {
 const value = (items: ContextBarItem[], id: string): Value => {
   const found = items.find((i): i is Value => i.kind === 'value' && i.id === id)
   if (!found) throw new Error(`no value "${id}" in the bar`)
+  return found
+}
+
+const stepper = (items: ContextBarItem[], id: string): Stepper => {
+  const found = items.find((i): i is Stepper => i.kind === 'stepper' && i.id === id)
+  if (!found) throw new Error(`no stepper "${id}" in the bar`)
   return found
 }
 
@@ -79,7 +86,9 @@ describe('contextual bar — select tool', () => {
 
     const items = bar(store)
     expect(label(items)).toBe('Nœud')
-    expect(actionLabels(items)).toEqual(['Prolonger', 'Supprimer'])
+    // Voie double cannot double a lone node: it is greyed out, not removed, so Supprimer stays put
+    expect(actionLabels(items)).toEqual(['Prolonger', 'Voie double', 'Supprimer'])
+    expect(action(items, 'parallel').disabled).toBe(true)
     expect(action(items, 'delete').tone).toBe('danger')
 
     action(items, 'extend').run()
@@ -94,7 +103,7 @@ describe('contextual bar — select tool', () => {
     store.setSelection({ nodes: new Set([apex.id]), segments: new Set() })
 
     const items = bar(store)
-    expect(actionLabels(items)).toEqual(['Prolonger', 'Aiguiller', 'Inverser D/G', 'Supprimer'])
+    expect(actionLabels(items)).toEqual(['Prolonger', 'Aiguiller', 'Inverser D/G', 'Voie double', 'Supprimer'])
 
     const before = junction.activeBranch
     action(items, 'toggle-junction').run()
@@ -123,6 +132,7 @@ describe('contextual bar — select tool', () => {
     const items = bar(store)
     expect(label(items)).toBe('2 nœuds')
     expect(actionLabels(items)).toEqual(['Voie double', 'Supprimer'])
+    expect(action(items, 'parallel').disabled).toBe(false)
   })
 
   it('a rail: « Voie », Scinder, Voie double, Supprimer — each one acts on the network', () => {
@@ -131,7 +141,8 @@ describe('contextual bar — select tool', () => {
 
     const items = bar(store)
     expect(label(items)).toBe('Voie')
-    expect(actionLabels(items)).toEqual(['Scinder', 'Monter', 'Descendre', 'Voie double', 'Supprimer'])
+    expect(items.map((i) => i.kind)).toEqual(['label', 'stepper', 'action', 'action', 'action'])
+    expect(actionLabels(items)).toEqual(['Scinder', 'Voie double', 'Supprimer'])
 
     action(items, 'parallel').run()
     expect(store.network.segments.size).toBe(2)
@@ -148,84 +159,90 @@ describe('contextual bar — select tool', () => {
 })
 
 describe('contextual bar — track levels', () => {
-  it('Monter and Descendre shift the selected rails by one level, on a multiple selection too', () => {
+  it('the level stepper shifts the selected rails by one level, on a multiple selection too', () => {
     const { store, b, seg } = storeWithTrack()
     const c = addNode(store.network, { x: 400, y: 0 })
     const next = addSegment(store.network, b.id, c.id)!
     const shift = vi.spyOn(store, 'shiftSelectionLevel')
 
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
-    action(bar(store), 'level-up').run()
+    stepper(bar(store), 'level').increase.run()
     expect(shift).toHaveBeenLastCalledWith(1)
-    action(bar(store), 'level-down').run()
+    stepper(bar(store), 'level').decrease.run()
     expect(shift).toHaveBeenLastCalledWith(-1)
 
-    // A bridge is several rails: the same two actions on the whole selection
+    // A bridge is several rails: the same stepper on the whole selection
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
     const items = bar(store)
     expect(label(items)).toBe('2 voies')
-    expect(actionLabels(items)).toEqual(['Scinder', 'Monter', 'Descendre', 'Voie double', 'Supprimer'])
-    action(items, 'level-up').run()
+    stepper(items, 'level').increase.run()
     expect(shift).toHaveBeenLastCalledWith(1)
     expect(shift).toHaveBeenCalledTimes(3)
     // The selection is what the store acts on
     expect([...store.selection.segments]).toEqual([seg.id, next.id])
   })
 
-  it('a track picked with its nodes (a click on a track) gets Monter and Descendre too; nodes alone do not', () => {
+  it('a track picked with its nodes (a click on a track) gets the stepper too; nodes alone do not', () => {
     const { store, seg } = storeWithTrack()
     const shift = vi.spyOn(store, 'shiftSelectionLevel')
 
     store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set([seg.id]) })
-    const items = bar(store)
-    expect(actionLabels(items)).toContain('Monter')
-    expect(actionLabels(items)).toContain('Descendre')
-    action(items, 'level-up').run()
+    stepper(bar(store), 'level').increase.run()
     expect(shift).toHaveBeenLastCalledWith(1)
 
     store.setSelection({ nodes: new Set([seg.from, seg.to]), segments: new Set() })
-    expect(actionLabels(bar(store))).not.toContain('Monter')
+    expect(bar(store).some((i) => i.kind === 'stepper')).toBe(false)
   })
 
-  it('on the ground no level is shown; a bridge or a tunnel shows its level', () => {
+  it('the bar keeps the same items, in the same order, whatever the level: nothing moves between two clicks', () => {
     const { store, seg } = storeWithTrack()
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
-    expect(bar(store).some((i) => i.kind === 'value' && i.id === 'level')).toBe(false)
+    const shape = () => bar(store).map((i) => (i.kind === 'action' ? i.label : i.kind))
+    const onTheGround = shape()
 
+    expect(stepper(bar(store), 'level')).toMatchObject({ caption: 'Niveau', text: 'Sol' })
+    for (const level of [1, 2, MAX_LEVEL, -1, MIN_LEVEL]) {
+      seg.level = level
+      expect(shape()).toEqual(onTheGround)
+    }
     seg.level = 1
-    expect(value(bar(store), 'level')).toMatchObject({ caption: 'Niveau', text: 'Pont +1' })
+    expect(stepper(bar(store), 'level').text).toBe('Pont +1')
     seg.level = -2
-    expect(value(bar(store), 'level').text).toBe('Tunnel −2')
+    expect(stepper(bar(store), 'level').text).toBe('Tunnel −2')
   })
 
-  it('a selection across several levels shows the span', () => {
+  it('a selection across several levels shows the span, in a short form', () => {
     const { store, b, seg } = storeWithTrack()
     const c = addNode(store.network, { x: 400, y: 0 })
     const next = addSegment(store.network, b.id, c.id)!
     next.level = 1
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
-    expect(value(bar(store), 'level').text).toBe('Sol à Pont +1')
+    expect(stepper(bar(store), 'level').text).toBe('0 à +1')
+    seg.level = MIN_LEVEL
+    next.level = MAX_LEVEL
+    expect(stepper(bar(store), 'level').text).toBe('−5 à +5')
   })
 
-  it('Monter is disabled at the top level and Descendre at the bottom one', () => {
+  it('+ is disabled at the top level and − at the bottom one', () => {
     const { store, b, seg } = storeWithTrack()
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id]) })
-    expect(action(bar(store), 'level-up').disabled).toBe(false)
-    expect(action(bar(store), 'level-down').disabled).toBe(false)
+    const disabled = () => {
+      const level = stepper(bar(store), 'level')
+      return { up: !!level.increase.disabled, down: !!level.decrease.disabled }
+    }
+    expect(disabled()).toEqual({ up: false, down: false })
 
     seg.level = MAX_LEVEL
-    expect(action(bar(store), 'level-up').disabled).toBe(true)
-    expect(action(bar(store), 'level-down').disabled).toBe(false)
+    expect(disabled()).toEqual({ up: true, down: false })
     seg.level = MIN_LEVEL
-    expect(action(bar(store), 'level-up').disabled).toBe(false)
-    expect(action(bar(store), 'level-down').disabled).toBe(true)
+    expect(disabled()).toEqual({ up: false, down: true })
 
-    // Mixed selection: an action stays available as long as one rail can still move
+    // Mixed selection: a button stays available as long as one rail can still move
     const c = addNode(store.network, { x: 400, y: 0 })
     const next = addSegment(store.network, b.id, c.id)!
     seg.level = MAX_LEVEL
     store.setSelection({ nodes: new Set(), segments: new Set([seg.id, next.id]) })
-    expect(action(bar(store), 'level-up').disabled).toBe(false)
+    expect(disabled()).toEqual({ up: false, down: false })
   })
 })
 

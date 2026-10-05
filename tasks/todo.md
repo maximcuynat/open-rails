@@ -74,6 +74,18 @@ Règle unique, partagée par tous les points ci-dessous : deux voies n'interagis
   - debug des trains possiblement masqué par un pont ; l'ancienne `Locomotive` prend le niveau de sa motrice en un bloc ;
   - descendre un pont sous lequel stationne un train coupe le rail et retire les véhicules (défaut déjà listé plus bas).
 
+## Barre contextuelle stable (ajout du 2026-10-05, à la demande de l'utilisateur)
+
+La barre flottante est centrée et suit la largeur de son contenu : chaque changement décalait les boutons sous le curseur.
+
+- [x] 1. Niveau en compteur `−  valeur  +` à largeur fixe, toujours affiché pour une voie (« Sol » compris) ; sélection sur plusieurs niveaux en forme courte (« −1 à +2 »)
+- [x] 2. Règles de la barre : action indisponible grisée au lieu d'être retirée (« Voie double ») ; libellé de gauche à largeur minimale ; une valeur ne fait que s'élargir tant que la barre garde le même sujet
+- [x] 3. Barre figée tant que la souris est dessus (bord gauche verrouillé, recentrage quand le pointeur sort)
+- [x] Tests du modèle mis à jour, `npm test`, `npm run typecheck`, `npm run build`
+- [x] Navigateur sans écran : quatre clics sur `−` au même point de l'écran (Pont +1 → Tunnel −3), positions de `−`, `+` et « Supprimer » identiques au pixel près
+- Non couvert par un test automatique : le figeage au survol et l'élargissement des valeurs (pas de test de composant React) ; vérifiés seulement par le scénario ci-dessus.
+- Reste connu : une voie qui passe par le niveau 0 en croisant une autre y est coupée ; les deux moitiés restent séparées une fois redescendue en tunnel.
+
 ## Hors périmètre
 
 - Import OSM, fond de carte, projection

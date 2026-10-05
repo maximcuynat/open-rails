@@ -8,6 +8,16 @@ export function levelLabel(level: number): string {
   return 'Sol'
 }
 
+/**
+ * Level of a selection of rails, short enough for a slot of constant width: the name of the level
+ * when they share one, « −1 à +2 » when they span several.
+ */
+export function levelRangeLabel(range: { min: number; max: number }): string {
+  if (range.min === range.max) return levelLabel(range.min)
+  const signed = (level: number) => (level > 0 ? `+${level}` : level < 0 ? `−${-level}` : '0')
+  return `${signed(range.min)} à ${signed(range.max)}`
+}
+
 /** Lowest and highest level among the given rails, or null when none of them exists. */
 export function levelRange(net: Network, segmentIds: Iterable<SegmentId>): { min: number; max: number } | null {
   let min = Infinity
