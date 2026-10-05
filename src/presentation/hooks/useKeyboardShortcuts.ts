@@ -59,6 +59,7 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
     case 'tool.measure': store.setTool('measure'); return
     case 'tool.pan': store.setTool('pan'); return
     case 'tool.locomotive': store.setTool('locomotive'); return
+    case 'tool.speedZone': store.setSignalToolSubMode('speedZone'); return
     case 'edit.toggleJunction':
       e.preventDefault()
       if (!store.toggleActiveJunction()) showToast(JUNCTION_OCCUPIED_REFUSED, 'warning')

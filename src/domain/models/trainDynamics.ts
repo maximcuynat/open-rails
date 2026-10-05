@@ -12,6 +12,10 @@
  */
 
 import type { Network } from './types'
+import type { CurveState, LineSettings, UpcomingSpeedLimit } from './speedLimits'
+import { DEFAULT_LINE_SETTINGS } from './speedLimits'
+import { consistAdmittedDeficiency, curveStateFor } from './cant'
+import { rakeSpeedState } from './trackSpeed'
 import type { TrainSet } from './train'
 import type { TrackPosition } from './locomotive'
 import { getTrackCurvatureAt } from './locomotive'
@@ -32,6 +36,8 @@ import {
 export interface DrivingEnvironment {
   /** Height of one track level in world metres (`store.levelHeight`): turns levels into slopes */
   levelHeight: number
+  /** Line speed and line type of the project (`store.lineSettings`); the defaults when absent */
+  line?: LineSettings
 }
 
 export const DEFAULT_DRIVING_ENVIRONMENT: DrivingEnvironment = { levelHeight: 6 }
@@ -142,6 +148,14 @@ export interface TrainDynamics {
   stoppingDistance: number
   /** Largest lateral acceleration v²/R under a vehicle, m/s² (hook for cant and curve speed limits) */
   lateralAcceleration: number
+  /** Speed limit the train runs under, m/s: the lowest of its own maximum, the line, the zones and the curves under it */
+  speedLimit: number
+  /** Next lower speed limit along the route ahead, null when there is none within reach */
+  nextSpeedLimit: UpcomingSpeedLimit | null
+  /** Largest cant deficiency under a vehicle, mm (0 on straight track) */
+  cantDeficiency: number
+  /** How the train takes the curve it is in */
+  curveState: CurveState
 }
 
 // ─── Rake data ────────────────────────────────────────────────────────────────
@@ -206,10 +220,11 @@ function isBrakeApplied(train: TrainSet): boolean {
 
 /**
  * Let the applied effort follow the notch: a ramp up, a quicker one down. Braking cuts the
- * traction at once, and there is none without a direction on the reverser or without a power car.
+ * traction at once, and there is none without a direction on the reverser, without a power car or
+ * on a derailed train.
  */
 function stepTraction(train: TrainSet, rake: RakePhysics, h: number): void {
-  if (isBrakeApplied(train) || train.reverser === 'neutral' || rake.maxEffort <= 0) {
+  if (train.derailed || isBrakeApplied(train) || train.reverser === 'neutral' || rake.maxEffort <= 0) {
     train.tractionEffort = 0
     return
   }
@@ -343,6 +358,18 @@ function brakeForce(rake: RakePhysics, brake: BrakeState, speed: number): number
   const deceleration = service + (emergency - service) * emergencyShare
   const fullEffort = Math.max(0, ROTATING_MASS_FACTOR * rake.mass * deceleration - runningResistance(rake, speed))
   return Math.min(brake.brakeCylinder * fullEffort, brakeAdhesion(speed) * rake.mass * GRAVITY)
+}
+
+/**
+ * Brakes applied, as a train is left standing: brake pipe at full service pressure and cylinders
+ * full, so that it holds on a ramp until the driver releases them.
+ */
+export function applyParkedBrake(brake: BrakeState): void {
+  brake.emergencyBrake = false
+  brake.brakePipe = BRAKE_PIPE_FULL_SERVICE
+  brake.brakeCylinder = 1
+  brake.brakeLag = 0
+  brake.brakeCommand = 'hold'
 }
 
 /** Move the brake handle (see `BrakeCommand`). Ignored while the emergency brake is latched. */
@@ -493,7 +520,7 @@ export function trainDynamics(net: Network, train: TrainSet, env: DrivingEnviron
   const inertia = ROTATING_MASS_FACTOR * rake.mass
 
   let acceleration = 0
-  if (inertia > 0) {
+  if (inertia > 0 && !(train.derailed && speed === 0)) {
     if (speed === 0) {
       // At rest the dissipative forces hold the train up to their maximum
       acceleration = Math.max(0, Math.abs(forces.active) - forces.dissipative) / inertia
@@ -501,6 +528,11 @@ export function trainDynamics(net: Network, train: TrainSet, env: DrivingEnviron
       acceleration = (train.direction * forces.active - forces.dissipative) / inertia
     }
   }
+
+  const stoppingDistance = rake.mass > 0 ? integrateStop(rake, train, speed, train.direction * forces.gravity) : 0
+  // Limits are written in km/h; the cant, the curve speeds and the overturning only exist at full size
+  const line = env.line ?? DEFAULT_LINE_SETTINGS
+  const { limit, next, cantDeficiency } = rakeSpeedState(net, train, speed * 3.6, stoppingDistance, line)
 
   return {
     mass: rake.mass,
@@ -516,8 +548,12 @@ export function trainDynamics(net: Network, train: TrainSet, env: DrivingEnviron
     electricBrakeEffort: train.electricBrakeEffort,
     brakePipeBar: train.brakePipe,
     brakeCylinderBar: train.brakeCylinder * BRAKE_CYLINDER_MAX_BAR,
-    stoppingDistance: rake.mass > 0 ? integrateStop(rake, train, speed, train.direction * forces.gravity) : 0,
+    stoppingDistance,
     lateralAcceleration: speed * speed * forces.maxCurvature,
+    speedLimit: Math.min(train.maxSpeed, limit / 3.6),
+    nextSpeedLimit: next,
+    cantDeficiency,
+    curveState: curveStateFor(cantDeficiency, consistAdmittedDeficiency(train.vehicles, line.lineType, speed * 3.6)),
   }
 }
 
@@ -538,6 +574,9 @@ export interface DynamicsStep {
  * stops exactly (speed 0), and one that starts again the other way — rolling back down a ramp —
  * gets its direction flipped, the reverser staying where the driver left it. At rest the brake
  * and the resistances hold the train as long as they can match what pushes it.
+ *
+ * A derailed train (`train.derailed`) brakes to a stop under its latched emergency brake and then
+ * stays at rest: neither gravity nor the controls set it moving again.
  *
  * `isBlocked(direction)` tells whether an obstacle stands right against the train on that side: a
  * train at rest pushed onto it stays at rest instead of starting and hitting it again every step.
@@ -564,7 +603,8 @@ export function stepTrainDynamics(
   const speed = train.currentSpeed
 
   if (speed === 0) {
-    if (Math.abs(active) <= dissipative) return { distance: 0, blocked: false }
+    // A derailed train stays where it stopped, whatever pushes it
+    if (train.derailed || Math.abs(active) <= dissipative) return { distance: 0, blocked: false }
     const direction = active > 0 ? 1 : -1
     if (isBlocked?.(direction)) return { distance: 0, blocked: true }
     const gained = ((Math.abs(active) - dissipative) / inertia) * h

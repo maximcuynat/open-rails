@@ -8,7 +8,9 @@ import {
   speedDialStep,
   speedDialTicks,
   speedMinorTicks,
+  type CurveView,
   type GaugeSpec,
+  type GuidanceView,
   type NotchStop,
 } from './consoleModel'
 import { LEVER_TRACK_BOTTOM, LEVER_TRACK_TOP, LEVER_VIEW_HEIGHT, leverRatioAt, leverY } from './leverGeometry'
@@ -31,6 +33,27 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number): string 
   const [x0, y0] = point(cx, cy, r, a0)
   const [x1, y1] = point(cx, cy, r, a1)
   return `M ${x0} ${y0} A ${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1} ${y1}`
+}
+
+/** What a speed instrument shows of the limits: its colour and its two marks */
+export type SpeedGuide = Pick<GuidanceView, 'speedTone' | 'limit' | 'nextLimit'>
+
+/**
+ * The two marks of a speed scale: solid at the limit in force, hollow at the next lower one.
+ * `place` gives the centre of a mark from its place on the scale (0 … 1).
+ */
+function LimitMarks({ guide, place }: { guide?: SpeedGuide; place: (ratio: number) => [number, number] }) {
+  if (!guide) return null
+  const mark = (ratio: number, next: boolean) => {
+    const [x, y] = place(ratio)
+    return <circle className={`console-limit-mark${next ? ' is-next' : ''}`} cx={x} cy={y} r={4.5} />
+  }
+  return (
+    <>
+      {guide.limit && mark(guide.limit.ratio, false)}
+      {guide.nextLimit && mark(guide.nextLimit.ratio, true)}
+    </>
+  )
 }
 
 /** Reminder of the key that doubles a control; nothing where there is no keyboard */
@@ -68,7 +91,7 @@ export function HalfGauge({ value, spec, tone, name, title }: {
 }
 
 /** Half-circle speed dial: the arc fills up to the speed, the top speed is marked in red */
-export function HalfDial({ ratio, maxKmh }: { ratio: number; maxKmh: number }) {
+export function HalfDial({ ratio, maxKmh, guide }: { ratio: number; maxKmh: number; guide?: SpeedGuide }) {
   const cx = 150
   const cy = 112
   const r = 98
@@ -80,7 +103,7 @@ export function HalfDial({ ratio, maxKmh }: { ratio: number; maxKmh: number }) {
   return (
     <svg className="console-half-dial" viewBox="0 0 300 118" aria-hidden="true">
       <path className="console-track" d={arc(cx, cy, r, 180, 360)} strokeWidth={10} />
-      {ratio > 0.001 && <path className="console-arc tone-blue" d={arc(cx, cy, r, 180, 180 + 180 * ratio)} strokeWidth={10} />}
+      {ratio > 0.001 && <path className={`console-arc speed-${guide?.speedTone ?? 'normal'}`} d={arc(cx, cy, r, 180, 180 + 180 * ratio)} strokeWidth={10} />}
       {[...new Set([...minor, ...labelled])].map((kmh) => {
         const [x1, y1] = point(cx, cy, r - 12, at(kmh))
         const [x2, y2] = point(cx, cy, r - 6, at(kmh))
@@ -91,12 +114,20 @@ export function HalfDial({ ratio, maxKmh }: { ratio: number; maxKmh: number }) {
         return <text key={kmh} className="console-tick-label" x={x} y={y + 4} textAnchor="middle">{kmh}</text>
       })}
       <circle className="console-dial-max" cx={mx} cy={my} r={5} />
+      <LimitMarks guide={guide} place={(at01) => point(cx, cy, r, 180 + 180 * at01)} />
     </svg>
   )
 }
 
 /** Round dial with a needle, as on an on-board screen; the speed is written on its hub */
-export function RoundDial({ kmh, ratio, maxKmh }: { kmh: number; ratio: number; maxKmh: number }) {
+export function RoundDial({ kmh, ratio, maxKmh, guide, curve }: {
+  kmh: number
+  ratio: number
+  maxKmh: number
+  guide?: SpeedGuide
+  /** A curve taken too fast: its warning takes the place of the unit */
+  curve?: CurveView | null
+}) {
   const cx = 150
   const cy = 150
   const r = 130
@@ -111,7 +142,7 @@ export function RoundDial({ kmh, ratio, maxKmh }: { kmh: number; ratio: number; 
   // The needle turns through CSS so that a page fed ten times a second can smooth it with a transition
   const needleStyle: CSSProperties = { transform: `rotate(${needleAngle}deg)` }
   return (
-    <svg className="console-round-dial" viewBox="0 0 300 300" role="img" aria-label={`${kmh} km/h`}>
+    <svg className={`console-round-dial speed-${guide?.speedTone ?? 'normal'}`} viewBox="0 0 300 300" role="img" aria-label={`${kmh} km/h`}>
       <path className="console-round-track" d={arc(cx, cy, r + 8, a0, a0 + sweep)} />
       {ratio > 0.001 && <path className="console-round-arc" d={arc(cx, cy, r + 8, a0, a0 + sweep * ratio)} />}
       {minor.map((v) => {
@@ -130,6 +161,7 @@ export function RoundDial({ kmh, ratio, maxKmh }: { kmh: number; ratio: number; 
           </g>
         )
       })}
+      <LimitMarks guide={guide} place={(at01) => point(cx, cy, r + 8, a0 + sweep * at01)} />
       <path
         className="console-needle"
         style={needleStyle}
@@ -137,7 +169,9 @@ export function RoundDial({ kmh, ratio, maxKmh }: { kmh: number; ratio: number; 
       />
       <circle className="console-hub" cx={cx} cy={cy} r={34} />
       <text className="console-hub-value" x={cx} y={cy + 11} textAnchor="middle">{kmh}</text>
-      <text className="console-round-unit" x={cx} y={262} textAnchor="middle">km/h</text>
+      <text className={`console-round-unit${curve ? ` console-curve curve-${curve.tone}` : ''}`} x={cx} y={262} textAnchor="middle">
+        {curve ? curve.label : 'km/h'}
+      </text>
     </svg>
   )
 }
@@ -174,14 +208,15 @@ export function DistanceBar({ metres }: { metres: number | null }) {
 }
 
 /** Straight speed scale, for the console that shows the speed as a number */
-export function SpeedTape({ ratio, maxKmh }: { ratio: number; maxKmh: number }) {
+export function SpeedTape({ ratio, maxKmh, guide }: { ratio: number; maxKmh: number; guide?: SpeedGuide }) {
   const scale = Math.max(maxKmh, 1)
   const x = (kmh: number) => 4 + (242 * kmh) / scale
   const ticks = speedDialTicks(maxKmh)
   return (
     <svg className="console-tape" viewBox="0 0 250 34" aria-hidden="true">
       <rect className="console-fill tone-track" x={4} y={4} width={242} height={8} rx={4} />
-      {ratio > 0.001 && <rect className="console-fill tone-blue" x={4} y={4} width={242 * ratio} height={8} rx={4} />}
+      {ratio > 0.001 && <rect className={`console-fill speed-${guide?.speedTone ?? 'normal'}`} x={4} y={4} width={242 * ratio} height={8} rx={4} />}
+      <LimitMarks guide={guide} place={(at01) => [4 + 242 * at01, 8]} />
       {ticks.map((kmh, i) => (
         <g key={kmh}>
           <line className="console-tick is-thin" x1={x(kmh)} y1={15} x2={x(kmh)} y2={20} />

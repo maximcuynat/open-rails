@@ -8,6 +8,8 @@
  *  - power car – power car : two trainsets coupled together (multiple unit).
  */
 
+import type { LineType } from './speedLimits'
+
 export type RollingStockModel = 'duplex' | 'tgvm'
 
 export const DEFAULT_ROLLING_STOCK: RollingStockModel = 'duplex'
@@ -58,7 +60,36 @@ export interface RollingStockSpec {
   resistance: { a: number; b: number; c: number }
   /** Maximum speed in service, m/s */
   maxSpeed: number
+  /**
+   * Cant deficiency (mm) the stock is allowed in a curve, by line type: each step applies up to
+   * its speed `upTo` (km/h), the last one beyond as well
+   */
+  cantDeficiency: Record<LineType, readonly CantDeficiencyStep[]>
+  /** Cant deficiency (mm) at which the stock overturns */
+  overturningDeficiency: number
 }
+
+export interface CantDeficiencyStep {
+  /** km/h */
+  upTo: number
+  /** mm */
+  deficiency: number
+}
+
+/**
+ * Deficiency admitted for a TGV: category III of the SNCF rules on conventional lines, the 2008
+ * high-speed TSI on high-speed lines (the SNCF rules for those are not public).
+ */
+const TGV_CANT_DEFICIENCY: Record<LineType, readonly CantDeficiencyStep[]> = {
+  classic: [{ upTo: 200, deficiency: 160 }, { upTo: Infinity, deficiency: 150 }],
+  highSpeed: [{ upTo: 300, deficiency: 130 }, { upTo: Infinity, deficiency: 80 }],
+}
+
+/**
+ * Deficiency at which a TGV Duplex overturns: fitted on the Eckwersheim derailment (945 m, 163 mm
+ * of cant, about 235 km/h) — one accident, one rolling stock.
+ */
+const TGV_OVERTURNING_DEFICIENCY = 525
 
 /**
  * Lengths over couplers add up to the real trainset: power cars + N trailer pitches + 2 end
@@ -94,6 +125,8 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
     trailerCount: 8,
     resistance: { a: 2680, b: 115, c: 6.93 }, // Dasye coefficients scaled to 424 t
     maxSpeed: 320 / 3.6,
+    cantDeficiency: TGV_CANT_DEFICIENCY,
+    overturningDeficiency: TGV_OVERTURNING_DEFICIENCY,
   },
   // TGV M (Avelia Horizon): M + 9 R + M = 202 m, the end extension is the "greffon" module
   tgvm: {
@@ -121,6 +154,8 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
     // estimated: Dasye coefficients scaled to 460 t, aerodynamic term reduced by 13 %
     resistance: { a: 2910, b: 125, c: 6.03 },
     maxSpeed: 320 / 3.6,
+    cantDeficiency: TGV_CANT_DEFICIENCY, // estimated: same as Duplex
+    overturningDeficiency: TGV_OVERTURNING_DEFICIENCY, // estimated: same as Duplex
   },
 }
 

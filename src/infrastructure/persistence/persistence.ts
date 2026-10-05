@@ -1,6 +1,7 @@
 import type { Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
 import { declareTurnout, findJunctionAtNode, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
+import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
 import type { Junction, JunctionKind, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
@@ -9,6 +10,8 @@ import type { Unit, ScalePresetId } from '../../domain/models/units'
 import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
 import { deserializeTrains, serializeTrains } from '../../domain/models/train'
 import type { SerializedTrain, TrainSet } from '../../domain/models/train'
+import { DEFAULT_LINE_SETTINGS, LINE_SPEED_RANGE, type LineSettings, type LineType } from '../../domain/models/speedLimits'
+import { CANT_RANGE } from '../../domain/models/cant'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -31,6 +34,8 @@ export interface SerializedSegment {
   to: string
   kind: SegmentKind
   via?: { x: number; y: number }
+  /** Cant of a curved rail in mm; only written when it was set by hand */
+  cant?: number
   /**
    * Legacy (saves made when the level was a property of the rail): never written, converted to
    * node heights on load.
@@ -62,6 +67,14 @@ export interface SerializedJunction {
   divergingRightSegmentId?: string
   activeBranch?: 'straight' | 'diverging' | 'left' | 'right'
   hand?: 'left' | 'right' | 'three_way'
+}
+
+/** Saved speed zone: its stretches in order from A to B, each from `t0` to `t1` on rail `segId` */
+export interface SerializedSpeedZone {
+  id: string
+  /** km/h */
+  speed: number
+  spans: { segId: string; t0: number; t1: number }[]
 }
 
 export interface SerializedCamera {
@@ -111,12 +124,18 @@ export interface SerializedProject {
   levelHeight?: number
   /** Steepest slope allowed, in ‰ (absent from files saved before ramps: default of the scale) */
   maxGradient?: number
+  /** Ceiling speed of the line, km/h; only written when it is not the default one */
+  lineSpeed?: number
+  /** Conventional or high-speed line; only written when it is not the default one */
+  lineType?: LineType
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
   boardHeight?: number
   /** Trains standing on the layout (absent from files saved before trains were persisted) */
   trains?: SerializedTrain[]
+  /** Speed limits laid on the track (absent when there is none) */
+  speedZones?: SerializedSpeedZone[]
 }
 
 /**
@@ -129,6 +148,7 @@ function copySectionMeta(meta: Record<string, any>): Record<string, any> {
 
 /**
  * Serialize a railway network into a pure JSON-friendly data structure.
+ * What the network holds itself (rails, route tables, speed zones) is read from `net`.
  */
 export function serializeNetwork(
   net: Network,
@@ -148,6 +168,7 @@ export function serializeNetwork(
   boardHeight?: number,
   trains?: TrainSet[],
   gradient?: Partial<GradientLimits>,
+  line?: Partial<LineSettings>,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -167,6 +188,7 @@ export function serializeNetwork(
       to: s.to,
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
+      ...(isStoredCant(s) ? { cant: s.cant } : {}),
     })
   }
 
@@ -180,6 +202,15 @@ export function serializeNetwork(
       positions: j.positions.map((position) => [...position]),
       active: j.active,
       ...(j.frogNumber !== undefined ? { frogNumber: j.frogNumber } : {}),
+    })
+  }
+
+  const speedZones: SerializedSpeedZone[] = []
+  for (const zone of net.speedZones.values()) {
+    speedZones.push({
+      id: zone.id,
+      speed: zone.speed,
+      spans: zone.spans.map((span) => ({ segId: span.segId, t0: span.t0, t1: span.t1 })),
     })
   }
 
@@ -242,12 +273,35 @@ export function serializeNetwork(
     trackSpacing,
     levelHeight: gradient?.levelHeight,
     maxGradient: gradient?.maxGradient,
+    // A project on the default line carries neither: a file saved before lines existed is written back as it was
+    lineSpeed: line?.lineSpeed !== DEFAULT_LINE_SETTINGS.lineSpeed ? line?.lineSpeed : undefined,
+    lineType: line?.lineType !== DEFAULT_LINE_SETTINGS.lineType ? line?.lineType : undefined,
     showDimensions,
     boardEnabled,
     boardWidth,
     boardHeight,
     trains: trains && trains.length > 0 ? serializeTrains(trains) : undefined,
+    speedZones: speedZones.length > 0 ? speedZones : undefined,
   }
+}
+
+/**
+ * Put a saved speed zone back as it was saved. A record without a usable id or speed is skipped;
+ * `cleanSpeedZones` then drops a stretch on a rail that is not there, or out of 0…1, and cuts the
+ * zone at that place.
+ */
+function restoreZone(net: Network, z: SerializedSpeedZone): void {
+  if (!z || typeof z.id !== 'string' || !Array.isArray(z.spans)) return
+  restoreSpeedZone(
+    net,
+    z.id,
+    z.speed,
+    z.spans.map((span) =>
+      span && typeof span.segId === 'string' && typeof span.t0 === 'number' && typeof span.t1 === 'number'
+        ? { segId: span.segId, t0: span.t0, t1: span.t1 }
+        : null,
+    ),
+  )
 }
 
 const JUNCTION_KINDS: JunctionKind[] = ['turnout', 'three_way', 'crossing', 'double_slip', 'custom']
@@ -310,6 +364,24 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
   normalizeTurnoutRoles(net, junction)
 }
 
+/** A cant worth storing: set by hand on a curved rail, within `CANT_RANGE` */
+function isStoredCant(seg: { kind: SegmentKind; cant?: unknown }): seg is { kind: SegmentKind; cant: number } {
+  return (
+    seg.kind === 'curve' &&
+    typeof seg.cant === 'number' &&
+    Number.isFinite(seg.cant) &&
+    seg.cant >= CANT_RANGE.min &&
+    seg.cant <= CANT_RANGE.max
+  )
+}
+
+/** A line speed read from a file: kept only when it is one the settings accept */
+function storedLineSpeed(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= LINE_SPEED_RANGE.min && value <= LINE_SPEED_RANGE.max
+    ? value
+    : undefined
+}
+
 /** A setting read from a file: kept only when it is a usable (finite, positive) number */
 function positiveNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
@@ -332,6 +404,8 @@ export function deserializeNetwork(data: SerializedProject): {
   trackSpacing?: number
   levelHeight?: number
   maxGradient?: number
+  lineSpeed?: number
+  lineType?: LineType
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -382,6 +456,8 @@ export function deserializeNetwork(data: SerializedProject): {
             ? { x: s.via.x, y: s.via.y }
             : undefined,
       }
+      // Before the reconcile pass, which hands the cant down to the pieces of a rail it cuts
+      if (isStoredCant({ kind, cant: s.cant }) && seg.via) seg.cant = s.cant
       if (isStoredLevel(s.level)) {
         for (const nodeId of [seg.from, seg.to]) {
           const known = legacyLevels.get(nodeId) ?? 0
@@ -407,8 +483,18 @@ export function deserializeNetwork(data: SerializedProject): {
     for (const j of data.junctions) restoreJunction(net, j)
   }
 
+  // Speed zones name rails, like the tables: they are put back on the rails as saved, before the
+  // reconcile pass, which then carries them onto whatever rail it cuts or merges (`replaceRail`).
+  // Read after it, a zone on a rail the pass cuts again would have lost its rail.
+  if (Array.isArray(data.speedZones)) {
+    for (const z of data.speedZones) restoreZone(net, z)
+  }
+
   // 4. Ids generated from here on (by the reconcile pass below) must not reuse the ones just read
   syncIdCounter(net)
+
+  // Only now that every id of the file is known: a zone cut in two where a stretch is unusable takes a new id
+  cleanSpeedZones(net)
 
   // 5. Reconcile intersections; it ends by bringing the tables in line with the track
   reconcileNetworkIntersections(
@@ -416,12 +502,13 @@ export function deserializeNetwork(data: SerializedProject): {
     placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance,
   )
 
+  cleanSpeedZones(net)
   syncIdCounter(net)
 
   // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
   const trains = deserializeTrains(net, data.trains)
   if (trains.length > 0) {
-    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys()]
+    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys()]
     for (const train of trains) ids.push(train.id, ...train.vehicles.map((v) => v.id))
     resetIdCounter(Math.max(0, ...ids.map((id) => Number(id.match(/_(\d+)$/)?.[1] ?? 0))))
   }
@@ -450,6 +537,8 @@ export function deserializeNetwork(data: SerializedProject): {
     trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
     levelHeight: positiveNumber(data.levelHeight),
     maxGradient: positiveNumber(data.maxGradient),
+    lineSpeed: storedLineSpeed(data.lineSpeed),
+    lineType: data.lineType === 'classic' || data.lineType === 'highSpeed' ? data.lineType : undefined,
     showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
     boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
@@ -517,6 +606,7 @@ export function saveNetworkToStorage(
   boardHeight?: number,
   trains?: TrainSet[],
   gradient?: Partial<GradientLimits>,
+  line?: Partial<LineSettings>,
 ): boolean {
   try {
     const storage = getStorage()
@@ -539,6 +629,7 @@ export function saveNetworkToStorage(
       boardHeight,
       trains,
       gradient,
+      line,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -564,6 +655,8 @@ export function loadNetworkFromStorage(): {
   trackSpacing?: number
   levelHeight?: number
   maxGradient?: number
+  lineSpeed?: number
+  lineType?: LineType
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number

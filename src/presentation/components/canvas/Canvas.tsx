@@ -72,9 +72,14 @@ import {
   resolvePlaceTool,
   describeCurve,
   pendingPlacementNodeId,
+  resolveSpeedZoneTool,
+  speedZoneAim,
 } from './placementPreview'
 import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
+import { positionOnSegment } from '@domain/models/locomotive'
+import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -356,6 +361,13 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
       quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
+      // Zones are only picked in the signalling mode; in its delete sub-mode the hovered one turns red
+      speedZones: store.tool === 'signal' && !store.isPlayMode
+        ? {
+            selectedId: store.selectedSpeedZone?.id ?? null,
+            dangerId: store.signalToolSubMode === 'delete' ? store.hoveredSpeedZoneId : null,
+          }
+        : undefined,
     }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
@@ -491,7 +503,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       store.tool === 'curve' ||
       store.tool === 'turnout' ||
       store.tool === 'split' ||
-      store.tool === 'measure'
+      store.tool === 'measure' ||
+      store.isSpeedZoneTool
     if (isSnapTool) {
       const isNode = store.hoverNodeId !== null
       if (isNode || store.snap) {
@@ -531,7 +544,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const coordLabel = isIntCoord ? `[${Math.round(nearest.x)}, ${Math.round(nearest.y)}] ` : ''
       // The label only shows before the first click: once a placement is under way the single
       // text near the cursor is its dimension. Turnout and scissors draw their own hover label.
-      if (!store.hasPendingPlacement && store.tool !== 'turnout' && store.tool !== 'split') {
+      if (!store.hasPendingPlacement && !store.speedZoneStart && store.tool !== 'turnout' && store.tool !== 'split') {
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
         ctx.fillStyle = accent
         ctx.globalAlpha = 0.95
@@ -819,6 +832,56 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillText(labelText, mx, my + 1)
+      ctx.restore()
+    }
+
+    // 7. Speed limit tool preview: the start, the way to the cursor and its length (or why not)
+    const zonePreview = store.isPlayMode ? null : resolveSpeedZoneTool(store)
+    if (zonePreview) {
+      const toScreen = (p: Point): Point => ({
+        x: (p.x - cam.x) * cam.scale + rect.width / 2,
+        y: (p.y - cam.y) * cam.scale + rect.height / 2,
+      })
+      const startWorld = positionOnSegment(store.network, zonePreview.start.segId, zonePreview.start.t)
+      ctx.save()
+      if (zonePreview.path) {
+        ctx.strokeStyle = SPEED_ZONE_COLOR
+        ctx.globalAlpha = 0.75
+        ctx.lineWidth = 4
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.setLineDash([8, 6])
+        ctx.beginPath()
+        traceTrackSpans(ctx, cam, rect.width, rect.height, store.network, zonePreview.path.spans)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.globalAlpha = 1
+      }
+      if (startWorld) {
+        const start = toScreen(startWorld)
+        ctx.fillStyle = SPEED_ZONE_COLOR
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(start.x, start.y, 5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+      // One text near the cursor: the zone it would lay, or why the click would be refused
+      const at = toScreen(store.hoverNodeId !== null || store.hoverSegSteps?.nearest ? store.snappedCursor : store.cursorWorld)
+      const labelText = zonePreview.path
+        ? `${zoneSpeedLabel(store.speedZoneToolSpeed)} · ${formatDistance(zonePreview.path.length, store.unit)}`
+        : zonePreview.end ? 'Aucun chemin' : 'Hors voie'
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const lw = ctx.measureText(labelText).width
+      ctx.fillStyle = zonePreview.path ? 'rgba(15, 23, 42, 0.92)' : 'rgba(220, 38, 38, 0.92)'
+      ctx.beginPath()
+      ctx.roundRect(at.x - lw / 2 - 6, at.y - 34, lw + 12, 18, 4)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(labelText, at.x, at.y - 24)
       ctx.restore()
     }
 
@@ -1605,6 +1668,36 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      // Signalling mode: the speed limit tool lays a zone in two clicks; the two other sub-modes
+      // pick or remove the zone under the cursor, and a click on nothing drags the view
+      if (e.button === 0 && store.tool === 'signal' && !store.isPlayMode) {
+        const world = getWorldPos(e.clientX, e.clientY)
+        if (store.signalToolSubMode === 'speedZone') {
+          store.cursorWorld = world
+          clickSpeedZoneTool(store, speedZoneAim(store))
+          redraw()
+          return
+        }
+        const zone = store.speedZoneAt(world)
+        if (store.signalToolSubMode === 'delete') {
+          if (zone) store.deleteSpeedZone(zone.id)
+        } else {
+          store.selectSpeedZone(zone?.id ?? null)
+        }
+        store.updateSpeedZoneHover(world)
+        if (!zone) {
+          store.panning = true
+          lastX = e.clientX
+          lastY = e.clientY
+          store.moved = false
+          canvas.setPointerCapture(e.pointerId)
+          canvas.style.cursor = 'grabbing'
+          stopEdgePan()
+        }
+        redraw()
+        return
+      }
+
       if (e.button === 0 && (store.trains.length > 0 || store.locomotive)) {
         const world = getWorldPos(e.clientX, e.clientY)
         if (store.trains.length > 0) {
@@ -1926,13 +2019,21 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.tool === 'curve' ||
         store.tool === 'turnout' ||
         store.tool === 'split' ||
-        store.tool === 'measure'
+        store.tool === 'measure' ||
+        store.isSpeedZoneTool
 
       if (!isConstructionTool) {
         // En mode sélection (V) ou déplacement de vue (H) : aucun point de pose/snap de construction
         store.hoverSegSteps = null
         store.hoverNodeId = null
         store.snappedCursor = rawWorld
+
+        // Signalling mode, select and delete sub-modes: the zone under the cursor can be clicked
+        if (store.tool === 'signal' && !store.isPlayMode && !store.panning) {
+          const changed = store.updateSpeedZoneHover(rawWorld)
+          canvas.style.cursor = store.hoveredSpeedZoneId ? 'pointer' : isSpaceDown ? 'grab' : ''
+          if (changed) draw()
+        }
 
         // Feedback curseur survol sur les éléments sélectionnables
         if (store.tool === 'select' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis && !store.gizmoHoverAxis) {
@@ -2046,6 +2147,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'turnout' ||
           store.tool === 'split' ||
           store.tool === 'measure' ||
+          store.isSpeedZoneTool ||
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
         ) {
@@ -2102,7 +2204,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (segId) {
             store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
           } else {
-            if (store.hasPendingPlacement || store.measureStart) {
+            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart) {
               store.cancelInteraction()
             } else {
               store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })
@@ -2433,7 +2535,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     <div className="canvas-wrap" style={{ position: 'relative' }}>
       <canvas
         ref={canvasRef}
-        className={`tool-${store.tool}`}
+        className={`tool-${store.tool}${store.tool === 'signal' ? ` signal-${store.signalToolSubMode}` : ''}`}
         onDragOver={(e) => {
           e.preventDefault()
           e.dataTransfer.dropEffect = 'copy'

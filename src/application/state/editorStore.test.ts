@@ -511,7 +511,7 @@ describe('EditorStore persistence', () => {
         expect(net).toBe(store.network)
         expect(dt).toBe(0.1)
         expect(others).toBe(store.trains)
-        expect(env).toEqual({ levelHeight: 4.5 })
+        expect(env).toEqual({ levelHeight: 4.5, line: store.lineSettings })
       }
     })
 
@@ -548,7 +548,7 @@ describe('EditorStore persistence', () => {
       const dynamics = vi.spyOn(trainDynamicsModel, 'trainDynamics')
 
       const shown = store.selectedTrainDynamics
-      expect(dynamics).toHaveBeenCalledWith(store.network, store.selectedTrain, { levelHeight: 4.5 })
+      expect(dynamics).toHaveBeenCalledWith(store.network, store.selectedTrain, { levelHeight: 4.5, line: store.lineSettings })
       expect(shown).toBe(dynamics.mock.results[0].value)
 
       store.selectTrainById(null)

@@ -29,6 +29,8 @@ export interface Segment {
   via?: Point
   /** Parent segment ID if this segment was split from another segment */
   parentSegmentId?: SegmentId
+  /** Cant of a curved rail in mm, set by hand; absent = computed from its radius and speed (see `curveCant`) */
+  cant?: number
 }
 
 export type JunctionId = string
@@ -66,6 +68,39 @@ export interface Junction {
   frogNumber?: number
 }
 
+/**
+ * A stretch of one rail, in the order it is walked: from `t0` to `t1`, so `t0 > t1` on a rail taken
+ * against its own direction (`to` → `from`).
+ */
+export interface TrackSpan {
+  segId: SegmentId
+  t0: number
+  t1: number
+}
+
+export type SpeedZoneId = string
+
+/**
+ * A speed limit laid on the track from a point A to a point B. It names rails, like a route table:
+ * the domain keeps it in place when a rail is cut, merged or removed (see `replaceRail` in
+ * `models/network.ts`). Change it only through the helpers of `models/speedZones.ts`, which keep
+ * the rail → zones index in step.
+ */
+export interface SpeedZone {
+  id: SpeedZoneId
+  /** Limit in km/h: a multiple of 10, at least 10. It applies to every train, in both directions. */
+  speed: number
+  /** The track covered, in order from A to B; each stretch runs from its `t0` to its `t1` in that order */
+  spans: TrackSpan[]
+  /**
+   * Reserved, not read yet: the direction of travel the limit applies to, relative to the A → B
+   * order of `spans`. Absent = both.
+   */
+  direction?: 'both' | 'a_to_b' | 'b_to_a'
+  /** Reserved, not read yet: limit in km/h per train category, overriding `speed` for that category */
+  speedByCategory?: Record<string, number>
+}
+
 export interface Network {
   nodes: Map<NodeId, RailNode>
   segments: Map<SegmentId, Segment>
@@ -73,6 +108,8 @@ export interface Network {
   adjacency: Map<NodeId, SegmentId[]>
   /** Junctions: junctionId -> Junction definition */
   junctions: Map<JunctionId, Junction>
+  /** Speed limits laid on the track (see `models/speedZones.ts`) */
+  speedZones: Map<SpeedZoneId, SpeedZone>
 }
 
 export interface Selection {

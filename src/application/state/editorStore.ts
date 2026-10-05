@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
@@ -6,6 +7,12 @@ import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions } from '@domain/models/junction'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { cleanSpeedZones } from '@domain/models/speedZones'
+import { removeSpeedZone, setSpeedZoneSpeed, speedZonesAt, normalizeZoneSpeed } from '@domain/models/speedZones'
+import { addSpeedZoneBetween } from '@domain/services/speedZoneLayout'
+import type { TrackPoint } from '@domain/services/trackPath'
+import { LINE_SPEED_RANGE, overlapsOfZone, rerailTrain } from '@domain/models/speedLimits'
+import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import {
   saveNetworkToStorage,
@@ -25,7 +32,7 @@ import {
 } from '@infrastructure/persistence/preferences'
 import { isConsolePreference, type ConsolePreference } from '@application/console/consolePreference'
 import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
-import type { Junction, JunctionId, Network, Point, Selection, Segment } from '@domain/models/types'
+import type { Junction, JunctionId, Network, Point, Selection, Segment, SpeedZone } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
 import { computeTrackSections } from '@domain/models/sections'
 import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
@@ -90,6 +97,30 @@ export type Tool =
   | 'pan'
   | 'locomotive'
   | 'coupling'
+  | 'signal'
+
+/**
+ * Sub-modes of the signalling mode (tool `signal`), in the order of the toolbar. Signals will be
+ * added to this list; `select` and `delete` act on whatever the mode lays on the track.
+ */
+export const SIGNAL_SUB_MODES = ['select', 'speedZone', 'delete'] as const
+export type SignalSubMode = (typeof SIGNAL_SUB_MODES)[number]
+
+/** Speed (km/h) of the first zone the speed limit tool lays */
+export const DEFAULT_ZONE_TOOL_SPEED = 80
+
+/** Highest speed (km/h) a zone is given from the interface: the highest line speed */
+export const MAX_ZONE_SPEED = LINE_SPEED_RANGE.max
+
+/** Feedback shown when a click of the speed limit tool is not on a rail */
+export const SPEED_ZONE_OFF_TRACK = 'Limite de vitesse : cliquez sur une voie'
+/** Feedback shown when no track joins the two ends of a speed zone */
+export const SPEED_ZONE_NO_PATH = 'Aucun chemin ne relie ces deux points de la voie'
+/** Feedback shown when a zone laid or changed shares track with another one */
+export const SPEED_ZONE_OVERLAP = 'Cette zone en chevauche une autre : la limite la plus basse s’applique'
+
+/** What a click of the speed limit tool did */
+export type SpeedZoneClick = 'started' | 'placed' | 'off-track' | 'no-path' | 'refused'
 
 export type TrackMode = 'catalog' | 'freeform'
 
@@ -207,6 +238,8 @@ export class EditorStore {
   private impactReported = new Set<string>()
   levelHeight: number = 6 // height of one track level in world meters (6 m at 1:1, scaled down for model scales)
   maxGradient: number = 35 // steepest slope allowed, in ‰ (a ramp above it is reported)
+  lineSpeed: number = DEFAULT_LINE_SETTINGS.lineSpeed // ceiling speed of the line, km/h
+  lineType: LineType = DEFAULT_LINE_SETTINGS.lineType // conventional or high-speed line: rules for cant
   showDimensions: boolean = true // live CAD dimensioning HUD overlay
   isSettingsOpen: boolean = false
 
@@ -288,6 +321,18 @@ export class EditorStore {
   measureStart: Point | null = null
   measureEnd: Point | null = null
   isMeasuring = false
+
+  // --- Signalling mode (tool `signal`) ---
+  /** Sub-mode of the signalling mode: only one is active at a time */
+  signalToolSubMode: SignalSubMode = 'select'
+  /** First click of the speed limit tool: where the zone starts */
+  speedZoneStart: TrackPoint | null = null
+  /** Speed (km/h) of the next zone the speed limit tool lays */
+  speedZoneToolSpeed = DEFAULT_ZONE_TOOL_SPEED
+  /** Speed zone picked in the signalling mode */
+  selectedSpeedZoneId: string | null = null
+  /** Speed zone under the cursor in the signalling mode (select and delete sub-modes) */
+  hoveredSpeedZoneId: string | null = null
 
   // Dragging nodes & sections (Select tool)
   isDraggingNode = false
@@ -395,6 +440,7 @@ export class EditorStore {
     this.measureStart = null
     this.measureEnd = null
     this.isMeasuring = false
+    this.speedZoneStart = null
     this.numericInput = ''
     this.isNumericInputActive = false
     this.pendingEdit = 'none'
@@ -444,6 +490,7 @@ export class EditorStore {
       this.boardHeight,
       this.trains,
       this.gradientLimits,
+      this.lineSettings,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
@@ -478,6 +525,7 @@ export class EditorStore {
           this.parallelOffset = res.trackSpacing
         }
         this.restoreGradientSettings(res)
+        this.restoreLineSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.resetPendingToolState()
@@ -510,6 +558,7 @@ export class EditorStore {
           this.parallelOffset = res.trackSpacing
         }
         this.restoreGradientSettings(res)
+        this.restoreLineSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.resetPendingToolState()
@@ -661,6 +710,7 @@ export class EditorStore {
       this.parallelOffset = saved.trackSpacing
     }
     this.restoreGradientSettings(saved)
+    this.restoreLineSettings(saved)
     if (typeof saved.showDimensions === 'boolean') {
       this.showDimensions = saved.showDimensions
     }
@@ -700,6 +750,7 @@ export class EditorStore {
       this.parallelOffset = res.trackSpacing
     }
     this.restoreGradientSettings(res)
+    this.restoreLineSettings(res)
     if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
     if (typeof res.boardEnabled === 'boolean') {
       this.boardEnabled = res.boardEnabled
@@ -741,6 +792,7 @@ export class EditorStore {
       this.boardHeight,
       this.trains,
       this.gradientLimits,
+      this.lineSettings,
     )
   }
 
@@ -767,6 +819,7 @@ export class EditorStore {
       this.boardHeight,
       this.trains,
       this.gradientLimits,
+      this.lineSettings,
     )
   }
 
@@ -810,6 +863,9 @@ export class EditorStore {
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
     autoDetectJunctions(this.network)
+    // The domain moves the zones itself when a rail is replaced; this only drops what would be
+    // left on a rail taken out of the graph by other means
+    cleanSpeedZones(this.network)
     this.syncTrainsWithNetwork()
     this.version++
     this.listeners.forEach((l) => l())
@@ -824,6 +880,15 @@ export class EditorStore {
     if (this.tool !== t && (this.tool === 'place' || this.tool === 'curve' || this.tool === 'turnout')) {
       this.selection = { nodes: new Set(), segments: new Set() }
     }
+
+    // Zones are only picked inside the signalling mode, which always opens on its selection
+    if (t !== 'signal' || this.tool !== 'signal') {
+      this.signalToolSubMode = 'select'
+      this.selectedSpeedZoneId = null
+      this.hoveredSpeedZoneId = null
+    }
+    // Entering it drops the track selection: Delete must never reach a rail from there
+    if (t === 'signal' && this.tool !== 'signal') this.selection = { nodes: new Set(), segments: new Set() }
 
     this.tool = t
     this.gizmoHoverAxis = null
@@ -1316,6 +1381,7 @@ export class EditorStore {
     const hadPending =
       hadPlacement ||
       this.measureStart !== null ||
+      this.speedZoneStart !== null ||
       this.isNumericInputActive ||
       this.isDraggingNode ||
       this.gizmoDragAxis !== null ||
@@ -1360,6 +1426,8 @@ export class EditorStore {
       // the placement. Any other selection survives the cancel.
       if (hadPlacement) this.clearSelection()
       else this.notify()
+    } else if (this.tool === 'signal' && this.stepBackSignalMode()) {
+      // Signalling climbs one level at a time, like the train mode: see `stepBackSignalMode`
     } else if (this.tool !== 'select') {
       this.setTool('select')
     } else {
@@ -1410,6 +1478,11 @@ export class EditorStore {
    * - Junctions and turnouts are cleanly reconciled.
    */
   deleteSelection = (): void => {
+    // Signalling mode: the only thing Delete removes is the selected zone
+    if (this.tool === 'signal') {
+      this.deleteSelectedSpeedZone()
+      return
+    }
     if (this.isTrainSelected || this.tool === 'locomotive' || this.tool === 'coupling') {
       if (this.selectedTrain || this.locomotive) {
         this.deleteSelectedTrainOrVehicle()
@@ -1699,6 +1772,12 @@ export class EditorStore {
     const preset = SCALE_PRESETS[this.scalePreset] ?? SCALE_PRESETS['1:1']
     this.levelHeight = saved.levelHeight ?? preset.defaultLevelHeight
     this.maxGradient = saved.maxGradient ?? preset.defaultMaxGradient
+  }
+
+  /** Line settings read from a project; one saved without them is on the default line */
+  private restoreLineSettings(saved: { lineSpeed?: number; lineType?: LineType }): void {
+    this.lineSpeed = saved.lineSpeed ?? DEFAULT_LINE_SETTINGS.lineSpeed
+    this.lineType = saved.lineType ?? DEFAULT_LINE_SETTINGS.lineType
   }
 
   /**
@@ -2623,7 +2702,62 @@ export class EditorStore {
 
   /** What the track gives the driving physics beyond its plan geometry */
   get drivingEnvironment(): DrivingEnvironment {
-    return { levelHeight: this.levelHeight }
+    return { levelHeight: this.levelHeight, line: this.lineSettings }
+  }
+
+  /**
+   * Line speed and line type of the project, with what the cant rules read from the scale: the
+   * gauge, and whether the project is at full size (cant, curve speeds and derailment are left out
+   * on a model railway scale)
+   */
+  get lineSettings(): LineSettings {
+    return { lineSpeed: this.lineSpeed, lineType: this.lineType, gauge: this.gauge, realScale: this.scalePreset === '1:1' }
+  }
+
+  /**
+   * Change the line speed (km/h) and / or the line type of the project. A speed that is not a
+   * finite number is ignored, the others are rounded to the km/h and kept within LINE_SPEED_RANGE;
+   * an unknown line type is ignored. One undo step when something changed.
+   */
+  setLineSettings = (settings: Partial<LineSettings>): void => {
+    const lineSpeed =
+      typeof settings.lineSpeed === 'number' && Number.isFinite(settings.lineSpeed)
+        ? Math.max(LINE_SPEED_RANGE.min, Math.min(LINE_SPEED_RANGE.max, Math.round(settings.lineSpeed)))
+        : this.lineSpeed
+    const lineType = settings.lineType === 'classic' || settings.lineType === 'highSpeed' ? settings.lineType : this.lineType
+    if (lineSpeed === this.lineSpeed && lineType === this.lineType) return
+    this.lineSpeed = lineSpeed
+    this.lineType = lineType
+    this.markDirty()
+    this.notify()
+  }
+
+  /**
+   * Set the cant (mm) of the selected curved rails by hand, or give it back to the automatic rule
+   * with null. Returns true when a rail changed.
+   */
+  setSelectionCant = (cant: number | null): boolean => {
+    if (cant !== null && !Number.isFinite(cant)) return false
+    // Whole millimetres within CANT_RANGE; only a curved rail carries a cant
+    const target = cant === null ? undefined : Math.max(CANT_RANGE.min, Math.min(CANT_RANGE.max, Math.round(cant)))
+    let changed = false
+    for (const sid of this.selection.segments) {
+      const seg = this.network.segments.get(sid)
+      if (!seg || seg.kind !== 'curve' || !seg.via || seg.cant === target) continue
+      if (target === undefined) delete seg.cant
+      else seg.cant = target
+      changed = true
+    }
+    if (changed) this.markDirty()
+    return changed
+  }
+
+  /** Put the driven train back on the track after a derailment. Returns false when it is not derailed. */
+  rerailSelectedTrain = (): boolean => {
+    const train = this.selectedTrain
+    if (!train || !rerailTrain(train)) return false
+    this.notify()
+    return true
   }
 
   /** Forces, pressures and stopping distance of the selected train, as the physics sees them now */
@@ -2703,6 +2837,144 @@ export class EditorStore {
     if (!train.emergencyBrake) triggerEmergencyBrake(train)
     else if (!releaseEmergencyBrake(train)) return
     this.notify()
+  }
+
+  // ─────────────────── Signalling mode: speed zones ───────────────────
+
+  /** True in the signalling mode with the speed limit tool in hand (never while driving) */
+  get isSpeedZoneTool(): boolean {
+    return this.tool === 'signal' && this.signalToolSubMode === 'speedZone' && !this.isPlayMode
+  }
+
+  /** Open the signalling mode on a sub-mode, or change sub-mode. Refused while driving. */
+  setSignalToolSubMode = (mode: SignalSubMode): void => {
+    if (this.isPlayMode) return
+    if (this.tool !== 'signal') this.setTool('signal')
+    this.signalToolSubMode = mode
+    this.speedZoneStart = null
+    this.hoveredSpeedZoneId = null
+    this.notify()
+  }
+
+  /** Leave the signalling mode for the track tools */
+  exitSignalMode = (): void => {
+    if (this.tool === 'signal') this.setTool('select')
+  }
+
+  /**
+   * One Escape inside the signalling mode with nothing pending: back to its selection sub-mode,
+   * then the selected zone is released. False when there is nothing left but to leave the mode.
+   */
+  private stepBackSignalMode(): boolean {
+    if (this.signalToolSubMode !== 'select') {
+      this.signalToolSubMode = 'select'
+    } else if (this.selectedSpeedZone) {
+      this.selectedSpeedZoneId = null
+    } else {
+      return false
+    }
+    this.hoveredSpeedZoneId = null
+    this.notify()
+    return true
+  }
+
+  /** The zone picked in the signalling mode; null outside it or once the zone is gone */
+  get selectedSpeedZone(): SpeedZone | null {
+    if (this.tool !== 'signal' || !this.selectedSpeedZoneId) return null
+    return this.network.speedZones.get(this.selectedSpeedZoneId) ?? null
+  }
+
+  /** Pick a zone (null: none). Only in the signalling mode, never while driving. */
+  selectSpeedZone = (id: string | null): boolean => {
+    if (this.isPlayMode || this.tool !== 'signal') return false
+    if (id !== null && !this.network.speedZones.has(id)) return false
+    this.selectedSpeedZoneId = id
+    this.notify()
+    return true
+  }
+
+  /** Place of the track under a world position, within the reach of a click; null off the track */
+  trackPointAt = (worldPos: Point, tolerance: number = 14 / this.camera.scale): TrackPoint | null => {
+    const hit = snapToNearestTrack(this.network, worldPos, tolerance)
+    return hit ? { segId: hit.segId, t: hit.t } : null
+  }
+
+  /**
+   * The zone under a world position. Where several overlap, the one after the selected zone:
+   * clicking again on the shared stretch goes through them in turn.
+   */
+  speedZoneAt = (worldPos: Point, tolerance?: number): SpeedZone | null => {
+    const point = this.trackPointAt(worldPos, tolerance)
+    if (!point) return null
+    const zones = speedZonesAt(this.network, point.segId, point.t)
+    if (zones.length === 0) return null
+    const current = zones.findIndex((zone) => zone.id === this.selectedSpeedZoneId)
+    return zones[(current + 1) % zones.length]
+  }
+
+  /** Remember the zone under the cursor (select and delete sub-modes). True when it changed. */
+  updateSpeedZoneHover = (worldPos: Point): boolean => {
+    const hovered = this.tool === 'signal' && this.signalToolSubMode !== 'speedZone' && !this.isPlayMode
+      ? this.speedZoneAt(worldPos)?.id ?? null
+      : null
+    if (hovered === this.hoveredSpeedZoneId) return false
+    this.hoveredSpeedZoneId = hovered
+    return true
+  }
+
+  /** Speed (km/h) of the next zone laid: a multiple of 10, from 10 to `MAX_ZONE_SPEED` */
+  setSpeedZoneToolSpeed = (speed: number): void => {
+    this.speedZoneToolSpeed = Math.min(MAX_ZONE_SPEED, normalizeZoneSpeed(speed))
+    this.notify()
+  }
+
+  /**
+   * One click of the speed limit tool on `point` (null: off the track). The first click sets the
+   * start, the second lays the zone along the shortest way between the two, selects it and records
+   * one undo step. A refused click keeps the start, so the next one can still close the zone.
+   */
+  clickSpeedZoneTool = (point: TrackPoint | null): SpeedZoneClick => {
+    if (this.isPlayMode || !this.isSpeedZoneTool) return 'refused'
+    if (!point) return 'off-track'
+    if (!this.speedZoneStart) {
+      this.speedZoneStart = { segId: point.segId, t: point.t }
+      this.notify()
+      return 'started'
+    }
+    const zone = addSpeedZoneBetween(this.network, this.speedZoneStart, point, this.speedZoneToolSpeed)
+    if (!zone) return 'no-path'
+    this.speedZoneStart = null
+    this.selectedSpeedZoneId = zone.id
+    this.markDirty()
+    return 'placed'
+  }
+
+  /** True when the zone shares track with another one: the lower limit applies there */
+  speedZoneOverlapsAnother = (id: string): boolean => overlapsOfZone(this.network, id).length > 0
+
+  /** Change the speed of a zone (one undo step). False while driving, for no zone or for no change. */
+  setSpeedZoneSpeed = (id: string, speed: number): boolean => {
+    if (this.isPlayMode) return false
+    const zone = this.network.speedZones.get(id)
+    const next = Math.min(MAX_ZONE_SPEED, normalizeZoneSpeed(speed))
+    if (!zone || zone.speed === next) return false
+    setSpeedZoneSpeed(this.network, id, next)
+    this.markDirty()
+    return true
+  }
+
+  /** Remove a zone (one undo step). False while driving or for no zone. */
+  deleteSpeedZone = (id: string): boolean => {
+    if (this.isPlayMode || !removeSpeedZone(this.network, id)) return false
+    if (this.selectedSpeedZoneId === id) this.selectedSpeedZoneId = null
+    if (this.hoveredSpeedZoneId === id) this.hoveredSpeedZoneId = null
+    this.markDirty()
+    return true
+  }
+
+  deleteSelectedSpeedZone = (): boolean => {
+    const zone = this.selectedSpeedZone
+    return zone ? this.deleteSpeedZone(zone.id) : false
   }
 
   /** Toggle coupling mode on/off */

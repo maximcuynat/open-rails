@@ -1,5 +1,6 @@
 import type { Reverser } from '@domain/models/train'
 import type { BrakeCommand } from '@domain/models/trainDynamics'
+import type { CurveState, Derailment, UpcomingSpeedLimit } from '@domain/models/speedLimits'
 
 /**
  * The contract between a driving console and whatever drives the train. A console only ever sees
@@ -30,6 +31,18 @@ export interface ConsoleTurnout {
   side: 'left' | 'right' | null
   /** Occupied by a train: it cannot be thrown */
   locked: boolean
+}
+
+/** What the track asks of the driver right now: the speed limits and the curve under the train */
+export interface ConsoleGuidance {
+  /** Speed limit in force over the train, km/h */
+  speedLimit: number
+  /** The next lower limit ahead and the distance to it; `null` when none is in sight */
+  nextLimit: UpcomingSpeedLimit | null
+  /** How the train takes the curve it is in */
+  curve: CurveState
+  /** Set once the train has left the rails: it stays put until it is put back on the track */
+  derailed: Derailment | null
 }
 
 export interface ConsoleState {
@@ -68,6 +81,8 @@ export interface ConsoleState {
   canSwitchCab: boolean
   /** Legacy locomotive only: its throttle (-1 brake, 0 coast, 1 accelerate) */
   legacyThrottle?: -1 | 0 | 1
+  /** Absent for the legacy locomotive, which knows no speed limit, and from a PC of an older version */
+  guidance?: ConsoleGuidance
 }
 
 /** One train of the layout, for the list a phone picks its train from */
@@ -102,6 +117,8 @@ export type ConsoleCommand =
   | { type: 'selectTrainByOffset'; offset: 1 | -1 }
   /** Leave driving mode */
   | { type: 'releaseControls' }
+  /** Put the derailed train back on the track */
+  | { type: 'rerail' }
 
 export const CONSOLE_COMMAND_TYPES = [
   'notchStep',
@@ -114,4 +131,5 @@ export const CONSOLE_COMMAND_TYPES = [
   'selectTrain',
   'selectTrainByOffset',
   'releaseControls',
+  'rerail',
 ] as const satisfies readonly ConsoleCommand['type'][]

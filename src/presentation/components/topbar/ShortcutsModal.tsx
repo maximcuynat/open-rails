@@ -41,6 +41,8 @@ export function ShortcutsModal({ store, isOpen, onClose }: ShortcutsModalProps) 
         <div>Déplacer la vue</div>
         <div>{keys('tool.locomotive')}</div>
         <div>Trains (pose et sélection)</div>
+        <div>{keys('tool.speedZone')}</div>
+        <div>Limite de vitesse (mode Signalisation)</div>
         <div className="shortcuts-section">Pose des voies</div>
         <div><span className="shortcut-kbd">0</span>–<span className="shortcut-kbd">9</span> puis <span className="shortcut-kbd">Entrée</span></div>
         <div>Saisir la longueur exacte de la voie droite en cours</div>

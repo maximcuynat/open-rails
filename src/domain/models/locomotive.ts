@@ -1,4 +1,4 @@
-import type { Network, NodeId, Point, Segment, SegmentId, Junction } from './types'
+import type { Network, NodeId, Point, Segment, SegmentId, Junction, TrackSpan } from './types'
 import { generateId, isCloserOrAbove, segmentHeightAt } from './network'
 import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength } from '../services/pathfinding'
@@ -66,12 +66,7 @@ export function segmentArcLength(net: Network, segId: SegmentId): number {
   return segmentLength(net, seg)
 }
 
-/** A stretch of one segment, in the order it was walked (from t0 to t1) */
-export interface TrackSpan {
-  segId: SegmentId
-  t0: number
-  t1: number
-}
+export type { TrackSpan }
 
 /** Record of a walk along the track: the stretches covered and the nodes passed, in walk order */
 export interface WalkTrace {

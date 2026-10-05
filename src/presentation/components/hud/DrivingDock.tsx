@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { trainImpactMessage, type EditorStore } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
 import type { ConsoleCommand } from '@application/console/consoleContract'
@@ -8,7 +8,7 @@ import type { RemoteSession } from '@application/remote/remoteSession'
 import { showToast } from '../common/Toast'
 import { DrivingConsole } from '../console/DrivingConsole'
 import { ConsoleIcon, KeyCap } from '../console/instruments'
-import { compactKeyLabel } from '../console/consoleModel'
+import { compactKeyLabel, newDerailment } from '../console/consoleModel'
 import type { ConsoleArrangement } from '../console/consoleLayout'
 import type { ConsoleKeys } from '../console/consoleParts'
 import { TrainDebugPanel } from './TrainDebugPanel'
@@ -60,6 +60,16 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
   const onCommand = useCallback((command: ConsoleCommand) => applyConsoleCommand(store, command), [store])
 
   const state = buildConsoleState(store)
+  // A derailment says so on screen once, when it happens; the console then keeps its panel up
+  const announcedDerailments = useRef(new Set<string>())
+  const drivenId = state?.trainId ?? null
+  const isDerailed = !!state?.guidance?.derailed
+  useEffect(() => {
+    const message = newDerailment(announcedDerailments.current, state)
+    if (message) showToast(message, 'error', 6000)
+    // Only when the driven train changes or leaves / regains the rails: `state` is new at every frame
+  }, [drivenId, isDerailed])
+
   const phoneConnected = useSyncExternalStore(remote.subscribe, remote.getSnapshot)?.deskConnected ?? false
   const debugKey = store.shortcutLabel('train.debug')
 

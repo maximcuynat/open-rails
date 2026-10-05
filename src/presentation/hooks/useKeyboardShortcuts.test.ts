@@ -227,4 +227,46 @@ describe('keyboard shortcuts', () => {
     reloaded.resetKeybindings()
     expect(new EditorStore().shortcutLabel('tool.select')).toBe('V')
   })
+
+  it('S opens the signalling mode on the speed limit tool, and never while driving', () => {
+    const store = storeWithTrain()
+    store.setTool('select')
+    handleKeyDown(store, keyEvent('KeyS', 's'))
+    expect(store.tool).toBe('signal')
+    expect(store.isSpeedZoneTool).toBe(true)
+    expect(store.shortcutLabel('tool.speedZone')).toBe('S')
+
+    // Driving: S is the reverser, the tool stays out of reach
+    const driving = drivingStore()
+    handleKeyDown(driving, keyEvent('KeyS', 's'))
+    expect(driving.tool).not.toBe('signal')
+  })
+
+  it('in the signalling mode, Delete removes the picked zone and Escape climbs back one level at a time', () => {
+    const store = storeWithTrain()
+    handleKeyDown(store, keyEvent('KeyS', 's'))
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 300, y: 0 }))
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 700, y: 0 }))
+    expect(store.network.speedZones.size).toBe(1)
+
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 800, y: 0 }))
+    vi.stubGlobal('document', { querySelector: () => null })
+    try {
+      handleKeyDown(store, keyEvent('Escape', 'Escape'))
+      expect(store.speedZoneStart).toBeNull()
+      expect(store.isSpeedZoneTool).toBe(true)
+      handleKeyDown(store, keyEvent('Escape', 'Escape'))
+      expect(store.tool).toBe('signal')
+      expect(store.signalToolSubMode).toBe('select')
+
+      handleKeyDown(store, keyEvent('Delete', 'Delete'))
+      expect(store.network.speedZones.size).toBe(0)
+      expect(store.network.segments.size).toBe(1)
+
+      handleKeyDown(store, keyEvent('Escape', 'Escape'))
+      expect(store.tool).toBe('select')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })

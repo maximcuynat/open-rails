@@ -1,6 +1,7 @@
 import type {
   ConsoleBrake,
   ConsoleCommand,
+  ConsoleGuidance,
   ConsoleState,
   ConsoleTurnout,
   FleetEntry,
@@ -260,6 +261,8 @@ function readCommand(value: unknown): ConsoleCommand | null {
         : null
     case 'releaseControls':
       return { type: 'releaseControls' }
+    case 'rerail':
+      return { type: 'rerail' }
     default:
       return null
   }
@@ -285,6 +288,27 @@ function readTurnout(value: unknown): ConsoleTurnout | null {
   if (value.side !== null && !isOneOf(value.side, SIDES)) return null
   if (typeof value.locked !== 'boolean') return null
   return { distance: value.distance, side: value.side, locked: value.locked }
+}
+
+const CURVE_STATES = ['ok', 'discomfort', 'danger'] as const
+
+/** Speed limits and curve: read as a whole, `null` when anything in it is off */
+function readGuidance(value: unknown): ConsoleGuidance | null {
+  if (!isObject(value)) return null
+  if (!isFiniteNumber(value.speedLimit) || !isOneOf(value.curve, CURVE_STATES)) return null
+  let nextLimit: ConsoleGuidance['nextLimit'] = null
+  if (value.nextLimit !== null) {
+    const next = value.nextLimit
+    if (!isObject(next) || !isFiniteNumber(next.speed) || !isFiniteNumber(next.distance) || next.distance < 0) return null
+    nextLimit = { speed: next.speed, distance: next.distance }
+  }
+  let derailed: ConsoleGuidance['derailed'] = null
+  if (value.derailed !== null) {
+    const d = value.derailed
+    if (!isObject(d) || !isFiniteNumber(d.speed) || !isFiniteNumber(d.limit)) return null
+    derailed = { speed: d.speed, limit: d.limit }
+  }
+  return { speedLimit: value.speedLimit, nextLimit, curve: value.curve, derailed }
 }
 
 function readState(value: unknown): ConsoleState | null {
@@ -341,6 +365,12 @@ function readState(value: unknown): ConsoleState | null {
   if (v.legacyThrottle !== undefined) {
     if (!isOneOf(v.legacyThrottle, [-1, 0, 1] as const)) return null
     state.legacyThrottle = v.legacyThrottle
+  }
+  // Optional: a PC of an older version does not send it, and the desk then shows no limit
+  if (v.guidance !== undefined) {
+    const guidance = readGuidance(v.guidance)
+    if (!guidance) return null
+    state.guidance = guidance
   }
   return state
 }

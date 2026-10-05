@@ -2,7 +2,8 @@ import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from '../mo
 import { bezierPoint, bezierDerivative1, closestCurveParam, discretizeCurve } from './curve'
 import { isCrossingAngle } from '../models/crossing'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
-import { addNode, addChildSegment, removeSegment, removeDuplicateSegments, replaceJunctionRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
+import { splitReplacement } from '../models/trackObjects'
+import { addNode, addChildSegment, detachSegment, removeDuplicateSegments, replaceRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
 
 /**
  * Split an existing segment at an existing node that lies on it.
@@ -35,18 +36,20 @@ export function splitSegmentAtNode(
     const dx = nodeB.pos.x - nodeA.pos.x
     const dy = nodeB.pos.y - nodeA.pos.y
     const lenSq = dx * dx + dy * dy
+    // A rail of no length is cut "in the middle": both halves are the same place
+    let t = 0.5
     if (lenSq > 0) {
-      const t = at ?? Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
+      t = at ?? Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
       node.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
       adoptHeight(t)
     } else {
       adoptHeight(0)
     }
-    removeSegment(net, segmentId, false)
+    detachSegment(net, segmentId)
     // A half that already exists (the node sits on a superimposed rail) is reused as it is
     const seg1 = addChildSegment(net, seg, nodeA.id, node.id)!
     const seg2 = addChildSegment(net, seg, node.id, nodeB.id)!
-    replaceJunctionRail(net, segmentId, [seg1, seg2])
+    replaceRail(net, splitReplacement(seg, t, seg1, seg2))
     return { seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -69,10 +72,10 @@ export function splitSegmentAtNode(
     node.pos = bt
     adoptHeight(t)
 
-    removeSegment(net, segmentId, false)
+    detachSegment(net, segmentId)
     const seg1 = addChildSegment(net, seg, nodeA.id, node.id, q0)!
     const seg2 = addChildSegment(net, seg, node.id, nodeB.id, q1)!
-    replaceJunctionRail(net, segmentId, [seg1, seg2])
+    replaceRail(net, splitReplacement(seg, t, seg1, seg2))
     return { seg1, seg2 }
   }
   return null

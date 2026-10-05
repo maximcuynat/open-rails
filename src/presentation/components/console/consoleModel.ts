@@ -1,4 +1,4 @@
-import type { ConsoleBrakeTone, ConsoleState, ConsoleTurnout, FleetEntry } from '@application/console/consoleContract'
+import type { ConsoleBrakeTone, ConsoleGuidance, ConsoleState, ConsoleTurnout, FleetEntry } from '@application/console/consoleContract'
 import {
   BRAKE_CYLINDER_MAX_BAR,
   BRAKE_PIPE_FIRST_REDUCTION,
@@ -183,7 +183,122 @@ export function turnoutView(turnout: ConsoleTurnout | null): TurnoutView {
   return { label: distance, hint: `Aiguillage à ${distance}${open}`, side: turnout.side, disabled: false }
 }
 
-export interface ConsoleView {
+// ─────────────────── Speed limits ───────────────────
+
+/**
+ * Colour of the speed (its arc and its figure), the gravest first:
+ * - `over` (red): the limit in force is exceeded;
+ * - `near` (orange): within 10 km/h under the limit in force, the limit included;
+ * - `ahead` (yellow): a lower limit is announced ahead and the train still runs faster than it;
+ * - `normal` (white): none of these.
+ */
+export type SpeedTone = 'normal' | 'ahead' | 'near' | 'over'
+
+/** Margin (km/h) under the limit in force from which the speed turns orange */
+export const SPEED_NEAR_MARGIN = 10
+
+/**
+ * Colour of the speed. Speeds in km/h as the console writes them (whole numbers): the colour
+ * changes with the figure. `limit` and `next` are null when there is none.
+ */
+export function speedTone(kmh: number, limit: number | null, next: number | null): SpeedTone {
+  if (limit !== null && kmh > limit) return 'over'
+  // At rest nothing is close to being exceeded, however low the limit
+  if (limit !== null && kmh > 0 && kmh >= limit - SPEED_NEAR_MARGIN) return 'near'
+  if (next !== null && kmh > next) return 'ahead'
+  return 'normal'
+}
+
+/** A speed limit on the speed scale */
+export interface LimitMark {
+  kmh: number
+  /** Place on the scale of the dial, 0 … 1 */
+  ratio: number
+  /** « 160 » */
+  label: string
+}
+
+/** The next lower limit: where it is on the dial and how far ahead it starts */
+export interface NextLimitMark extends LimitMark {
+  /** « 850 m », « 1,2 km » */
+  distance: string
+}
+
+export type CurveTone = 'discomfort' | 'danger'
+
+/** How the curve under the train is taken, when it is taken too fast */
+export interface CurveView {
+  tone: CurveTone
+  /** « Courbe : inconfort » */
+  label: string
+  hint: string
+}
+
+const CURVE_VIEWS: Record<CurveTone, CurveView> = {
+  discomfort: {
+    tone: 'discomfort',
+    label: 'Courbe : inconfort',
+    hint: 'Courbe prise trop vite pour son dévers : ralentir',
+  },
+  danger: {
+    tone: 'danger',
+    label: 'Courbe : danger',
+    hint: 'Courbe prise beaucoup trop vite : risque de déraillement, freiner',
+  },
+}
+
+/** « Déraillement à 235 km/h (limite 160 km/h) » */
+export function derailmentMessage(derailed: { speed: number; limit: number }): string {
+  return `Déraillement à ${Math.round(derailed.speed)} km/h (limite ${Math.round(derailed.limit)} km/h)`
+}
+
+/**
+ * The message owed for the derailment of the driven train, once: `announced` remembers the trains
+ * it was given for, and forgets a train as soon as it is back on the track. Null when there is
+ * nothing new to say.
+ */
+export function newDerailment(announced: Set<string>, state: ConsoleState | null): string | null {
+  if (!state || state.trainId === null) return null
+  const derailed = state.guidance?.derailed
+  if (!derailed) {
+    announced.delete(state.trainId)
+    return null
+  }
+  if (announced.has(state.trainId)) return null
+  announced.add(state.trainId)
+  return derailmentMessage(derailed)
+}
+
+function limitMark(kmh: number, maxKmh: number): LimitMark {
+  const rounded = Math.round(kmh)
+  return { kmh: rounded, ratio: Math.max(0, Math.min(1, rounded / Math.max(maxKmh, 1))), label: String(rounded) }
+}
+
+/** What the consoles show of the speed limits, the curve and a derailment */
+export interface GuidanceView {
+  speedTone: SpeedTone
+  /** Limit in force: the solid mark of the dial, the white-on-black board. Null when unknown */
+  limit: LimitMark | null
+  /** Next lower limit: the hollow mark of the dial, the black-on-white board */
+  nextLimit: NextLimitMark | null
+  curve: CurveView | null
+  /** « Déraillement à 235 km/h (limite 160 km/h) » while the train is off the rails */
+  derailment: string | null
+}
+
+export function guidanceView(kmh: number, maxKmh: number, guidance: ConsoleGuidance | undefined): GuidanceView {
+  if (!guidance) return { speedTone: 'normal', limit: null, nextLimit: null, curve: null, derailment: null }
+  const next = guidance.nextLimit
+  return {
+    speedTone: speedTone(kmh, guidance.speedLimit, next ? next.speed : null),
+    limit: limitMark(guidance.speedLimit, maxKmh),
+    nextLimit: next ? { ...limitMark(next.speed, maxKmh), distance: stoppingDistanceLabel(next.distance) } : null,
+    curve: guidance.curve === 'ok' ? null : CURVE_VIEWS[guidance.curve],
+    derailment: guidance.derailed ? derailmentMessage(guidance.derailed) : null,
+  }
+}
+
+export interface ConsoleView extends GuidanceView {
   kmh: number
   maxKmh: number
   /** Speed on its scale, 0 … 1 */
@@ -223,9 +338,12 @@ export function consoleView(state: ConsoleState, fleet: readonly FleetEntry[]): 
   const handleSide = sideOf(state.notch)
   const handlePercent = effortPercent(state.handleEffort)
   const tone = state.brake?.tone
+  const kmh = Math.round(state.speed * 3.6)
+  const maxKmh = Math.round(state.maxSpeed * 3.6)
   return {
-    kmh: Math.round(state.speed * 3.6),
-    maxKmh: Math.round(state.maxSpeed * 3.6),
+    ...guidanceView(kmh, maxKmh, state.guidance),
+    kmh,
+    maxKmh,
     speedRatio: Math.max(0, Math.min(1, state.speed / Math.max(state.maxSpeed, 1e-6))),
     legacy,
     handleSide,

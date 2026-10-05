@@ -3,7 +3,7 @@ import { BandConsole } from './BandConsole'
 import { ScreenConsole } from './ScreenConsole'
 import { LeversConsole } from './LeversConsole'
 import { consoleView } from './consoleModel'
-import type { ConsoleProps } from './consoleParts'
+import { DerailmentPanel, type ConsoleProps } from './consoleParts'
 
 const CONSOLES = { band: BandConsole, screen: ScreenConsole, levers: LeversConsole } as const
 
@@ -13,5 +13,16 @@ const CONSOLES = { band: BandConsole, screen: ScreenConsole, levers: LeversConso
  */
 export function DrivingConsole({ layout, ...props }: ConsoleProps & { layout: ConsoleLayout }) {
   const Console = CONSOLES[layout]
-  return <Console {...props} view={consoleView(props.state, props.fleet)} />
+  const view = consoleView(props.state, props.fleet)
+  return (
+    <>
+      <Console {...props} view={view} />
+      {view.derailment && (
+        // A stage of its own over the console: the same panel whatever the layout
+        <div className="console-stage console-stage-alert">
+          <DerailmentPanel view={view} onCommand={props.onCommand} />
+        </div>
+      )}
+    </>
+  )
 }

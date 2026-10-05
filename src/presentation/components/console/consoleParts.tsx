@@ -231,3 +231,69 @@ export function BrakeLever({ command, disabled, onCommand }: {
     />
   )
 }
+
+/** The limit in force as its real board: white figures on black. « — » when there is none to show */
+export function LimitBoard({ view }: { view: ConsoleView }) {
+  if (!view.limit) return <>—</>
+  return <span className="console-limit" title="Limite de vitesse en cours, km/h">{view.limit.label}</span>
+}
+
+/** The next lower limit as its announcement board, black on white, and the distance to it */
+export function NextLimitBoard({ view }: { view: ConsoleView }) {
+  if (!view.nextLimit) return <>—</>
+  return (
+    <>
+      <span className="console-limit is-next" title="Prochaine limite plus basse, km/h">{view.nextLimit.label}</span>
+      <span className="console-limit-distance" title="Distance jusqu’à cette limite">{view.nextLimit.distance}</span>
+    </>
+  )
+}
+
+/**
+ * The two boards in the bottom corners of a dial, the limit in force on the left and the next one
+ * on the right under its distance. Out of the flow: nothing moves when a board comes or goes.
+ */
+export function LimitCorners({ view }: { view: ConsoleView }) {
+  return (
+    <>
+      {view.limit && (
+        <div className="console-corner-limit is-current">
+          <small>Limite</small>
+          <LimitBoard view={view} />
+        </div>
+      )}
+      {view.nextLimit && (
+        <div className="console-corner-limit is-next" title="Prochaine limite plus basse et distance jusqu’à elle">
+          <small>{view.nextLimit.distance}</small>
+          <span className="console-limit is-next">{view.nextLimit.label}</span>
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * The caption under the speed: its unit, which turns into the warning while a curve is taken too
+ * fast. Same place, same size: nothing moves when the warning comes or goes.
+ */
+export function SpeedCaption({ view, unit }: { view: ConsoleView; unit: string }) {
+  if (!view.curve) return <>{unit}</>
+  return <span className={`console-curve curve-${view.curve.tone}`} title={view.curve.hint} role="status">{view.curve.label}</span>
+}
+
+/**
+ * The train has left the rails: what happened, and the way back. It covers the middle of the
+ * console stage it is put in; nothing while the train is on the track.
+ */
+export function DerailmentPanel({ view, onCommand }: Pick<ConsolePartProps, 'view' | 'onCommand'>) {
+  if (!view.derailment) return null
+  return (
+    <div className="console-derail" role="alert">
+      <b>{view.derailment}</b>
+      <span>Le train est immobilisé.</span>
+      <button type="button" className="console-btn tone-amber" onClick={() => onCommand({ type: 'rerail' })}>
+        Remettre sur la voie
+      </button>
+    </div>
+  )
+}

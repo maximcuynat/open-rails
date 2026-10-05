@@ -17,6 +17,12 @@ import {
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { JUNCTION_OCCUPIED_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedLimits'
+import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
+import { speedZoneLength } from '@domain/services/speedZoneLayout'
+import { formatDistance, formatRadius } from '@domain/models/units'
+import type { SpeedZone } from '@domain/models/types'
+import { canLowerZoneSpeed, canRaiseZoneSpeed, changeZoneSpeed, zoneSpeedLabel, zoneSpeedChoices } from '../common/speedZoneActions'
 import { levelRange, levelRangeLabel, rampSummary } from '../common/trackLevel'
 
 function PanelHeader({ children }: { children: ReactNode }) {
@@ -32,20 +38,15 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-/**
- * Heights of the selected rail (of its two nodes) or node, with − / + to send it under or over the
- * other tracks. `onStep` acts through the store: by default on the current selection.
- */
-function LevelField({
-  store,
-  range,
-  onStep = (delta) => { store.shiftSelectionLevel(delta) },
-}: {
-  store: EditorStore
-  range: { min: number; max: number }
-  onStep?: (delta: 1 | -1) => void
+/** One of the two buttons of a stepped value: − or + */
+function StepButton({ sign, disabled, onClick, title, label }: {
+  sign: 1 | -1
+  disabled: boolean
+  onClick: () => void
+  title: string
+  label: string
 }) {
-  const stepButton = (delta: 1 | -1, disabled: boolean) => (
+  return (
     <button
       type="button"
       style={{
@@ -63,12 +64,36 @@ function LevelField({
         opacity: disabled ? 0.4 : 1,
       }}
       disabled={disabled}
+      onClick={onClick}
+      title={title}
+      aria-label={label}
+    >
+      {sign > 0 ? '+' : '−'}
+    </button>
+  )
+}
+
+/**
+ * Heights of the selected rail (of its two nodes) or node, with − / + to send it under or over the
+ * other tracks. `onStep` acts through the store: by default on the current selection.
+ */
+function LevelField({
+  store,
+  range,
+  onStep = (delta) => { store.shiftSelectionLevel(delta) },
+}: {
+  store: EditorStore
+  range: { min: number; max: number }
+  onStep?: (delta: 1 | -1) => void
+}) {
+  const stepButton = (delta: 1 | -1, disabled: boolean) => (
+    <StepButton
+      sign={delta}
+      disabled={disabled}
       onClick={() => onStep(delta)}
       title={delta > 0 ? 'Monter d’un niveau (pont)' : 'Descendre d’un niveau (tunnel)'}
-      aria-label={delta > 0 ? 'Monter d’un niveau' : 'Descendre d’un niveau'}
-    >
-      {delta > 0 ? '+' : '−'}
-    </button>
+      label={delta > 0 ? 'Monter d’un niveau' : 'Descendre d’un niveau'}
+    />
   )
   return (
     <Field
@@ -83,6 +108,149 @@ function LevelField({
         </span>
       }
     />
+  )
+}
+
+/** A speed zone picked in the signalling mode: its speed, its length, the zones it overlaps */
+function SpeedZonePanel({ store, zone }: { store: EditorStore; zone: SpeedZone }) {
+  const overlaps = overlapsOfZone(store.network, zone.id)
+  const setSpeed = (speed: number) => changeZoneSpeed(store, zone.id, speed)
+  return (
+    <>
+      <PanelHeader>Limite de vitesse</PanelHeader>
+      <div className="sp-section">
+        <Field
+          label="Vitesse"
+          value={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+              <StepButton
+                sign={-1}
+                disabled={!canLowerZoneSpeed(zone.speed)}
+                onClick={() => setSpeed(zone.speed - SPEED_ZONE_STEP)}
+                title={`Baisser la vitesse de ${SPEED_ZONE_STEP} km/h`}
+                label="Baisser la vitesse de la zone"
+              />
+              <select
+                className="settings-input"
+                style={{ width: '104px', fontWeight: 700 }}
+                aria-label="Vitesse de la zone"
+                value={zone.speed}
+                onChange={(e) => setSpeed(Number(e.target.value))}
+              >
+                {zoneSpeedChoices().map((speed) => (
+                  <option key={speed} value={speed}>{zoneSpeedLabel(speed)}</option>
+                ))}
+              </select>
+              <StepButton
+                sign={1}
+                disabled={!canRaiseZoneSpeed(zone.speed)}
+                onClick={() => setSpeed(zone.speed + SPEED_ZONE_STEP)}
+                title={`Relever la vitesse de ${SPEED_ZONE_STEP} km/h`}
+                label="Relever la vitesse de la zone"
+              />
+            </span>
+          }
+        />
+        <Field label="Longueur" value={formatDistance(speedZoneLength(store.network, zone), store.unit)} />
+        <Field label="Sens" value="Les deux sens" />
+      </div>
+
+      <div className="sp-subheader">Chevauchements</div>
+      {overlaps.length === 0 ? (
+        <div className="sp-hint">Cette zone n’en chevauche aucune autre.</div>
+      ) : (
+        <>
+          <div className="sp-list">
+            {overlaps.map((overlap) => {
+              const other = overlap.a.id === zone.id ? overlap.b : overlap.a
+              return (
+                <button
+                  key={other.id}
+                  className="sp-list-item"
+                  onClick={() => store.selectSpeedZone(other.id)}
+                  title="Sélectionner cette zone"
+                >
+                  <span className="sp-tag to">{zoneSpeedLabel(other.speed)}</span>
+                  sur {formatDistance(overlap.length, store.unit)}
+                </button>
+              )
+            })}
+          </div>
+          <div className="sp-hint">Sur la portion commune, la limite la plus basse s’applique.</div>
+        </>
+      )}
+
+      <button className="sp-danger" onClick={() => store.deleteSpeedZone(zone.id)}>
+        Supprimer la limite
+      </button>
+    </>
+  )
+}
+
+/** Cant of a curved rail: automatic or set by hand, and the speed the curve allows with it */
+function CurveCantFields({ store, cant }: { store: EditorStore; cant: CurveCant }) {
+  const [draft, setDraft] = useState(String(Math.round(cant.cant)))
+  // The cant follows the line speed, the zones and the undo history: the field follows it
+  useEffect(() => setDraft(String(Math.round(cant.cant))), [cant.cant])
+  const apply = (text: string) => {
+    const value = parseFloat(text.replace(',', '.'))
+    if (Number.isFinite(value) && value >= 0 && Math.round(value) !== Math.round(cant.cant)) store.setSelectionCant(Math.round(value))
+    else setDraft(String(Math.round(cant.cant)))
+  }
+  const curveLimits = cant.maxSpeed < cant.appliedSpeed
+  return (
+    <>
+      <div className="sp-subheader">Dévers</div>
+      <div className="sp-section">
+        <Field label="Rayon de la courbe" value={formatRadius(cant.radius, store.unit)} />
+        <Field label="Dévers" value={`${Math.round(cant.cant)} mm · ${cant.automatic ? 'automatique' : 'corrigé'}`} />
+        <label className="sp-input-row">
+          <span style={{ width: 'auto' }}>Corriger (mm)</span>
+          <input
+            type="number"
+            min="0"
+            step="5"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={(e) => apply(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+          />
+        </label>
+        <button
+          type="button"
+          className="sp-btn-compact"
+          style={{
+            margin: '6px 0',
+            padding: '4px 8px',
+            fontSize: '11px',
+            fontWeight: 600,
+            borderRadius: '4px',
+            border: '1px solid var(--border)',
+            background: 'var(--panel-2)',
+            color: 'var(--ink)',
+            cursor: cant.automatic ? 'not-allowed' : 'pointer',
+            opacity: cant.automatic ? 0.5 : 1,
+          }}
+          disabled={cant.automatic}
+          onClick={() => store.setSelectionCant(null)}
+          title="Revenir au dévers calculé d’après le rayon et la vitesse de la voie"
+        >
+          Revenir au dévers automatique
+        </button>
+        <Field
+          label="Vitesse max. de la courbe"
+          value={
+            <span
+              style={curveLimits ? { color: '#d97706', fontWeight: 700 } : undefined}
+              title={curveLimits ? `La courbe impose sa vitesse, plus basse que la limite de la voie (${Math.round(cant.appliedSpeed)} km/h)` : undefined}
+            >
+              {Math.round(cant.maxSpeed)} km/h
+            </span>
+          }
+        />
+        <Field label="Limite de la voie" value={`${Math.round(cant.appliedSpeed)} km/h`} />
+      </div>
+    </>
   )
 }
 
@@ -576,6 +744,8 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
 
   const allSections = computeTrackSections(store.network, store.sectionMeta)
   const currentSection = findSectionBySegment(allSections, segId)
+  // Null for a straight rail: nothing more is shown
+  const cant = curveCant(store.network, seg, store.lineSettings)
 
   return (
     <>
@@ -684,6 +854,8 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
           </>
         )}
       </div>
+
+      {cant && <CurveCantFields store={store} cant={cant} />}
 
       {junction && (
         <div style={{ padding: '0 14px 10px' }}>
@@ -1247,8 +1419,12 @@ export function SidePanel({ store }: { store: EditorStore }) {
     : null
 
   let content: ReactNode
-  // If 2 nodes are selected: special panel allowing direct double track creation / connection
-  if (sel.nodes.size === 2 && sel.segments.size === 0) {
+  const speedZone = store.selectedSpeedZone
+  if (speedZone) {
+    // Signalling mode: the picked zone comes before anything else
+    content = <SpeedZonePanel key={speedZone.id} store={store} zone={speedZone} />
+  } else if (sel.nodes.size === 2 && sel.segments.size === 0) {
+    // If 2 nodes are selected: special panel allowing direct double track creation / connection
     const [idA, idB] = [...sel.nodes]
     content = <TwoNodesSelectionPanel key={`${idA}-${idB}`} store={store} nodeAId={idA} nodeBId={idB} />
   } else if (sel.segments.size === 1 && sel.nodes.size === 0) {

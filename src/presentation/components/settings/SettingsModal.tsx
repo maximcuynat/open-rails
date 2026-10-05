@@ -13,6 +13,8 @@ import {
 import { showToast } from '../common/Toast'
 import { KeybindingsSection } from './KeybindingsSection'
 import type { Keybindings } from '@application/keybindings/keybindings'
+import { LINE_SPEED_RANGE, type LineType } from '@domain/models/speedLimits'
+import { LINE_CHOICES, applyLineChoice, lineChoiceId, parseLineSpeed } from './lineSettingsModel'
 
 /** A length as typed in a field of the modal: in the display unit, without float noise */
 const unitField = (meters: number, unit: Unit): string => Number(toUnitValue(meters, unit).toFixed(4)).toString()
@@ -34,6 +36,8 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   )
   const [levelHeightVal, setLevelHeightVal] = useState<string>(unitField(store.levelHeight, store.unit))
   const [maxGradientVal, setMaxGradientVal] = useState<string>(store.maxGradient.toString())
+  const [lineType, setLineType] = useState<LineType>(store.lineSettings.lineType)
+  const [lineSpeedVal, setLineSpeedVal] = useState<string>(store.lineSettings.lineSpeed.toString())
   const [showDimensions, setShowDimensions] = useState<boolean>(store.showDimensions)
   const [boardEnabled, setBoardEnabled] = useState<boolean>(store.boardEnabled)
   const [boardWidthVal, setBoardWidthVal] = useState<string>(
@@ -53,13 +57,15 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSpacingVal(toUnitValue(store.trackSpacing, store.unit).toString())
       setLevelHeightVal(unitField(store.levelHeight, store.unit))
       setMaxGradientVal(store.maxGradient.toString())
+      setLineType(store.lineSettings.lineType)
+      setLineSpeedVal(store.lineSettings.lineSpeed.toString())
       setShowDimensions(store.showDimensions)
       setBoardEnabled(store.boardEnabled)
       setBoardWidthVal(toUnitValue(store.boardWidth, store.unit).toString())
       setBoardHeightVal(toUnitValue(store.boardHeight, store.unit).toString())
       setDraftKeys(store.keybindings)
     }
-  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.levelHeight, store.maxGradient, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.levelHeight, store.maxGradient, store.lineSettings.lineType, store.lineSettings.lineSpeed, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
 
   // When changing scale preset in the modal
   const handleScaleChange = (presetId: ScalePresetId) => {
@@ -111,6 +117,11 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       showToast('Hauteur de niveau ou pente maximale invalide', 'error')
       return
     }
+    const parsedLineSpeed = parseLineSpeed(lineSpeedVal)
+    if (parsedLineSpeed === null) {
+      showToast(`Vitesse de ligne invalide : de ${LINE_SPEED_RANGE.min} à ${LINE_SPEED_RANGE.max} km/h`, 'error')
+      return
+    }
 
     if (selectedScale !== 'custom') {
       store.setScalePreset(selectedScale)
@@ -132,6 +143,10 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
 
     // After the scale: choosing a preset puts back its own slope settings
     store.setGradientSettings({ levelHeight: parsedLevelHeight, maxGradient: parsedMaxGradient })
+
+    if (parsedLineSpeed !== store.lineSettings.lineSpeed || lineType !== store.lineSettings.lineType) {
+      store.setLineSettings({ lineSpeed: parsedLineSpeed, lineType })
+    }
 
     if (store.showDimensions !== showDimensions) {
       store.toggleDimensions()
@@ -283,6 +298,53 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
                   onChange={(e) => setMaxGradientVal(e.target.value)}
                 />
                 <span className="settings-input-unit">‰</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Line: the speed every rail without a speed zone runs at, and the rules its curves follow */}
+        <div className="settings-section">
+          <label className="settings-label">
+            Ligne
+            <span className="settings-hint">Vitesse des voies sans limite posée, et règles de dévers des courbes</span>
+          </label>
+          <div className="settings-grid-2">
+            <div className="settings-field">
+              <label htmlFor="select-line-type" className="settings-sublabel">
+                Type de ligne :
+              </label>
+              <select
+                id="select-line-type"
+                className="settings-input"
+                value={lineChoiceId({ lineType, lineSpeed: parseLineSpeed(lineSpeedVal) ?? NaN })}
+                onChange={(e) => {
+                  const next = applyLineChoice(e.target.value, { lineType, lineSpeed: parseLineSpeed(lineSpeedVal) ?? store.lineSettings.lineSpeed })
+                  setLineType(next.lineType)
+                  setLineSpeedVal(next.lineSpeed.toString())
+                }}
+              >
+                {LINE_CHOICES.map((choice) => (
+                  <option key={choice.id} value={choice.id}>{choice.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="input-line-speed" className="settings-sublabel">
+                Vitesse de ligne (km/h) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-line-speed"
+                  type="number"
+                  step="10"
+                  min={LINE_SPEED_RANGE.min}
+                  max={LINE_SPEED_RANGE.max}
+                  className="settings-input"
+                  value={lineSpeedVal}
+                  onChange={(e) => setLineSpeedVal(e.target.value)}
+                />
+                <span className="settings-input-unit">km/h</span>
               </div>
             </div>
           </div>

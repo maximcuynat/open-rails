@@ -40,7 +40,7 @@ describe('applyConsoleCommand', () => {
   it('covers every command of the contract', () => {
     // One `describe`/`it` per command type below: this list is what they are checked against
     expect([...CONSOLE_COMMAND_TYPES].sort()).toEqual([
-      'brake', 'emergencyBrake', 'notchSet', 'notchStep', 'releaseControls', 'reverser',
+      'brake', 'emergencyBrake', 'notchSet', 'notchStep', 'releaseControls', 'rerail', 'reverser',
       'selectTrain', 'selectTrainByOffset', 'steer', 'switchCab',
     ])
   })
@@ -203,6 +203,17 @@ describe('applyConsoleCommand', () => {
     expect(store.selectedTrainId).toBe(ids[2])
     applyConsoleCommand(store, { type: 'selectTrainByOffset', offset: 1 })
     expect(store.selectedTrainId).toBe(ids[0])
+  })
+
+  it('rerail asks the store to put the driven train back on the track', () => {
+    const store = makeDrivingStore()
+    const rerail = vi.spyOn(store, 'rerailSelectedTrain')
+    applyConsoleCommand(store, { type: 'rerail' })
+    expect(rerail).toHaveBeenCalledTimes(1)
+    // Like every driving command, it does nothing outside driving mode
+    store.togglePlayMode()
+    applyConsoleCommand(store, { type: 'rerail' })
+    expect(rerail).toHaveBeenCalledTimes(1)
   })
 
   it('releaseControls leaves driving mode', () => {

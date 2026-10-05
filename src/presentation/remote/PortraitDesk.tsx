@@ -1,7 +1,15 @@
 import type { CSSProperties } from 'react'
 import type { ConsoleCommand, ConsoleState, FleetEntry } from '@application/console/consoleContract'
 import { HalfGauge } from '@presentation/components/console/instruments'
-import { BrakeLever, ReverserControl, ThrottleLever } from '@presentation/components/console/consoleParts'
+import {
+  BrakeLever,
+  DerailmentPanel,
+  LimitBoard,
+  NextLimitBoard,
+  ReverserControl,
+  SpeedCaption,
+  ThrottleLever,
+} from '@presentation/components/console/consoleParts'
 import {
   BRAKE_CYLINDER_GAUGE,
   BRAKE_PIPE_GAUGE,
@@ -34,16 +42,22 @@ export function PortraitDesk({ state, fleet, canSwitchCab, onCommand }: {
         </div>
         <div className="phone-speed-row">
           <div className="phone-speed-num">
-            <div className="phone-speed-value">{view.kmh}</div>
-            <div className="phone-speed-unit">KM/H · MAX {view.maxKmh}</div>
+            <div className={`phone-speed-value speed-${view.speedTone}`}>{view.kmh}</div>
+            <div className="phone-speed-unit"><SpeedCaption view={view} unit={`KM/H · MAX ${view.maxKmh}`} /></div>
           </div>
           <div className="console-stats">
             <span>Accél.</span><b>{view.acceleration} m/s²</b>
             <span>Pente</span><b>{view.gradient}</b>
             <span>Arrêt en</span><b>{view.stopping}</b>
+            <span>Limite</span><b><LimitBoard view={view} /></b>
+            <span>Proch.</span><b><NextLimitBoard view={view} /></b>
           </div>
         </div>
-        <div className="phone-speed-bar" style={speed} role="img" aria-label={`${view.kmh} km/h sur ${view.maxKmh}`}><i /></div>
+        <div className="phone-speed-scale">
+          <div className={`phone-speed-bar speed-${view.speedTone}`} style={speed} role="img" aria-label={`${view.kmh} km/h sur ${view.maxKmh}`}><i /></div>
+          {view.limit && <span className="phone-limit-mark" style={{ left: `${view.limit.ratio * 100}%` }} />}
+          {view.nextLimit && <span className="phone-limit-mark is-next" style={{ left: `${view.nextLimit.ratio * 100}%` }} />}
+        </div>
       </section>
 
       <section className="phone-panel phone-air">
@@ -100,6 +114,7 @@ export function PortraitDesk({ state, fleet, canSwitchCab, onCommand }: {
           </div>
         </div>
       </section>
+      <DerailmentPanel view={view} onCommand={onCommand} />
     </div>
   )
 }

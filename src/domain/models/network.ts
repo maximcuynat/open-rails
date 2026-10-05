@@ -1,19 +1,13 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
 import { closestCurveParam, curveLength, distToCurve, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
+import { generateId, resetIdCounter } from './ids'
+import { remapSpeedZones } from './speedZones'
+import { duplicateReplacement, mergeReplacements, notifyRailReplaced, removalReplacement, type RailReplacement } from './trackObjects'
 
-let idCounter = 0
-
-export function resetIdCounter(startFrom = 0): void {
-  idCounter = startFrom
-}
-
-export function generateId(prefix: string): string {
-  idCounter++
-  return `${prefix}_${idCounter}`
-}
+export { generateId, resetIdCounter }
 
 /**
- * Scan all node, segment, and junction IDs in the network and update
+ * Scan all node, segment, junction and speed zone IDs in the network and update
  * idCounter so that any future generateId calls will not collide.
  */
 export function syncIdCounter(net: Network): void {
@@ -28,11 +22,12 @@ export function syncIdCounter(net: Network): void {
   for (const id of net.nodes.keys()) scan(id)
   for (const id of net.segments.keys()) scan(id)
   for (const id of net.junctions.keys()) scan(id)
+  for (const id of net.speedZones.keys()) scan(id)
   resetIdCounter(max)
 }
 
 export function createNetwork(): Network {
-  return { nodes: new Map(), segments: new Map(), adjacency: new Map(), junctions: new Map() }
+  return { nodes: new Map(), segments: new Map(), adjacency: new Map(), junctions: new Map(), speedZones: new Map() }
 }
 
 /** Add a node at `pos`, at height `level` (in levels, 0 = ground; see `RailNode.level`). */
@@ -171,7 +166,8 @@ export function setNodesLevel(net: Network, nodeIds: Iterable<NodeId>, level: nu
 /**
  * Lay a rail that replaces (part of) `parent`, which was cut or merged: straight, or curved with
  * `via`. It hands down the ancestry of the rail (`ancestorId`, by default the parent's own
- * ancestor); heights need no handing down, they are on the nodes. When the same rail already lies
+ * ancestor) and, to its curved pieces, the cant set by hand on it; heights need no handing down,
+ * they are on the nodes. When the same rail already lies
  * there it is returned as it is, with its own ancestry.
  */
 export function addChildSegment(
@@ -184,7 +180,11 @@ export function addChildSegment(
 ): Segment | null {
   const before = net.segments.size
   const seg = via ? addCurveSegment(net, from, to, via) : addSegment(net, from, to)
-  if (seg && net.segments.size > before) seg.parentSegmentId = ancestorId
+  if (seg && net.segments.size > before) {
+    seg.parentSegmentId = ancestorId
+    // A cant set by hand goes with the curve: each curved piece of the rail keeps it
+    if (seg.kind === 'curve' && parent.cant !== undefined) seg.cant = parent.cant
+  }
   return seg
 }
 
@@ -230,8 +230,8 @@ export function removeDuplicateSegments(net: Network, tolerance: number): number
       const otherIsCurve = other.kind === 'curve' && !!other.via
       if (isCurve !== otherIsCurve) continue
       if (isCurve && Math.hypot(other.via!.x - seg.via!.x, other.via!.y - seg.via!.y) > viaTolerance) continue
-      replaceJunctionRail(net, other.id, [seg])
-      removeSegment(net, other.id, false)
+      replaceRail(net, duplicateReplacement(other, seg))
+      detachSegment(net, other.id)
       removed++
     }
   }
@@ -292,6 +292,7 @@ export function removeNode(net: Network, id: NodeId): void {
   if (segs) {
     for (const sid of segs) {
       const seg = net.segments.get(sid)
+      if (seg) replaceRail(net, removalReplacement(sid))
       net.segments.delete(sid)
       if (seg) {
         const otherId = seg.from === id ? seg.to : seg.from
@@ -372,8 +373,8 @@ export function dissolveNode(
   const parentId = s1.parentSegmentId ?? s2.parentSegmentId ?? s1.id
 
   // Remove the two segments without cleaning orphans
-  removeSegment(net, s1.id, false)
-  removeSegment(net, s2.id, false)
+  detachSegment(net, s1.id)
+  detachSegment(net, s2.id)
 
   // Remove the intermediate node
   net.nodes.delete(id)
@@ -382,19 +383,39 @@ export function dissolveNode(
   // Connect node1 and node2 directly with a straight segment. When a straight already joins them
   // it takes over as it is: its own heritage is not overwritten.
   const newSeg = addChildSegment(net, s1, otherId1, otherId2, undefined, parentId)
-  if (newSeg) {
-    replaceJunctionRail(net, s1.id, [newSeg])
-    replaceJunctionRail(net, s2.id, [newSeg])
-  }
+  // What stood on the two rails stands on the merged one, each on its share of the length
+  const replacements = newSeg
+    ? mergeReplacements(s1, len1, s2, len2, id, newSeg)
+    : [removalReplacement(s1.id), removalReplacement(s2.id)]
+  for (const replacement of replacements) replaceRail(net, replacement)
 
   return newSeg
+}
+
+/**
+ * The one place a rail replacement goes through: "rail `oldId` is replaced by these pieces" (cut in
+ * two, merged with its neighbour, dropped as a duplicate of another rail, or — no piece — removed).
+ * Everything attached to the track is moved from here: the route tables, the speed zones, and
+ * whoever listens (`onRailReplaced`). Every function that makes a rail disappear must call it,
+ * while the pieces are in the network; `models/trackObjects.ts` builds the replacement for each
+ * case. A new kind of object held by `Network` is moved by one more line here.
+ */
+export function replaceRail(net: Network, replacement: RailReplacement): void {
+  const pieces: Segment[] = []
+  for (const piece of replacement.pieces) {
+    const seg = net.segments.get(piece.segId)
+    if (seg) pieces.push(seg)
+  }
+  replaceJunctionRail(net, replacement.oldId, pieces)
+  remapSpeedZones(net, replacement)
+  notifyRailReplaced(net, replacement)
 }
 
 /**
  * Tell the route tables that a rail was replaced by other rails (cut in pieces, or merged with its
  * neighbour): each table naming it now names the piece that touches its own node.
  */
-export function replaceJunctionRail(net: Network, oldSegId: SegmentId, pieces: Segment[]): void {
+function replaceJunctionRail(net: Network, oldSegId: SegmentId, pieces: Segment[]): void {
   for (const junc of net.junctions.values()) {
     const heir = pieces.find((seg) => seg.from === junc.nodeId || seg.to === junc.nodeId)
     if (!heir) continue
@@ -405,23 +426,36 @@ export function replaceJunctionRail(net: Network, oldSegId: SegmentId, pieces: S
   }
 }
 
+/**
+ * Take a rail out of the graph and nothing else: its nodes stay and nobody is told. For the
+ * operations that replace the rail and say so themselves through `replaceRail`; a rail that simply
+ * goes away is removed with `removeSegment`.
+ */
+export function detachSegment(net: Network, id: SegmentId): void {
+  const seg = net.segments.get(id)
+  if (!seg) return
+  const a = net.adjacency.get(seg.from)
+  if (a) {
+    const idx = a.indexOf(id)
+    if (idx >= 0) a.splice(idx, 1)
+  }
+  const b = net.adjacency.get(seg.to)
+  if (b) {
+    const idx = b.indexOf(id)
+    if (idx >= 0) b.splice(idx, 1)
+  }
+  net.segments.delete(id)
+}
+
+/** Remove a rail for good: what stood on it (see `replaceRail`) goes with it. */
 export function removeSegment(net: Network, id: SegmentId, cleanOrphans = true): void {
   const seg = net.segments.get(id)
   if (!seg) return
   const fromId = seg.from
   const toId = seg.to
 
-  const a = net.adjacency.get(fromId)
-  if (a) {
-    const idx = a.indexOf(id)
-    if (idx >= 0) a.splice(idx, 1)
-  }
-  const b = net.adjacency.get(toId)
-  if (b) {
-    const idx = b.indexOf(id)
-    if (idx >= 0) b.splice(idx, 1)
-  }
-  net.segments.delete(id)
+  replaceRail(net, removalReplacement(id))
+  detachSegment(net, id)
 
   if (cleanOrphans) {
     const adjA = net.adjacency.get(fromId)

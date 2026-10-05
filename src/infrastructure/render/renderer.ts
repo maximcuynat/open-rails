@@ -9,6 +9,8 @@ import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
 import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
 import { networkDerived } from './networkDerived'
+import { drawDiagnosticMarker } from './diagnosticMarker'
+import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
   deckAbutments,
@@ -494,6 +496,8 @@ export interface RenderNetworkOptions {
    * by the diagnostic marker. Absent: slopes are not checked.
    */
   gradient?: GradientLimits
+  /** Speed zones that stand out (signalling mode). Absent: every zone is drawn plain. */
+  speedZones?: SpeedZoneHighlight
 }
 
 // ─────────────────── Track levels (bridges and tunnels) ───────────────────
@@ -840,6 +844,9 @@ export function renderNetwork(
     renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
     const tunnel = level < 0
 
+    // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
+    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, tunnel ? TUNNEL_ALPHA : 1, options?.speedZones)
+
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // Draw a subtle, distinct colored stripe in the track center identifying each functional section
     if (!hideSectionCenterline) {
@@ -999,6 +1006,15 @@ export function renderNetwork(
       ctx.fillText(text, sx, badgeY)
       ctx.restore()
     }
+  }
+
+  // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
+  // with the bands at far zoom.
+  if (!simplified) {
+    renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
+      highlight: options?.speedZones,
+      showOverlaps: !hideConstructionNodes,
+    })
   }
 
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
@@ -1217,56 +1233,7 @@ export function renderNetwork(
       const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
       const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
 
-      ctx.save()
-      const isErr = issue.severity === 'error'
-      const badgeColor = isErr ? '#ef4444' : '#f59e0b'
-      const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
-
-      // Pulse halo
-      ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
-      ctx.beginPath()
-      ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
-      ctx.fill()
-
-      // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
-      ctx.fillStyle = badgeColor
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.moveTo(sx, sy - signR)
-      ctx.lineTo(sx + signR, sy)
-      ctx.lineTo(sx, sy + signR)
-      ctx.lineTo(sx - signR, sy)
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-
-      // Exclamation point or angle
-      ctx.fillStyle = '#ffffff'
-      ctx.font = '900 11px Archivo, system-ui, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('!', sx, sy)
-
-      // Label badge above if zoom is reasonable
-      if (cam.scale >= 0.9) {
-        ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const label = diagnosticLabel(issue)
-        const tw = ctx.measureText(label).width
-        const ty = sy - signR - 10
-
-        ctx.fillStyle = badgeColor
-        ctx.beginPath()
-        ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
-        ctx.fill()
-
-        ctx.fillStyle = '#ffffff'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(label, sx, ty)
-      }
-
-      ctx.restore()
+      drawDiagnosticMarker(ctx, sx, sy, cam.scale, issue.severity, diagnosticLabel(issue))
     }
   }
 }

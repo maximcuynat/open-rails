@@ -1,5 +1,5 @@
 import { KeyCap, SpeedTape } from './instruments'
-import { BrakeLever, ConsoleTools, ReverserControl, ThrottleLever, type ConsolePartProps } from './consoleParts'
+import { BrakeLever, ConsoleTools, LimitBoard, NextLimitBoard, ReverserControl, SpeedCaption, ThrottleLever, type ConsolePartProps } from './consoleParts'
 import { decimal, notchStops } from './consoleModel'
 
 /** Console C — two levers on the right and the speed as a number along the bottom */
@@ -11,17 +11,19 @@ export function LeversConsole(props: ConsolePartProps) {
         <ConsoleTools {...props} />
         <div className="console console-speedblock">
           <div className="console-speedblock-num">
-            <div className="console-speedblock-value">{view.kmh}</div>
-            <div className="console-speedblock-unit">KM/H · MAX {view.maxKmh}</div>
+            <div className={`console-speedblock-value speed-${view.speedTone}`}>{view.kmh}</div>
+            <div className="console-speedblock-unit"><SpeedCaption view={view} unit={`KM/H · MAX ${view.maxKmh}`} /></div>
           </div>
           <div className="console-speedblock-tape">
-            <SpeedTape ratio={view.speedRatio} maxKmh={view.maxKmh} />
+            <SpeedTape ratio={view.speedRatio} maxKmh={view.maxKmh} guide={view} />
             <ReverserControl {...props} />
           </div>
           <div className="console-stats">
             <span>Accél.</span><b>{view.acceleration} m/s²</b>
             <span>Pente</span><b>{view.gradient}</b>
             <span>Arrêt</span><b>{view.stopping}</b>
+            <span>Limite</span><b><LimitBoard view={view} /></b>
+            <span>Proch.</span><b><NextLimitBoard view={view} /></b>
           </div>
         </div>
       </div>

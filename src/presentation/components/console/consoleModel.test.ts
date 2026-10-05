@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ConsoleState, FleetEntry } from '@application/console/consoleContract'
+import type { ConsoleGuidance, ConsoleState, FleetEntry } from '@application/console/consoleContract'
 import {
   BRAKE_CYLINDER_GAUGE,
   BRAKE_PIPE_GAUGE,
@@ -7,14 +7,18 @@ import {
   accelerationValue,
   compactKeyLabel,
   consoleView,
+  derailmentMessage,
   distanceRatio,
   effortPercent,
   gaugeRatio,
   gradientLabel,
+  guidanceView,
+  newDerailment,
   notchLabel,
   notchStops,
   speedDialTicks,
   speedMinorTicks,
+  speedTone,
   stoppingDistanceLabel,
   turnoutView,
 } from './consoleModel'
@@ -170,6 +174,12 @@ describe('console view', () => {
       reverserNeeded: false,
       releaseHint: false,
       turnout: { label: '—', hint: 'Aucun aiguillage devant le train', side: null, disabled: true },
+      // No speed limit known (state without `guidance`): the speed stays white and nothing is marked
+      speedTone: 'normal',
+      limit: null,
+      nextLimit: null,
+      curve: null,
+      derailment: null,
     })
   })
 
@@ -261,5 +271,109 @@ describe('turnout ahead', () => {
       side: 'right',
       disabled: true,
     })
+  })
+})
+
+describe('speed limits on the console', () => {
+  const guidance = (over: Partial<ConsoleGuidance> = {}): ConsoleGuidance => ({
+    speedLimit: 160,
+    nextLimit: null,
+    curve: 'ok',
+    derailed: null,
+    ...over,
+  })
+  const at = (kmh: number, over: Partial<ConsoleGuidance> = {}) =>
+    consoleView({ ...baseState, speed: kmh / 3.6, guidance: guidance(over) }, fleet)
+
+  it('colours the speed against the limit in force: white, orange within 10 km/h, red above', () => {
+    // Limit at 160 km/h
+    expect(speedTone(140, 160, null)).toBe('normal')
+    expect(speedTone(149, 160, null)).toBe('normal')
+    expect(speedTone(150, 160, null)).toBe('near')
+    expect(speedTone(160, 160, null)).toBe('near')
+    expect(speedTone(161, 160, null)).toBe('over')
+  })
+
+  it('turns yellow when a lower limit is announced ahead and the train still runs faster than it', () => {
+    // 200 km/h on a 320 km/h line, a 160 km/h zone ahead
+    expect(speedTone(200, 320, 160)).toBe('ahead')
+    // Already under the announced limit: nothing to do
+    expect(speedTone(160, 320, 160)).toBe('normal')
+    expect(speedTone(120, 320, 160)).toBe('normal')
+  })
+
+  it('the gravest colour wins: red, then orange, then yellow', () => {
+    expect(speedTone(205, 200, 160)).toBe('over')
+    expect(speedTone(195, 200, 160)).toBe('near')
+    expect(speedTone(180, 200, 160)).toBe('ahead')
+  })
+
+  it('stays white at rest, and without any limit', () => {
+    expect(speedTone(0, 10, null)).toBe('normal')
+    expect(speedTone(250, null, null)).toBe('normal')
+  })
+
+  it('colours the view from the speed the console writes', () => {
+    expect(at(140).speedTone).toBe('normal')
+    expect(at(150).speedTone).toBe('near')
+    expect(at(160).speedTone).toBe('near')
+    // 160,4 km/h is written 160: still orange, like the figure
+    expect(at(160.4).speedTone).toBe('near')
+    expect(at(161).speedTone).toBe('over')
+    expect(at(200, { speedLimit: 320, nextLimit: { speed: 160, distance: 5000 } }).speedTone).toBe('ahead')
+    expect(at(330, { speedLimit: 320, nextLimit: { speed: 160, distance: 5000 } }).speedTone).toBe('over')
+  })
+
+  it('places the solid mark at the limit in force and the hollow one at the next lower limit', () => {
+    const view = at(200, { speedLimit: 240, nextLimit: { speed: 160, distance: 850 } })
+    expect(view.limit).toEqual({ kmh: 240, ratio: 240 / 320, label: '240' })
+    expect(view.nextLimit).toEqual({ kmh: 160, ratio: 0.5, label: '160', distance: '850 m' })
+    // No lower limit in sight: no hollow mark
+    expect(at(200).nextLimit).toBeNull()
+  })
+
+  it('keeps a mark on the scale when the limit is above the top speed of the train', () => {
+    expect(guidanceView(100, 200, guidance({ speedLimit: 320 })).limit).toEqual({ kmh: 320, ratio: 1, label: '320' })
+  })
+
+  it('writes the distance to the next limit in metres, then in kilometres, like the stopping distance', () => {
+    const next = (distance: number) => at(200, { nextLimit: { speed: 90, distance } }).nextLimit!.distance
+    expect(next(0)).toBe('0 m')
+    expect(next(849.6)).toBe('850 m')
+    expect(next(999)).toBe('999 m')
+    expect(next(1000)).toBe('1,0 km')
+    expect(next(5230)).toBe('5,2 km')
+  })
+
+  it('says how the curve is taken, only when it is taken too fast', () => {
+    expect(at(100).curve).toBeNull()
+    expect(at(100, { curve: 'discomfort' }).curve).toMatchObject({ tone: 'discomfort', label: 'Courbe : inconfort' })
+    expect(at(100, { curve: 'danger' }).curve).toMatchObject({ tone: 'danger', label: 'Courbe : danger' })
+  })
+
+  it('writes a derailment with the speed and the limit of that moment', () => {
+    expect(at(0).derailment).toBeNull()
+    expect(derailmentMessage({ speed: 234.6, limit: 160 })).toBe('Déraillement à 235 km/h (limite 160 km/h)')
+    expect(at(0, { derailed: { speed: 235, limit: 160 } }).derailment).toBe('Déraillement à 235 km/h (limite 160 km/h)')
+  })
+
+  it('announces a derailment once, and again only after the train was put back on the track', () => {
+    const announced = new Set<string>()
+    const derailed: ConsoleState = { ...baseState, guidance: guidance({ derailed: { speed: 235, limit: 160 } }) }
+    const onTrack: ConsoleState = { ...baseState, guidance: guidance() }
+
+    expect(newDerailment(announced, onTrack)).toBeNull()
+    expect(newDerailment(announced, derailed)).toBe('Déraillement à 235 km/h (limite 160 km/h)')
+    expect(newDerailment(announced, derailed)).toBeNull()
+    // Another train derails: its own message
+    expect(newDerailment(announced, { ...derailed, trainId: 't_2' })).not.toBeNull()
+    expect(newDerailment(announced, derailed)).toBeNull()
+    // Back on the track, then off again
+    expect(newDerailment(announced, onTrack)).toBeNull()
+    expect(newDerailment(announced, derailed)).not.toBeNull()
+    // Nothing driven, legacy locomotive, state without limits
+    expect(newDerailment(announced, null)).toBeNull()
+    expect(newDerailment(announced, { ...derailed, trainId: null })).toBeNull()
+    expect(newDerailment(announced, { ...baseState, trainId: 't_9' })).toBeNull()
   })
 })

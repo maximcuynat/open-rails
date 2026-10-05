@@ -215,6 +215,42 @@ describe('console state', () => {
     expect(store.switchSelectedTrainCab()).toBe(true)
   })
 
+  it('hands the console the limits, the curve and a derailment as the physics gives them', () => {
+    const store = makeDrivingStore()
+    const train = store.selectedTrain!
+    const dynamics = store.selectedTrainDynamics!
+    const state = (over: Partial<typeof dynamics>) => trainConsoleState(train, { ...dynamics, ...over })
+
+    // Limit in m/s from the physics, in km/h on the console
+    expect(state({ speedLimit: 160 / 3.6, nextSpeedLimit: null, curveState: 'ok' }).guidance).toEqual({
+      speedLimit: 160,
+      nextLimit: null,
+      curve: 'ok',
+      derailed: null,
+    })
+    expect(
+      state({ speedLimit: 320 / 3.6, nextSpeedLimit: { speed: 90, distance: 1250.5 }, curveState: 'danger' }).guidance,
+    ).toEqual({ speedLimit: 320, nextLimit: { speed: 90, distance: 1250.5 }, curve: 'danger', derailed: null })
+
+    train.derailed = { speed: 235, limit: 160 }
+    const derailed = state({ speedLimit: 160 / 3.6 })
+    expect(derailed.guidance!.derailed).toEqual({ speed: 235, limit: 160 })
+    // Plain JSON, like the rest of the state: it travels to the phone as it is
+    expect(JSON.parse(JSON.stringify(derailed))).toEqual(derailed)
+    train.derailed = null
+
+    // The store builds the same thing for the driven train
+    expect(buildConsoleState(store)!.guidance).toEqual(trainConsoleState(train, store.selectedTrainDynamics!).guidance)
+  })
+
+  it('gives the legacy locomotive no speed limit', () => {
+    const store = makeForkStore()
+    const stem = [...store.network.segments.keys()][0]
+    store.locomotive = createLocomotive(store.network, stem, 0.5, 20, 14, 2)
+    store.togglePlayMode()
+    expect(buildConsoleState(store)!.guidance).toBeUndefined()
+  })
+
   it('gives the legacy locomotive its turnout too, and no cab button', () => {
     const store = makeForkStore()
     const stem = [...store.network.segments.keys()][0]

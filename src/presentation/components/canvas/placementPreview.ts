@@ -6,6 +6,7 @@ import { computeCurveToolGeometry, checkCurveJoins, MAX_FREEFORM_TURN_DEG, type 
 import { snapStraightLength, computeStraightPiece } from '@domain/profiles/profiles'
 import { computeFreeformParallelTurnout } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatRadius, formatAngle, parseDistance } from '@domain/models/units'
+import { findTrackPath, type TrackPath, type TrackPoint } from '@domain/services/trackPath'
 import type { EditorStore } from '@application/state/editorStore'
 
 /**
@@ -248,4 +249,44 @@ export function resolveTurnoutTool(store: EditorStore) {
     ? `Espacement: ${formatDistance(Math.abs(geom.offset), store.unit)} · Longueur: ${formatDistance(geom.dx, store.unit)} (${formatRadius(geom.radius, store.unit)})`
     : `Rayon trop serré : ${formatRadius(geom.radius, store.unit)} (min ${formatRadius(limits.minRadius, store.unit)})`
   return { startNode, geom, text }
+}
+
+// ─────────────────── Speed limit tool ───────────────────
+
+/**
+ * Place of the track the speed limit tool aims at: the node or the step point the magnet caught,
+ * else the rail under the cursor. Null off the track.
+ */
+export function speedZoneAim(store: EditorStore): TrackPoint | null {
+  const magnetised = store.hoverNodeId !== null || !!store.hoverSegSteps?.nearest
+  return store.trackPointAt(magnetised ? store.snappedCursor : store.cursorWorld)
+}
+
+export interface SpeedZonePreview {
+  start: TrackPoint
+  /** Where the zone would end; null when the cursor is off the track */
+  end: TrackPoint | null
+  /** Way the zone would cover; null off the track, or when no track joins the two points */
+  path: TrackPath | null
+}
+
+let lastZonePath: { net: Network; a: TrackPoint; b: TrackPoint; path: TrackPath | null } | null = null
+
+/** `findTrackPath`, kept while the two points stay the same: the canvas and the bar both ask at every mouse move */
+function zonePath(net: Network, a: TrackPoint, b: TrackPoint): TrackPath | null {
+  const last = lastZonePath
+  if (last && last.net === net && last.a.segId === a.segId && last.a.t === a.t && last.b.segId === b.segId && last.b.t === b.t) {
+    return last.path
+  }
+  const path = findTrackPath(net, a, b)
+  lastZonePath = { net, a: { ...a }, b: { ...b }, path }
+  return path
+}
+
+/** The zone the next click of the speed limit tool would lay, once its start is set. */
+export function resolveSpeedZoneTool(store: EditorStore): SpeedZonePreview | null {
+  const start = store.speedZoneStart
+  if (!store.isSpeedZoneTool || !start) return null
+  const end = speedZoneAim(store)
+  return { start, end, path: end ? zonePath(store.network, start, end) : null }
 }

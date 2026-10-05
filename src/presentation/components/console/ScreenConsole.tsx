@@ -1,5 +1,5 @@
 import { DistanceBar, ReverserSwitch, RoundDial, VerticalBar } from './instruments'
-import { BrakeHoldButton, ConsoleTools, type ConsolePartProps } from './consoleParts'
+import { BrakeHoldButton, ConsoleTools, LimitCorners, type ConsolePartProps } from './consoleParts'
 import { BRAKE_CYLINDER_GAUGE, BRAKE_PIPE_GAUGE, decimal } from './consoleModel'
 
 /** Console B — an on-board screen in the bottom-right corner: needle dial in the middle, fixed zones around it */
@@ -21,7 +21,8 @@ export function ScreenConsole(props: ConsolePartProps) {
         </div>
 
         <div className="console-screen-dial">
-          <RoundDial kmh={view.kmh} ratio={view.speedRatio} maxKmh={view.maxKmh} />
+          <RoundDial kmh={view.kmh} ratio={view.speedRatio} maxKmh={view.maxKmh} guide={view} curve={view.curve} />
+          <LimitCorners view={view} />
         </div>
 
         <div className="console-screen-press">

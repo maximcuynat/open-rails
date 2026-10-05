@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment, setNodesLevel } from '@domain/models/network'
 import { createTrainSet, type TrainSet } from '@domain/models/train'
@@ -17,8 +17,21 @@ import {
   TUNNEL_DASH,
   TUNNEL_VEHICLE_ALPHA,
   diagnosticLabel,
+  GAUGE,
   type LevelBand,
+  type RenderNetworkOptions,
 } from '@infrastructure/render/renderer'
+import {
+  SPEED_ZONE_ACTIVE_ALPHA,
+  SPEED_ZONE_ALPHA,
+  SPEED_ZONE_BAND_GAUGES,
+  SPEED_ZONE_COLOR,
+  overlapLabel,
+} from '@infrastructure/render/speedZoneRender'
+import { removeSpeedZone, setSpeedZoneSpeed } from '@domain/models/speedZones'
+import * as speedLimits from '@domain/models/speedLimits'
+import { addSpeedZoneBetween } from '@domain/services/speedZoneLayout'
+import { snapToNearestTrack } from '@domain/models/locomotive'
 
 /** One canvas call, with the drawing state it was made in and where its path started */
 interface Op {
@@ -567,5 +580,233 @@ describe('track levels — ramps', () => {
 
     expect(diagnosticLabel({ id: 'x', nodeId: 'n', kind: 'track_gap', severity: 'warning', message: '', involvedSegmentIds: [] })).toBe('Voie interrompue')
     expect(diagnosticLabel({ id: 'x', nodeId: 'n', kind: 'sharp_turn', severity: 'error', angleDeg: 12, message: '', involvedSegmentIds: [] })).toBe('∠ 12° Cassure')
+  })
+})
+
+describe('speed zones on the canvas', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** Place of the track nearest to a world point */
+  const at = (net: Network, x: number, y = 0) => {
+    const hit = snapToNearestTrack(net, { x, y }, 0.5)!
+    return { segId: hit.segId, t: hit.t }
+  }
+  /** A 90 km/h zone from x = 60 to x = 140 on the ground track (world x 0 → 200, y = 0) */
+  function tracksWithZone(upperLevel = 1) {
+    const tracks = crossingTracks(upperLevel)
+    const zone = addSpeedZoneBetween(tracks.net, at(tracks.net, 60), at(tracks.net, 140), 90)!
+    return { ...tracks, zone }
+  }
+  const draw = (net: Network, options: RenderNetworkOptions = {}, camera = cam()): Op[] => {
+    const { ctx, ops } = createRecordingContext()
+    renderNetwork(ctx, camera, VW, VH, net, noSelection(), {}, { tool: 'select', ...options })
+    return ops
+  }
+  const BAND_WIDTH = SPEED_ZONE_BAND_GAUGES * GAUGE * SCALE
+  const isBandStroke = (op: Op) => op.name === 'stroke' && near(op.lineWidth ?? 0, BAND_WIDTH)
+  const texts = (ops: Op[]) => ops.filter((op) => op.name === 'fillText').map((op) => String(op.args[0]))
+  const isBoardText = (op: Op) => op.name === 'fillText' && /^[ZR] \d+$/.test(String(op.args[0]))
+  /** Path calls (moveTo, lineTo, quadraticCurveTo) of the path a stroke closes */
+  const pathOf = (ops: Op[], strokeIndex: number): Op[] => {
+    let begin = strokeIndex
+    while (begin > 0 && ops[begin].name !== 'beginPath') begin--
+    return ops.slice(begin + 1, strokeIndex)
+  }
+  const screenX = (x: number) => VW / 2 + (x - 100) * SCALE
+
+  it('draws nothing more for a network without zone: the same calls as before', () => {
+    const { net } = crossingTracks(0)
+    const plain = draw(net)
+    expect(plain.some(isBandStroke)).toBe(false)
+    expect(plain.some(isBoardText)).toBe(false)
+    // Asking for a highlight changes nothing when there is no zone
+    expect(draw(net, { speedZones: { selectedId: 'z_1', dangerId: 'z_2' } })).toEqual(plain)
+
+    // A zone adds calls; once it is removed the drawing is back to exactly what it was
+    const zone = addSpeedZoneBetween(net, at(net, 60), at(net, 140), 90)!
+    expect(draw(net).length).toBeGreaterThan(plain.length)
+    removeSpeedZone(net, zone.id)
+    expect(draw(net)).toEqual(plain)
+  })
+
+  it('lays a band along the limited stretch only, under the rails', () => {
+    const { net } = tracksWithZone(0)
+    const ops = draw(net)
+    const bands = indices(ops, isBandStroke)
+    expect(bands).toHaveLength(1)
+    const band = ops[bands[0]]
+    expect(band.strokeStyle).toBe(SPEED_ZONE_COLOR)
+    expect(band.globalAlpha).toBeCloseTo(SPEED_ZONE_ALPHA)
+
+    // One stretch, from world x = 60 to world x = 140 on the axis of the track
+    const path = pathOf(ops, bands[0])
+    expect(path.map((op) => op.name)).toEqual(['moveTo', 'lineTo'])
+    expect(path[0].args[0]).toBeCloseTo(screenX(60))
+    expect(path[0].args[1]).toBeCloseTo(VH / 2)
+    expect(path[1].args[0]).toBeCloseTo(screenX(140))
+    expect(path[1].args[1]).toBeCloseTo(VH / 2)
+
+    // Before the rails of the track it lies on: they are drawn over it
+    expect(bands[0]).toBeLessThan(Math.min(...indices(ops, isGroundRailStroke)))
+  })
+
+  it('follows a curved rail as a curve', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 60, y: 0 })
+    const b = addNode(net, { x: 140, y: 30 })
+    const seg = addCurveSegment(net, a.id, b.id, { x: 100, y: 0 })!
+    addSpeedZoneBetween(net, { segId: seg.id, t: 0.25 }, { segId: seg.id, t: 0.75 }, 60)
+    const ops = draw(net)
+    const bands = indices(ops, isBandStroke)
+    expect(bands).toHaveLength(1)
+    const path = pathOf(ops, bands[0])
+    expect(path.map((op) => op.name)).toEqual(['moveTo', 'quadraticCurveTo'])
+    // Ends on the curve at t = 0.25 and t = 0.75
+    const point = (t: number) => ({
+      x: (1 - t) * (1 - t) * 60 + 2 * (1 - t) * t * 100 + t * t * 140,
+      y: t * t * 30,
+    })
+    expect(path[0].args[0]).toBeCloseTo(screenX(point(0.25).x))
+    expect(path[0].args[1]).toBeCloseTo(VH / 2 + point(0.25).y * SCALE)
+    expect(path[1].args[2]).toBeCloseTo(screenX(point(0.75).x))
+    expect(path[1].args[3]).toBeCloseTo(VH / 2 + point(0.75).y * SCALE)
+  })
+
+  it('stands a board at each end: Z and the speed where the zone starts, R where it ends', () => {
+    const { net, zone } = tracksWithZone(0)
+    const ops = draw(net)
+    const boards = ops.filter(isBoardText)
+    expect(boards.map((op) => op.args[0])).toEqual(['Z 90', 'R 90'])
+    // Beside the track at world x = 60 and x = 140, above it on screen, white figures
+    expect(boards[0].args[1]).toBeCloseTo(screenX(60))
+    expect(boards[1].args[1]).toBeCloseTo(screenX(140))
+    for (const board of boards) {
+      expect(board.args[2] as number).toBeLessThan(VH / 2 - 10)
+      expect(board.fillStyle).toBe('#ffffff')
+    }
+    // …on a black board
+    expect(ops.some((op) => op.name === 'fill' && op.fillStyle === '#111827')).toBe(true)
+    // After the rails: the boards come with the overlays
+    expect(ops.indexOf(boards[0])).toBeGreaterThan(Math.max(...indices(ops, isGroundRailStroke)))
+
+    // The boards follow the speed of the zone (the drawing is kept on the zones revision)
+    setSpeedZoneSpeed(net, zone.id, 60)
+    expect(draw(net).filter(isBoardText).map((op) => op.args[0])).toEqual(['Z 60', 'R 60'])
+  })
+
+  it('moves the boards with the track when a rail is reshaped', () => {
+    const { net, ground } = tracksWithZone(0)
+    draw(net)
+    net.nodes.get(ground.to)!.pos.x = 300
+    // The zone covers the same share of the rail: 30 % → 70 % of 0 → 300
+    const boards = draw(net).filter(isBoardText)
+    expect(boards[0].args[1]).toBeCloseTo(screenX(90))
+    expect(boards[1].args[1]).toBeCloseTo(screenX(210))
+  })
+
+  it('makes the picked zone stand out, and the one about to be removed turn red', () => {
+    const { net, zone } = tracksWithZone(0)
+    const other = addSpeedZoneBetween(net, at(net, 150), at(net, 190), 60)!
+    const picked = draw(net, { speedZones: { selectedId: zone.id } })
+    const bands = picked.filter(isBandStroke)
+    // The plain zone, then the picked one, in its own stroke
+    expect(bands.map((op) => op.globalAlpha)).toEqual([SPEED_ZONE_ALPHA, SPEED_ZONE_ACTIVE_ALPHA])
+    expect(bands.every((op) => op.strokeStyle === SPEED_ZONE_COLOR)).toBe(true)
+
+    const doomed = draw(net, { speedZones: { dangerId: other.id } })
+    const red = doomed.filter(isBandStroke).find((op) => op.strokeStyle === '#ef4444')!
+    expect(red.globalAlpha).toBeCloseTo(SPEED_ZONE_ACTIVE_ALPHA)
+    expect(red.start![0]).toBeCloseTo(screenX(150))
+  })
+
+  it('goes over a bridge with its rails: after the deck, before the rails it carries', () => {
+    const { net } = crossingTracks(1)
+    // Zone on the upper track (x = 100, y −50 → 50), from y = −30 to y = 30
+    addSpeedZoneBetween(net, at(net, 100, -30), at(net, 100, 30), 60)
+    const ops = draw(net)
+    const band = indices(ops, isBandStroke)
+    expect(band).toHaveLength(1)
+    expect(band[0]).toBeGreaterThan(Math.max(...indices(ops, isDeckStroke)))
+    expect(band[0]).toBeGreaterThan(Math.max(...indices(ops, isGroundRailStroke)))
+    expect(band[0]).toBeLessThan(Math.min(...indices(ops, isUpperRailStroke)))
+    expect(ops[band[0]].globalAlpha).toBeCloseTo(SPEED_ZONE_ALPHA)
+  })
+
+  it('is dimmed with its rails in a tunnel', () => {
+    const { net } = crossingTracks(-1)
+    addSpeedZoneBetween(net, at(net, 100, -30), at(net, 100, 30), 60)
+    const band = draw(net).filter(isBandStroke)
+    expect(band).toHaveLength(1)
+    expect(band[0].globalAlpha).toBeCloseTo(SPEED_ZONE_ALPHA * TUNNEL_ALPHA)
+  })
+
+  it('in the layered drawing, each level draws the bands of its own rails only', () => {
+    const { net } = tracksWithZone(1)
+    addSpeedZoneBetween(net, at(net, 100, -30), at(net, 100, 30), 60)
+    const { ctx, ops } = createRecordingContext()
+    renderNetwork(ctx, cam(), VW, VH, net, noSelection(), {}, { tool: 'select', part: 'tracks', level: 0 })
+    const ground = ops.filter(isBandStroke)
+    expect(ground).toHaveLength(1)
+    expect(ground[0].start![0]).toBeCloseTo(screenX(60))
+    // No board in the rail pass
+    expect(ops.some(isBoardText)).toBe(false)
+
+    const upper = createRecordingContext()
+    renderNetwork(upper.ctx, cam(), VW, VH, net, noSelection(), {}, { tool: 'select', part: 'tracks', level: 1 })
+    expect(upper.ops.filter(isBandStroke)).toHaveLength(1)
+    expect(upper.ops.filter(isBandStroke)[0].start![0]).toBeCloseTo(VW / 2)
+
+    const overlays = createRecordingContext()
+    renderNetwork(overlays.ctx, cam(), VW, VH, net, noSelection(), {}, { tool: 'select', part: 'overlays' })
+    expect(overlays.ops.some(isBandStroke)).toBe(false)
+    expect(overlays.ops.filter(isBoardText)).toHaveLength(4)
+  })
+
+  it('hides the zones at far zoom, and the boards of a zone too short on screen unless it is picked', () => {
+    const { net, zone } = tracksWithZone(0)
+    // Simplified drawing: neither band nor board
+    const far = draw(net, {}, createCamera(100, 0, 0.04))
+    expect(far.some((op) => op.strokeStyle === SPEED_ZONE_COLOR)).toBe(false)
+    expect(far.some(isBoardText)).toBe(false)
+
+    // 80 m at 0.3 px/m: 24 px on screen. The band stays, the boards go
+    const small = draw(net, {}, createCamera(100, 0, 0.3))
+    expect(small.some((op) => op.name === 'stroke' && op.strokeStyle === SPEED_ZONE_COLOR)).toBe(true)
+    expect(small.some(isBoardText)).toBe(false)
+    const picked = draw(net, { speedZones: { selectedId: zone.id } }, createCamera(100, 0, 0.3))
+    expect(picked.filter(isBoardText)).toHaveLength(2)
+  })
+
+  it('keeps bands and boards in the driving view', () => {
+    const { net } = tracksWithZone(0)
+    const ops = draw(net, { hideConstructionNodes: true, hideSectionBadges: true })
+    expect(ops.filter(isBandStroke)).toHaveLength(1)
+    expect(ops.filter(isBoardText)).toHaveLength(2)
+  })
+
+  it('marks the stretch two zones share with the diagnostic marker, in the construction view only', () => {
+    const { net, zone } = tracksWithZone(0)
+    const other = addSpeedZoneBetween(net, at(net, 110), at(net, 180), 60)!
+    const overlaps = vi.spyOn(speedLimits, 'speedZoneOverlaps')
+    // World x = 110 → 140 of the ground track
+    overlaps.mockReturnValue([{ a: zone, b: other, spans: [{ segId: at(net, 110).segId, t0: 0.55, t1: 0.7 }], length: 30 }])
+
+    const ops = draw(net)
+    // The lower of the two speeds, on the warning marker of the other diagnostics, halfway along the shared stretch
+    const label = ops.find((op) => op.name === 'fillText' && op.args[0] === overlapLabel(60))!
+    expect(label).toBeDefined()
+    expect(overlapLabel(60)).toBe('Chevauchement · 60 km/h')
+    expect(label.args[1]).toBeCloseTo(screenX(125))
+    expect(ops.some((op) => op.name === 'fill' && op.fillStyle === '#f59e0b')).toBe(true)
+
+    // Driving view: no diagnostic
+    expect(texts(draw(net, { hideConstructionNodes: true }))).not.toContain(overlapLabel(60))
+
+    // No overlap: no marker
+    overlaps.mockReturnValue([])
+    setSpeedZoneSpeed(net, other.id, 70) // a change of the zones: the kept drawing is rebuilt
+    expect(texts(draw(net)).some((t) => t.startsWith('Chevauchement'))).toBe(false)
   })
 })

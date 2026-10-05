@@ -66,6 +66,7 @@ const COMMANDS: ConsoleCommand[] = [
   { type: 'selectTrain', trainId: 't_2' },
   { type: 'selectTrainByOffset', offset: -1 },
   { type: 'releaseControls' },
+  { type: 'rerail' },
 ]
 
 const decode = (value: unknown) => decodeMessage(JSON.stringify(value))
@@ -90,6 +91,12 @@ describe('protocol: round trip', () => {
       { t: 'state', state: { ...STATE, stoppingDistance: null }, ack: 3 },
       { t: 'state', state: { ...STATE, upcomingTurnout: { distance: 240.5, side: 'left', locked: false } }, ack: 3 },
       { t: 'state', state: { ...STATE, upcomingTurnout: { distance: 0, side: null, locked: true }, canSwitchCab: true }, ack: 3 },
+      { t: 'state', state: { ...STATE, guidance: { speedLimit: 160, nextLimit: null, curve: 'ok', derailed: null } }, ack: 3 },
+      {
+        t: 'state',
+        state: { ...STATE, guidance: { speedLimit: 160, nextLimit: { speed: 90, distance: 1250.5 }, curve: 'danger', derailed: { speed: 235, limit: 160 } } },
+        ack: 3,
+      },
       { t: 'bye' },
       ...COMMANDS.map((c, i): RemoteMessage => ({ t: 'command', seq: i + 1, trainId: 't_1', command: c })),
       { t: 'command', seq: 99, trainId: null, command: { type: 'emergencyBrake' } },

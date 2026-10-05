@@ -1,4 +1,5 @@
-import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, removeSegment, replaceJunctionRail, segmentHeightAt, setNodesLevel } from './network'
+import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, detachSegment, replaceRail, segmentHeightAt, setNodesLevel } from './network'
+import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
 import { isTraversableDeflection } from '../geometry/tangent'
@@ -600,12 +601,14 @@ export function placeTurnout(
 /**
  * Split an existing segment into two connected segments at a given split position.
  * Preserves curvature and G1 tangency if segment is curved.
+ * `t` is the parameter of the old rail it was actually cut at (the split point is projected on the
+ * rail and kept off its very ends): `seg1` covers 0…t of it and `seg2` t…1.
  */
 export function splitSegment(
   net: Network,
   segmentId: SegmentId,
   splitPoint: Point,
-): { midNode: RailNode; seg1: Segment; seg2: Segment } | null {
+): { midNode: RailNode; seg1: Segment; seg2: Segment; t: number } | null {
   const seg = net.segments.get(segmentId)
   if (!seg) return null
   const nodeA = net.nodes.get(seg.from)
@@ -619,8 +622,10 @@ export function splitSegment(
     const dx = nodeB.pos.x - nodeA.pos.x
     const dy = nodeB.pos.y - nodeA.pos.y
     const lenSq = dx * dx + dy * dy
+    // A rail of no length is cut "in the middle": both halves are the same place
+    let t = 0.5
     if (lenSq > 0) {
-      const t = Math.max(0.005, Math.min(0.995, ((splitPoint.x - nodeA.pos.x) * dx + (splitPoint.y - nodeA.pos.y) * dy) / lenSq))
+      t = Math.max(0.005, Math.min(0.995, ((splitPoint.x - nodeA.pos.x) * dx + (splitPoint.y - nodeA.pos.y) * dy) / lenSq))
       midNode.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
       // The new node is at the height the rail has there: each piece keeps its share of a ramp
       setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
@@ -628,11 +633,11 @@ export function splitSegment(
       setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, 0))
     }
     // Replace straight A-B with A-mid and mid-B
-    removeSegment(net, segmentId, false)
+    detachSegment(net, segmentId)
     const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id)!
     const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id)!
-    replaceJunctionRail(net, segmentId, [seg1, seg2])
-    return { midNode, seg1, seg2 }
+    replaceRail(net, splitReplacement(seg, t, seg1, seg2))
+    return { midNode, seg1, seg2, t }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
     const p1 = seg.via
@@ -667,11 +672,11 @@ export function splitSegment(
     midNode.pos = bt
     setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
 
-    removeSegment(net, segmentId, false)
+    detachSegment(net, segmentId)
     const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id, q0)!
     const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id, q1)!
-    replaceJunctionRail(net, segmentId, [seg1, seg2])
-    return { midNode, seg1, seg2 }
+    replaceRail(net, splitReplacement(seg, t, seg1, seg2))
+    return { midNode, seg1, seg2, t }
   }
 
   return null
@@ -697,6 +702,8 @@ export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId
 
     // If this segment directly connects keepNode and removeNode, remove it
     if ((seg.from === keepNodeId && seg.to === removeNodeId) || (seg.from === removeNodeId && seg.to === keepNodeId)) {
+      // The rail between the two nodes has no length left: what stood on it goes with it
+      replaceRail(net, removalReplacement(sid))
       net.segments.delete(sid)
       const idx = keepSegIds.indexOf(sid)
       if (idx >= 0) keepSegIds.splice(idx, 1)

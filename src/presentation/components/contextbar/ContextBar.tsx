@@ -108,7 +108,24 @@ function ContextBarStrip({ items }: { items: ContextBarItem[] }) {
               >
                 −
               </button>
-              <span className="cb-step-value" aria-live="polite">{item.text}</span>
+              {item.choices && item.pick ? (
+                <select
+                  className="cb-step-value cb-step-select"
+                  aria-label={item.caption}
+                  value={item.value}
+                  onChange={(e) => {
+                    item.pick?.(Number(e.target.value))
+                    // Hand the keyboard back to the canvas: shortcuts go on working
+                    e.target.blur()
+                  }}
+                >
+                  {item.choices.map((choice) => (
+                    <option key={choice.value} value={choice.value}>{choice.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <span className="cb-step-value" aria-live="polite">{item.text}</span>
+              )}
               <button
                 type="button"
                 className="cb-btn cb-step"

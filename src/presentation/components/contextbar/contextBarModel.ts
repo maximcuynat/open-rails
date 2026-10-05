@@ -4,7 +4,10 @@ import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatAngle } from '@domain/models/units'
 import { computeTrackSections, findSectionBySegment, type SectionDirection } from '@domain/models/sections'
+import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
+import { speedZoneLength } from '@domain/services/speedZoneLayout'
 import { showToast } from '../common/Toast'
+import { canLowerZoneSpeed, canRaiseZoneSpeed, changeZoneSpeed, zoneSpeedChoices, zoneSpeedLabel } from '../common/speedZoneActions'
 import { levelRange, levelRangeLabel, nodeLevelRange } from '../common/trackLevel'
 import { getGizmoAnchor } from '../canvas/gizmo'
 import {
@@ -12,6 +15,7 @@ import {
   placementCursor,
   resolveCurveTool,
   resolvePlaceTool,
+  resolveSpeedZoneTool,
   resolveTurnoutTool,
 } from '../canvas/placementPreview'
 
@@ -31,7 +35,18 @@ export type ContextBarItem =
    * A value stepped down and up by two buttons that never move: the value sits between them in a
    * slot of constant width, so the same button can be clicked again and again.
    */
-  | { kind: 'stepper'; id: string; caption: string; text: string; decrease: ContextBarStep; increase: ContextBarStep }
+  | {
+      kind: 'stepper'
+      id: string
+      caption: string
+      text: string
+      decrease: ContextBarStep
+      increase: ContextBarStep
+      /** When given, the value between the two buttons is a pick list of these choices */
+      choices?: { value: number; label: string }[]
+      value?: number
+      pick?: (value: number) => void
+    }
   /** A button. `title` is its tooltip: the action and its shortcut */
   | {
       kind: 'action'
@@ -309,6 +324,68 @@ function trainBar(store: EditorStore): ContextBarItem[] {
   return [{ kind: 'label', text: 'Sélection de train' }]
 }
 
+/**
+ * Speed of a zone: picked in the list of multiples of 10 km/h, or stepped by 10 with the two buttons,
+ * which stay where they are whatever the value.
+ */
+function zoneSpeedStepper(speed: number, subject: string, set: (speed: number) => void): ContextBarItem {
+  return {
+    kind: 'stepper',
+    id: 'zone-speed',
+    caption: 'Vitesse',
+    text: zoneSpeedLabel(speed),
+    choices: zoneSpeedChoices().map((value) => ({ value, label: zoneSpeedLabel(value) })),
+    value: speed,
+    pick: set,
+    decrease: {
+      title: `Baisser la vitesse ${subject} de ${SPEED_ZONE_STEP} km/h`,
+      disabled: !canLowerZoneSpeed(speed),
+      run: () => set(speed - SPEED_ZONE_STEP),
+    },
+    increase: {
+      title: `Relever la vitesse ${subject} de ${SPEED_ZONE_STEP} km/h`,
+      disabled: !canRaiseZoneSpeed(speed),
+      run: () => set(speed + SPEED_ZONE_STEP),
+    },
+  }
+}
+
+/** Signalling mode: its selection, the speed limit tool and its two clicks, the deletion */
+function signalBar(store: EditorStore): ContextBarItem[] {
+  if (store.signalToolSubMode === 'delete') return [{ kind: 'label', text: 'Suppression de limites' }]
+
+  if (store.signalToolSubMode === 'speedZone') {
+    const speed = zoneSpeedStepper(store.speedZoneToolSpeed, 'de la zone à poser', (v) => store.setSpeedZoneToolSpeed(v))
+    const preview = resolveSpeedZoneTool(store)
+    if (!preview) return [{ kind: 'label', text: 'Limite de vitesse 1/2 — départ' }, speed]
+    return [
+      { kind: 'label', text: 'Limite de vitesse 2/2' },
+      speed,
+      // Always there once the start is set: the length, or why the click would be refused
+      preview.path
+        ? { kind: 'value', id: 'zone-length', caption: 'Longueur', text: formatDistance(preview.path.length, store.unit) }
+        : { kind: 'value', id: 'zone-length', text: preview.end ? 'aucun chemin' : 'hors voie', tone: 'danger' },
+      finish(store, 'Annuler', 'Annuler la zone en cours (Échap ou clic droit)'),
+    ]
+  }
+
+  const zone = store.selectedSpeedZone
+  if (!zone) return [{ kind: 'label', text: 'Signalisation' }]
+  return [
+    { kind: 'label', text: 'Limite de vitesse' },
+    zoneSpeedStepper(zone.speed, 'de la zone', (v) => changeZoneSpeed(store, zone.id, v)),
+    { kind: 'value', id: 'zone-length', caption: 'Longueur', text: formatDistance(speedZoneLength(store.network, zone), store.unit) },
+    {
+      kind: 'action',
+      id: 'delete',
+      label: 'Supprimer',
+      title: 'Supprimer la limite de vitesse (Suppr ou Retour arrière)',
+      tone: 'danger',
+      run: () => { store.deleteSpeedZone(zone.id) },
+    },
+  ]
+}
+
 /** Items of the contextual bar, or null when there is no bar (nothing to act on, or driving). */
 export function buildContextBar(store: EditorStore): ContextBarItem[] | null {
   if (store.isPlayMode) return null
@@ -381,5 +458,8 @@ export function buildContextBar(store: EditorStore): ContextBarItem[] | null {
     case 'locomotive':
     case 'coupling':
       return trainBar(store)
+
+    case 'signal':
+      return signalBar(store)
   }
 }

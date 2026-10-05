@@ -14,7 +14,7 @@ import {
   type TrainDynamics,
 } from '@domain/models/trainDynamics'
 import { DEFAULT_ROLLING_STOCK, ROLLING_STOCK } from '@domain/models/rollingStock'
-import type { ConsoleBrake, ConsoleBrakeTone, ConsoleState, ConsoleTurnout, FleetEntry } from './consoleContract'
+import type { ConsoleBrake, ConsoleBrakeTone, ConsoleGuidance, ConsoleState, ConsoleTurnout, FleetEntry } from './consoleContract'
 
 /** Pressure difference (bar) under which a gauge is read as being on its mark */
 const PRESSURE_TOLERANCE = 0.05
@@ -39,6 +39,24 @@ export function brakeTone(
 function countVehicles(train: TrainSet): { locoCount: number; wagonCount: number } {
   const locoCount = train.vehicles.filter((v) => v.kind === 'loco').length
   return { locoCount, wagonCount: train.vehicles.length - locoCount }
+}
+
+/** The limits and the curve as the console shows them: speeds in km/h, plain JSON */
+export function trainGuidance(
+  train: Pick<TrainSet, 'derailed'>,
+  dynamics: Pick<TrainDynamics, 'speedLimit' | 'nextSpeedLimit' | 'curveState'>,
+): ConsoleGuidance | undefined {
+  const speedLimit = Math.round(dynamics.speedLimit * 3.6)
+  if (!Number.isFinite(speedLimit)) return undefined
+  const next = dynamics.nextSpeedLimit
+  return {
+    speedLimit,
+    nextLimit: next && Number.isFinite(next.speed) && Number.isFinite(next.distance)
+      ? { speed: next.speed, distance: Math.max(0, next.distance) }
+      : null,
+    curve: dynamics.curveState,
+    derailed: train.derailed ? { speed: train.derailed.speed, limit: train.derailed.limit } : null,
+  }
 }
 
 /**
@@ -79,6 +97,7 @@ export function trainConsoleState(
     ...countVehicles(train),
     upcomingTurnout,
     canSwitchCab: canSwitchDrivingCab(train),
+    guidance: trainGuidance(train, dynamics),
   }
 }
 

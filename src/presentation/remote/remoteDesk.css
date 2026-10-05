@@ -508,6 +508,44 @@ html.phone-desk-page body {
   transition: transform 120ms linear;
 }
 
+/* Colour of the speed: see the `speed-*` tones of the consoles */
+.phone-speed-bar[class*='speed-'] i {
+  background: var(--tone);
+}
+
+.phone-speed-scale {
+  position: relative;
+}
+
+/* Solid mark: limit in force. Hollow mark: next lower limit */
+.phone-limit-mark {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--hud-fg);
+  border: 2px solid var(--hud);
+}
+
+.phone-limit-mark.is-next {
+  background: var(--hud);
+  border-color: var(--hud-fg);
+}
+
+/* Over the desk, without moving a lever */
+.phone-portrait > .console-derail {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  width: max-content;
+  margin: 0;
+  z-index: 2;
+}
+
 .phone-air {
   flex: none;
   display: flex;

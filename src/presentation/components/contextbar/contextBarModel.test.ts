@@ -1,9 +1,10 @@
 import { computeTrackSections } from '@domain/models/sections'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { EditorStore, JUNCTION_OCCUPIED_REFUSED } from '@application/state/editorStore'
+import { EditorStore, JUNCTION_OCCUPIED_REFUSED, MAX_ZONE_SPEED, SPEED_ZONE_OVERLAP } from '@application/state/editorStore'
 import { addNode, addSegment, resetIdCounter, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { findJunctionAtNode, activeBranchOf } from '@domain/models/junction'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { formatDistance } from '@domain/models/units'
 import { showToast } from '../common/Toast'
 import { buildContextBar, type ContextBarItem } from './contextBarModel'
 
@@ -653,5 +654,175 @@ describe('contextual bar — tooltips', () => {
     expect(titles.get('locomotive:flip-direction')).toContain('R ou Tab')
     expect(titles.get('locomotive:drive')).toContain('F5')
     expect(titles.get('locomotive:delete')).toContain('Suppr')
+  })
+})
+
+/** Number of steps the undo history holds */
+const undoSteps = (store: EditorStore) => (store as unknown as { history: unknown[] }).history.length
+
+describe('context bar: signalling mode', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+    vi.mocked(showToast).mockClear()
+  })
+
+  const kinds = (items: ContextBarItem[]): string[] => items.map((i) => (i.kind === 'label' ? 'label' : `${i.kind}:${i.id}`))
+
+  it('names the mode when nothing is picked, and the deletion sub-mode', () => {
+    const { store } = storeWithTrack(1000)
+    store.setTool('signal')
+    expect(bar(store)).toEqual([{ kind: 'label', text: 'Signalisation' }])
+    store.setSignalToolSubMode('delete')
+    expect(bar(store)).toEqual([{ kind: 'label', text: 'Suppression de limites' }])
+  })
+
+  it('speed limit tool: start step, then the live length of the way to the cursor', () => {
+    const { store } = storeWithTrack(1000)
+    store.setSignalToolSubMode('speedZone')
+    expect(label(bar(store))).toBe('Limite de vitesse 1/2 — départ')
+    expect(kinds(bar(store))).toEqual(['label', 'stepper:zone-speed'])
+
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 100, y: 0 }))
+    moveCursor(store, 600, 0)
+    let items = bar(store)
+    expect(label(items)).toBe('Limite de vitesse 2/2')
+    expect(kinds(items)).toEqual(['label', 'stepper:zone-speed', 'value:zone-length', 'action:finish'])
+    expect(value(items, 'zone-length')).toMatchObject({ caption: 'Longueur', text: formatDistance(500, store.unit) })
+
+    moveCursor(store, 850, 0)
+    items = bar(store)
+    expect(value(items, 'zone-length').text).toBe(formatDistance(750, store.unit))
+  })
+
+  it('speed limit tool: says why the click would be refused, in the same slot', () => {
+    const { store } = storeWithTrack(1000)
+    const c = addNode(store.network, { x: 0, y: 60 })
+    const d = addNode(store.network, { x: 1000, y: 60 })
+    addSegment(store.network, c.id, d.id)
+    store.setSignalToolSubMode('speedZone')
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 100, y: 0 }))
+
+    moveCursor(store, 500, 30)
+    let items = bar(store)
+    expect(kinds(items)).toEqual(['label', 'stepper:zone-speed', 'value:zone-length', 'action:finish'])
+    expect(value(items, 'zone-length')).toMatchObject({ text: 'hors voie', tone: 'danger' })
+
+    moveCursor(store, 500, 60)
+    items = bar(store)
+    expect(kinds(items)).toEqual(['label', 'stepper:zone-speed', 'value:zone-length', 'action:finish'])
+    expect(value(items, 'zone-length')).toMatchObject({ text: 'aucun chemin', tone: 'danger' })
+  })
+
+  it('speed limit tool: the speed is also picked in a list of the multiples of 10 km/h', () => {
+    const { store } = storeWithTrack(1000)
+    store.setSignalToolSubMode('speedZone')
+    store.setSpeedZoneToolSpeed(80)
+    const speed = stepper(bar(store), 'zone-speed')
+
+    const values = speed.choices!.map((choice) => choice.value)
+    expect(values[0]).toBe(10)
+    expect(values[values.length - 1]).toBe(MAX_ZONE_SPEED)
+    expect(values.every((value, i) => value % 10 === 0 && (i === 0 || value - values[i - 1] === 10))).toBe(true)
+    expect(speed.choices!.find((choice) => choice.value === 320)!.label).toBe('320 km/h')
+    expect(speed.value).toBe(80)
+
+    speed.pick!(320)
+    expect(store.speedZoneToolSpeed).toBe(320)
+    expect(stepper(bar(store), 'zone-speed').value).toBe(320)
+  })
+
+  it('speed limit tool: the stepper sets the speed of the next zone by 10 km/h, greyed out at its ends', () => {
+    const { store } = storeWithTrack(1000)
+    store.setSignalToolSubMode('speedZone')
+    store.setSpeedZoneToolSpeed(80)
+    let speed = stepper(bar(store), 'zone-speed')
+    expect(speed).toMatchObject({ caption: 'Vitesse', text: '80 km/h' })
+    speed.increase.run()
+    expect(store.speedZoneToolSpeed).toBe(90)
+    stepper(bar(store), 'zone-speed').decrease.run()
+    stepper(bar(store), 'zone-speed').decrease.run()
+    expect(store.speedZoneToolSpeed).toBe(70)
+
+    // Same items, same order, whatever the value: the two buttons never move
+    const shape = kinds(bar(store))
+    store.setSpeedZoneToolSpeed(10)
+    speed = stepper(bar(store), 'zone-speed')
+    expect(speed.decrease.disabled).toBe(true)
+    expect(speed.increase.disabled).toBe(false)
+    expect(kinds(bar(store))).toEqual(shape)
+    store.setSpeedZoneToolSpeed(MAX_ZONE_SPEED)
+    speed = stepper(bar(store), 'zone-speed')
+    expect(speed.increase.disabled).toBe(true)
+    expect(kinds(bar(store))).toEqual(shape)
+
+    // The step in progress is kept while the speed is changed
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 100, y: 0 }))
+    moveCursor(store, 400, 0)
+    stepper(bar(store), 'zone-speed').decrease.run()
+    expect(store.speedZoneStart).not.toBeNull()
+    expect(label(bar(store))).toBe('Limite de vitesse 2/2')
+  })
+
+  it('speed limit tool: « Annuler » drops the start and keeps the tool', () => {
+    const { store } = storeWithTrack(1000)
+    store.setSignalToolSubMode('speedZone')
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 100, y: 0 }))
+    moveCursor(store, 400, 0)
+    action(bar(store), 'finish').run()
+    expect(store.speedZoneStart).toBeNull()
+    expect(store.isSpeedZoneTool).toBe(true)
+  })
+
+  it('a picked zone: its speed stepped in place, its length, and its deletion', () => {
+    const { store } = storeWithTrack(1000)
+    store.setSignalToolSubMode('speedZone')
+    store.setSpeedZoneToolSpeed(90)
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 100, y: 0 }))
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 600, y: 0 }))
+    store.setSignalToolSubMode('select')
+    const zone = store.selectedSpeedZone!
+
+    let items = bar(store)
+    expect(label(items)).toBe('Limite de vitesse')
+    const shape = kinds(items)
+    expect(shape).toEqual(['label', 'stepper:zone-speed', 'value:zone-length', 'action:delete'])
+    expect(stepper(items, 'zone-speed').text).toBe('90 km/h')
+    expect(value(items, 'zone-length').text).toBe(formatDistance(500, store.unit))
+
+    const steps = undoSteps(store)
+    stepper(items, 'zone-speed').decrease.run()
+    expect(zone.speed).toBe(80)
+    expect(undoSteps(store)).toBe(steps + 1)
+    items = bar(store)
+    expect(kinds(items)).toEqual(shape)
+    expect(stepper(items, 'zone-speed').text).toBe('80 km/h')
+    expect(showToast).not.toHaveBeenCalled()
+
+    expect(action(items, 'delete')).toMatchObject({ tone: 'danger' })
+    action(items, 'delete').run()
+    expect(store.network.speedZones.size).toBe(0)
+    expect(bar(store)).toEqual([{ kind: 'label', text: 'Signalisation' }])
+  })
+
+  it('warns when the speed of a zone is changed while it overlaps another one', () => {
+    const { store } = storeWithTrack(1000)
+    store.setSignalToolSubMode('speedZone')
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 100, y: 0 }))
+    store.clickSpeedZoneTool(store.trackPointAt({ x: 600, y: 0 }))
+    store.setSignalToolSubMode('select')
+    const overlaps = vi.spyOn(store, 'speedZoneOverlapsAnother').mockReturnValue(true)
+    stepper(bar(store), 'zone-speed').increase.run()
+    expect(overlaps).toHaveBeenCalledWith(store.selectedSpeedZone!.id)
+    expect(showToast).toHaveBeenCalledWith(SPEED_ZONE_OVERLAP, 'warning', expect.any(Number))
+  })
+
+  it('has no bar while driving', () => {
+    const { store } = storeWithTrack(1000)
+    store.setTrainPlacementKind('tgv_loco')
+    store.placeTrainItem({ x: 100, y: 0 })
+    store.setTool('signal')
+    store.togglePlayMode()
+    expect(buildContextBar(store)).toBeNull()
   })
 })

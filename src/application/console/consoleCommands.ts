@@ -71,5 +71,8 @@ export function applyConsoleCommand(store: EditorStore, command: ConsoleCommand,
     case 'releaseControls':
       store.togglePlayMode()
       return
+    case 'rerail':
+      store.rerailSelectedTrain()
+      return
   }
 }

@@ -362,6 +362,10 @@ describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
           brakeCylinderBar: 0,
           stoppingDistance: 0,
           lateralAcceleration: 0,
+          speedLimit: 320 / 3.6,
+          nextSpeedLimit: null,
+          cantDeficiency: 0,
+          curveState: 'ok',
           ...values,
         })
       }

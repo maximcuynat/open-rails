@@ -283,7 +283,7 @@ Reste, non fait :
 
 ---
 
-# Prêt à lancer — Limites de vitesse posées sur la voie, dévers et déraillement
+# Fait, à commiter — Limites de vitesse posées sur la voie, dévers et déraillement
 
 Plan rédigé le 2026-10-05 après recherche, corrigé avec les décisions de l'utilisateur ; **rien n'est codé, en attente de son feu vert**. Sources : `tasks/recherche-limites-vitesse.md`, `tasks/recherche-devers.md`, `tasks/audit-objets-de-voie.md`. 1:1 seulement. Branche dédiée à créer à partir de `developement`. Pas de commit tant que l'utilisateur ne le demande pas.
 
@@ -381,39 +381,40 @@ Rapport entre vitesse de renversement et vitesse limite attendu : environ 1,5 su
 
 ### Phase 1 — Brique commune (un agent, avant le reste)
 
-- [ ] 1.1 Point de passage unique « rail remplacé » dans le domaine, appelé par les quatre fonctions qui remplacent un rail ; les tables d'itinéraires passent par lui ; `splitSegment` fait remonter son point de coupe exact
-- [ ] 1.2 Recalage d'un `TrackSpan` et d'une `TrackPosition` : coupe, fusion, rail inversé, doublon supprimé ; suppression d'un rail = tronçon retiré
-- [ ] 1.3 `net.speedZones` : création, modification, suppression, nettoyage des zones vides, index `rail → zones` mis en cache
-- [ ] 1.4 Chemin de A à B sur la voie, d'un point quelconque à un autre (enveloppe autour de `findPath`, qui ne va que de nœud à nœud) : refus si aucun chemin, plus court chemin sinon, aiguilles ignorées
-- [ ] 1.5 Sauvegarde : zones écrites seulement s'il y en a, lues après la réconciliation du chargement, identifiants pris en compte par le compteur ; undo / redo
-- [ ] 1.6 Tests : une zone survit à chaque opération (ciseaux, aiguillage posé dedans, croisement créé par une autre voie, nœud dissous, voie déplacée, changement de niveau, rechargement, annulation)
+- [x] 1.1 Point de passage unique « rail remplacé » dans le domaine, appelé par les quatre fonctions qui remplacent un rail ; les tables d'itinéraires passent par lui ; `splitSegment` fait remonter son point de coupe exact
+- [x] 1.2 Recalage d'un `TrackSpan` et d'une `TrackPosition` : coupe, fusion, rail inversé, doublon supprimé ; suppression d'un rail = tronçon retiré
+- [x] 1.3 `net.speedZones` : création, modification, suppression, nettoyage des zones vides, index `rail → zones` mis en cache
+- [x] 1.4 Chemin de A à B sur la voie, d'un point quelconque à un autre (enveloppe autour de `findPath`, qui ne va que de nœud à nœud) : refus si aucun chemin, plus court chemin sinon, aiguilles ignorées
+- [x] 1.5 Sauvegarde : zones écrites seulement s'il y en a, lues après la réconciliation du chargement, identifiants pris en compte par le compteur ; undo / redo
+- [x] 1.6 Tests : une zone survit à chaque opération (ciseaux, aiguillage posé dedans, croisement créé par une autre voie, nœud dissous, voie déplacée, changement de niveau, rechargement, annulation)
 
 ### Phase 2 — Agent A : domaine (limites, dévers, conduite)
 
-- [ ] A1. `domain/models/cant.ts` : dévers d'équilibre, dévers automatique, vitesse maximale d'une courbe, insuffisance admise ; reconnaissance d'une courbe (suite de pièces de même sens et de rayon voisin) et rampe de dévers à ses deux bouts
-- [ ] A2. Limite en un point de la voie et sous une rame (règle tête / queue) ; vitesse qui sert au dévers automatique d'une courbe = limite qui s'y applique
-- [ ] A2 bis. Chevauchements : portions communes à deux zones, exposées pour le diagnostic et le panneau
-- [ ] A3. Regard vers l'avant le long de l'itinéraire (aiguilles dans leur position du moment) : prochaine limite plus basse et sa distance, sur une portée d'au moins la distance d'arrêt
-- [ ] A4. `trainDynamics` : `speedLimit`, `nextSpeedLimit` et sa distance, insuffisance de dévers et accélération non compensée, état de la courbe ; coût par image maîtrisé (résultats mis en cache tant que le réseau ne change pas)
-- [ ] A5. Déraillement : `derailed`, arrêt d'urgence verrouillé, `rerailTrain` qui remet la rame sur la voie à l'arrêt, freins serrés
-- [ ] A6. Sauvegarde de `lineSpeed`, `lineType` et du dévers corrigé ; une coupe transmet le dévers corrigé aux deux moitiés
-- [ ] A7. Tests de contrôle (voir plus bas)
+- [x] A1. `domain/models/cant.ts` : dévers d'équilibre, dévers automatique, vitesse maximale d'une courbe, insuffisance admise ; reconnaissance d'une courbe (suite de pièces de même sens et de rayon voisin) et rampe de dévers à ses deux bouts
+- [x] A2. Limite en un point de la voie et sous une rame (règle tête / queue) ; vitesse qui sert au dévers automatique d'une courbe = limite qui s'y applique
+- [x] A2 bis. Chevauchements : portions communes à deux zones, exposées pour le diagnostic et le panneau
+- [x] A3. Regard vers l'avant le long de l'itinéraire (aiguilles dans leur position du moment) : prochaine limite plus basse et sa distance, sur une portée d'au moins la distance d'arrêt
+- [x] A4. `trainDynamics` : `speedLimit`, `nextSpeedLimit` et sa distance, insuffisance de dévers et accélération non compensée, état de la courbe ; coût par image maîtrisé (résultats mis en cache tant que le réseau ne change pas)
+- [x] A5. Déraillement : `derailed`, arrêt d'urgence verrouillé, `rerailTrain` qui remet la rame sur la voie à l'arrêt, freins serrés
+- [x] A6. Sauvegarde de `lineSpeed`, `lineType` et du dévers corrigé ; une coupe transmet le dévers corrigé aux deux moitiés
+- [x] A7. Tests de contrôle (voir plus bas)
 
 ### Phase 2 — Agent B : outil, canevas, panneaux, HUD
 
-- [ ] B0. Mode « Signalisation » de la barre de gauche, sur le modèle du mode train : bouton d'entrée, sous-modes (sélection, limite de vitesse, suppression), retour par Échap ; les zones ne sont sélectionnables et modifiables que dans ce mode, et restent visibles en dehors
-- [ ] B1. Outil « Limite de vitesse » à deux clics, sur le modèle de la mesure : aimant sur la voie, aperçu du trajet et de sa longueur au survol, vitesse réglable dans la barre contextuelle (pas de 10 km/h), Échap en deux temps, raccourci, refus signalé hors voie ou sans chemin
-- [ ] B2. Dessin sobre, dans l'esprit des pentes : un liseré le long de la portion limitée (passe des rails, pour suivre ponts et tunnels) et, à ses deux bouts, la vitesse et les lettres Z / R des pancartes réelles ; masqué au zoom lointain
-- [ ] B3. Sélection d'une zone au clic, panneau latéral (vitesse, longueur, zones chevauchées, supprimer), suppression au clavier, une étape d'annulation par action ; alerte de chevauchement à la pose et marqueur de diagnostic sur la portion commune
-- [ ] B4. Paramètres : « Type de ligne » et « Vitesse de ligne », avec les préréglages
-- [ ] B5. Panneau du segment courbe : rayon, dévers (automatique ou corrigé), vitesse maximale de la courbe
-- [ ] B6. HUD : cadran de vitesse en couleur (blanc, jaune, orange, rouge selon le tableau des décisions) avec un repère plein à la limite en cours et un repère creux à la prochaine ; limite en cours (blanc sur noir), prochaine limite (noir sur blanc) avec sa distance ; état de la courbe ; panneau de déraillement avec le bouton « Remettre sur la voie »
-- [ ] B7. Tests du store, de la barre contextuelle et du modèle du HUD
+- [x] B0. Mode « Signalisation » de la barre de gauche, sur le modèle du mode train : bouton d'entrée, sous-modes (sélection, limite de vitesse, suppression), retour par Échap ; les zones ne sont sélectionnables et modifiables que dans ce mode, et restent visibles en dehors
+- [x] B1. Outil « Limite de vitesse » à deux clics, sur le modèle de la mesure : aimant sur la voie, aperçu du trajet et de sa longueur au survol, vitesse réglable dans la barre contextuelle (pas de 10 km/h), Échap en deux temps, raccourci, refus signalé hors voie ou sans chemin
+- [x] B2. Dessin sobre, dans l'esprit des pentes : un liseré le long de la portion limitée (passe des rails, pour suivre ponts et tunnels) et, à ses deux bouts, la vitesse et les lettres Z / R des pancartes réelles ; masqué au zoom lointain
+- [x] B3. Sélection d'une zone au clic, panneau latéral (vitesse, longueur, zones chevauchées, supprimer), suppression au clavier, une étape d'annulation par action ; alerte de chevauchement à la pose et marqueur de diagnostic sur la portion commune
+- [x] B4. Paramètres : « Type de ligne » et « Vitesse de ligne », avec les préréglages
+- [x] B5. Panneau du segment courbe : rayon, dévers (automatique ou corrigé), vitesse maximale de la courbe
+- [x] B6. HUD : cadran de vitesse en couleur (blanc, jaune, orange, rouge selon le tableau des décisions) avec un repère plein à la limite en cours et un repère creux à la prochaine ; limite en cours (blanc sur noir), prochaine limite (noir sur blanc) avec sa distance ; état de la courbe ; panneau de déraillement avec le bouton « Remettre sur la voie »
+- [x] B7. Tests du store, de la barre contextuelle et du modèle du HUD
 
 ### Vérification finale
 
-- [ ] `npm test`, `npm run typecheck`, `npm run build`, relecture du diff
-- [ ] Navigateur : poser une zone, la couper aux ciseaux, y brancher une voie, annuler ; courbe à la limite, en survitesse, déraillement et remise sur la voie ; prochaine limite annoncée à temps pour freiner
+- [x] `npm test`, `npm run typecheck`, `npm run build`, relecture du diff
+- [x] Navigateur sans écran : zone posée avec l'outil (800 m, 80 km/h), seconde zone chevauchante et son alerte, dessin de la zone et de sa pancarte, limite 160 et prochaine limite 80 annoncée avec sa distance au poste de conduite
+- [ ] Contrôle à l'œil par l'utilisateur : zone coupée aux ciseaux et annulation à l'écran, courbe à la limite et en survitesse, déraillement et « Remettre sur la voie », couleurs du cadran, champ de dévers, paramètres de ligne, pupitre du téléphone
 
 ## Tests de contrôle
 
@@ -442,6 +443,22 @@ Rapport entre vitesse de renversement et vitesse limite attendu : environ 1,5 su
 | Voie sans dévers | R 500 m, I 150 mm | 80 km/h | calcul |
 
 Comportements : une courbe plus serrée que ce que la ligne permet abaisse la limite de sa section ; un dévers corrigé à la main change la vitesse de la courbe ; la prochaine limite est annoncée avant d'y être ; un fichier sans ces champs se charge et se resauvegarde à l'identique.
+
+## Revue (2026-10-05)
+
+- `npm test` : 1353 tests verts (73 fichiers, 221 nouveaux) ; `npm run typecheck` et `npm run build` verts, relancés après relecture.
+- Vu dans un navigateur sans écran : touche S, premier clic, aperçu « 2/2 · 80 km/h · 500 m », zone de 800 m posée et sauvegardée ; seconde zone chevauchante et son message ; bande ambre et pancarte « Z 80 » ; en conduite, repère plein à 160 et creux à 80 sur le cadran, « Limite 160 », prochaine limite 80 à 858 m. Aucune erreur dans la console.
+- Tests de contrôle, tous verts : Eckwersheim 160 km/h → insuffisance 157 mm, admise ; 176 km/h → 224 mm, inconfort ; 235 km/h → 526 mm, déraillement ; LGV Sud-Est 4 000 m à 300 km/h → 86 mm ; dévers automatique d'une courbe de 1 000 m à 160 → 155 mm ; règle tête / queue ; zone à 160 annoncée à 5 km à 300 km/h ; chevauchement de 200 m signalé ; fichier sans ces champs resauvegardé à l'identique.
+- Écarts au plan :
+  - zones relues **avant** la réconciliation du chargement (comme les tables d'itinéraires), sinon une zone posée sur un rail recoupé au chargement perdait son rail ;
+  - zones dessinées en bande translucide sous les rails plutôt qu'en liseré fin ;
+  - l'arc du cadran passe du bleu au blanc en marche normale, conformément au tableau des couleurs ;
+  - l'état de la courbe remplace la légende « km/h » du cadran au lieu d'un indicateur à part ;
+  - `k` = 0,508 sur ligne classique (règle SNCF `6·V²/R`) au lieu de 0,5, pour retrouver les 155 mm du cas de contrôle ;
+  - le protocole du pupitre téléphone a été étendu (limites, commande de remise sur la voie), version inchangée ;
+  - vitesse et type de ligne écrits dans le fichier seulement s'ils diffèrent du défaut.
+- Choix faits par les agents, à confirmer : inconfort jusqu'à 300 mm d'insuffisance inclus, danger au-delà (entrer dans une courbe pile à sa limite donne un orange passager, jamais rouge) ; entrer ou sortir de la conduite n'efface pas un déraillement, mais un rechargement ou une annulation l'efface ; après déraillement la rame s'arrête au freinage d'urgence normal (environ 1,9 km depuis 235 km/h).
+- Restes connus : voir « Limites de vitesse et dévers » dans les défauts connus.
 
 ## Décisions de l'utilisateur (2026-10-05)
 
@@ -623,6 +640,19 @@ Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été
 - À l'arrêt en urgence, « un cran de moins » sur N lève le verrou d'urgence (et met maintenant le manipulateur sur B1)
 - Frein électrique : sous 10 km/h le HUD affiche encore « B5 · 100 % » alors que l'effort est nul ; la distance d'arrêt l'ignore ; puissance et vitesse d'effacement estimées
 - Ruban de distance d'arrêt du debug anguleux en courbe serrée (échantillonnage limité à 150 pas)
+
+## Limites de vitesse et dévers
+
+- Le dévers n'apparaît que pour un rail sélectionné seul : un clic simple sur une voie sélectionne la section et ouvre un autre panneau
+- Le message de chevauchement revient à chaque pas du compteur de vitesse tant que la zone en chevauche une autre
+- Pas d'export SVG des zones ; clic droit pendant la pose d'une zone : ouvre le menu contextuel au lieu d'annuler (comme la mesure)
+- Trains toujours supprimés quand on coupe le rail sous eux (la brique « rail remplacé » permet de le corriger)
+- Zone partielle sur un rail dont on déplace un bout : elle s'étire avec le rail
+- Un dévers posé à la main peut être perdu par une édition qui recrée le rail courbe sans passer par la découpe ; il n'est pas réduit sur une courbe trop courte
+- Rampe de dévers tronquée à un aiguillage, absente entre deux courbes de même sens
+- Écartement modifié à la main (échelle « custom ») : traité comme hors 1:1, donc sans dévers
+- Vérification du profil de voie à chaque image : 0,14 à 0,25 ms pour 4 000 rails, linéaire
+- Seuil de renversement calé sur un seul accident ; valeurs du TGV M recopiées du Duplex
 
 ## Niveaux et pentes
 

@@ -69,6 +69,14 @@ describe('keybindings — matching', () => {
     expect(findAction(bindings, 'edit', press('KeyV', 'V', true))).toBe('tool.select')
   })
 
+  it('gives the speed limit tool the letter S, in the editor only', () => {
+    expect(bindings['tool.speedZone']).toEqual([{ key: 's' }, null])
+    expect(findAction(bindings, 'edit', press('KeyS', 's'))).toBe('tool.speedZone')
+    // While driving the same key position is the reverser
+    expect(findAction(bindings, 'drive', press('KeyS', 's'))).toBe('drive.reverserBackward')
+    expect(findConflict(bindings, 'tool.speedZone', press('KeyS', 's'))).toBeNull()
+  })
+
   it('tool keys follow the printed letter, not the position', () => {
     // AZERTY: the letter M sits on the Semicolon position; the KeyM position prints a comma
     expect(findAction(bindings, 'edit', press('Semicolon', 'm'))).toBe('tool.measure')

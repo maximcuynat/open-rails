@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { HalfDial, HalfGauge, KeyCap, NotchScale } from './instruments'
-import { BrakeHoldButton, ConsoleTools, ReverserControl, type ConsolePartProps } from './consoleParts'
+import { BrakeHoldButton, ConsoleTools, LimitCorners, ReverserControl, SpeedCaption, type ConsolePartProps } from './consoleParts'
 import { BRAKE_CYLINDER_GAUGE, BRAKE_PIPE_GAUGE, notchStops } from './consoleModel'
 
 /** Console A — a desk along the bottom of the window: brake on the left, speed in the middle, traction on the right */
@@ -40,8 +40,9 @@ export function BandConsole(props: ConsolePartProps) {
             Arrêt en<b>{view.stopping}</b>{view.rank !== null ? `Train ${view.rank}/${view.fleetSize}` : view.model ?? 'Train'}
             <b>{view.composition}</b>
           </div>
-          <HalfDial ratio={view.speedRatio} maxKmh={view.maxKmh} />
-          <div className="console-speed">{view.kmh}<small>KM/H</small></div>
+          <HalfDial ratio={view.speedRatio} maxKmh={view.maxKmh} guide={view} />
+          <div className={`console-speed speed-${view.speedTone}`}>{view.kmh}<small><SpeedCaption view={view} unit="KM/H" /></small></div>
+          <LimitCorners view={view} />
           <ReverserControl {...props} />
         </div>
 
