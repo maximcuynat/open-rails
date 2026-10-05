@@ -108,12 +108,16 @@ const cam = () => createCamera(100, 0, SCALE)
 const GROUND_START_X = VW / 2 - 100 * SCALE // screen x of world x = 0
 const UPPER_START_Y = VH / 2 - 50 * SCALE // screen y of world y = −50
 /** Strokes of the ground track: they all start at its left end (world x = 0) */
-const isGroundStroke = (op: Op) => op.name === 'stroke' && !!op.start && near(op.start[0], GROUND_START_X, 4)
+/** Buffer stop closing an end of track: its red beam and its struts, drawn with the overlays */
+const isBufferStopStroke = (op: Op) => op.name === 'stroke' && (op.strokeStyle === '#dc2626' || op.strokeStyle === '#334155')
+const isBufferBeam = (op: Op) => op.name === 'stroke' && !!op.start && op.strokeStyle === '#dc2626'
+const isGroundStroke = (op: Op) =>
+  op.name === 'stroke' && !!op.start && near(op.start[0], GROUND_START_X, 4) && !isBufferStopStroke(op)
 /** Rails of the ground track: its strokes off the centreline */
 const isGroundRailStroke = (op: Op) => isGroundStroke(op) && !near(op.start![1], VH / 2)
 /** Rails of the crossing track: thin strokes starting at its top end, either side of the centreline */
 const isUpperRailStroke = (op: Op) =>
-  op.name === 'stroke' && !!op.start && near(op.start[1], UPPER_START_Y, 1) &&
+  op.name === 'stroke' && !!op.start && near(op.start[1], UPPER_START_Y, 1) && !isBufferStopStroke(op) &&
   near(op.start[0], VW / 2, 4) && !near(op.start[0], VW / 2) && (op.lineWidth ?? 0) < 3
 const isDeckStroke = (op: Op) => op.name === 'stroke' && near(op.lineWidth ?? 0, DECK_WIDTH * SCALE)
 /** Body of a TrainSet vehicle (the translucent outline fill of `drawTrainSetBody`) */
@@ -193,8 +197,8 @@ describe('track levels — rails', () => {
 
   it('simplified view: order and an edging in the background colour around the upper rail, nothing else', () => {
     const far = createCamera(100, 0, 0.02)
-    // Strokes of a traced line (the signs on top are arcs, without `moveTo`)
-    const lines = (ops: Op[]) => ops.filter((op) => op.name === 'stroke' && op.start)
+    // Strokes of a traced line, the buffer stops at the ends of the tracks aside
+    const lines = (ops: Op[]) => ops.filter((op) => op.name === 'stroke' && op.start && !isBufferStopStroke(op))
     const strokes = lines(drawPlain(crossingTracks(1).net, far))
     // Ground line, then edging + line of the upper rail
     expect(strokes.map((op) => op.lineWidth)).toEqual([2.5, 6.5, 2.5])
@@ -339,8 +343,8 @@ describe('track levels — trains', () => {
     const { net } = crossingTracks(1)
     const { ops } = drawLayered(net, [wagonOn(net, { x: 85, y: 0 })])
 
-    // End-of-track signs: one per open end, as in a plain rendering of the network
-    const signs = (list: Op[]) => indices(list, (op) => op.name === 'arc' && op.fillStyle === '#dc2626')
+    // Buffer stops: one per open end, as in a plain rendering of the network
+    const signs = (list: Op[]) => indices(list, isBufferBeam)
     expect(signs(ops)).toHaveLength(4)
     expect(signs(drawPlain(net))).toHaveLength(4)
     expect(Math.min(...signs(ops))).toBeGreaterThan(indices(ops, isBodyFill)[0])

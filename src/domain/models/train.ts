@@ -355,14 +355,7 @@ function freeDistanceAhead(
   obstacles: TrainSet[],
   occupancy?: TrainOccupancyCache,
 ): number | null {
-  // The end of the train that leads the move: nose of the lead vehicle, or tail of the last one in reverse
-  const reversing = train.direction === -1
-  const lastIdx = train.vehicles.length - 1
-  const veh = reversing ? train.vehicles[lastIdx] : train.vehicles[0]
-  const overhang = reversing ? endOverhang(train.vehicles, lastIdx, 'rear') : endOverhang(train.vehicles, 0, 'front')
-  const ahead: WalkTrace = { spans: [], nodes: [] }
-  if (reversing) walkBackward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, overhang + reach, { trace: ahead })
-  else walkForward(net, veh.front.segId, veh.front.t, veh.front.forward, overhang + reach, { trace: ahead })
+  const { ahead, overhang } = traceAhead(net, train, reach)
 
   const occupied = obstacles.flatMap((other) => {
     let trace = occupancy?.get(other.id)
@@ -392,11 +385,42 @@ function freeDistanceAhead(
 }
 
 /**
+ * Walk the route ahead of the end of the train that leads the move — nose of the lead vehicle, or
+ * tail of the last one in reverse — up to `reach` meters past that end. The trace starts at the
+ * bogie under that end, `overhang` meters behind it.
+ */
+function traceAhead(net: Network, train: TrainSet, reach: number): { ahead: WalkTrace; overhang: number } {
+  const reversing = train.direction === -1
+  const lastIdx = train.vehicles.length - 1
+  const veh = reversing ? train.vehicles[lastIdx] : train.vehicles[0]
+  const overhang = reversing ? endOverhang(train.vehicles, lastIdx, 'rear') : endOverhang(train.vehicles, 0, 'front')
+  const ahead: WalkTrace = { spans: [], nodes: [] }
+  if (reversing) walkBackward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, overhang + reach, { trace: ahead })
+  else walkForward(net, veh.front.segId, veh.front.t, veh.front.forward, overhang + reach, { trace: ahead })
+  return { ahead, overhang }
+}
+
+/**
+ * Track left (meters) ahead of the leading end of the train before the track ends for it — a
+ * buffer stop, or points set against it — looking `reach` meters ahead. Returns null when the
+ * track goes on further than that; 0 or less means the end of the train is at the end or past it.
+ */
+export function trackLeftAhead(net: Network, train: TrainSet, reach: number): number | null {
+  if (train.vehicles.length === 0) return null
+  const { ahead, overhang } = traceAhead(net, train, reach)
+  const walked = ahead.spans.reduce((sum, span) => sum + segmentPartialLength(net, span.segId, span.t0, span.t1), 0)
+  return walked >= overhang + reach - 1e-6 ? null : walked - overhang
+}
+
+/**
  * Advance a TrainSet by deltaMeters * direction.
  * The lead vehicle moves first; all followers are recalculated via walkBackward.
  * All-or-nothing: when any vehicle cannot follow (dead end, switch set against the train), nothing
  * moves and false is returned. Followers still on a turnout branch stay on it whatever the switch
  * says, so points thrown under the train cannot make them jump to the other branch.
+ *
+ * The move is shortened so that the leading end of the train — not the bogie under it — stops at
+ * the end of the track (a buffer stop, points set against the train); false is then returned.
  *
  * `others` are the trains to collide with (the train itself is ignored): the move is shortened so
  * that the train stops a coupling gap short of the nearest one ahead, and false is returned as for
@@ -413,6 +437,14 @@ export function advanceTrainSet(
   if (train.vehicles.length === 0) return false
 
   let blocked = false
+  if (deltaMeters > 0) {
+    const left = trackLeftAhead(net, train, deltaMeters)
+    if (left !== null) {
+      deltaMeters = left
+      blocked = true
+      if (deltaMeters < 1e-6) return false
+    }
+  }
   const obstacles = others.filter((other) => other !== train && other.id !== train.id && other.vehicles.length > 0)
   if (obstacles.length > 0 && deltaMeters > 0) {
     const free = freeDistanceAhead(net, train, deltaMeters + COUPLING_GAP, obstacles, occupancy)

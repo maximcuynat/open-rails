@@ -993,45 +993,12 @@ export function renderNetwork(
     }
   }
 
-  // 4. END OF TRACK / FIN DE VOIE (Sens interdit logique sur chaque fin de voie / impasse)
-  if (!hideConstructionNodes) {
-    for (const node of net.nodes.values()) {
-      if (!isPointInBounds(node.pos, bounds)) continue
-      const adj = net.adjacency.get(node.id) ?? []
-      if (adj.length === 1) {
-        const sx = (node.pos.x - cam.x) * cam.scale + vw / 2
-        const sy = (node.pos.y - cam.y) * cam.scale + vh / 2
-
-        ctx.save()
-        const signR = Math.max(7, Math.min(11, 1.8 * cam.scale))
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
-        ctx.shadowBlur = 5
-        ctx.shadowOffsetY = 1.5
-
-        // Red circle with white border
-        ctx.fillStyle = '#dc2626'
-        ctx.strokeStyle = '#ffffff'
-        ctx.lineWidth = 1.5
-        ctx.beginPath()
-        ctx.arc(sx, sy, signR, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-
-        // White horizontal bar
-        ctx.shadowColor = 'transparent'
-        const barW = signR * 1.35
-        const barH = Math.max(2.2, signR * 0.35)
-        ctx.fillStyle = '#ffffff'
-        ctx.beginPath()
-        if (typeof ctx.roundRect === 'function') {
-          ctx.roundRect(sx - barW / 2, sy - barH / 2, barW, barH, barH / 2)
-        } else {
-          ctx.rect(sx - barW / 2, sy - barH / 2, barW, barH)
-        }
-        ctx.fill()
-
-        ctx.restore()
-      }
+  // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
+  // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
+  for (const node of net.nodes.values()) {
+    if (!isPointInBounds(node.pos, bounds)) continue
+    if ((net.adjacency.get(node.id) ?? []).length === 1) {
+      renderBufferStop(ctx, cam, node, net, vw, vh, options?.gauge ?? GAUGE)
     }
   }
 
@@ -1057,7 +1024,18 @@ export function renderNetwork(
         ctx.arc(sx, sy, 4, 0, Math.PI * 2)
         ctx.fill()
       } else if (connectionCount === 1) {
-        // Dead end already rendered with clean Sens Interdit sign
+        // End of track: a snap point, where the track can be carried on
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = accent
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(sx, sy, 5.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = accent
+        ctx.beginPath()
+        ctx.arc(sx, sy, 2, 0, Math.PI * 2)
+        ctx.fill()
       } else if (connectionCount === 0) {
         // Isolated / orphan node (0 connected tracks): render clear visible indicator so it is never an invisible ghost
         ctx.save()
@@ -2582,8 +2560,9 @@ export function renderDiamondCrossingDetails(
 }
 
 /**
- * Render authentic railway buffer stop (heurtoir de voie à poutre rouge et tampons)
- * on dead-end track endpoints (Layer 4 mechanical details).
+ * Buffer stop (heurtoir) closing a track at a dead-end node: a red beam across the end of the
+ * rails with its two buffers, held by two struts bolted on the rails. Sized from the gauge, with
+ * a minimum on screen so the end of a track still shows when zoomed out.
  */
 export function renderBufferStop(
   ctx: CanvasRenderingContext2D,
@@ -2592,12 +2571,14 @@ export function renderBufferStop(
   net: Network,
   vw: number,
   vh: number,
+  gauge = GAUGE,
 ): void {
   const segId = net.adjacency.get(node.id)?.[0]
   if (!segId) return
   const seg = net.segments.get(segId)
   if (!seg) return
 
+  // Direction in which the track runs off its end
   let forwardDir: Point | null = null
   if (node.id === seg.to) {
     forwardDir = segmentTangentAt(net, seg, seg.to)
@@ -2605,101 +2586,61 @@ export function renderBufferStop(
     const t = segmentTangentAt(net, seg, seg.from)
     if (t) forwardDir = { x: -t.x, y: -t.y }
   }
-
   if (!forwardDir) return
 
   const s = cam.scale
-  const hg = GAUGE / 2
+  const hg = gauge / 2
   const uF = forwardDir
   const uP = { x: -uF.y, y: uF.x }
+  const at = (along: number, across: number): [number, number] =>
+    w2s({ x: node.pos.x + uF.x * along + uP.x * across, y: node.pos.y + uF.y * along + uP.y * across }, cam, vw, vh)
+
+  // Half-width of the beam: a little wider than the track, at least 5 px
+  const beamHalf = Math.max(hg * 1.45, 5 / s)
 
   ctx.save()
 
-  // 1. Concrete / ballast anchor foundation behind the stop
-  if (s >= 1.0) {
-    const moundCenter = { x: node.pos.x + uF.x * 6, y: node.pos.y + uF.y * 6 }
-    const m1 = w2s({ x: moundCenter.x + uP.x * (hg + 3.5), y: moundCenter.y + uP.y * (hg + 3.5) }, cam, vw, vh)
-    const m2 = w2s({ x: moundCenter.x - uP.x * (hg + 3.5), y: moundCenter.y - uP.y * (hg + 3.5) }, cam, vw, vh)
-    const m3 = w2s({ x: moundCenter.x - uP.x * (hg + 2) + uF.x * 5, y: moundCenter.y - uP.y * (hg + 2) + uF.y * 5 }, cam, vw, vh)
-    const m4 = w2s({ x: moundCenter.x + uP.x * (hg + 2) + uF.x * 5, y: moundCenter.y + uP.y * (hg + 2) + uF.y * 5 }, cam, vw, vh)
-
-    ctx.fillStyle = '#94a3b8'
+  // Struts from the rails up to the beam, once there is room to see them
+  if (hg * s >= 3) {
+    const strutLen = gauge * 1.6
+    ctx.strokeStyle = '#334155'
+    ctx.lineWidth = Math.max(1.2, 0.12 * s)
+    ctx.lineCap = 'round'
     ctx.beginPath()
-    ctx.moveTo(m1[0], m1[1])
-    ctx.lineTo(m2[0], m2[1])
-    ctx.lineTo(m3[0], m3[1])
-    ctx.lineTo(m4[0], m4[1])
-    ctx.closePath()
-    ctx.fill()
-    ctx.strokeStyle = '#64748b'
-    ctx.lineWidth = 1
+    for (const side of [1, -1]) {
+      const foot = at(-strutLen, side * hg)
+      const head = at(0, side * hg)
+      ctx.moveTo(foot[0], foot[1])
+      ctx.lineTo(head[0], head[1])
+    }
     ctx.stroke()
   }
 
-  // 2. Heavy diagonal steel brace struts (jambes de force) bolted onto the rails
-  const strutLen = 14
-  const strutRailLeft = w2s({ x: node.pos.x - uF.x * strutLen + uP.x * hg, y: node.pos.y - uF.y * strutLen + uP.y * hg }, cam, vw, vh)
-  const strutRailRight = w2s({ x: node.pos.x - uF.x * strutLen - uP.x * hg, y: node.pos.y - uF.y * strutLen - uP.y * hg }, cam, vw, vh)
-  const strutHeadLeft = w2s({ x: node.pos.x + uF.x * 1.5 + uP.x * hg, y: node.pos.y + uF.y * 1.5 + uP.y * hg }, cam, vw, vh)
-  const strutHeadRight = w2s({ x: node.pos.x + uF.x * 1.5 - uP.x * hg, y: node.pos.y + uF.y * 1.5 - uP.y * hg }, cam, vw, vh)
-
-  ctx.strokeStyle = '#334155'
-  ctx.lineWidth = Math.max(1.8, 2.2 * s)
-  ctx.lineCap = 'square'
-
-  ctx.beginPath()
-  ctx.moveTo(strutRailLeft[0], strutRailLeft[1])
-  ctx.lineTo(strutHeadLeft[0], strutHeadLeft[1])
-  ctx.moveTo(strutRailRight[0], strutRailRight[1])
-  ctx.lineTo(strutHeadRight[0], strutHeadRight[1])
-  // Cross diagonal brace
-  ctx.moveTo(strutRailLeft[0], strutRailLeft[1])
-  ctx.lineTo(strutHeadRight[0], strutHeadRight[1])
-  ctx.stroke()
-
-  // 3. Heavy red buffer crossbeam (traverse rouge de butoir)
-  const beamHalfW = hg + 3.8
-  const beamCenter = { x: node.pos.x + uF.x * 2.0, y: node.pos.y + uF.y * 2.0 }
-  const b1 = w2s({ x: beamCenter.x + uP.x * beamHalfW, y: beamCenter.y + uP.y * beamHalfW }, cam, vw, vh)
-  const b2 = w2s({ x: beamCenter.x - uP.x * beamHalfW, y: beamCenter.y - uP.y * beamHalfW }, cam, vw, vh)
-
+  // Red beam across the end of the track
+  const b1 = at(0, beamHalf)
+  const b2 = at(0, -beamHalf)
   ctx.strokeStyle = '#dc2626'
-  ctx.lineWidth = Math.max(3.0, 4.0 * s)
+  ctx.lineWidth = Math.max(3, 0.3 * s)
   ctx.lineCap = 'butt'
   ctx.beginPath()
   ctx.moveTo(b1[0], b1[1])
   ctx.lineTo(b2[0], b2[1])
   ctx.stroke()
 
-  // 4. White reflective center target (cible blanche réglementaire)
-  const centerScr = w2s(beamCenter, cam, vw, vh)
-  const targetR = Math.max(1.8, 2.4 * s)
-  ctx.fillStyle = '#ffffff'
-  ctx.beginPath()
-  ctx.arc(centerScr[0], centerScr[1], targetR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#dc2626'
-  ctx.lineWidth = 1
-  ctx.stroke()
-
-  // 5. Dual circular buffer pads (tampons de butoir) aligned with each rail
-  const bufLeft = w2s({ x: beamCenter.x + uP.x * hg, y: beamCenter.y + uP.y * hg }, cam, vw, vh)
-  const bufRight = w2s({ x: beamCenter.x - uP.x * hg, y: beamCenter.y - uP.y * hg }, cam, vw, vh)
-  const padR = Math.max(1.5, 2.0 * s)
-
-  ctx.fillStyle = '#0f172a'
-  ctx.strokeStyle = '#475569'
-  ctx.lineWidth = 1
-
-  ctx.beginPath()
-  ctx.arc(bufLeft[0], bufLeft[1], padR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.stroke()
-
-  ctx.beginPath()
-  ctx.arc(bufRight[0], bufRight[1], padR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.stroke()
+  // Buffers facing the track, one in line with each rail
+  if (hg * s >= 3) {
+    const padR = Math.max(1.5, 0.16 * s)
+    ctx.fillStyle = '#0f172a'
+    ctx.strokeStyle = '#f8fafc'
+    ctx.lineWidth = 1
+    for (const side of [1, -1]) {
+      const pad = at(-0.22, side * hg)
+      ctx.beginPath()
+      ctx.arc(pad[0], pad[1], padR, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+    }
+  }
 
   ctx.restore()
 }

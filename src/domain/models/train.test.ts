@@ -29,6 +29,7 @@ import {
   deserializeTrains,
   pruneTrainsToNetwork,
   steerTrainSetJunction,
+  trackLeftAhead,
   trainRouteStart,
   isJunctionOccupied,
   handleCouplingClick,
@@ -784,7 +785,7 @@ const frontEnd = (net: Network, train: TrainSet) => vehicleFrontEndPos(net, trai
 const rearEnd = (net: Network, train: TrainSet) => vehicleRearEndPos(net, train.vehicles[train.vehicles.length - 1])!
 
 describe('advanceTrainSet is all-or-nothing', () => {
-  it('reversing into a buffer stop leaves the whole train where it was', () => {
+  it('reversing into a buffer stop brings the tail up to it, then leaves the whole train where it is', () => {
     const { net, segId } = makeStraightNetwork(600)
     const train = consist(net, segId, 0.5, 4) // nose towards +x, wagons towards the buffer at x=0
     const spacing = (pts: { x: number }[]) => pts.slice(1).map((p, i) => pts[i].x - p.x)
@@ -796,16 +797,34 @@ describe('advanceTrainSet is all-or-nothing', () => {
       const before = JSON.stringify(train.vehicles)
       if (!advanceTrainSet(net, train, 0.5)) {
         refused++
-        expect(JSON.stringify(train.vehicles)).toBe(before)
+        // The first refusal is the last, shortened step up to the buffer; after it nothing moves
+        if (refused > 1) expect(JSON.stringify(train.vehicles)).toBe(before)
       }
     }
 
     expect(refused).toBeGreaterThan(0)
     const after = bogiePoints(net, train)
     spacing(after).forEach((gap, i) => expect(gap).toBeCloseTo(laidOut[i], 6))
-    // The last bogie stands within one step of the buffer, never beyond it
-    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(0)
-    expect(after[after.length - 1].x).toBeLessThan(0.5)
+    // The tail of the train stands on the buffer, its last bogie never beyond it
+    expect(rearEnd(net, train).x).toBeCloseTo(0, 6)
+    expect(after[after.length - 1].x).toBeGreaterThanOrEqual(-1e-9)
+  })
+
+  it('running forward, stops with its nose on the end of the track, not its leading bogie', () => {
+    const { net, segId } = makeStraightNetwork(600)
+    const train = consist(net, segId, 0.5, 2)
+    expect(trackLeftAhead(net, train, 50)).toBeNull()
+
+    let steps = 0
+    while (advanceTrainSet(net, train, 0.5) && steps < 2000) steps++
+
+    expect(frontEnd(net, train).x).toBeCloseTo(600, 6)
+    expect(bogiePoints(net, train)[0].x).toBeLessThan(599)
+    expect(trackLeftAhead(net, train, 50)).toBeCloseTo(0, 6)
+    // Nothing more to gain by insisting
+    const before = JSON.stringify(train.vehicles)
+    expect(advanceTrainSet(net, train, 0.5)).toBe(false)
+    expect(JSON.stringify(train.vehicles)).toBe(before)
   })
 
   it('does not move the lead when a follower has no track to stand on', () => {
@@ -1005,13 +1024,15 @@ describe('sharp corners and crossings', () => {
       const { net, first, second } = corner(angle)
       const train = consist(net, first.id, 0.5, 0)
       for (let i = 0; i < 150; i++) advanceTrainSet(net, train, 0.5)
+      // The nose stops on the corner, the bogie under it short of it
       expect(train.vehicles[0].front.segId).toBe(first.id)
-      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeCloseTo(0, 6)
+      expect(frontEnd(net, train).x).toBeCloseTo(0, 6)
+      expect(positionOnSegment(net, first.id, train.vehicles[0].front.t)!.x).toBeLessThan(-1)
 
       const back = consist(net, second.id, 0.5, 0, -1)
       for (let i = 0; i < 150; i++) advanceTrainSet(net, back, 0.5)
       expect(back.vehicles[0].front.segId).toBe(second.id)
-      expect(back.vehicles[0].front.t).toBeCloseTo(0, 6)
+      expect(Math.hypot(frontEnd(net, back).x, frontEnd(net, back).y)).toBeCloseTo(0, 6)
     }
   })
 
@@ -1030,7 +1051,7 @@ describe('sharp corners and crossings', () => {
     const fromStub = consist(net, stub.id, 0.5, 0, -1) // heading down to the main line
     for (let i = 0; i < 400; i++) advanceTrainSet(net, fromStub, 0.5)
     expect(fromStub.vehicles[0].front.segId).toBe(stub.id)
-    expect(bogiePoints(net, fromStub)[0].y).toBeCloseTo(0, 6)
+    expect(frontEnd(net, fromStub).y).toBeCloseTo(0, 6)
 
     const west = [...net.segments.values()].find((s) => s.id !== stub.id && (s.from === w.id || s.to === w.id))!
     const through = consist(net, west.id, 0.5, 0, west.from === w.id ? 1 : -1)

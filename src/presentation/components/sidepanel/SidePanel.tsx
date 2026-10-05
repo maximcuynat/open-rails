@@ -354,10 +354,10 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             }}
           >
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" fill="#dc2626" />
-              <rect x="5" y="10" width="14" height="4" rx="1.5" fill="#ffffff" />
+              <path d="M3 9 H14 M3 15 H14" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+              <rect x="15" y="4" width="4" height="16" rx="1" fill="#dc2626" />
             </svg>
-            <span>Fin de voie — Impasse (sens interdit, aucun prolongement)</span>
+            <span>Fin de voie — heurtoir : les trains s’y arrêtent. Point d’accroche pour prolonger la voie.</span>
           </div>
         )}
         <label className="sp-input-row">
@@ -807,10 +807,10 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
             }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" fill="#dc2626" />
-              <rect x="5" y="10.2" width="14" height="3.6" rx="1" fill="#ffffff" />
+              <path d="M3 9 H14 M3 15 H14" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+              <rect x="15" y="4" width="4" height="16" rx="1" fill="#dc2626" />
             </svg>
-            <span>Fin de voie : voie en impasse (sens interdit)</span>
+            <span>Fin de voie : voie en impasse, fermée par un heurtoir</span>
           </div>
         )}
 

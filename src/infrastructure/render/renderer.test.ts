@@ -794,3 +794,41 @@ describe('renderDrivingRoute', () => {
     expect(lastX).toBeCloseTo(400 + 240 * createCamera().scale)
   })
 })
+
+describe('end of track', () => {
+  /** Mock context recording the colour of every stroke and fill, and the radius of every arc */
+  function draw(options: Parameters<typeof renderNetwork>[7]) {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    addSegment(net, a.id, b.id)
+    const ctx = createMockContext()
+    let stroke = ''
+    let fill = ''
+    const strokes: string[] = []
+    const fills: string[] = []
+    Object.defineProperty(ctx, 'strokeStyle', { set: (v: string) => { stroke = v }, get: () => stroke })
+    Object.defineProperty(ctx, 'fillStyle', { set: (v: string) => { fill = v }, get: () => fill })
+    vi.mocked(ctx.stroke).mockImplementation(() => { strokes.push(stroke) })
+    vi.mocked(ctx.fill).mockImplementation(() => { fills.push(fill) })
+    renderNetwork(ctx, createCamera(), 800, 600, net, { nodes: new Set(), segments: new Set() }, {}, options)
+    return { strokes, fills, arcRadii: vi.mocked(ctx.arc).mock.calls.map((c) => c[2]) }
+  }
+  const RED = '#dc2626'
+
+  it('closes each end with a buffer stop and marks it with a snap point, without a no-entry sign', () => {
+    const { strokes, fills, arcRadii } = draw({ tool: 'select' })
+    // One red beam per end
+    expect(strokes.filter((c) => c === RED)).toHaveLength(2)
+    // No red disc: the no-entry sign is kept for direction conflicts
+    expect(fills).not.toContain(RED)
+    // The snap point of each end: a ring and its centre
+    expect(arcRadii.filter((r) => r === 5.5)).toHaveLength(2)
+  })
+
+  it('keeps the buffer stops while driving, where the editing marks are hidden', () => {
+    const { strokes, arcRadii } = draw({ tool: 'select', hideConstructionNodes: true })
+    expect(strokes.filter((c) => c === RED)).toHaveLength(2)
+    expect(arcRadii).not.toContain(5.5)
+  })
+})

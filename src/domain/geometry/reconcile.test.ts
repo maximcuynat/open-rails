@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment, resetIdCounter } from '../models/network'
 import { MIN_CROSSING_ANGLE_DEG } from '../models/crossing'
-import { createVehicle, makeTrainSet, advanceTrainSet } from '../models/train'
+import { createVehicle, makeTrainSet, advanceTrainSet, vehicleFrontEndPos } from '../models/train'
 import { positionOnSegment } from '../models/locomotive'
 import { reconcileNetworkIntersections } from './reconcile'
 import { deserializeNetwork } from '../../infrastructure/persistence/persistence'
@@ -365,7 +365,7 @@ describe('a curve meeting a track twice', () => {
               const p = positionOnSegment(net, train.vehicles[0].front.segId, train.vehicles[0].front.t)!
               expect(Math.abs(p.y - (line === 'straight' ? 0 : curveY(dip, p.x)))).toBeLessThan(1e-6)
             }
-            const nose = positionOnSegment(net, train.vehicles[0].front.segId, train.vehicles[0].front.t)!
+            const nose = vehicleFrontEndPos(net, train.vehicles[0])!
             expect(Math.abs(nose.x - -fromX)).toBeLessThan(0.3) // reached the far end of its own line
           }
         }
