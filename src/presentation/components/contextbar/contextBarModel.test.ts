@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EditorStore, JUNCTION_OCCUPIED_REFUSED } from '@application/state/editorStore'
 import { addNode, addSegment, resetIdCounter, MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
-import { findJunctionAtNode } from '@domain/models/junction'
+import { findJunctionAtNode, activeBranchOf } from '@domain/models/junction'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { showToast } from '../common/Toast'
 import { buildContextBar, type ContextBarItem } from './contextBarModel'
@@ -105,9 +105,9 @@ describe('contextual bar — select tool', () => {
     const items = bar(store)
     expect(actionLabels(items)).toEqual(['Prolonger', 'Aiguiller', 'Inverser D/G', 'Voie double', 'Supprimer'])
 
-    const before = junction.activeBranch
+    const before = activeBranchOf(junction)
     action(items, 'toggle-junction').run()
-    expect(findJunctionAtNode(store.network, apex.id)!.activeBranch).not.toBe(before)
+    expect(activeBranchOf(findJunctionAtNode(store.network, apex.id)!)).not.toBe(before)
     expect(showToast).not.toHaveBeenCalled()
   })
 

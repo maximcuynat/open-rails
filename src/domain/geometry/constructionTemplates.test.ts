@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { turnoutView } from '@domain/models/junction'
 import { placementThresholds } from '@domain/geometry/scale'
 import {
   computeAutoConnectGeometry,
@@ -152,6 +153,44 @@ describe('constructionTemplates', () => {
       expect(res.endNode.pos.y).toBeCloseTo(5.2, 2)
       // 1 straight original + 2 halves of ~16.9° each, inserted as 2 arc pieces per half (max 15° per piece)
       expect(net.segments.size).toBe(5)
+    })
+
+    it('declares the turnout it lays out of a through track, and nothing out of a dead end', () => {
+      const net = createNetwork()
+      const west = addNode(net, { x: -100, y: 0 })
+      const mid = addNode(net, { x: 0, y: 0 })
+      const east = addNode(net, { x: 100, y: 0 })
+      const stem = addSegment(net, west.id, mid.id)!
+      const main = addSegment(net, mid.id, east.id)!
+      const geom = computeFreeformParallelTurnout(mid.pos, { x: 1, y: 0 }, { x: 35, y: 5.2 })!
+
+      const res = applyFreeformParallelTurnout(net, mid.id, geom)
+
+      expect([...net.junctions.values()]).toEqual([res.junction])
+      const view = turnoutView(net, res.junction)!
+      expect(view.stemSegmentId).toBe(stem.id)
+      expect(view.straightSegmentId).toBe(main.id)
+      expect(net.segments.get(view.divergingSegmentId)!.kind).toBe('curve')
+      expect(view.hand).toBe('left')
+      expect(view.activeBranch).toBe('straight')
+      // Mirrored, the same turnout is right-handed: the hand follows where the branch lies
+      const mirror = createNetwork()
+      const a = addNode(mirror, { x: -100, y: 0 })
+      const b = addNode(mirror, { x: 0, y: 0 })
+      const c = addNode(mirror, { x: 100, y: 0 })
+      addSegment(mirror, a.id, b.id)
+      addSegment(mirror, b.id, c.id)
+      const down = applyFreeformParallelTurnout(mirror, b.id, computeFreeformParallelTurnout(b.pos, { x: 1, y: 0 }, { x: 35, y: -5.2 })!)
+      expect(turnoutView(mirror, down.junction)!.hand).toBe('right')
+
+      // Out of the end of a track the curve only prolongs it: there is nothing to choose
+      const end = createNetwork()
+      const p = addNode(end, { x: -100, y: 0 })
+      const q = addNode(end, { x: 0, y: 0 })
+      addSegment(end, p.id, q.id)
+      const prolonged = applyFreeformParallelTurnout(end, q.id, computeFreeformParallelTurnout(q.pos, { x: 1, y: 0 }, { x: 35, y: 5.2 })!)
+      expect(prolonged.junction).toBeNull()
+      expect(end.junctions.size).toBe(0)
     })
 
     it('flags a freeform parallel turnout tighter than the minimum radius as invalid', () => {

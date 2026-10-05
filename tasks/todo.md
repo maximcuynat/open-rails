@@ -140,3 +140,34 @@ Rien de ce qui touche `Canvas.tsx`, le clavier ou les composants React n'a été
 
 - Ancienne `Locomotive` (rendu compris), `TrainBuilderPalette`, repli glisser au pointeur dans `Canvas.tsx`, Tab et `[` `]` en courbe
 - Extraction des outils de `Canvas.tsx` vers `IToolStrategy`
+
+---
+
+# Table d'itinéraires par nœud
+
+Validé le 2026-10-05 (plan : `~/.claude/plans/swirling-foraging-planet.md`, état des lieux : `tasks/audit-construction-circulation.md`). Travail fait dans un worktree, branche `feature/node-route-table`. Pas de commit tant que l'utilisateur ne le demande pas.
+
+## Plan
+
+- [x] 1. Modèle : `Junction` = table d'itinéraires (`passages`, `positions`, `active`), lue par `turnoutView`
+- [x] 2. `models/routing.ts` : une seule réponse à « ce train peut-il passer de ce rail à celui-là » pour les trains, la recherche de chemin et le dessin
+- [x] 3. Trains (`locomotive.ts`), recherche de chemin (`pathfinding.ts`), dessin, export SVG, panneau latéral, menu contextuel : lecture par la table
+- [x] 4. Stabilité : `syncJunctions` ne redevine plus un aiguillage qui a ses rails ; `replaceJunctionRail` aux coupes, fusions et doublons
+- [x] 5. L'outil aiguillage déclare son aiguillage (`declareBranchOff`)
+- [x] 6. Sauvegarde version 2, lecture des fichiers version 1, compteur d'identifiants resynchronisé avant la réconciliation
+- [x] 7. Tests, `npm test`, `npm run typecheck`, `npm run build`
+- [ ] 8. Contrôle dans le navigateur
+- [ ] 9. Fusion avec le chantier « niveaux » non commité (conflits attendus : `junction.ts`, `network.ts`, `reconcile.ts`, `crossing.ts`, `persistence.ts`, `constructionTemplates.ts`)
+
+## Revue
+
+- `vitest` : 711 tests verts (39 fichiers) ; `tsc --noEmit` et `npm run build` verts.
+- Relecture indépendante faite, avec comparaison de l'ancien et du nouveau routage sur 28 formes de nœud : aucune forme où un train qui passait est bloqué ou dévié. Ses sept constats sont corrigés et couverts par un test chacun.
+- Écarts par rapport au plan :
+  - une branche tordue au-delà de 15° perd sa place dans la table (et l'aiguillage disparaît s'il ne reste qu'une branche), au lieu de garder une position morte qui coupait la voie principale ;
+  - un rail qui prolonge une branche à travers la pointe fait du nœud un croisement de deux voies : la table est retirée ;
+  - une fourche est proposée dès qu'un seul rail a deux ou trois continuations, même si d'autres rails ne font que croiser le nœud ;
+  - `syncJunctions` est resté dans `junction.ts` (pas de fichier `junctionSync.ts`).
+- Changements visibles : plus d'« aiguillage incomplet » sur une fourche sans tige ; `placeTurnout` ne déclare rien sans tige.
+- Non fait : contrôle dans le navigateur ; aiguilles couplées et appareils à deux tiges (le modèle les permet, aucun outil ne les pose).
+- Restes connus : recul à travers une aiguille fermée (R6), wagons supprimés en coupant sous un train (R5), collisions sur traversée (R15) ; `findJunctionAtNode` linéaire en nombre de tables.

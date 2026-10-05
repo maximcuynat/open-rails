@@ -1,3 +1,4 @@
+import { turnoutView } from '@domain/models/junction'
 import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
 import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
@@ -362,11 +363,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
 
   // 4. Turnout dynamic mechanical details (guard rails, frog, blades, motor)
   for (const junc of net.junctions.values()) {
+    const turnout = turnoutView(net, junc)
+    if (!turnout) continue
     const apex = net.nodes.get(junc.nodeId)
-    const straightNode = net.nodes.get(junc.straightNodeId)
-    const divNode = net.nodes.get(junc.divergingNodeId)
+    const straightNode = net.nodes.get(turnout.straightNodeId)
+    const divNode = net.nodes.get(turnout.divergingNodeId)
     if (!apex || !straightNode || !divNode) continue
-    outputLevel = levelOfSegment(junc.straightSegmentId)
+    outputLevel = levelOfSegment(turnout.straightSegmentId)
 
     const dx = straightNode.pos.x - apex.pos.x
     const dy = straightNode.pos.y - apex.pos.y
@@ -377,9 +380,9 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     const uy = dy / straightLen
     const nx = -uy
     const ny = ux
-    const side: 1 | -1 = junc.hand === 'left' ? 1 : -1
+    const side: 1 | -1 = turnout.hand === 'left' ? 1 : -1
 
-    const specAngle = junc.frogNumber === 4 ? 15 : 10
+    const specAngle = turnout.frogNumber === 4 ? 15 : 10
     const thetaRad = (specAngle * Math.PI) / 180
     const frogDist = Math.min(straightLen * 0.75, GAUGE / Math.sin(thetaRad))
 
@@ -460,7 +463,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     // Blade tapers from ~0.15mm at toe (knife edge) to full RAIL_WIDTH at heel
     const bladeLen = 32
     const toeX = 6
-    const isStraight = junc.activeBranch === 'straight'
+    const isStraight = turnout.activeBranch === 'straight'
     const bladeTipHalf = 0.15 // Knife-edge half-width at toe
     const bladeHeelHalf = RAIL_WIDTH / 2 // Full rail width at heel
 

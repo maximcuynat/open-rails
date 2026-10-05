@@ -1,6 +1,6 @@
-import type { Network, Point, RailNode } from '@domain/models/types'
+import type { Junction, Network, Point, RailNode } from '@domain/models/types'
 import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, branchLevel } from '@domain/models/network'
-import { splitSegment } from '@domain/models/junction'
+import { splitSegment, declareBranchOff } from '@domain/models/junction'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 
@@ -554,23 +554,27 @@ export function computeFreeformParallelTurnout(
 }
 
 /**
- * Apply a freeform parallel turnout to the network.
+ * Apply a freeform parallel turnout to the network. Laid out of a node of a through track, it
+ * declares the turnout there: the track is the straight route, the new curve the diverging one.
  */
 export function applyFreeformParallelTurnout(
   net: Network,
   startNodeId: string,
   geom: FreeformParallelTurnoutResult,
   tolerance?: number,
-): { midNode: RailNode; endNode: RailNode } {
+): { midNode: RailNode; endNode: RailNode; junction: Junction | null } {
   const midNode = addNode(net, geom.midPos)
   const endNode = addNode(net, geom.endPos)
 
   const level = branchLevel(net, startNodeId)
-  addArcCurve(net, startNodeId, midNode.id, geom.via1, level)
+  const railsBefore = [...(net.adjacency.get(startNodeId) ?? [])]
+  const first = addArcCurve(net, startNodeId, midNode.id, geom.via1, level)
   addArcCurve(net, midNode.id, endNode.id, geom.via2, level)
+  const branch = first?.segments.find((seg) => seg.from === startNodeId || seg.to === startNodeId)
+  const junction = branch ? declareBranchOff(net, startNodeId, railsBefore, branch.id) : null
 
   reconcileNetworkIntersections(net, tolerance)
-  return { midNode, endNode }
+  return { midNode, endNode, junction }
 }
 
 /**

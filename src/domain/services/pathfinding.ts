@@ -1,5 +1,5 @@
 import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
-import { segmentTangentAt, isTraversableDeflection } from '../geometry/tangent'
+import { isPassageOpen, isRailClosedAt } from '../models/routing'
 import type { SectionMetadata } from '../models/sections'
 
 export interface PathResult {
@@ -43,28 +43,6 @@ export function segmentLength(net: Network, seg: Segment): number {
   return len
 }
 
-/** Helper: compute outgoing ray direction from a node along a segment */
-function getOutgoingRay(net: Network, seg: Segment, nodeId: NodeId): Point {
-  const tan = segmentTangentAt(net, seg, nodeId)
-  if (tan) {
-    const isFrom = seg.from === nodeId
-    const rx = isFrom ? tan.x : -tan.x
-    const ry = isFrom ? tan.y : -tan.y
-    const len = Math.hypot(rx, ry)
-    if (len > 1e-5) return { x: rx / len, y: ry / len }
-  }
-  const otherId = seg.from === nodeId ? seg.to : seg.from
-  const nA = net.nodes.get(nodeId)
-  const nB = net.nodes.get(otherId)
-  if (nA && nB) {
-    const dx = nB.pos.x - nA.pos.x
-    const dy = nB.pos.y - nA.pos.y
-    const len = Math.hypot(dx, dy)
-    if (len > 1e-5) return { x: dx / len, y: dy / len }
-  }
-  return { x: 1, y: 0 }
-}
-
 /** Find segment between two nodes if one exists. */
 export function getSegmentBetween(net: Network, u: NodeId, v: NodeId): Segment | undefined {
   const segIds = net.adjacency.get(u)
@@ -106,99 +84,16 @@ export function isTransitionAllowed(
       : undefined
   const outSeg = rails.outSegId ? net.segments.get(rails.outSegId) : getSegmentBetween(net, currNodeId, nextNodeId)
 
-  // 1. Junction Switch Rules
-  if (respectSwitches) {
-    for (const junc of net.junctions.values()) {
-      if (junc.nodeId === currNodeId) {
-        let activeBranchNode: NodeId | undefined
-        const inactiveBranchNodes: NodeId[] = []
-
-        if (junc.hand === 'three_way') {
-          if (junc.activeBranch === 'straight') {
-            activeBranchNode = junc.straightNodeId
-            inactiveBranchNodes.push(junc.divergingNodeId)
-            if (junc.divergingRightNodeId) inactiveBranchNodes.push(junc.divergingRightNodeId)
-          } else if (junc.activeBranch === 'right') {
-            activeBranchNode = junc.divergingRightNodeId ?? junc.divergingNodeId
-            inactiveBranchNodes.push(junc.straightNodeId)
-            inactiveBranchNodes.push(junc.divergingNodeId)
-          } else {
-            // 'left' or 'diverging'
-            activeBranchNode = junc.divergingNodeId
-            inactiveBranchNodes.push(junc.straightNodeId)
-            if (junc.divergingRightNodeId) inactiveBranchNodes.push(junc.divergingRightNodeId)
-          }
-        } else {
-          activeBranchNode = junc.activeBranch === 'straight' ? junc.straightNodeId : junc.divergingNodeId
-          inactiveBranchNodes.push(junc.activeBranch === 'straight' ? junc.divergingNodeId : junc.straightNodeId)
-        }
-
-        // Cannot exit toward inactive branch
-        if (inactiveBranchNodes.includes(nextNodeId)) return false
-
-        // Cannot enter from inactive branch into apex
-        if (prevNodeId && inactiveBranchNodes.includes(prevNodeId)) return false
-
-        // If entering from stem, must exit via active branch
-        if (junc.stemNodeId && prevNodeId === junc.stemNodeId) {
-          if (nextNodeId !== activeBranchNode) return false
-        }
-
-        // If entering from active branch, must exit toward stem if defined. If stem is not defined, cannot exit!
-        if (prevNodeId === activeBranchNode) {
-          if (!junc.stemNodeId || nextNodeId !== junc.stemNodeId) return false
-        }
-      }
-    }
+  // 1. Passage through the node: route table, straightest continuation, deflection limit
+  if (inSeg && outSeg) {
+    const query = { anyPosition: !respectSwitches, anyContinuation: !enforceCrossings }
+    if (!isPassageOpen(net, currNodeId, inSeg.id, outSeg.id, query)) return false
+  } else if (outSeg && respectSwitches && isRailClosedAt(net, outSeg.id, currNodeId)) {
+    // Starting from the node itself: a rail its points are set against cannot be taken
+    return false
   }
 
-  // 1b. Kinematic continuity constraint
-  // A train cannot take a corner: the two rails must meet within MAX_TRANSITION_DEFLECTION_DEG
-  // (see geometry/tangent.ts). A sharper angle, up to a hairpin fold-back, is an end of track.
-  if (prevNodeId !== null) {
-    if (inSeg && outSeg) {
-      // rayIn points towards prevNodeId, rayOut points towards nextNodeId.
-      const rayIn = getOutgoingRay(net, inSeg, currNodeId)
-      const rayOut = getOutgoingRay(net, outSeg, currNodeId)
-      if (!isTraversableDeflection(rayIn, rayOut)) return false
-    }
-  }
-
-  // 2. Diamond Crossing (X) Geometric Constraint
-  // At a diamond crossing / grade intersection without movable blades (degree 4, not a junction),
-  // trains arriving on line A MUST continue on line A (facing directly ahead, dot < -0.7).
-  // A train CANNOT turn at sharp crossing angles onto line B.
-  if (enforceCrossings && prevNodeId !== null) {
-    const adj = net.adjacency.get(currNodeId) ?? []
-    const isJunction = Array.from(net.junctions.values()).some((j) => j.nodeId === currNodeId)
-
-    // A diamond crossing is typically a node with degree 4 that is NOT a movable switch
-    if (adj.length === 4 && !isJunction) {
-      if (inSeg && outSeg) {
-        const rayIn = getOutgoingRay(net, inSeg, currNodeId)
-        const rayOut = getOutgoingRay(net, outSeg, currNodeId)
-        // rayIn points away from currNodeId towards prevNodeId.
-        // rayOut points away from currNodeId towards nextNodeId.
-        // A straight continuation through the crossing means rayIn and rayOut are opposite:
-        // dot(rayIn, rayOut) must be close to -1 (e.g. < -0.65).
-        const dot = rayIn.x * rayOut.x + rayIn.y * rayOut.y
-        if (dot > -0.65) {
-          // Sharp diversion at a fixed diamond crossing is physically impossible!
-          return false
-        }
-        // On a shallow crossing both lines leave within the deflection limit: only the straightest
-        // continuation is the train's own line.
-        for (const sid of adj) {
-          const other = net.segments.get(sid)
-          if (!other || other.id === inSeg.id || other.id === outSeg.id) continue
-          const ray = getOutgoingRay(net, other, currNodeId)
-          if (rayIn.x * ray.x + rayIn.y * ray.y < dot - 1e-9) return false
-        }
-      }
-    }
-  }
-
-  // 3. Traffic direction constraints (Sens unique / circulation)
+  // 2. Traffic direction constraints (Sens unique / circulation)
   if (options.sectionMeta) {
     if (outSeg) {
       const meta = options.sectionMeta[outSeg.id]
@@ -235,62 +130,55 @@ export function findPath(
     return { found: true, nodes: [startNodeId], segments: [], totalDistance: 0 }
   }
 
-  // Priority queue item: { node, prev, dist }
+  // Search state: a node and the rail it was reached by (two rails may join the same two nodes)
   interface PQItem {
     node: NodeId
     prev: NodeId | null
+    inSeg: SegmentId | null
     dist: number
   }
 
   const distMap = new Map<string, number>()
-  const parentMap = new Map<string, { prev: NodeId | null; prevPrev: NodeId | null; segId: SegmentId }>()
-  const pq: PQItem[] = [{ node: startNodeId, prev: null, dist: 0 }]
-  const key = (node: NodeId, prev: NodeId | null) => `${prev ?? 'START'}->${node}`
+  const parentMap = new Map<string, PQItem>()
+  const pq: PQItem[] = [{ node: startNodeId, prev: null, inSeg: null, dist: 0 }]
+  const key = (node: NodeId, inSeg: SegmentId | null) => `${inSeg ?? 'START'}->${node}`
   distMap.set(key(startNodeId, null), 0)
 
-  let bestTargetState: { node: NodeId; prev: NodeId | null } | null = null
-  let minTargetDist = Infinity
+  let bestTargetState: PQItem | null = null
 
   while (pq.length > 0) {
     // Pop min
     pq.sort((a, b) => a.dist - b.dist)
     const current = pq.shift()!
-    const currKey = key(current.node, current.prev)
 
-    if (current.dist > (distMap.get(currKey) ?? Infinity)) {
+    if (current.dist > (distMap.get(key(current.node, current.inSeg)) ?? Infinity)) {
       continue
     }
 
     if (current.node === targetNodeId) {
-      if (current.dist < minTargetDist) {
-        minTargetDist = current.dist
-        bestTargetState = { node: current.node, prev: current.prev }
-        break // First target arrival in Dijkstra is optimal
-      }
+      bestTargetState = current
+      break // First target arrival in Dijkstra is optimal
     }
 
     const segIds = net.adjacency.get(current.node) ?? []
     for (const sid of segIds) {
       const seg = net.segments.get(sid)
       if (!seg) continue
+      if (sid === current.inSeg) continue // Don't instantly reverse along same track
       const nextNodeId = seg.from === current.node ? seg.to : seg.from
-      if (nextNodeId === current.prev) continue // Don't instantly reverse along same track
 
-      // Known limitation: the search state is (node, previous node), so the rail arrived on is
-      // looked up by node pair. Where two rails join the same two nodes (a curve crossing a track
-      // twice) it may be the wrong one; same in reachableFrom below. The train walks pass both rails.
-      if (!isTransitionAllowed(net, current.prev, current.node, nextNodeId, options, { outSegId: sid })) {
+      const rails = { inSegId: current.inSeg ?? undefined, outSegId: sid }
+      if (!isTransitionAllowed(net, current.prev, current.node, nextNodeId, options, rails)) {
         continue
       }
 
-      const weight = segmentLength(net, seg)
-      const nextDist = current.dist + weight
-      const nextKey = key(nextNodeId, current.node)
+      const nextDist = current.dist + segmentLength(net, seg)
+      const nextKey = key(nextNodeId, sid)
 
       if (nextDist < (distMap.get(nextKey) ?? Infinity)) {
         distMap.set(nextKey, nextDist)
-        parentMap.set(nextKey, { prev: current.node, prevPrev: current.prev, segId: sid })
-        pq.push({ node: nextNodeId, prev: current.node, dist: nextDist })
+        parentMap.set(nextKey, current)
+        pq.push({ node: nextNodeId, prev: current.node, inSeg: sid, dist: nextDist })
       }
     }
   }
@@ -304,19 +192,19 @@ export function findPath(
   const segments: SegmentId[] = []
   let currState = bestTargetState
 
-  while (currState.prev !== null) {
-    const parent = parentMap.get(key(currState.node, currState.prev))
+  while (currState.inSeg !== null) {
+    const parent = parentMap.get(key(currState.node, currState.inSeg))
     if (!parent) break
-    nodes.unshift(currState.prev)
-    segments.unshift(parent.segId)
-    currState = { node: currState.prev, prev: parent.prevPrev }
+    nodes.unshift(parent.node)
+    segments.unshift(currState.inSeg)
+    currState = parent
   }
 
   return {
     found: true,
     nodes,
     segments,
-    totalDistance: minTargetDist,
+    totalDistance: bestTargetState.dist,
   }
 }
 
@@ -335,35 +223,37 @@ export function reachableFrom(
     return { nodes: visitedNodes, segments: visitedSegments }
   }
 
-  // Queue of { node, prev }
-  const queue: Array<{ node: NodeId; prev: NodeId | null }> = [{ node: startNodeId, prev: null }]
+  // Queue of states: a node and the rail it was reached by
+  const queue: Array<{ node: NodeId; prev: NodeId | null; inSeg: SegmentId | null }> = [
+    { node: startNodeId, prev: null, inSeg: null },
+  ]
   const visitedStates = new Set<string>()
-  const stateKey = (node: NodeId, prev: NodeId | null) => `${prev ?? 'START'}->${node}`
+  const stateKey = (node: NodeId, inSeg: SegmentId | null) => `${inSeg ?? 'START'}->${node}`
 
   visitedNodes.add(startNodeId)
   visitedStates.add(stateKey(startNodeId, null))
 
   while (queue.length > 0) {
-    const { node, prev } = queue.shift()!
+    const { node, prev, inSeg } = queue.shift()!
     const segIds = net.adjacency.get(node) ?? []
 
     for (const sid of segIds) {
       const seg = net.segments.get(sid)
       if (!seg) continue
+      if (sid === inSeg) continue
       const nextNodeId = seg.from === node ? seg.to : seg.from
-      if (nextNodeId === prev) continue
 
-      if (!isTransitionAllowed(net, prev, node, nextNodeId, options, { outSegId: sid })) {
+      if (!isTransitionAllowed(net, prev, node, nextNodeId, options, { inSegId: inSeg ?? undefined, outSegId: sid })) {
         continue
       }
 
       visitedSegments.add(sid)
       visitedNodes.add(nextNodeId)
 
-      const nKey = stateKey(nextNodeId, node)
+      const nKey = stateKey(nextNodeId, sid)
       if (!visitedStates.has(nKey)) {
         visitedStates.add(nKey)
-        queue.push({ node: nextNodeId, prev: node })
+        queue.push({ node: nextNodeId, prev: node, inSeg: sid })
       }
     }
   }

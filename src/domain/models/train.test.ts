@@ -42,7 +42,7 @@ import { walkForward, snapToNearestTrack, positionOnSegment, tangentOnSegment, f
 import type { TrackPosition } from './locomotive'
 import { removeSegment, addArcCurve } from './network'
 import { ROLLING_STOCK, type RollingStockModel } from './rollingStock'
-import { addJunction, placeTurnout, autoDetectJunctions } from './junction'
+import { addJunction, placeTurnout, autoDetectJunctions, activeBranchOf, turnoutView, setJunctionBranch } from './junction'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 
@@ -719,9 +719,9 @@ describe('steerTrainSetJunction', () => {
     const train = makeTrainSet('t', [createVehicle(net, sStem.id, 0.5, 'loco', 1)!])
 
     expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
   })
 
   it('starts the route at the lead bogie running forward and at the last bogie in reverse', () => {
@@ -749,13 +749,13 @@ describe('steerTrainSetJunction', () => {
 
     // Running forward (towards -x) there is no facing turnout ahead
     expect(steerTrainSetJunction(net, train, 'right')).toBe(false)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
 
     setReverser(train, 'reverse')
     expect(steerTrainSetJunction(net, train, 'right')).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(steerTrainSetJunction(net, train, 'left')).toBe(true)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
   })
 
   it('does nothing for an empty train', () => {
@@ -920,7 +920,7 @@ describe('junction under a train', () => {
     const straightExt = addSegment(net, t.straightNode.id, sEnd.id)!
     autoDetectJunctions(net)
     const junction = [...net.junctions.values()][0]
-    return { net, junction, stem, straightExt, straightSegId: junction.straightSegmentId }
+    return { net, junction, stem, straightExt, straightSegId: turnoutView(net, junction)!.straightSegmentId }
   }
 
   it('is occupied exactly while a vehicle stands over its points', () => {
@@ -950,10 +950,10 @@ describe('junction under a train', () => {
 
     // The diverging branch leaves towards +y: the right-hand side when running towards +x
     expect(steerTrainSetJunction(net, driven, 'right', [driven, parked])).toBe(false)
-    expect(junction.activeBranch).toBe('straight')
+    expect(activeBranchOf(junction)).toBe('straight')
     // With the points clear the same command goes through
     expect(steerTrainSetJunction(net, driven, 'right', [driven])).toBe(true)
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
   })
 
   it('keeps the vehicles on their branch if the points move under a trailing train anyway', () => {
@@ -964,14 +964,14 @@ describe('junction under a train', () => {
     let biggestMove = 0
     for (let i = 0; i < 1200; i++) {
       // Thrown behind the store's back once the lead is 30 m past the points
-      if (prev[0].x < -30) junction.activeBranch = 'diverging'
+      if (prev[0].x < -30) setJunctionBranch(junction, 'diverging')
       expect(advanceTrainSet(net, train, 0.5)).toBe(true)
       const cur = bogiePoints(net, train)
       cur.forEach((p, k) => (biggestMove = Math.max(biggestMove, Math.hypot(p.x - prev[k].x, p.y - prev[k].y))))
       prev = cur
     }
 
-    expect(junction.activeBranch).toBe('diverging')
+    expect(activeBranchOf(junction)).toBe('diverging')
     expect(biggestMove).toBeLessThanOrEqual(0.5 + 1e-6)
     expect(prev.every((p) => Math.abs(p.y) < 1e-6)).toBe(true)
   })
@@ -1343,14 +1343,14 @@ describe('articulated trainsets', () => {
       autoDetectJunctions(net)
       const junction = [...net.junctions.values()][0]
       // Extend the diverging branch along its end tangent
-      const via = net.segments.get(junction.divergingSegmentId)!.via!
+      const via = net.segments.get(turnoutView(net, junction)!.divergingSegmentId)!.via!
       const end = t.divergingNode.pos
       const len = Math.hypot(end.x - via.x, end.y - via.y)
       const far = addNode(net, { x: end.x + ((end.x - via.x) / len) * 400, y: end.y + ((end.y - via.y) / len) * 400 })
       const divergingExt = addSegment(net, t.divergingNode.id, far.id)!
 
       const train = buildRake(net, createVehicle(net, stem.id, 0.6, 'loco')!, ['wagon', 'wagon', 'wagon', 'wagon', 'loco'])
-      junction.activeBranch = 'diverging'
+      setJunctionBranch(junction, 'diverging')
 
       const pitch = ROLLING_STOCK.duplex.trailer.pitch
       let straddled = 0

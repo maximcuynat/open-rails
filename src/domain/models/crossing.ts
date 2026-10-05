@@ -202,26 +202,10 @@ export function separateLevelsAtNode(net: Network, nodeId: NodeId): NodeId | nul
     net.adjacency.get(twin.id)!.push(seg.id)
   }
 
-  // A plain node is left on each track: no points here any more, and the junctions at the far end
-  // of the moved rails now look at the twin
-  const moved = new Set(upper.map((seg) => seg.id))
+  // A plain node is left on each track: no points here any more. The tables at the far end of the
+  // moved rails name rails, so they need nothing.
   for (const junc of [...net.junctions.values()]) {
-    if (junc.nodeId === nodeId) {
-      net.junctions.delete(junc.id)
-      continue
-    }
-    if (junc.straightNodeId === nodeId && moved.has(junc.straightSegmentId)) junc.straightNodeId = twin.id
-    if (junc.divergingNodeId === nodeId && moved.has(junc.divergingSegmentId)) junc.divergingNodeId = twin.id
-    if (
-      junc.divergingRightNodeId === nodeId &&
-      junc.divergingRightSegmentId &&
-      moved.has(junc.divergingRightSegmentId)
-    ) {
-      junc.divergingRightNodeId = twin.id
-    }
-    if (junc.stemNodeId === nodeId && upper.some((seg) => seg.from === junc.nodeId || seg.to === junc.nodeId)) {
-      junc.stemNodeId = twin.id
-    }
+    if (junc.nodeId === nodeId) net.junctions.delete(junc.id)
   }
   return twin.id
 }

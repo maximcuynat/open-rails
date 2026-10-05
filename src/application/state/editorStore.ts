@@ -1405,19 +1405,7 @@ export class EditorStore {
       }
     }
 
-    // 4. Reconcile junctions: remove invalid turnout entries where segments or nodes were deleted
-    for (const [juncId, junc] of this.network.junctions) {
-      const nodeExists = this.network.nodes.has(junc.nodeId)
-      const adj = this.network.adjacency.get(junc.nodeId) ?? []
-      const sStraight = this.network.segments.has(junc.straightSegmentId)
-      const sDiverging = this.network.segments.has(junc.divergingSegmentId)
-
-      if (!nodeExists || adj.length !== 3 || !sStraight || !sDiverging) {
-        this.network.junctions.delete(juncId)
-      }
-    }
-
-    // Re-detect turnouts on any modified 3-way nodes
+    // 4. Bring the route tables in line with what is left of the track
     autoDetectJunctions(this.network)
 
     this.clearSelection()
@@ -1642,11 +1630,6 @@ export class EditorStore {
     if (junctionId) {
       const junc = this.network.junctions.get(junctionId)
       if (junc) targets = [junc]
-    } else if (this.selection.junctions && this.selection.junctions.size > 0) {
-      for (const jid of this.selection.junctions) {
-        const junc = this.network.junctions.get(jid)
-        if (junc) targets.push(junc)
-      }
     } else {
       let junc: Junction | undefined
       for (const nid of this.selection.nodes) {

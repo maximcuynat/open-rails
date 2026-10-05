@@ -6,7 +6,8 @@ import {
   addCurveSegment,
   resetIdCounter,
 } from '../../domain/models/network'
-import { placeTurnout, toggleJunction } from '../../domain/models/junction'
+import { placeTurnout, toggleJunction, activeBranchOf, turnoutView } from '../../domain/models/junction'
+import { openExit } from '../../domain/models/routing'
 import {
   serializeNetwork,
   deserializeNetwork,
@@ -32,7 +33,7 @@ describe('persistence module', () => {
   it('serializes and deserializes an empty network', () => {
     const net = createNetwork()
     const serialized = serializeNetwork(net, 'Empty Project')
-    expect(serialized.version).toBe(1)
+    expect(serialized.version).toBe(2)
     expect(serialized.name).toBe('Empty Project')
     expect(serialized.nodes).toHaveLength(0)
     expect(serialized.segments).toHaveLength(0)
@@ -72,26 +73,161 @@ describe('persistence module', () => {
     expect(curveSeg?.via).toEqual({ x: 130, y: 20 })
   })
 
-  it('preserves turnout junction state (activeBranch)', () => {
+  /** Stem west of the apex, then a catalog #6 turnout: straight on, diverging to +y */
+  function turnoutNetwork() {
     const net = createNetwork()
+    const stem = addNode(net, { x: -100, y: 0 })
+    const apex = addNode(net, { x: 0, y: 0 })
+    const stemSeg = addSegment(net, stem.id, apex.id)!
     const turnout = placeTurnout(net, {
-      startPos: { x: 0, y: 0 },
+      startPos: apex.pos,
       direction: { x: 1, y: 0 },
       frogNumber: 6,
       hand: 'left',
+      stemNodeId: apex.id,
     })
+    return { net, apex, stemSeg, turnout, junction: turnout.junction! }
+  }
+
+  it('preserves the route table of a turnout: rails, roles and position', () => {
+    const { net, junction } = turnoutNetwork()
 
     // Switch the turnout to diverging
-    toggleJunction(turnout.junction)
-    expect(turnout.junction.activeBranch).toBe('diverging')
+    toggleJunction(junction)
+    expect(activeBranchOf(junction)).toBe('diverging')
 
     const serialized = serializeNetwork(net, 'Turnout Project')
+    expect(serialized.junctions).toEqual([
+      {
+        id: junction.id,
+        nodeId: junction.nodeId,
+        kind: 'turnout',
+        passages: junction.passages.map((p) => [p.a, p.b]),
+        positions: [[0], [1]],
+        active: 1,
+        frogNumber: 6,
+      },
+    ])
     const restored = deserializeNetwork(serialized)
 
-    expect(restored.network.junctions.size).toBe(1)
+    expect([...restored.network.junctions.values()]).toEqual([junction])
     const restoredJunc = [...restored.network.junctions.values()][0]
-    expect(restoredJunc.activeBranch).toBe('diverging')
-    expect(restoredJunc.hand).toBe('left')
+    expect(activeBranchOf(restoredJunc)).toBe('diverging')
+    expect(turnoutView(restored.network, restoredJunc)).toEqual(turnoutView(net, junction))
+  })
+
+  it('reads a turnout saved by its parts (version 1) and leaves it open on the same rail', () => {
+    const { net, apex, stemSeg, turnout, junction } = turnoutNetwork()
+    const serialized = serializeNetwork(net, 'Old Project')
+    const view = turnoutView(net, junction)!
+    // As version 1 wrote it, with the roles the old detector could give a tangent turnout: the
+    // curve named "straight", the points set to "diverging" — that is, open on the straight rail
+    const legacy = {
+      ...serialized,
+      version: 1 as const,
+      junctions: [
+        {
+          id: 'j_77',
+          nodeId: apex.id,
+          stemNodeId: view.stemNodeId,
+          straightNodeId: view.divergingNodeId,
+          divergingNodeId: view.straightNodeId,
+          straightSegmentId: view.divergingSegmentId,
+          divergingSegmentId: view.straightSegmentId,
+          activeBranch: 'diverging' as const,
+          hand: 'right' as const,
+          frogNumber: 6,
+        },
+      ],
+    }
+
+    const restored = deserializeNetwork(legacy).network
+    const restoredJunc = [...restored.junctions.values()]
+    expect(restoredJunc).toHaveLength(1)
+    expect(restoredJunc[0].id).toBe('j_77')
+    const restoredView = turnoutView(restored, restoredJunc[0])!
+    expect(restoredView.stemSegmentId).toBe(stemSeg.id)
+    expect(restoredView.straightNodeId).toBe(turnout.straightNode.id)
+    expect(restoredView.divergingNodeId).toBe(turnout.divergingNode.id)
+    expect(restoredView.hand).toBe('left')
+    // Same rail open as in the file
+    expect(restoredView.activeBranch).toBe('straight')
+    expect(openExit(restored, apex.id, stemSeg.id)).toBe(view.straightSegmentId)
+  })
+
+  it('reads every turnout of a version 1 file, whatever their ids', () => {
+    // Three turnouts in a row on one line, saved with ids a fresh counter would hand out again
+    const net = createNetwork()
+    let prev = addNode(net, { x: 0, y: 0 })
+    const legacy: NonNullable<ReturnType<typeof serializeNetwork>['junctions']> = []
+    ;['j_2', 'j_50', 'j_51'].forEach((id, i) => {
+      const apex = addNode(net, { x: 300 * (i + 1), y: 0 })
+      const next = addNode(net, { x: 300 * (i + 1) + 150, y: 0 })
+      const spur = addNode(net, { x: 300 * (i + 1) + 150, y: 20 })
+      addSegment(net, prev.id, apex.id)
+      const straight = addSegment(net, apex.id, next.id)!
+      const diverging = addSegment(net, apex.id, spur.id)!
+      legacy.push({
+        id,
+        nodeId: apex.id,
+        stemNodeId: prev.id,
+        straightNodeId: next.id,
+        divergingNodeId: spur.id,
+        straightSegmentId: straight.id,
+        divergingSegmentId: diverging.id,
+        activeBranch: 'diverging',
+        hand: 'left',
+      })
+      prev = next
+    })
+    const file = { ...serializeNetwork(net), version: 1 as const, junctions: legacy }
+
+    resetIdCounter()
+    const restored = deserializeNetwork(file).network
+
+    expect([...restored.junctions.keys()].sort()).toEqual(['j_2', 'j_50', 'j_51'])
+    for (const junction of restored.junctions.values()) expect(activeBranchOf(junction)).toBe('diverging')
+  })
+
+  it('skips a saved table that does not hold together instead of failing to load', () => {
+    const { net, junction } = turnoutNetwork()
+    const file = serializeNetwork(net)
+    for (const broken of [
+      { passages: [], positions: [[]] },
+      { passages: [file.junctions![0].passages![0], file.junctions![0].passages![0]] },
+      { passages: [[junction.passages[0].a, junction.passages[0].a], file.junctions![0].passages![1]] },
+    ]) {
+      const restored = deserializeNetwork({ ...file, junctions: [{ ...file.junctions![0], ...broken } as never] }).network
+      // The fork is still there: its table is read again from the geometry
+      expect(restored.junctions.size).toBe(1)
+      expect(turnoutView(restored, [...restored.junctions.values()][0])).toEqual(turnoutView(net, junction))
+    }
+  })
+
+  it('does not reuse the ids of the file for what the reconcile pass creates on load', () => {
+    // Two straights crossing without a shared node: the file still needs reconciling
+    const net = createNetwork()
+    const w = addNode(net, { x: -50, y: 0 })
+    const e = addNode(net, { x: 50, y: 0 })
+    const s = addNode(net, { x: 0, y: -50 })
+    const n = addNode(net, { x: 0, y: 50 })
+    addSegment(net, w.id, e.id)
+    addSegment(net, s.id, n.id)
+    const serialized = serializeNetwork(net)
+
+    resetIdCounter()
+    const restored = deserializeNetwork(serialized).network
+
+    // The four ends are where they were, and a fifth node joins the two tracks
+    for (const node of [w, e, s, n]) expect(restored.nodes.get(node.id)!.pos).toEqual(node.pos)
+    expect(restored.nodes.size).toBe(5)
+    expect(restored.segments.size).toBe(4)
+    for (const [nodeId, adj] of restored.adjacency) {
+      for (const sid of adj) {
+        const seg = restored.segments.get(sid)!
+        expect([seg.from, seg.to]).toContain(nodeId)
+      }
+    }
   })
 
   it('synchronizes idCounter after restore to prevent collisions', () => {

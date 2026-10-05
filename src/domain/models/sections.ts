@@ -133,7 +133,7 @@ export function computeTrackSections(
 
     // A 3-way turnout (degree 4) is also a routing decision junction (boundary)
     const junc = findJunctionAtNode(net, currNode)
-    if (junc && junc.hand === 'three_way') return null
+    if (junc && junc.kind === 'three_way') return null
 
     const rPrev = getRayFromNode(net, prevSeg, currNode)
 
@@ -256,7 +256,7 @@ export function computeTrackSections(
       if (idx === 0 || idx === orderedNodes.length - 1) return false
       const deg = net.adjacency.get(nid)?.length ?? 0
       const junc = findJunctionAtNode(net, nid)
-      return deg === 4 && (!junc || junc.hand !== 'three_way')
+      return deg === 4 && (!junc || junc.kind !== 'three_way')
     })
 
     rawSections.push({

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { curveLength } from '@domain/geometry/curve'
 import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
-import { findJunctionAtNode, findJunctionBySegment } from '@domain/models/junction'
+import { findJunctionAtNode, findJunctionBySegment, turnoutView } from '@domain/models/junction'
 import { MAX_LEVEL, MIN_LEVEL, segmentLevel } from '@domain/models/network'
 import { detectCrossings } from '@domain/models/crossing'
 import { detectDeadEnds, detectLoops, detectConnectedComponents } from '@domain/services/pathfinding'
@@ -249,7 +249,8 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     .map((sid) => store.network.segments.get(sid))
     .filter((s): s is NonNullable<typeof s> => !!s)
 
-  const junction = findJunctionAtNode(store.network, nodeId)
+  const turnout = turnoutView(store.network, findJunctionAtNode(store.network, nodeId))
+  const junction = turnout ? findJunctionAtNode(store.network, nodeId) : undefined
   const crossing = detectCrossings(store.network).find((c) => c.nodeId === nodeId)
 
   const [x, setX] = useState(node.pos.x)
@@ -364,21 +365,21 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
       {junction && (
         <>
           <div className="sp-subheader">
-            {junction.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${junction.frogNumber ?? 6}`}
+            {turnout?.hand === 'three_way' ? 'Aiguillage Triple' : `Aiguillage #${turnout?.frogNumber ?? 6}`}
           </div>
           <div className="sp-section">
             <Field
               label="Déviation"
-              value={junction.hand === 'three_way' ? 'Triple (G / Directe / D)' : junction.hand === 'left' ? 'Gauche' : 'Droite'}
+              value={turnout?.hand === 'three_way' ? 'Triple (G / Directe / D)' : turnout?.hand === 'left' ? 'Gauche' : 'Droite'}
             />
             <Field
               label="Voie active"
               value={
-                junction.activeBranch === 'straight'
+                turnout?.activeBranch === 'straight'
                   ? 'Directe (centre)'
-                  : junction.activeBranch === 'left'
+                  : turnout?.activeBranch === 'left'
                     ? 'Gauche'
-                    : junction.activeBranch === 'right'
+                    : turnout?.activeBranch === 'right'
                       ? 'Droite'
                       : 'Déviée'
               }
@@ -403,7 +404,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
             >
               Aiguiller{store.shortcutHint('edit.toggleJunction')}
             </button>
-            {junction.hand !== 'three_way' && (
+            {turnout?.hand !== 'three_way' && (
               <button
                 className="sp-btn-compact"
                 style={{
@@ -422,7 +423,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
                 }}
                 title="Inverser le côté de déviation"
               >
-                Inverser {junction.hand === 'left' ? 'D' : 'G'}
+                Inverser {turnout?.hand === 'left' ? 'D' : 'G'}
               </button>
             )}
           </div>
@@ -498,17 +499,18 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   const b = store.network.nodes.get(seg.to)
   if (!a || !b) return <NetworkPanel store={store} />
 
-  const junction = findJunctionBySegment(store.network, segId)
-  const isStraightBranch = junction?.straightSegmentId === segId
-  const isLeftBranch = junction?.divergingSegmentId === segId
-  const isRightBranch = junction?.divergingRightSegmentId === segId
+  const turnout = turnoutView(store.network, findJunctionBySegment(store.network, segId))
+  const junction = turnout ? findJunctionBySegment(store.network, segId) : undefined
+  const isStraightBranch = turnout?.straightSegmentId === segId
+  const isLeftBranch = turnout?.divergingSegmentId === segId
+  const isRightBranch = turnout?.divergingRightSegmentId === segId
   const isBranchActive = junction
-    ? junction.hand === 'three_way'
-      ? (isStraightBranch && junction.activeBranch === 'straight') ||
-        (isLeftBranch && (junction.activeBranch === 'left' || junction.activeBranch === 'diverging')) ||
-        (isRightBranch && junction.activeBranch === 'right')
-      : (isStraightBranch && junction.activeBranch === 'straight') ||
-        (!isStraightBranch && junction.activeBranch === 'diverging')
+    ? turnout?.hand === 'three_way'
+      ? (isStraightBranch && turnout?.activeBranch === 'straight') ||
+        (isLeftBranch && (turnout?.activeBranch === 'left' || turnout?.activeBranch === 'diverging')) ||
+        (isRightBranch && turnout?.activeBranch === 'right')
+      : (isStraightBranch && turnout?.activeBranch === 'straight') ||
+        (!isStraightBranch && turnout?.activeBranch === 'diverging')
     : true
 
   let len = 0
@@ -618,7 +620,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
             <Field
               label="Aiguillage"
               value={
-                junction.hand === 'three_way'
+                turnout?.hand === 'three_way'
                   ? isStraightBranch
                     ? 'Branche directe (centre)'
                     : isLeftBranch

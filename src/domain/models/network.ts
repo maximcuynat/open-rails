@@ -202,6 +202,7 @@ export function removeDuplicateSegments(net: Network, tolerance: number): number
       const otherIsCurve = other.kind === 'curve' && !!other.via
       if (isCurve !== otherIsCurve) continue
       if (isCurve && Math.hypot(other.via!.x - seg.via!.x, other.via!.y - seg.via!.y) > viaTolerance) continue
+      replaceJunctionRail(net, other.id, [seg])
       removeSegment(net, other.id, false)
       removed++
     }
@@ -344,24 +345,26 @@ export function dissolveNode(
   // it takes over as it is: its own heritage is not overwritten.
   const newSeg = addChildSegment(net, s1, otherId1, otherId2, undefined, parentId)
   if (newSeg) {
-
-    // Update any junctions that were referencing s1 or s2
-    for (const junc of net.junctions.values()) {
-      if (junc.straightSegmentId === s1.id || junc.straightSegmentId === s2.id) {
-        junc.straightSegmentId = newSeg.id
-        junc.straightNodeId = otherId1 === junc.nodeId ? otherId2 : otherId1
-      }
-      if (junc.divergingSegmentId === s1.id || junc.divergingSegmentId === s2.id) {
-        junc.divergingSegmentId = newSeg.id
-        junc.divergingNodeId = otherId1 === junc.nodeId ? otherId2 : otherId1
-      }
-      if (junc.stemNodeId === id) {
-        junc.stemNodeId = otherId1 === junc.nodeId ? otherId2 : otherId1
-      }
-    }
+    replaceJunctionRail(net, s1.id, [newSeg])
+    replaceJunctionRail(net, s2.id, [newSeg])
   }
 
   return newSeg
+}
+
+/**
+ * Tell the route tables that a rail was replaced by other rails (cut in pieces, or merged with its
+ * neighbour): each table naming it now names the piece that touches its own node.
+ */
+export function replaceJunctionRail(net: Network, oldSegId: SegmentId, pieces: Segment[]): void {
+  for (const junc of net.junctions.values()) {
+    const heir = pieces.find((seg) => seg.from === junc.nodeId || seg.to === junc.nodeId)
+    if (!heir) continue
+    for (const p of junc.passages) {
+      if (p.a === oldSegId) p.a = heir.id
+      if (p.b === oldSegId) p.b = heir.id
+    }
+  }
 }
 
 export function removeSegment(net: Network, id: SegmentId, cleanOrphans = true): void {

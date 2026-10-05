@@ -1,8 +1,11 @@
-import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, removeSegment } from './network'
+import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, removeSegment, replaceJunctionRail } from './network'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
-import { segmentTangentAt, isTraversableDeflection } from '../geometry/tangent'
-import type { Junction, JunctionId, Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
+import { isTraversableDeflection } from '../geometry/tangent'
+import { findJunctionAtNode, junctionRails, leaveDirection } from './routing'
+import type { Junction, JunctionId, Network, NodeId, Passage, Point, RailNode, Segment, SegmentId } from './types'
+
+export { findJunctionAtNode, junctionRails }
 
 export interface TurnoutSpec {
   frogNumber: 4 | 6
@@ -29,39 +32,135 @@ export const TURNOUT_SPECS: Record<4 | 6, TurnoutSpec> = {
   },
 }
 
-/** Register a junction in the network. */
+/** Name of a branch of a turnout: `diverging` on a 2-way, `left` / `right` on a 3-way */
+export type TurnoutBranch = 'straight' | 'diverging' | 'left' | 'right'
+
+/** Branch names of a turnout, in the order of its passages */
+function branchNames(junction: Junction): TurnoutBranch[] {
+  return junction.kind === 'three_way' ? ['straight', 'left', 'right'] : ['straight', 'diverging']
+}
+
+function isTurnoutKind(junction: Junction): boolean {
+  return junction.kind === 'turnout' || junction.kind === 'three_way'
+}
+
+/**
+ * Declare a turnout at a node: the stem and its two branches, or three with `divergingRightSegmentId`
+ * (then `divergingSegmentId` is the left one). Replaces the table the node already had, keeping its id.
+ */
+export function declareTurnout(
+  net: Network,
+  params: {
+    nodeId: NodeId
+    stemSegmentId: SegmentId
+    straightSegmentId: SegmentId
+    divergingSegmentId: SegmentId
+    divergingRightSegmentId?: SegmentId
+    activeBranch?: TurnoutBranch
+    frogNumber?: number
+    /** Id to give the table when the node has none yet (a table read from a file); a new one by default */
+    id?: JunctionId
+  },
+): Junction {
+  const branches = [params.straightSegmentId, params.divergingSegmentId]
+  if (params.divergingRightSegmentId) branches.push(params.divergingRightSegmentId)
+  const existing = findJunctionAtNode(net, params.nodeId)
+  const junc: Junction = {
+    id: existing?.id ?? params.id ?? generateId('j'),
+    nodeId: params.nodeId,
+    kind: branches.length === 3 ? 'three_way' : 'turnout',
+    passages: branches.map((b) => ({ a: params.stemSegmentId, b })),
+    positions: branches.map((_, i) => [i]),
+    active: 0,
+  }
+  if (params.frogNumber !== undefined) junc.frogNumber = params.frogNumber
+  if (params.activeBranch) setJunctionBranch(junc, params.activeBranch)
+  net.junctions.set(junc.id, junc)
+  return junc
+}
+
+/**
+ * The rail of a node that can be the stem of a turnout with the given branches: one that is not a
+ * branch — the one ending at `stemNodeId` when several qualify.
+ */
+export function stemRailFor(
+  net: Network,
+  nodeId: NodeId,
+  branchSegIds: (SegmentId | undefined)[],
+  stemNodeId?: NodeId,
+): SegmentId | undefined {
+  const candidates = (net.adjacency.get(nodeId) ?? [])
+    .map((sid) => net.segments.get(sid))
+    .filter((seg): seg is Segment => !!seg && !branchSegIds.includes(seg.id))
+  const stem = candidates.find((seg) => (seg.from === nodeId ? seg.to : seg.from) === stemNodeId) ?? candidates[0]
+  return stem?.id
+}
+
+/**
+ * Declare a turnout from its node and branch rails; the stem is found with `stemRailFor`.
+ * Throws when the node has no rail to be the stem: use `declareTurnout` when that can happen.
+ */
 export function addJunction(
   net: Network,
   params: {
     nodeId: NodeId
     stemNodeId?: NodeId
-    straightNodeId: NodeId
-    divergingNodeId: NodeId
+    straightNodeId?: NodeId
+    divergingNodeId?: NodeId
     divergingRightNodeId?: NodeId
     straightSegmentId: SegmentId
     divergingSegmentId: SegmentId
     divergingRightSegmentId?: SegmentId
-    hand: 'left' | 'right' | 'three_way'
+    hand?: 'left' | 'right' | 'three_way'
     frogNumber?: number
-    activeBranch?: 'straight' | 'diverging' | 'left' | 'right'
+    activeBranch?: TurnoutBranch
   },
 ): Junction {
-  const junc: Junction = {
-    id: generateId('j'),
+  const stemSegmentId = stemRailFor(
+    net,
+    params.nodeId,
+    [params.straightSegmentId, params.divergingSegmentId, params.divergingRightSegmentId],
+    params.stemNodeId,
+  )
+  if (!stemSegmentId) throw new Error(`addJunction: node ${params.nodeId} has no rail to be the stem`)
+  return declareTurnout(net, {
     nodeId: params.nodeId,
-    stemNodeId: params.stemNodeId,
-    straightNodeId: params.straightNodeId,
-    divergingNodeId: params.divergingNodeId,
-    divergingRightNodeId: params.divergingRightNodeId,
+    stemSegmentId,
     straightSegmentId: params.straightSegmentId,
     divergingSegmentId: params.divergingSegmentId,
     divergingRightSegmentId: params.divergingRightSegmentId,
-    hand: params.hand,
+    activeBranch: params.activeBranch,
     frogNumber: params.frogNumber,
-    activeBranch: params.activeBranch ?? 'straight',
+  })
+}
+
+/**
+ * Declare the turnout made by laying `branchSegId` out of a node of an existing track: the stem is
+ * the rail of `railsBefore` (what the node had before) that the new branch continues, the straight
+ * branch the rail that already continued that stem. Declares nothing — and returns null — when the
+ * node is not on a through track (a dead end the branch merely prolongs, a free node), or when it
+ * already has a table: `syncJunctions` then decides what the extra rail is.
+ */
+export function declareBranchOff(
+  net: Network,
+  nodeId: NodeId,
+  railsBefore: SegmentId[],
+  branchSegId: SegmentId,
+): Junction | null {
+  const branch = net.segments.get(branchSegId)
+  if (!branch || findJunctionAtNode(net, nodeId)) return null
+  const rays = new Map<SegmentId, Point>()
+  for (const sid of railsBefore) {
+    const seg = net.segments.get(sid)
+    if (seg) rays.set(sid, leaveDirection(net, seg, nodeId))
   }
-  net.junctions.set(junc.id, junc)
-  return junc
+  const branchRay = leaveDirection(net, branch, nodeId)
+  const stems = [...rays].filter(([, ray]) => isTraversableDeflection(ray, branchRay))
+  if (stems.length !== 1) return null
+  const [stemSegmentId, stemRay] = stems[0]
+  const straights = [...rays].filter(([sid, ray]) => sid !== stemSegmentId && isTraversableDeflection(stemRay, ray))
+  if (straights.length !== 1) return null
+  return declareTurnout(net, { nodeId, stemSegmentId, straightSegmentId: straights[0][0], divergingSegmentId: branchSegId })
 }
 
 /** Remove a junction definition from the network (does not remove the rails unless specified). */
@@ -69,388 +168,364 @@ export function removeJunction(net: Network, id: JunctionId): void {
   net.junctions.delete(id)
 }
 
-/** Toggle active branch of a junction. */
-export function toggleJunction(junction: Junction): 'straight' | 'diverging' | 'left' | 'right' {
-  if (junction.hand === 'three_way') {
-    if (junction.activeBranch === 'straight') {
-      junction.activeBranch = 'left'
-    } else if (junction.activeBranch === 'left' || junction.activeBranch === 'diverging') {
-      junction.activeBranch = 'right'
-    } else {
-      junction.activeBranch = 'straight'
-    }
-  } else {
-    junction.activeBranch = junction.activeBranch === 'straight' ? 'diverging' : 'straight'
-  }
-  return junction.activeBranch
+/** Put a device in one of its positions. Every change of position goes through here. */
+export function setJunctionPosition(junction: Junction, index: number): void {
+  if (index >= 0 && index < junction.positions.length) junction.active = index
 }
 
-/** Set active branch of a junction. */
-export function setJunctionBranch(junction: Junction, branch: 'straight' | 'diverging' | 'left' | 'right'): void {
-  junction.activeBranch = branch
+/** The branch a turnout is set to */
+export function activeBranchOf(junction: Junction): TurnoutBranch {
+  return branchNames(junction)[junction.active] ?? 'straight'
 }
 
-/** Find if a node is the apex of a junction. */
-export function findJunctionAtNode(net: Network, nodeId: NodeId): Junction | undefined {
-  for (const junc of net.junctions.values()) {
-    if (junc.nodeId === nodeId) return junc
-  }
-  return undefined
+/** Throw a device to its next position (straight → left → right on a 3-way). Returns the branch now set. */
+export function toggleJunction(junction: Junction): TurnoutBranch {
+  if (junction.positions.length > 0) setJunctionPosition(junction, (junction.active + 1) % junction.positions.length)
+  return activeBranchOf(junction)
 }
 
-/** Find if a segment belongs to any junction. */
+/** Set a turnout to a branch. `diverging` and `left` name the same branch. */
+export function setJunctionBranch(junction: Junction, branch: TurnoutBranch): void {
+  const index = branch === 'straight' ? 0 : branch === 'right' && junction.kind === 'three_way' ? 2 : 1
+  setJunctionPosition(junction, index)
+}
+
+/** Find the turnout a rail is a branch of (its stem does not count). */
 export function findJunctionBySegment(net: Network, segId: SegmentId): Junction | undefined {
   for (const junc of net.junctions.values()) {
-    if (
-      junc.straightSegmentId === segId ||
-      junc.divergingSegmentId === segId ||
-      (junc.hand === 'three_way' && junc.divergingRightSegmentId === segId)
-    ) {
-      return junc
-    }
+    if (isTurnoutKind(junc) && junc.passages.some((p) => p.b === segId)) return junc
   }
   return undefined
+}
+
+// ─── Geometry of a turnout ────────────────────────────────────────────────────
+
+const RAIL_SAMPLES = 24
+
+/** Points along a rail, starting from one of its end nodes */
+function railPolyline(net: Network, seg: Segment, fromNodeId: NodeId): Point[] {
+  const a = net.nodes.get(seg.from)
+  const b = net.nodes.get(seg.to)
+  if (!a || !b) return []
+  const pts: Point[] = seg.kind === 'curve' && seg.via
+    ? Array.from({ length: RAIL_SAMPLES + 1 }, (_, i) => bezierPoint(i / RAIL_SAMPLES, a.pos, seg.via!, b.pos))
+    : [a.pos, b.pos]
+  return seg.from === fromNodeId ? pts : pts.reverse()
+}
+
+function polylineLength(pts: Point[]): number {
+  let len = 0
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+  return len
+}
+
+function pointAlong(pts: Point[], distance: number): Point {
+  let remaining = distance
+  for (let i = 1; i < pts.length; i++) {
+    const step = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+    if (remaining <= step && step > 0) {
+      const k = remaining / step
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k }
+    }
+    remaining -= step
+  }
+  return pts[pts.length - 1]
+}
+
+/** Where a branch of a turnout lies relative to the axis of its stem */
+export interface BranchSide {
+  segId: SegmentId
+  /** Lateral offset (meters) from the stem axis, at the same track distance on every branch; positive on the `left` hand */
+  offset: number
+  /** Angle (degrees) between the stem axis and the chord to that point */
+  angle: number
+  kind: Segment['kind']
 }
 
 /**
- * Automatically inspect all nodes in the network.
- * Any node with 3 connected segments is auto-detected as a railway turnout.
- * Automatically classifies stem, straight route, diverging route, hand, and frog number.
+ * Side of each branch of a turnout, measured at the same distance from the points on every branch
+ * (the length of the shortest one). The tangents at the points cannot tell the branches apart on a
+ * turnout whose diverging rail leaves tangent to the stem, which is how the tools lay them.
+ * Returns null when a rail is missing or does not touch the node.
  */
-export function autoDetectJunctions(net: Network): Junction[] {
-  const detected: Junction[] = []
+export function branchSides(
+  net: Network,
+  nodeId: NodeId,
+  stemSegId: SegmentId,
+  branchSegIds: SegmentId[],
+): BranchSide[] | null {
+  const apex = net.nodes.get(nodeId)
+  const stem = net.segments.get(stemSegId)
+  if (!apex || !stem || (stem.from !== nodeId && stem.to !== nodeId)) return null
+  const stemLeave = leaveDirection(net, stem, nodeId)
+  const axis = { x: -stemLeave.x, y: -stemLeave.y }
 
-  // Helper to compute normalized tangent directions entering each segment from node.pos
-  const getDir = (node: RailNode, seg: Segment): Point => {
-    const otherId = seg.from === node.id ? seg.to : seg.from
-    const other = net.nodes.get(otherId)
-    const tan = segmentTangentAt(net, seg, node.id)
-    if (tan) {
-      return seg.to === node.id ? { x: -tan.x, y: -tan.y } : tan
-    }
-    if (other) {
-      const dx = other.pos.x - node.pos.x
-      const dy = other.pos.y - node.pos.y
-      const len = Math.hypot(dx, dy)
-      return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-    }
-    return { x: 1, y: 0 }
+  const lines: { seg: Segment; pts: Point[] }[] = []
+  for (const sid of branchSegIds) {
+    const seg = net.segments.get(sid)
+    if (!seg || (seg.from !== nodeId && seg.to !== nodeId)) return null
+    lines.push({ seg, pts: railPolyline(net, seg, nodeId) })
   }
+  const reach = Math.min(...lines.map((line) => polylineLength(line.pts)))
+  return lines.map(({ seg, pts }) => {
+    const p = pointAlong(pts, reach)
+    const dx = p.x - apex.pos.x
+    const dy = p.y - apex.pos.y
+    const offset = axis.x * dy - axis.y * dx
+    return { segId: seg.id, offset, angle: (Math.atan2(Math.abs(offset), axis.x * dx + axis.y * dy) * 180) / Math.PI, kind: seg.kind }
+  })
+}
 
-  for (const node of net.nodes.values()) {
-    const adj = net.adjacency.get(node.id) ?? []
-    if (adj.length === 3) {
-      const s0 = net.segments.get(adj[0])
-      const s1 = net.segments.get(adj[1])
-      const s2 = net.segments.get(adj[2])
-      if (!s0 || !s1 || !s2) continue
+/** A turnout read with the names of its parts. Everything but the rails and the position is derived from the geometry. */
+export interface TurnoutView {
+  stemSegmentId: SegmentId
+  stemNodeId: NodeId
+  straightSegmentId: SegmentId
+  straightNodeId: NodeId
+  /** The diverging branch; the left one on a 3-way */
+  divergingSegmentId: SegmentId
+  divergingNodeId: NodeId
+  divergingRightSegmentId?: SegmentId
+  divergingRightNodeId?: NodeId
+  hand: 'left' | 'right' | 'three_way'
+  frogNumber: number
+  activeBranch: TurnoutBranch
+  /** The branch rail the points are set to */
+  activeSegmentId: SegmentId
+}
 
-      const u = [getDir(node, s0), getDir(node, s1), getDir(node, s2)]
-      const segs = [s0, s1, s2]
+/** Read a turnout or a 3-way. Returns null for another kind of device, or when one of its rails is gone. */
+export function turnoutView(net: Network, junction: Junction | null | undefined): TurnoutView | null {
+  if (!junction || !isTurnoutKind(junction) || junction.passages.length < 2) return null
+  const farNode = (segId: SegmentId): NodeId | null => {
+    const seg = net.segments.get(segId)
+    if (!seg) return null
+    return seg.from === junction.nodeId ? seg.to : seg.to === junction.nodeId ? seg.from : null
+  }
+  const stemSegmentId = junction.passages[0].a
+  const branchIds = junction.passages.map((p) => p.b)
+  const stemNodeId = farNode(stemSegmentId)
+  const branchNodeIds = branchIds.map(farNode)
+  if (!stemNodeId || branchNodeIds.some((id) => !id)) return null
 
-      // Find pair with minimal dot product (closest to -1, through route)
-      const dot01 = u[0].x * u[1].x + u[0].y * u[1].y
-      const dot02 = u[0].x * u[2].x + u[0].y * u[2].y
-      const dot12 = u[1].x * u[2].x + u[1].y * u[2].y
+  const sides = branchSides(net, junction.nodeId, stemSegmentId, branchIds)
+  const threeWay = junction.kind === 'three_way' && branchIds.length >= 3
+  const hand = threeWay ? 'three_way' : !sides || sides[1].offset - sides[0].offset >= 0 ? 'left' : 'right'
+  // Divergence between the branches (the widest one from the stem axis on a 3-way)
+  const divergence = !sides ? 0 : threeWay ? Math.max(sides[1].angle, sides[2].angle) : branchDivergence(sides[0], sides[1])
+  const view: TurnoutView = {
+    stemSegmentId,
+    stemNodeId,
+    straightSegmentId: branchIds[0],
+    straightNodeId: branchNodeIds[0]!,
+    divergingSegmentId: branchIds[1],
+    divergingNodeId: branchNodeIds[1]!,
+    hand,
+    frogNumber: junction.frogNumber ?? (divergence <= 12.5 ? 6 : 4),
+    activeBranch: activeBranchOf(junction),
+    activeSegmentId: branchIds[junction.active] ?? branchIds[0],
+  }
+  if (threeWay) {
+    view.divergingRightSegmentId = branchIds[2]
+    view.divergingRightNodeId = branchNodeIds[2]!
+  }
+  return view
+}
 
-      let throughA = 0
-      let throughB = 1
-      let divIdx = 2
-      let minDot = dot01
+/** Angle (degrees) between two branches, from their side of the stem axis */
+function branchDivergence(a: BranchSide, b: BranchSide): number {
+  return Math.abs(Math.sign(a.offset || 1) * a.angle - Math.sign(b.offset || 1) * b.angle)
+}
 
-      if (dot02 < minDot) {
-        minDot = dot02
-        throughA = 0
-        throughB = 2
-        divIdx = 1
-      }
-      if (dot12 < minDot) {
-        minDot = dot12
-        throughA = 1
-        throughB = 2
-        divIdx = 0
-      }
+/**
+ * Propose the route table of a node from its geometry: a turnout when one rail (the stem) can be
+ * left for each of two others, a 3-way for three. Rails that only cross the node are left out of
+ * the table. The roles do not depend on the order in which the rails were laid. Returns null when
+ * the node is not a fork — no stem, or several.
+ */
+export function proposeJunction(net: Network, nodeId: NodeId): Junction | null {
+  const rails = (net.adjacency.get(nodeId) ?? [])
+    .map((sid) => net.segments.get(sid))
+    .filter((seg): seg is Segment => !!seg)
+  if (rails.length < 3) return null
 
-      // Check if this is an incomplete 3-way turnout (all 3 branches depart on the same side)
-      if (dot01 > 0.5 && dot02 > 0.5 && dot12 > 0.5) {
-        const avgDir = {
-          x: (u[0].x + u[1].x + u[2].x) / 3,
-          y: (u[0].y + u[1].y + u[2].y) / 3,
-        }
-        const len = Math.hypot(avgDir.x, avgDir.y)
-        if (len > 0) {
-          avgDir.x /= len
-          avgDir.y /= len
-        }
-        const branchCrosses = [0, 1, 2]
-          .map((idx) => ({
-            idx,
-            cross: avgDir.x * u[idx].y - avgDir.y * u[idx].x,
-          }))
-          .sort((a, b) => b.cross - a.cross)
+  const rays = rails.map((seg) => leaveDirection(net, seg, nodeId))
+  // A stem is a rail that two or more others continue. Two of them at one node are two tracks
+  // meeting (a crossing, a converging line): only a single stem makes a fork.
+  const continuations = rails.map((_, i) => rails.filter((__, k) => k !== i && isTraversableDeflection(rays[i], rays[k])))
+  const stems = rails.filter((_, i) => continuations[i].length >= 2)
+  if (stems.length !== 1) return null
+  const stem = stems[0]
+  const branches = continuations[rails.indexOf(stem)]
+  if (branches.length > 3) return null
 
-        const leftIdx = branchCrosses[0].idx
-        const straightIdx = branchCrosses[1].idx
-        const rightIdx = branchCrosses[2].idx
+  const sides = branchSides(net, nodeId, stem.id, branches.map((seg) => seg.id))
+  if (!sides) return null
 
-        const straightSeg = segs[straightIdx]
-        const leftSeg = segs[leftIdx]
-        const rightSeg = segs[rightIdx]
+  const [straightSegmentId, divergingSegmentId, divergingRightSegmentId] = orderBranches(sides)
+  return declareTurnout(net, { nodeId, stemSegmentId: stem.id, straightSegmentId, divergingSegmentId, divergingRightSegmentId })
+}
 
-        const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
-        const leftNodeId = leftSeg.from === node.id ? leftSeg.to : leftSeg.from
-        const rightNodeId = rightSeg.from === node.id ? rightSeg.to : rightSeg.from
+/**
+ * Branches of a turnout in the order of its passages, from where they lie: straight then diverging
+ * for two branches; the middle one, the left one, the right one for three.
+ */
+function orderBranches(sides: BranchSide[]): SegmentId[] {
+  if (sides.length === 3) {
+    const [left, straight, right] = [...sides].sort((a, b) => b.offset - a.offset || a.segId.localeCompare(b.segId))
+    return [straight.segId, left.segId, right.segId]
+  }
+  return orderStraightFirst(sides[0], sides[1]).map((side) => side.segId)
+}
 
-        let junc = findJunctionAtNode(net, node.id)
-        if (junc) {
-          junc.stemNodeId = undefined
-          junc.straightNodeId = straightNodeId
-          junc.divergingNodeId = leftNodeId
-          junc.divergingRightNodeId = rightNodeId
-          junc.straightSegmentId = straightSeg.id
-          junc.divergingSegmentId = leftSeg.id
-          junc.divergingRightSegmentId = rightSeg.id
-          junc.hand = 'three_way'
-          junc.frogNumber = 6
-        } else {
-          junc = addJunction(net, {
-            nodeId: node.id,
-            stemNodeId: undefined,
-            straightNodeId,
-            divergingNodeId: leftNodeId,
-            divergingRightNodeId: rightNodeId,
-            straightSegmentId: straightSeg.id,
-            divergingSegmentId: leftSeg.id,
-            divergingRightSegmentId: rightSeg.id,
-            hand: 'three_way',
-            frogNumber: 6,
-            activeBranch: 'straight',
-          })
-        }
-        detected.push(junc)
+/**
+ * Re-read the roles of a turnout from its geometry, leaving it open on the same rail. For tables
+ * that come from outside (an older save file, whose roles were settled by the order of the rails).
+ */
+export function normalizeTurnoutRoles(net: Network, junc: Junction): void {
+  if (!isTurnoutKind(junc) || junc.passages.length < 2) return
+  const stemId = junc.passages[0].a
+  const sides = branchSides(net, junc.nodeId, stemId, junc.passages.map((p) => p.b))
+  if (!sides) return
+  const openRail = junc.passages[junc.active]?.b
+  const branches = orderBranches(sides)
+  junc.passages = branches.map((b) => ({ a: stemId, b }))
+  junc.active = Math.max(0, branches.indexOf(openRail))
+}
+
+/**
+ * Of two branches, the straight one first: the one closer to the stem axis; when they are as close
+ * (a symmetric Y), a straight rail before a curve, then the branch on the right hand.
+ */
+function orderStraightFirst(a: BranchSide, b: BranchSide): [BranchSide, BranchSide] {
+  const gap = Math.abs(a.offset) - Math.abs(b.offset)
+  const tolerance = 1e-6 * Math.max(1, Math.abs(a.offset), Math.abs(b.offset))
+  if (Math.abs(gap) > tolerance) return gap < 0 ? [a, b] : [b, a]
+  if (a.kind !== b.kind) return a.kind === 'straight' ? [a, b] : [b, a]
+  return a.offset <= b.offset ? [a, b] : [b, a]
+}
+
+/**
+ * Bring the route tables in line with the track after it was edited. A table is declared once and
+ * then only follows its rails: nothing here re-derives the roles of a turnout that still has the
+ * rails it names, so calling it again changes nothing and the order of the rails at a node never matters.
+ * - a table whose node is gone is removed, and so is a second table on the same node;
+ * - a rail that disappeared, or a branch bent into a corner no train can take, takes its passages
+ *   with it; the device stays on the rail that was open when it survives, a 3-way becomes a
+ *   turnout, and a turnout left with one branch is removed;
+ * - a turnout whose stem gets a third branch becomes a 3-way, open on the same rail;
+ * - a turnout one of whose branches is prolonged back through the points is two tracks crossing:
+ *   its table is removed, and each track runs straight through;
+ * - any other extra rail leaves the table alone and follows the default rule;
+ * - a fork that has no table gets the one `proposeJunction` reads from its geometry.
+ * Returns the tables of the network.
+ */
+export function syncJunctions(net: Network): Junction[] {
+  const seen = new Set<NodeId>()
+  for (const junc of [...net.junctions.values()]) {
+    if (!net.nodes.has(junc.nodeId) || seen.has(junc.nodeId)) {
+      net.junctions.delete(junc.id)
+      continue
+    }
+    seen.add(junc.nodeId)
+    const rails = new Set((net.adjacency.get(junc.nodeId) ?? []).filter((sid) => net.segments.has(sid)))
+
+    if (!dropDeadPassages(net, junc, rails)) {
+      net.junctions.delete(junc.id)
+      continue
+    }
+    if (isTurnoutKind(junc)) {
+      const named = new Set(junctionRails(junc))
+      const extras = [...rails].filter((sid) => !named.has(sid))
+      if (extras.some((sid) => continuesABranch(net, junc, sid))) {
+        net.junctions.delete(junc.id)
         continue
       }
-
-      // Between throughA and throughB: the diverging route branches forward from stem.
-      // u_div . u_straight > 0, u_div . u_stem < 0.
-      const dotA_div = u[throughA].x * u[divIdx].x + u[throughA].y * u[divIdx].y
-      const dotB_div = u[throughB].x * u[divIdx].x + u[throughB].y * u[divIdx].y
-
-      const stemIdx = dotA_div < dotB_div ? throughA : throughB
-      const straightIdx = dotA_div < dotB_div ? throughB : throughA
-
-      // A turnout needs two traversable routes out of the stem (see MAX_TRANSITION_DEFLECTION_DEG):
-      // a sharper through route or branch (a perpendicular T, a 120° star) is not a turnout.
-      if (!isTraversableDeflection(u[stemIdx], u[straightIdx]) || !isTraversableDeflection(u[stemIdx], u[divIdx])) {
-        const existing = findJunctionAtNode(net, node.id)
-        if (existing) removeJunction(net, existing.id)
-        continue
-      }
-
-      const stemSeg = segs[stemIdx]
-      const straightSeg = segs[straightIdx]
-      const divSeg = segs[divIdx]
-
-      const stemNodeId = stemSeg.from === node.id ? stemSeg.to : stemSeg.from
-      const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
-      const divNodeId = divSeg.from === node.id ? divSeg.to : divSeg.from
-
-      // Hand: cross product of approach vector (-u_stem) and diverging vector (u_div)
-      const approachX = -u[stemIdx].x
-      const approachY = -u[stemIdx].y
-      const cross = approachX * u[divIdx].y - approachY * u[divIdx].x
-      const hand: 'left' | 'right' = cross >= 0 ? 'left' : 'right'
-
-      // Angle of divergence
-      const straightDotDiv = Math.max(-1, Math.min(1, u[straightIdx].x * u[divIdx].x + u[straightIdx].y * u[divIdx].y))
-      const angleDeg = (Math.acos(straightDotDiv) * 180) / Math.PI
-      const frogNumber: 4 | 6 = angleDeg <= 12.5 ? 6 : 4
-
-      let junc = findJunctionAtNode(net, node.id)
-      if (junc) {
-        junc.stemNodeId = stemNodeId
-        junc.straightNodeId = straightNodeId
-        junc.divergingNodeId = divNodeId
-        junc.straightSegmentId = straightSeg.id
-        junc.divergingSegmentId = divSeg.id
-        junc.hand = hand
-        junc.frogNumber = frogNumber
-      } else {
-        junc = addJunction(net, {
-          nodeId: node.id,
-          stemNodeId,
-          straightNodeId,
-          divergingNodeId: divNodeId,
-          straightSegmentId: straightSeg.id,
-          divergingSegmentId: divSeg.id,
-          hand,
-          frogNumber,
-          activeBranch: 'straight',
-        })
-      }
-      detected.push(junc)
-    } else if (adj.length === 2) {
-      const s0 = net.segments.get(adj[0])
-      const s1 = net.segments.get(adj[1])
-      if (!s0 || !s1) continue
-
-      const u0 = getDir(node, s0)
-      const u1 = getDir(node, s1)
-      const dot01 = Math.max(-1, Math.min(1, u0.x * u1.x + u0.y * u1.y))
-
-      // In an incomplete turnout / fork apex, both branches depart on the same side:
-      // dot01 > 0.8 (relative angle <= 36°).
-      if (dot01 > 0.8) {
-        let straightSeg = s0
-        let divSeg = s1
-        let uStraight = u0
-        let uDiv = u1
-
-        if (s0.kind === 'curve' && s1.kind === 'straight') {
-          straightSeg = s1
-          divSeg = s0
-          uStraight = u1
-          uDiv = u0
-        }
-
-        const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
-        const divNodeId = divSeg.from === node.id ? divSeg.to : divSeg.from
-
-        const cross = uStraight.x * uDiv.y - uStraight.y * uDiv.x
-        const hand: 'left' | 'right' = cross >= 0 ? 'left' : 'right'
-
-        const angleDeg = (Math.acos(dot01) * 180) / Math.PI
-        const frogNumber: 4 | 6 = angleDeg <= 12.5 ? 6 : 4
-
-        let junc = findJunctionAtNode(net, node.id)
-        if (junc) {
-          junc.stemNodeId = undefined
-          junc.straightNodeId = straightNodeId
-          junc.divergingNodeId = divNodeId
-          junc.straightSegmentId = straightSeg.id
-          junc.divergingSegmentId = divSeg.id
-          junc.hand = hand
-          junc.frogNumber = frogNumber
-        } else {
-          junc = addJunction(net, {
-            nodeId: node.id,
-            stemNodeId: undefined,
-            straightNodeId,
-            divergingNodeId: divNodeId,
-            straightSegmentId: straightSeg.id,
-            divergingSegmentId: divSeg.id,
-            hand,
-            frogNumber,
-            activeBranch: 'straight',
-          })
-        }
-        detected.push(junc)
-      } else {
-        const junc = findJunctionAtNode(net, node.id)
-        if (junc) {
-          removeJunction(net, junc.id)
-        }
-      }
-    } else if (adj.length === 4) {
-      const s0 = net.segments.get(adj[0])
-      const s1 = net.segments.get(adj[1])
-      const s2 = net.segments.get(adj[2])
-      const s3 = net.segments.get(adj[3])
-      if (!s0 || !s1 || !s2 || !s3) continue
-
-      const segs = [s0, s1, s2, s3]
-      const u = [getDir(node, s0), getDir(node, s1), getDir(node, s2), getDir(node, s3)]
-
-      // Check for 3-way turnout (aiguillage triple) : 1 stem opposing 3 co-directional branches
-      let stemIdx = -1
-      for (let i = 0; i < 4; i++) {
-        const otherIndices = [0, 1, 2, 3].filter((k) => k !== i)
-        // Every branch must be a traversable route out of the stem
-        if (otherIndices.every((k) => isTraversableDeflection(u[i], u[k]))) {
-          stemIdx = i
-          break
-        }
-      }
-
-      if (stemIdx !== -1) {
-        const branchIndices = [0, 1, 2, 3].filter((k) => k !== stemIdx)
-        const approachX = -u[stemIdx].x
-        const approachY = -u[stemIdx].y
-
-        const branchCrosses = branchIndices
-          .map((idx) => ({
-            idx,
-            cross: approachX * u[idx].y - approachY * u[idx].x,
-          }))
-          .sort((a, b) => b.cross - a.cross)
-
-        const leftIdx = branchCrosses[0].idx
-        const straightIdx = branchCrosses[1].idx
-        const rightIdx = branchCrosses[2].idx
-
-        const stemSeg = segs[stemIdx]
-        const straightSeg = segs[straightIdx]
-        const leftSeg = segs[leftIdx]
-        const rightSeg = segs[rightIdx]
-
-        const stemNodeId = stemSeg.from === node.id ? stemSeg.to : stemSeg.from
-        const straightNodeId = straightSeg.from === node.id ? straightSeg.to : straightSeg.from
-        const leftNodeId = leftSeg.from === node.id ? leftSeg.to : leftSeg.from
-        const rightNodeId = rightSeg.from === node.id ? rightSeg.to : rightSeg.from
-
-        const angleLeft =
-          (Math.acos(Math.max(-1, Math.min(1, approachX * u[leftIdx].x + approachY * u[leftIdx].y))) * 180) / Math.PI
-        const angleRight =
-          (Math.acos(Math.max(-1, Math.min(1, approachX * u[rightIdx].x + approachY * u[rightIdx].y))) * 180) / Math.PI
-        const maxAngle = Math.max(angleLeft, angleRight)
-        const frogNumber: 4 | 6 = maxAngle <= 12.5 ? 6 : 4
-
-        let junc = findJunctionAtNode(net, node.id)
-        if (junc) {
-          junc.stemNodeId = stemNodeId
-          junc.straightNodeId = straightNodeId
-          junc.divergingNodeId = leftNodeId
-          junc.divergingRightNodeId = rightNodeId
-          junc.straightSegmentId = straightSeg.id
-          junc.divergingSegmentId = leftSeg.id
-          junc.divergingRightSegmentId = rightSeg.id
-          junc.hand = 'three_way'
-          junc.frogNumber = frogNumber
-          if (junc.activeBranch !== 'straight' && junc.activeBranch !== 'left' && junc.activeBranch !== 'right') {
-            junc.activeBranch = 'straight'
-          }
-        } else {
-          junc = addJunction(net, {
-            nodeId: node.id,
-            stemNodeId,
-            straightNodeId,
-            divergingNodeId: leftNodeId,
-            divergingRightNodeId: rightNodeId,
-            straightSegmentId: straightSeg.id,
-            divergingSegmentId: leftSeg.id,
-            divergingRightSegmentId: rightSeg.id,
-            hand: 'three_way',
-            frogNumber,
-            activeBranch: 'straight',
-          })
-        }
-        detected.push(junc)
-      } else {
-        const junc = findJunctionAtNode(net, node.id)
-        if (junc) {
-          removeJunction(net, junc.id)
-        }
-      }
-    } else {
-      // If node is not degree 2, 3 or 4-way turnout, remove any registered junction
-      const junc = findJunctionAtNode(net, node.id)
-      if (junc) {
-        removeJunction(net, junc.id)
-      }
+      if (junc.kind === 'turnout' && extras.length === 1) addThirdBranch(net, junc, extras[0])
     }
   }
 
-  return detected
+  for (const [nodeId, adj] of net.adjacency) {
+    if (adj.length >= 3 && !findJunctionAtNode(net, nodeId)) proposeJunction(net, nodeId)
+  }
+  return [...net.junctions.values()]
+}
+
+/** Former name of `syncJunctions` */
+export const autoDetectJunctions = syncJunctions
+
+/**
+ * Remove from a table the passages that no longer exist: over a rail the node has lost, between a
+ * rail and itself, listed twice (two rails that became one), or — on a turnout — bent into a corner
+ * no train can take. The device stays on the rail that was open when it can. Returns false when it
+ * is left without a choice to make (fewer than two positions) and should be removed.
+ */
+function dropDeadPassages(net: Network, junc: Junction, rails: Set<SegmentId>): boolean {
+  const samePair = (p: Passage, q: Passage) => (p.a === q.a && p.b === q.b) || (p.a === q.b && p.b === q.a)
+  const takable = (p: Passage): boolean => {
+    if (!isTurnoutKind(junc)) return true
+    const a = net.segments.get(p.a)
+    const b = net.segments.get(p.b)
+    return !!a && !!b && isTraversableDeflection(leaveDirection(net, a, junc.nodeId), leaveDirection(net, b, junc.nodeId))
+  }
+  // For each passage, its index among the ones kept (a repeated pair maps onto its first occurrence)
+  const passages: Passage[] = []
+  const mapped = junc.passages.map((p) => {
+    if (p.a === p.b || !rails.has(p.a) || !rails.has(p.b) || !takable(p)) return -1
+    const first = passages.findIndex((q) => samePair(p, q))
+    return first >= 0 ? first : passages.push(p) - 1
+  })
+  const unchanged = passages.length === junc.passages.length
+  if (unchanged) return junc.positions.length >= 2
+
+  const openBefore = (junc.positions[junc.active] ?? []).map((i) => junc.passages[i])
+  const positions: number[][] = []
+  for (const position of junc.positions) {
+    const kept = [...new Set(position.map((i) => mapped[i]).filter((i) => i >= 0))]
+    if (kept.length > 0 && !positions.some((other) => other.join() === kept.join())) positions.push(kept)
+  }
+  if (positions.length < 2) return false
+
+  const active = positions.findIndex((position) => position.some((i) => openBefore.some((p) => samePair(p, passages[i]))))
+  const wasThreeWay = junc.kind === 'three_way'
+  junc.passages = passages
+  junc.positions = positions
+  junc.active = Math.max(0, active)
+  if (wasThreeWay && passages.length === 2) {
+    // What is left is a plain turnout: which branch is the straight one is read again
+    junc.kind = 'turnout'
+    normalizeTurnoutRoles(net, junc)
+  }
+  return true
+}
+
+/** True when a rail the turnout does not name lines up with one of its branches: a second track through the points */
+function continuesABranch(net: Network, junc: Junction, extraSegId: SegmentId): boolean {
+  const extra = net.segments.get(extraSegId)
+  if (!extra) return false
+  const extraRay = leaveDirection(net, extra, junc.nodeId)
+  return junc.passages.some((p) => {
+    const branch = net.segments.get(p.b)
+    return !!branch && isTraversableDeflection(extraRay, leaveDirection(net, branch, junc.nodeId))
+  })
+}
+
+/** Turn a turnout into a 3-way when the extra rail of its node is a third branch of its stem */
+function addThirdBranch(net: Network, junc: Junction, extraSegId: SegmentId): void {
+  const stemId = junc.passages[0]?.a
+  const stem = stemId ? net.segments.get(stemId) : undefined
+  const extra = net.segments.get(extraSegId)
+  if (!stemId || !stem || !extra || junc.passages.length !== 2) return
+  if (!isTraversableDeflection(leaveDirection(net, stem, junc.nodeId), leaveDirection(net, extra, junc.nodeId))) return
+  const sides = branchSides(net, junc.nodeId, stemId, [...junc.passages.map((p) => p.b), extraSegId])
+  if (!sides) return
+
+  const openRail = junc.passages[junc.active]?.b
+  const branches = orderBranches(sides)
+  junc.kind = 'three_way'
+  junc.passages = branches.map((b) => ({ a: stemId, b }))
+  junc.positions = branches.map((_, i) => [i])
+  junc.active = Math.max(0, branches.indexOf(openRail))
 }
 
 /**
@@ -467,7 +542,8 @@ export function placeTurnout(
     stemNodeId?: NodeId
   },
 ): {
-  junction: Junction
+  /** Null when the apex has no rail to be the stem: the two branches are laid but nothing chooses between them */
+  junction: Junction | null
   apexNode: RailNode
   straightNode: RailNode
   divergingNode: RailNode
@@ -483,6 +559,7 @@ export function placeTurnout(
   } else {
     apexNode = addNode(net, options.startPos)
   }
+  const railsBefore = [...(net.adjacency.get(apexNode.id) ?? [])]
 
   // 2. Straight branch
   const straightEnd = computeStraightPiece(apexNode.pos, dir, spec.straightLength)
@@ -501,18 +578,21 @@ export function placeTurnout(
   const divergingNode = addNode(net, divEnd)
   const divergingSeg = addCurveSegment(net, apexNode.id, divergingNode.id, divVia)!
 
-  // 4. Register Junction
-  const junction = addJunction(net, {
-    nodeId: apexNode.id,
-    stemNodeId: options.stemNodeId,
-    straightNodeId: straightNode.id,
-    divergingNodeId: divergingNode.id,
-    straightSegmentId: straightSeg.id,
-    divergingSegmentId: divergingSeg.id,
-    hand: options.hand,
-    frogNumber: options.frogNumber,
-    activeBranch: 'straight',
+  // 4. Declare the turnout: its stem is the rail already at the apex that the straight branch continues
+  const straightLeave = leaveDirection(net, straightSeg, apexNode.id)
+  const stemSegId = railsBefore.find((sid) => {
+    const seg = net.segments.get(sid)
+    return !!seg && isTraversableDeflection(leaveDirection(net, seg, apexNode.id), straightLeave)
   })
+  const junction = stemSegId
+    ? declareTurnout(net, {
+        nodeId: apexNode.id,
+        stemSegmentId: stemSegId,
+        straightSegmentId: straightSeg.id,
+        divergingSegmentId: divergingSeg.id,
+        frogNumber: options.frogNumber,
+      })
+    : null
 
   return { junction, apexNode, straightNode, divergingNode }
 }
@@ -547,6 +627,7 @@ export function splitSegment(
     removeSegment(net, segmentId, false)
     const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id)!
     const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id)!
+    replaceJunctionRail(net, segmentId, [seg1, seg2])
     return { midNode, seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -584,6 +665,7 @@ export function splitSegment(
     removeSegment(net, segmentId, false)
     const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id, q0)!
     const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id, q1)!
+    replaceJunctionRail(net, segmentId, [seg1, seg2])
     return { midNode, seg1, seg2 }
   }
 
@@ -624,12 +706,11 @@ export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId
     }
   }
 
-  // Update any junction node references
-  for (const junc of net.junctions.values()) {
-    if (junc.nodeId === removeNodeId) junc.nodeId = keepNodeId
-    if (junc.stemNodeId === removeNodeId) junc.stemNodeId = keepNodeId
-    if (junc.straightNodeId === removeNodeId) junc.straightNodeId = keepNodeId
-    if (junc.divergingNodeId === removeNodeId) junc.divergingNodeId = keepNodeId
+  // The table of the removed node follows its rails to the kept node, unless that node has its own
+  const moved = findJunctionAtNode(net, removeNodeId)
+  if (moved) {
+    if (findJunctionAtNode(net, keepNodeId)) net.junctions.delete(moved.id)
+    else moved.nodeId = keepNodeId
   }
 
   net.nodes.delete(removeNodeId)
@@ -643,8 +724,9 @@ export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId
  * itself and whatever continues it or hangs off its end. Nothing further away moves.
  */
 export function turnoutHandFlipSegments(net: Network, junction: Junction): SegmentId[] {
-  if (junction.hand === 'three_way') return []
-  return [...new Set([junction.divergingSegmentId, ...(net.adjacency.get(junction.divergingNodeId) ?? [])])]
+  const view = turnoutView(net, junction)
+  if (!view || view.hand === 'three_way') return []
+  return [...new Set([view.divergingSegmentId, ...(net.adjacency.get(view.divergingNodeId) ?? [])])]
 }
 
 /**
@@ -653,14 +735,15 @@ export function turnoutHandFlipSegments(net: Network, junction: Junction): Segme
  */
 export function toggleTurnoutHand(net: Network, junctionId: JunctionId): boolean {
   const junc = net.junctions.get(junctionId)
-  if (!junc) return false
+  const view = junc ? turnoutView(net, junc) : null
+  if (!junc || !view || view.hand === 'three_way') return false
 
   const apex = net.nodes.get(junc.nodeId)
-  const straightNode = net.nodes.get(junc.straightNodeId)
-  const divNode = net.nodes.get(junc.divergingNodeId)
-  const divSeg = net.segments.get(junc.divergingSegmentId)
+  const straightNode = net.nodes.get(view.straightNodeId)
+  const divNode = net.nodes.get(view.divergingNodeId)
+  const divSeg = net.segments.get(view.divergingSegmentId)
 
-  if (!apex || !straightNode || !divNode || junc.hand === 'three_way') return false
+  if (!apex || !straightNode || !divNode) return false
 
   // Straight axis vector A -> B
   const ax = straightNode.pos.x - apex.pos.x
@@ -693,6 +776,5 @@ export function toggleTurnoutHand(net: Network, junctionId: JunctionId): boolean
     divSeg.via = reflectPoint(divSeg.via)
   }
 
-  junc.hand = junc.hand === 'left' ? 'right' : 'left'
   return true
 }

@@ -2,7 +2,7 @@ import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from '../mo
 import { bezierPoint, bezierDerivative1, closestCurveParam, discretizeCurve } from './curve'
 import { isCrossingAngle } from '../models/crossing'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
-import { addNode, addChildSegment, removeSegment, removeDuplicateSegments, nodeLevels, segmentLevel } from '../models/network'
+import { addNode, addChildSegment, removeSegment, removeDuplicateSegments, replaceJunctionRail, nodeLevels, segmentLevel } from '../models/network'
 
 /**
  * Split an existing segment at an existing node that lies on it.
@@ -38,6 +38,7 @@ export function splitSegmentAtNode(
     // A half that already exists (the node sits on a superimposed rail) is reused as it is
     const seg1 = addChildSegment(net, seg, nodeA.id, node.id)!
     const seg2 = addChildSegment(net, seg, node.id, nodeB.id)!
+    replaceJunctionRail(net, segmentId, [seg1, seg2])
     return { seg1, seg2 }
   } else if (seg.kind === 'curve' && seg.via) {
     const p0 = nodeA.pos
@@ -62,6 +63,7 @@ export function splitSegmentAtNode(
     removeSegment(net, segmentId, false)
     const seg1 = addChildSegment(net, seg, nodeA.id, node.id, q0)!
     const seg2 = addChildSegment(net, seg, node.id, nodeB.id, q1)!
+    replaceJunctionRail(net, segmentId, [seg1, seg2])
     return { seg1, seg2 }
   }
   return null

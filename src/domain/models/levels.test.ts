@@ -15,7 +15,7 @@ import {
 } from './network'
 import type { Network, Segment } from './types'
 import { detectCrossings, separateLevelsAtNode } from './crossing'
-import { autoDetectJunctions, splitSegment } from './junction'
+import { autoDetectJunctions, splitSegment, turnoutView } from './junction'
 import { computeTrackSections } from './sections'
 import { snapToNearestTrack } from './locomotive'
 import { advanceTrainSet, createVehicle, makeTrainSet } from './train'
@@ -341,17 +341,17 @@ describe('separateLevelsAtNode', () => {
     addSegment(net, cut.midNode.id, tip.id)
     autoDetectJunctions(net)
     const junc = [...net.junctions.values()].find((j) => j.nodeId === cut.midNode.id)!
-    expect(junc.stemNodeId).toBe(centre.id)
+    expect(turnoutView(net, junc)!.stemNodeId).toBe(centre.id)
 
     const nsNow = net.adjacency.get(centre.id)!.map((sid) => net.segments.get(sid)!)
       .filter((seg) => [seg.from, seg.to].some((nid) => Math.abs(net.nodes.get(nid)!.pos.y) > 1))
     setSegmentsLevel(net, nsNow.map((seg) => seg.id), 1)
     const twinId = separateLevelsAtNode(net, centre.id)!
 
-    expect(junc.stemNodeId).toBe(twinId)
+    expect(turnoutView(net, junc)!.stemNodeId).toBe(twinId)
     // What notify() re-derives from the topology agrees
     autoDetectJunctions(net)
-    expect([...net.junctions.values()].find((j) => j.nodeId === cut.midNode.id)!.stemNodeId).toBe(twinId)
+    expect(turnoutView(net, [...net.junctions.values()].find((j) => j.nodeId === cut.midNode.id))!.stemNodeId).toBe(twinId)
   })
 })
 
