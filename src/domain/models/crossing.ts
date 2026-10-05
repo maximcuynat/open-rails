@@ -1,5 +1,5 @@
-import type { Network, NodeId, Point, Segment } from './types'
-import { addNode, segmentLevel } from './network'
+import type { Network, NodeId, Point, Segment, SegmentId } from './types'
+import { addNode, levelsMeet, nodeLevel, segmentHeightAt, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from './network'
 import { discretizeCurve } from '../geometry/curve'
 import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
@@ -172,28 +172,37 @@ export function throughTracksAtNode(
   }
 }
 
-/** True when the two tracks have a level in common, i.e. when they meet */
-function shareLevel(a: ThroughTrack, b: ThroughTrack): boolean {
-  return a.some((sa) => b.some((sb) => segmentLevel(sa) === segmentLevel(sb)))
-}
-
 /**
- * Turn a level crossing into a bridge: when the two tracks running through a degree-4 node have no
- * level in common, the upper one is moved onto a twin node at the same place, so that nothing
- * joins them any more. The rails keep their ids and their shape (trains on them do not move), and
- * reconcile leaves the two stacked nodes apart for as long as their levels differ.
- * Returns the twin node id, or null when the node is not such a crossing.
+ * Turn a level crossing into a bridge. `nodeId` is a degree-4 node where two tracks run through;
+ * the one that `segmentId` belongs to is given the height `level` there, the other one stays at the
+ * height of the node. The two tracks stop sharing a node: the upper one is moved onto a twin node
+ * at the same place, which carries its height, and the original node keeps the lower track and its
+ * height. The rails keep their ids and their shape (trains on them do not move), and reconcile
+ * leaves the two stacked nodes apart for as long as their heights are LEVEL_CLEARANCE apart.
+ * Returns the twin node id, or null when nothing was done: the node is not such a crossing,
+ * `segmentId` does not end there, or `level` (clamped to MIN_LEVEL…MAX_LEVEL) is still within
+ * LEVEL_CLEARANCE of the height of the node — the tracks would still meet.
  */
-export function separateLevelsAtNode(net: Network, nodeId: NodeId): NodeId | null {
+export function separateLevelsAtNode(
+  net: Network,
+  nodeId: NodeId,
+  segmentId: SegmentId,
+  level: number,
+): NodeId | null {
   const node = net.nodes.get(nodeId)
   const through = node && throughTracksAtNode(net, nodeId)
   if (!node || !through) return null
-  const [a, b] = through.tracks
-  if (shareLevel(a, b)) return null
+  const leaving = through.tracks.find((track) => track.some((seg) => seg.id === segmentId))
+  if (!leaving) return null
+  const staying = through.tracks[0] === leaving ? through.tracks[1] : through.tracks[0]
+  const target = Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, level))
+  const current = nodeLevel(node)
+  if (levelsMeet(target, current)) return null
 
-  const top = (track: ThroughTrack) => Math.max(segmentLevel(track[0]), segmentLevel(track[1]))
-  const upper = top(a) > top(b) ? a : b
-  const twin = addNode(net, node.pos)
+  // The twin always carries the upper track, whichever of the two is the one changing height
+  const upper = target > current ? leaving : staying
+  const twin = addNode(net, node.pos, Math.max(target, current))
+  setNodesLevel(net, [nodeId], Math.min(target, current))
   const stay = net.adjacency.get(nodeId)!
   for (const seg of upper) {
     if (seg.from === nodeId) seg.from = twin.id
@@ -233,38 +242,35 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
       const through = throughTracksAtNode(net, node.id)
       if (through) {
         const { tracks, dirs } = through
-        // Two tracks stacked on one node without a level in common do not cross
-        if (shareLevel(tracks[0], tracks[1])) {
-          // Found two through lines crossing at node.pos!
-          const u1 = dirs[0]
-          const u2 = dirs[1]
-          const dot12 = Math.abs(u1.x * u2.x + u1.y * u2.y)
-          const angleRad = Math.acos(Math.min(1, Math.max(0, dot12)))
-          const angleDeg = (angleRad * 180) / Math.PI
+        // Found two through lines crossing at node.pos (one node: they are at the same height there)
+        const u1 = dirs[0]
+        const u2 = dirs[1]
+        const dot12 = Math.abs(u1.x * u2.x + u1.y * u2.y)
+        const angleRad = Math.acos(Math.min(1, Math.max(0, dot12)))
+        const angleDeg = (angleRad * 180) / Math.PI
 
-          // The node exists: reconcile has already judged the angle
-          if (angleDeg > 0 && angleDeg <= 90) {
-            const frogs = computeCrossingFrogs(node.pos, u1, u2)
-            if (frogs) {
-              const r = Math.max(
-                Math.hypot(frogs.p1.x - node.pos.x, frogs.p1.y - node.pos.y),
-                Math.hypot(frogs.p2.x - node.pos.x, frogs.p2.y - node.pos.y),
-              )
-              crossings.push({
-                id: `cross-node-${node.id}`,
-                center: node.pos,
-                angleDeg,
-                angleRad,
-                track1Dir: u1,
-                track2Dir: u2,
-                seg1Id: tracks[0][0].id,
-                seg2Id: tracks[1][0].id,
-                nodeId: node.id,
-                frogs,
-                radius: r + 15,
-              })
-              crossingCenters.push(node.pos)
-            }
+        // The node exists: reconcile has already judged the angle
+        if (angleDeg > 0 && angleDeg <= 90) {
+          const frogs = computeCrossingFrogs(node.pos, u1, u2)
+          if (frogs) {
+            const r = Math.max(
+              Math.hypot(frogs.p1.x - node.pos.x, frogs.p1.y - node.pos.y),
+              Math.hypot(frogs.p2.x - node.pos.x, frogs.p2.y - node.pos.y),
+            )
+            crossings.push({
+              id: `cross-node-${node.id}`,
+              center: node.pos,
+              angleDeg,
+              angleRad,
+              track1Dir: u1,
+              track2Dir: u2,
+              seg1Id: tracks[0][0].id,
+              seg2Id: tracks[1][0].id,
+              nodeId: node.id,
+              frogs,
+              radius: r + 15,
+            })
+            crossingCenters.push(node.pos)
           }
         }
       }
@@ -280,8 +286,6 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
 
       // Skip segments sharing an endpoint
       if (s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to) continue
-      // One passes over the other: a bridge, not a crossing
-      if (segmentLevel(s1) !== segmentLevel(s2)) continue
 
       const n1A = net.nodes.get(s1.from)
       const n1B = net.nodes.get(s1.to)
@@ -313,7 +317,14 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
       for (let a = 0; a < pts1.length - 1; a++) {
         for (let b = 0; b < pts2.length - 1; b++) {
           const res = intersectSegments(pts1[a], pts1[a + 1], pts2[b], pts2[b + 1])
-          if (res) {
+          // One passes over the other where they intersect: a bridge, not a crossing
+          if (
+            res &&
+            levelsMeet(
+              segmentHeightAt(net, s1, (a + res.t1) / (pts1.length - 1)),
+              segmentHeightAt(net, s2, (b + res.t2) / (pts2.length - 1)),
+            )
+          ) {
             const d1x = pts1[a + 1].x - pts1[a].x
             const d1y = pts1[a + 1].y - pts1[a].y
             const l1 = Math.hypot(d1x, d1y)

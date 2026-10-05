@@ -14,6 +14,9 @@ import { showToast } from '../common/Toast'
 import { KeybindingsSection } from './KeybindingsSection'
 import type { Keybindings } from '@application/keybindings/keybindings'
 
+/** A length as typed in a field of the modal: in the display unit, without float noise */
+const unitField = (meters: number, unit: Unit): string => Number(toUnitValue(meters, unit).toFixed(4)).toString()
+
 interface SettingsModalProps {
   store: EditorStore
   isOpen: boolean
@@ -29,6 +32,8 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   const [spacingVal, setSpacingVal] = useState<string>(
     toUnitValue(store.trackSpacing, store.unit).toString()
   )
+  const [levelHeightVal, setLevelHeightVal] = useState<string>(unitField(store.levelHeight, store.unit))
+  const [maxGradientVal, setMaxGradientVal] = useState<string>(store.maxGradient.toString())
   const [showDimensions, setShowDimensions] = useState<boolean>(store.showDimensions)
   const [boardEnabled, setBoardEnabled] = useState<boolean>(store.boardEnabled)
   const [boardWidthVal, setBoardWidthVal] = useState<string>(
@@ -46,13 +51,15 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSelectedUnit(store.unit)
       setGaugeVal(toUnitValue(store.gauge, store.unit).toString())
       setSpacingVal(toUnitValue(store.trackSpacing, store.unit).toString())
+      setLevelHeightVal(unitField(store.levelHeight, store.unit))
+      setMaxGradientVal(store.maxGradient.toString())
       setShowDimensions(store.showDimensions)
       setBoardEnabled(store.boardEnabled)
       setBoardWidthVal(toUnitValue(store.boardWidth, store.unit).toString())
       setBoardHeightVal(toUnitValue(store.boardHeight, store.unit).toString())
       setDraftKeys(store.keybindings)
     }
-  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.levelHeight, store.maxGradient, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
 
   // When changing scale preset in the modal
   const handleScaleChange = (presetId: ScalePresetId) => {
@@ -62,6 +69,8 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSelectedUnit(preset.defaultUnit)
       setGaugeVal(toUnitValue(preset.defaultGauge, preset.defaultUnit).toString())
       setSpacingVal(toUnitValue(preset.defaultTrackSpacing, preset.defaultUnit).toString())
+      setLevelHeightVal(unitField(preset.defaultLevelHeight, preset.defaultUnit))
+      setMaxGradientVal(preset.defaultMaxGradient.toString())
       if (preset.defaultBoardWidth && preset.defaultBoardHeight) {
         setBoardEnabled(true)
         setBoardWidthVal(toUnitValue(preset.defaultBoardWidth, preset.defaultUnit).toString())
@@ -76,11 +85,13 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   const handleUnitChange = (newUnit: Unit) => {
     const currentGaugeMeters = parseDistance(gaugeVal, selectedUnit)
     const currentSpacingMeters = parseDistance(spacingVal, selectedUnit)
+    const currentLevelHeightMeters = parseDistance(levelHeightVal, selectedUnit)
     const currentBWMeters = parseDistance(boardWidthVal, selectedUnit)
     const currentBHMeters = parseDistance(boardHeightVal, selectedUnit)
     setSelectedUnit(newUnit)
     setGaugeVal(toUnitValue(currentGaugeMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
     setSpacingVal(toUnitValue(currentSpacingMeters, newUnit).toFixed(newUnit === 'mm' ? 1 : 2))
+    setLevelHeightVal(unitField(currentLevelHeightMeters, newUnit))
     setBoardWidthVal(toUnitValue(currentBWMeters, newUnit).toFixed(newUnit === 'mm' ? 0 : 2))
     setBoardHeightVal(toUnitValue(currentBHMeters, newUnit).toFixed(newUnit === 'mm' ? 0 : 2))
   }
@@ -89,8 +100,15 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
     const parsedGauge = parseDistance(gaugeVal, selectedUnit)
     const parsedSpacing = parseDistance(spacingVal, selectedUnit)
 
+    const parsedLevelHeight = parseDistance(levelHeightVal, selectedUnit)
+    const parsedMaxGradient = parseFloat(maxGradientVal.replace(',', '.'))
+
     if (parsedGauge <= 0 || parsedSpacing <= 0) {
       showToast('Valeurs de voie invalides', 'error')
+      return
+    }
+    if (!(parsedLevelHeight > 0) || !(parsedMaxGradient > 0)) {
+      showToast('Hauteur de niveau ou pente maximale invalide', 'error')
       return
     }
 
@@ -111,6 +129,9 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       store.setCustomGauge(parsedGauge)
       store.setCustomTrackSpacing(parsedSpacing)
     }
+
+    // After the scale: choosing a preset puts back its own slope settings
+    store.setGradientSettings({ levelHeight: parsedLevelHeight, maxGradient: parsedMaxGradient })
 
     if (store.showDimensions !== showDimensions) {
       store.toggleDimensions()
@@ -193,7 +214,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
         <div className="settings-section">
           <label className="settings-label">
             Gabarit et géométrie de voie
-            <span className="settings-hint">Personnalisez l'écartement physique et l'entraxe entre voies parallèles</span>
+            <span className="settings-hint">Personnalisez l'écartement physique, l'entraxe entre voies parallèles, la hauteur d'un niveau (pont, tunnel) et la pente maximale des rampes</span>
           </label>
           <div className="settings-grid-2">
             <div className="settings-field">
@@ -228,6 +249,40 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
                   onChange={(e) => setSpacingVal(e.target.value)}
                 />
                 <span className="settings-input-unit">{selectedUnit}</span>
+              </div>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="input-level-height" className="settings-sublabel">
+                Hauteur d'un niveau ({selectedUnit}) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-level-height"
+                  type="number"
+                  step="any"
+                  min="0"
+                  className="settings-input"
+                  value={levelHeightVal}
+                  onChange={(e) => setLevelHeightVal(e.target.value)}
+                />
+                <span className="settings-input-unit">{selectedUnit}</span>
+              </div>
+            </div>
+            <div className="settings-field">
+              <label htmlFor="input-max-gradient" className="settings-sublabel">
+                Pente maximale (‰) :
+              </label>
+              <div className="settings-input-wrap">
+                <input
+                  id="input-max-gradient"
+                  type="number"
+                  step="any"
+                  min="1"
+                  className="settings-input"
+                  value={maxGradientVal}
+                  onChange={(e) => setMaxGradientVal(e.target.value)}
+                />
+                <span className="settings-input-unit">‰</span>
               </div>
             </div>
           </div>

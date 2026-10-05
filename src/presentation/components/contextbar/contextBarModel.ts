@@ -4,7 +4,7 @@ import { MAX_LEVEL, MIN_LEVEL } from '@domain/models/network'
 import { performTrackCut } from '@domain/geometry/constructionTemplates'
 import { formatDistance, formatAngle } from '@domain/models/units'
 import { showToast } from '../common/Toast'
-import { levelRange, levelRangeLabel } from '../common/trackLevel'
+import { levelRange, levelRangeLabel, nodeLevelRange } from '../common/trackLevel'
 import { getGizmoAnchor } from '../canvas/gizmo'
 import {
   describeCurve,
@@ -114,10 +114,12 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
     run: () => { store.createParallelTrackFromSelection() },
   }
 
-  // Track level (bridge / tunnel). Each rail moves from its own level, so a whole bridge (several
-  // rails) goes up in one click. Always shown for rails, « Sol » included: nothing appears or
-  // goes away between two clicks.
-  const range = levelRange(store.network, segments) ?? { min: 0, max: 0 }
+  // Track level (bridge / tunnel): the heights of the nodes of the selected rails, or of the
+  // selected nodes when no rail is selected (what `shiftSelectionLevel` acts on). Each node moves
+  // from its own height, so a whole bridge (several rails) goes up in one click. Always shown,
+  // « Sol » included: nothing appears or goes away between two clicks.
+  const range =
+    (segments.size > 0 ? levelRange(store.network, segments) : nodeLevelRange(store.network, nodes)) ?? { min: 0, max: 0 }
   const level: ContextBarItem = {
     kind: 'stepper',
     id: 'level',
@@ -133,6 +135,17 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
       disabled: range.min >= MAX_LEVEL,
       run: () => { store.shiftSelectionLevel(1) },
     },
+  }
+
+  // Even out the slope along a run of rails. Always there when rails are selected, greyed out
+  // when there is nothing to even out: the buttons after it keep their place
+  const spread: ContextBarItem = {
+    kind: 'action',
+    id: 'spread-gradient',
+    label: 'Lisser la pente',
+    title: 'Répartir le dénivelé sur les voies sélectionnées : la même pente d’un bout à l’autre',
+    disabled: !store.canSpreadSelectionGradient,
+    run: () => { store.spreadSelectionGradient() },
   }
 
   if (nodes.size > 0) {
@@ -177,14 +190,16 @@ function selectionBar(store: EditorStore): ContextBarItem[] | null {
         )
       }
     }
-    // A click on a track selects its nodes along with its rails: the level applies to those rails
-    if (segments.size > 0) items.push(level)
+    // A click on a track selects its nodes along with its rails: the level applies to those rails.
+    // Nodes alone: to the nodes themselves
+    items.push(level)
+    if (segments.size > 0) items.push(spread)
     items.push(parallel, remove)
     return items
   }
 
   items.push({ kind: 'label', text: segments.size === 1 ? 'Voie' : `${segments.size} voies` })
-  items.push(level)
+  items.push(level, spread)
   items.push({
     kind: 'action',
     id: 'split',

@@ -1,20 +1,28 @@
 import type { Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, syncIdCounter, segmentLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
+import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
 import { declareTurnout, findJunctionAtNode, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
 import type { Junction, JunctionKind, Network, RailNode, Segment, SegmentKind } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
+import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
 import { deserializeTrains, serializeTrains } from '../../domain/models/train'
 import type { SerializedTrain, TrainSet } from '../../domain/models/train'
 
 export const STORAGE_KEY = 'open-rail:network'
 
+/** A height worth storing: a finite number off the ground, within MIN_LEVEL…MAX_LEVEL */
+function isStoredLevel(level: unknown): level is number {
+  return typeof level === 'number' && Number.isFinite(level) && level !== 0 && level >= MIN_LEVEL && level <= MAX_LEVEL
+}
+
 export interface SerializedNode {
   id: string
   x: number
   y: number
+  /** Height of the track at the node, in levels (decimals allowed); only written off the ground */
+  level?: number
 }
 
 export interface SerializedSegment {
@@ -23,7 +31,10 @@ export interface SerializedSegment {
   to: string
   kind: SegmentKind
   via?: { x: number; y: number }
-  /** Stacking level; only written when the rail is off the ground */
+  /**
+   * Legacy (saves made when the level was a property of the rail): never written, converted to
+   * node heights on load.
+   */
   level?: number
 }
 
@@ -96,6 +107,10 @@ export interface SerializedProject {
   scalePreset?: ScalePresetId
   gauge?: number
   trackSpacing?: number
+  /** Height of one track level, in world meters (absent from files saved before ramps: default of the scale) */
+  levelHeight?: number
+  /** Steepest slope allowed, in ‰ (absent from files saved before ramps: default of the scale) */
+  maxGradient?: number
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -124,6 +139,7 @@ export function serializeNetwork(
   boardWidth?: number,
   boardHeight?: number,
   trains?: TrainSet[],
+  gradient?: Partial<GradientLimits>,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -131,6 +147,7 @@ export function serializeNetwork(
       id: n.id,
       x: n.pos.x,
       y: n.pos.y,
+      ...(nodeLevel(n) !== 0 ? { level: nodeLevel(n) } : {}),
     })
   }
 
@@ -142,7 +159,6 @@ export function serializeNetwork(
       to: s.to,
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
-      ...(segmentLevel(s) !== 0 ? { level: segmentLevel(s) } : {}),
     })
   }
 
@@ -216,6 +232,8 @@ export function serializeNetwork(
     scalePreset,
     gauge,
     trackSpacing,
+    levelHeight: gradient?.levelHeight,
+    maxGradient: gradient?.maxGradient,
     showDimensions,
     boardEnabled,
     boardWidth,
@@ -284,6 +302,11 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
   normalizeTurnoutRoles(net, junction)
 }
 
+/** A setting read from a file: kept only when it is a usable (finite, positive) number */
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
 /**
  * Reconstruct a full in-memory Network structure from serialized data,
  * rebuilding adjacency, resolving junctions, and synchronizing ID counters.
@@ -299,6 +322,8 @@ export function deserializeNetwork(data: SerializedProject): {
   scalePreset?: ScalePresetId
   gauge?: number
   trackSpacing?: number
+  levelHeight?: number
+  maxGradient?: number
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number
@@ -317,12 +342,16 @@ export function deserializeNetwork(data: SerializedProject): {
       const x = typeof n.x === 'number' && !Number.isNaN(n.x) ? n.x : 0
       const y = typeof n.y === 'number' && !Number.isNaN(n.y) ? n.y : 0
       const node: RailNode = { id: n.id, pos: { x, y } }
+      if (isStoredLevel(n.level)) node.level = n.level
       net.nodes.set(node.id, node)
       net.adjacency.set(node.id, [])
     }
   }
 
   // 2. Restore segments
+  // Legacy saves carry the level on the rails: each node takes, among the levels of its rails, the
+  // one furthest from the ground (the upper one on a tie)
+  const legacyLevels = new Map<string, number>()
   if (Array.isArray(data.segments)) {
     for (const s of data.segments) {
       if (!s || typeof s.id !== 'string' || !s.from || !s.to) continue
@@ -345,14 +374,24 @@ export function deserializeNetwork(data: SerializedProject): {
             ? { x: s.via.x, y: s.via.y }
             : undefined,
       }
-      // Read before the reconcile pass below, which must not join a bridge to the track under it
-      if (Number.isInteger(s.level) && s.level !== 0 && s.level! >= MIN_LEVEL && s.level! <= MAX_LEVEL) {
-        seg.level = s.level
+      if (isStoredLevel(s.level)) {
+        for (const nodeId of [seg.from, seg.to]) {
+          const known = legacyLevels.get(nodeId) ?? 0
+          const further = Math.abs(s.level) > Math.abs(known) || (Math.abs(s.level) === Math.abs(known) && s.level > known)
+          if (further) legacyLevels.set(nodeId, s.level)
+        }
       }
       net.segments.set(seg.id, seg)
       net.adjacency.get(s.from)?.push(seg.id)
       net.adjacency.get(s.to)?.push(seg.id)
     }
+  }
+
+  // Heights are settled before the reconcile pass below, which must not join a bridge to the track
+  // under it. A node that states its own height keeps it.
+  for (const [nodeId, level] of legacyLevels) {
+    const node = net.nodes.get(nodeId)
+    if (node && node.level === undefined) node.level = level
   }
 
   // 3. Restore the route tables as they were saved: roles and positions are not re-derived
@@ -401,6 +440,8 @@ export function deserializeNetwork(data: SerializedProject): {
     scalePreset: data.scalePreset,
     gauge: typeof data.gauge === 'number' ? data.gauge : undefined,
     trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
+    levelHeight: positiveNumber(data.levelHeight),
+    maxGradient: positiveNumber(data.maxGradient),
     showDimensions: typeof data.showDimensions === 'boolean' ? data.showDimensions : undefined,
     boardEnabled: typeof data.boardEnabled === 'boolean' ? data.boardEnabled : undefined,
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
@@ -467,6 +508,7 @@ export function saveNetworkToStorage(
   boardWidth?: number,
   boardHeight?: number,
   trains?: TrainSet[],
+  gradient?: Partial<GradientLimits>,
 ): boolean {
   try {
     const storage = getStorage()
@@ -488,6 +530,7 @@ export function saveNetworkToStorage(
       boardWidth,
       boardHeight,
       trains,
+      gradient,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -511,6 +554,8 @@ export function loadNetworkFromStorage(): {
   scalePreset?: ScalePresetId
   gauge?: number
   trackSpacing?: number
+  levelHeight?: number
+  maxGradient?: number
   showDimensions?: boolean
   boardEnabled?: boolean
   boardWidth?: number

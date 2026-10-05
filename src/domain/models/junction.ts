@@ -1,4 +1,4 @@
-import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, removeSegment, replaceJunctionRail } from './network'
+import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, removeSegment, replaceJunctionRail, segmentHeightAt, setNodesLevel } from './network'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
 import { isTraversableDeflection } from '../geometry/tangent'
@@ -622,6 +622,10 @@ export function splitSegment(
     if (lenSq > 0) {
       const t = Math.max(0.005, Math.min(0.995, ((splitPoint.x - nodeA.pos.x) * dx + (splitPoint.y - nodeA.pos.y) * dy) / lenSq))
       midNode.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
+      // The new node is at the height the rail has there: each piece keeps its share of a ramp
+      setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
+    } else {
+      setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, 0))
     }
     // Replace straight A-B with A-mid and mid-B
     removeSegment(net, segmentId, false)
@@ -661,6 +665,7 @@ export function splitSegment(
       y: (1 - t) * q0.y + t * q1.y,
     }
     midNode.pos = bt
+    setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
 
     removeSegment(net, segmentId, false)
     const seg1 = addChildSegment(net, seg, nodeA.id, midNode.id, q0)!
@@ -674,6 +679,7 @@ export function splitSegment(
 
 /**
  * Fuse two nodes together (weld nodeB into nodeA).
+ * The kept node keeps its height: the rails of the removed node now end there.
  * Moves all connections of nodeB to nodeA and deletes nodeB.
  */
 export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId): boolean {
