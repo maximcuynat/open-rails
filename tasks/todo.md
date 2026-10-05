@@ -213,7 +213,9 @@ Branche `feature/driving-physics`, pas encore commité. Les crans B1…B5 retir�
 
 ---
 
-# À valider — Niveaux de détail au dézoom (plan du 2026-10-05)
+# Fait, à contrôler à l'œil — Niveaux de détail au dézoom (2026-10-05)
+
+Branche `feature/render-lod` (partie de `developement`), worktree `../open-rails-lod`. Rien de commité.
 
 Demande : plus on dézoome, plus le dessin se simplifie, comme une carte en ligne. La vue rapprochée ne change pas.
 
@@ -238,14 +240,14 @@ Dans tous les paliers : un badge qui en recouvrirait un autre n'est pas dessiné
 
 ## Étapes
 
-- [ ] 0. Banc de mesure gardé dans le dépôt (hors de `npm test`) : temps par image à cinq zooms sur 1 000 et 4 000 rails, avec le détail par couche ; relevé de départ
-- [ ] 1. `render/lod.ts` : `trackLod`, seuils en pixels, tests à 1:1 et en HO ; remplacer les comparaisons à `cam.scale` de `renderNetwork` par ce palier (sans changer ce qui s'affiche en 1:1 au zoom par défaut)
-- [ ] 2. Palier Ligne : trait unique par rail, regroupé par style (normal, sélectionné, branche fermée, tunnel), halo de pont ; tests du nombre de tracés
-- [ ] 3. Palier Ligne, par-dessus : nœuds, heurtoirs, flèches de sens
-- [ ] 4. Palier Schéma : polylignes de section calculées une fois dans `networkDerived`, simplifiées selon le zoom ; tests
-- [ ] 5. Badges sans recouvrement ; pastilles de diagnostics regroupés
-- [ ] 6. Trains : silhouette sans bogies au palier Ligne, repère au palier Schéma ; vérifier qu'un train hors champ n'est pas tracé
-- [ ] 7. Mesure finale, `npm test`, `npm run typecheck`, `npm run build`, contrôle dans le navigateur à chaque palier en 1:1 et en HO, captures avant/après aux seuils
+- [x] 0. Banc de mesure gardé dans le dépôt (hors de `npm test`) : temps par image à cinq zooms sur 1 000 et 4 000 rails, avec le détail par couche ; relevé de départ
+- [x] 1. `render/lod.ts` : `trackLod`, seuils en pixels, tests à 1:1 et en HO ; remplacer les comparaisons à `cam.scale` de `renderNetwork` par ce palier (sans changer ce qui s'affiche en 1:1 au zoom par défaut)
+- [x] 2. Palier Ligne : trait unique par rail, regroupé par style (normal, sélectionné, branche fermée, tunnel), halo de pont ; tests du nombre de tracés
+- [x] 3. Palier Ligne, par-dessus : nœuds, heurtoirs, flèches de sens
+- [x] 4. Palier Schéma : polylignes de section calculées une fois dans `networkDerived`, simplifiées selon le zoom ; tests
+- [x] 5. Badges sans recouvrement ; pastilles de diagnostics regroupés
+- [x] 6. Trains : silhouette sans bogies au palier Ligne, repère au palier Schéma ; vérifier qu'un train hors champ n'est pas tracé
+- [x] 7. Mesure finale, `npm test`, `npm run typecheck`, `npm run build`, contrôle dans le navigateur à chaque palier en 1:1 et en HO, captures avant/après aux seuils
 
 Chaque étape est indépendante et peut être commitée seule ; 2 et 4 portent l'essentiel du gain.
 
@@ -254,6 +256,30 @@ Chaque étape est indépendante et peut être commitée seule ; 2 et 4 portent l
 - Couleur du trait au palier Ligne : couleur du rail (continuité avec la vue rapprochée, proposé) ou couleur de la section (comme le palier simplifié actuel) ? Au palier Schéma : couleur de la section.
 - Nœuds masqués au dézoom : restent-ils cliquables ? Proposé : non, on ne saisit que ce qu'on voit ; la sélection par voie reste possible.
 - Les rails sont tracés avec la constante `GAUGE` (1,435 m) et non l'écartement du projet : à vérifier en HO avant l'étape 1, le palier doit lire le même écartement que le tracé.
+
+## Revue
+
+Temps de calcul par image (`npm run bench`, hors tracé du navigateur), 4 000 rails :
+
+| Zoom (px/m) | 8 | 2,5 | 1 | 0,4 | 0,1 |
+|---|---|---|---|---|---|
+| Avant | 16,3 ms | 19,0 ms | 46,0 ms | 77,2 ms | 70,9 ms |
+| Après | 11,8 ms | 17,4 ms | 4,9 ms | 6,1 ms | 0,9 ms |
+
+`npm test` (1 234), `npm run typecheck`, `npm run build` passent. Les trois paliers ont été regardés dans le navigateur sur un réseau de 370 rails (ponts, cassure signalée) ; trains, saisie des nœuds et HO non regardés.
+
+Points tranchés sans l'utilisateur : couleur du rail au palier Ligne, couleur de la section au palier Schéma ; nœud masqué non saisissable avec l'outil de sélection (les outils de pose s'accrochent toujours à tous les nœuds).
+
+Écarts au plan et restes :
+- Badges : sous 1,435 px d'écartement, les sections renommées gardent leur badge (avant : la sélectionnée seule) ; au palier Détail, un badge qui en recouvre un autre n'est plus dessiné
+- Flèches de sens visibles jusqu'au bas du palier Ligne (avant : rien sous 0,8 px/m)
+- Palier Schéma : les niveaux ne sont pas superposés, sélectionner un rail colore toute sa section
+- Palier Ligne : nœud isolé masqué s'il n'est pas sélectionné ; l'ancienne `Locomotive` garde son dessin complet
+- Le menu contextuel (clic droit) atteint encore un nœud masqué
+- `hitNode` (`models/network.ts`) a reçu un filtre optionnel
+- Import circulaire `renderer.ts` ↔ `lodTracks.ts` (sans effet à l'exécution)
+- Le palier lit la constante `GAUGE` comme le tracé des rails : en HO on reste au palier Détail tant que les rails ne suivent pas l'écartement du projet (défaut ancien, non corrigé)
+- Seuils des badges et diagnostics dans `lodOverlays.ts` et non `lod.ts`
 
 ## Hors périmètre
 

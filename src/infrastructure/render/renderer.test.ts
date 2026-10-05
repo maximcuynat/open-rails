@@ -955,7 +955,8 @@ describe('end of track', () => {
     Object.defineProperty(ctx, 'fillStyle', { set: (v: string) => { fill = v }, get: () => fill })
     vi.mocked(ctx.stroke).mockImplementation(() => { strokes.push(stroke) })
     vi.mocked(ctx.fill).mockImplementation(() => { fills.push(fill) })
-    renderNetwork(ctx, createCamera(), 800, 600, net, { nodes: new Set(), segments: new Set() }, {}, options)
+    // Drawn at the default zoom of a 1:1 layout: buffer stops belong to the detailed drawing
+    renderNetwork(ctx, createCamera(0, 0, 2.5), 800, 600, net, { nodes: new Set(), segments: new Set() }, {}, options)
     return { strokes, fills, arcRadii: vi.mocked(ctx.arc).mock.calls.map((c) => c[2]) }
   }
   const RED = '#dc2626'

@@ -3,7 +3,7 @@ import { createNetwork, addNode, addSegment, addCurveSegment, removeSegment } fr
 import { computeTrackSections } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import type { Network } from '@domain/models/types'
-import { networkDerived } from './networkDerived'
+import { networkDerived, POLYLINE_MAX_CHORDS, POLYLINE_TOLERANCE } from './networkDerived'
 
 function line(): { net: Network; ids: string[]; segs: string[] } {
   const net = createNetwork()
@@ -114,5 +114,70 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     const two = line().net
     expect(networkDerived(one)).not.toBe(networkDerived(two))
     expect(networkDerived(one)).toBe(networkDerived(one))
+  })
+
+  describe('section polylines', () => {
+    it('one line per section, through its nodes in order, with its bounding box', () => {
+      const { net } = line()
+      const lines = networkDerived(net).sectionPolylines()
+      expect(lines).toHaveLength(1)
+      expect(lines[0].section).toBe(networkDerived(net).sections[0])
+      const pts = [...lines[0].points]
+      // Either way round, but in order along the track
+      expect([pts, [...pts].reverse().flatMap((_, i, all) => (i % 2 ? [] : [all[i + 1], all[i]]))]).toContainEqual([0, 0, 30, 0, 60, 0])
+      expect(lines[0]).toMatchObject({ minX: 0, maxX: 60, minY: 0, maxY: 0, tunnel: false })
+    })
+
+    it('a rail laid against the direction of the section is walked backwards', () => {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 })
+      const b = addNode(net, { x: 30, y: 0 })
+      const c = addNode(net, { x: 60, y: 0 })
+      addSegment(net, a.id, b.id)
+      addCurveSegment(net, c.id, b.id, { x: 45, y: 0 })
+      const [only] = networkDerived(net).sectionPolylines()
+      const xs = [...only.points].filter((_, i) => i % 2 === 0)
+      expect(xs.length).toBe(3)
+      expect([[0, 30, 60], [60, 30, 0]]).toContainEqual(xs)
+    })
+
+    it('a flat curve is one chord, a bent one a few points that stay within the tolerance', () => {
+      const net = createNetwork()
+      const a = addNode(net, { x: 0, y: 0 })
+      const b = addNode(net, { x: 100, y: 0 })
+      const curve = addCurveSegment(net, a.id, b.id, { x: 50, y: 0.5 })!
+      expect(networkDerived(net).sectionPolylines()[0].points.length).toBe(4)
+
+      curve.via = { x: 50, y: 40 }
+      const bent = networkDerived(net).sectionPolylines()[0]
+      const count = bent.points.length / 2
+      expect(count).toBeGreaterThan(3)
+      expect(count).toBeLessThanOrEqual(POLYLINE_MAX_CHORDS + 1)
+      // The top of the curve (y = 20 at mid-length) is not cut off by more than the tolerance
+      expect(bent.maxY).toBeGreaterThan(20 - POLYLINE_TOLERANCE)
+      expect(bent.maxY).toBeLessThanOrEqual(20)
+    })
+
+    it('a section wholly below ground is flagged as a tunnel', () => {
+      const { net, ids } = line()
+      for (const id of ids) net.nodes.get(id)!.level = -1
+      expect(networkDerived(net).sectionPolylines()[0].tunnel).toBe(true)
+      net.nodes.get(ids[0])!.level = 0
+      expect(networkDerived(net).sectionPolylines()[0].tunnel).toBe(false)
+    })
+
+    it('are built once and rebuilt when the network changes', () => {
+      const { net, ids } = line()
+      const first = networkDerived(net).sectionPolylines()
+      expect(networkDerived(net).sectionPolylines()).toBe(first)
+      net.nodes.get(ids[2])!.pos.x = 90
+      const moved = networkDerived(net).sectionPolylines()
+      expect(moved).not.toBe(first)
+      expect(moved[0].maxX).toBe(90)
+
+      const d = addNode(net, { x: 120, y: 0 })
+      addSegment(net, ids[2], d.id)
+      expect(networkDerived(net).sectionPolylines()[0].maxX).toBe(120)
+    })
   })
 })

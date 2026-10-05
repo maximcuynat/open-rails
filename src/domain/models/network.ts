@@ -500,14 +500,23 @@ export function isCloserOrAbove(d: number, level: number, bestD: number, bestLev
   return level > bestLevel ? d <= bestD + LEVEL_TIE_EPSILON : d < bestD - LEVEL_TIE_EPSILON
 }
 
-/** Find the closest node to a point within a max radius (the upper one of two stacked nodes). */
-export function hitNode(net: Network, pos: Point, maxDist: number): NodeId | null {
+/**
+ * Find the closest node to a point within a max radius (the upper one of two stacked nodes).
+ * With `accept`, only among the nodes it lets through.
+ */
+export function hitNode(
+  net: Network,
+  pos: Point,
+  maxDist: number,
+  accept?: (node: RailNode) => boolean,
+): NodeId | null {
   let best: NodeId | null = null
   let bestD = maxDist
   let bestLevel = 0
   for (const node of net.nodes.values()) {
     const d = dist(pos, node.pos)
     if (d >= maxDist) continue
+    if (accept && !accept(node)) continue
     const level = nodeLevel(node)
     if (best === null || isCloserOrAbove(d, level, bestD, bestLevel)) {
       bestD = d

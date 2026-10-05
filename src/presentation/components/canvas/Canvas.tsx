@@ -75,6 +75,7 @@ import {
 } from './placementPreview'
 import { JUNCTION_OCCUPIED_REFUSED, TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { hitShownNode } from './nodePicking'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -1631,7 +1632,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
-        const nodeId = hitNode(store.network, world, hitTol)
+        const nodeId = hitShownNode(store.network, store.selection, world, hitTol, store.camera.scale)
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
           if (existingJunc && store.selection.nodes.has(nodeId) && !isMulti) {
@@ -1937,7 +1938,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         // Feedback curseur survol sur les éléments sélectionnables
         if (store.tool === 'select' && !store.panning && !store.isDraggingNode && !store.gizmoDragAxis && !store.gizmoHoverAxis) {
           const hitTol = 14 / store.camera.scale
-          const hoveredNodeId = hitNode(store.network, rawWorld, hitTol)
+          const hoveredNodeId = hitShownNode(store.network, store.selection, rawWorld, hitTol, store.camera.scale)
           const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
           const hoveredVehicle = store.trains.length > 0 ? store.findVehicleAt(rawWorld) : null
           if (hoveredNodeId || hoveredSegId || hoveredVehicle) {
