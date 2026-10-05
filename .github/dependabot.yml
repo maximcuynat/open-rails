@@ -1,14 +1,23 @@
 version: 2
 updates:
+  # Une seule pull request par mois et par écosystème : ce projet n'a pas besoin de plus.
+  # Les correctifs de sécurité restent proposés à part, dès qu'une alerte existe.
   - package-ecosystem: npm
     directory: /
     target-branch: developement
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      npm:
+        patterns: ['*']
 
   - package-ecosystem: github-actions
     directory: /
     target-branch: developement
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ['*']
