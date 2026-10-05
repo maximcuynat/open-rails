@@ -14,12 +14,26 @@ import type { BadgeBox } from './lodOverlays'
 // steeper than the limit of the project is drawn in the alert colour. Slopes do not depend on the
 // scale of the project: they show on a model railway as at full size.
 
-/** Distance between two chevrons along a ramp, on screen (px) */
-export const CHEVRON_SPACING_PX = 28
 /** Half width of a chevron, in track gauges, and its bounds on screen (px) */
 const CHEVRON_HALF_GAUGES = 0.34
-const CHEVRON_HALF_PX = { min: 2.5, max: 7 }
-const CHEVRON_ALPHA = 0.8
+export const CHEVRON_HALF_PX = { min: 4.5, max: 7 }
+/** Distance between two chevrons along a ramp, in half widths of a chevron, and its bounds on screen (px) */
+const CHEVRON_SPACING_HALVES = 7
+export const CHEVRON_SPACING_PX = { min: 32, max: 48 }
+/** A chevron is never drawn with a thinner line than this (px) */
+export const CHEVRON_MIN_LINE_PX = 1.6
+const CHEVRON_ALPHA = 0.9
+
+/**
+ * Size of the chevrons at a zoom, all in screen pixels: their half width (they follow the gauge
+ * close up, and keep a readable size where the two rails are 3 px apart — they then stand out
+ * beyond the rails), the pitch they are laid at and the width of their line.
+ */
+export function chevronMetrics(scale: number, gauge: number): { half: number; spacing: number; line: number } {
+  const half = Math.max(CHEVRON_HALF_PX.min, Math.min(CHEVRON_HALF_PX.max, CHEVRON_HALF_GAUGES * gauge * scale))
+  const spacing = Math.max(CHEVRON_SPACING_PX.min, Math.min(CHEVRON_SPACING_PX.max, CHEVRON_SPACING_HALVES * half))
+  return { half, spacing, line: Math.max(CHEVRON_MIN_LINE_PX, half * 0.32) }
+}
 /** A ramp shorter than this on screen (px) gets no label */
 export const GRADIENT_LABEL_MIN_LENGTH = 40
 /** Distance (px) from the axis of the track down to the middle of the label */
@@ -46,7 +60,8 @@ export interface GradientColors {
  * Chevrons of the ramps over the pieces of rail of one level, their point towards the top of the
  * ramp whichever way each rail runs. They are counted from the foot of the ramp at a constant pitch
  * on screen, so they neither bunch nor jump from one rail to the next. Called from the rail pass of
- * the detailed drawing, after the rails; two strokes at most (plain and alert).
+ * the detailed drawing, after the rails; one path each for the plain and the alert chevrons,
+ * stroked twice (a rim in the background colour, then the chevron).
  */
 export function renderGradientChevrons(
   ctx: CanvasRenderingContext2D,
@@ -62,8 +77,9 @@ export function renderGradientChevrons(
   colors: GradientColors,
 ): void {
   if (index.ramps.length === 0) return
-  const step = CHEVRON_SPACING_PX / cam.scale
-  const half = Math.max(CHEVRON_HALF_PX.min, Math.min(CHEVRON_HALF_PX.max, CHEVRON_HALF_GAUGES * gauge * cam.scale))
+  const metrics = chevronMetrics(cam.scale, gauge)
+  const half = metrics.half
+  const step = metrics.spacing / cam.scale
   const margin = half * 2
   /** Chevrons as screen triplets: one arm end, the point, the other arm end */
   const plain: number[] = []
@@ -100,17 +116,21 @@ export function renderGradientChevrons(
   ctx.save()
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.lineWidth = Math.max(1.2, half * 0.32)
   ctx.globalAlpha = CHEVRON_ALPHA * levelAlpha
   const stroke = (points: number[], color: string): void => {
     if (points.length === 0) return
-    ctx.strokeStyle = color
     ctx.beginPath()
     for (let i = 0; i < points.length; i += 6) {
       ctx.moveTo(points[i], points[i + 1])
       ctx.lineTo(points[i + 2], points[i + 3])
       ctx.lineTo(points[i + 4], points[i + 5])
     }
+    // A rim in the background colour first: the chevron reads over the rails and the centreline
+    ctx.strokeStyle = colors.paper
+    ctx.lineWidth = metrics.line + 2.4
+    ctx.stroke()
+    ctx.strokeStyle = color
+    ctx.lineWidth = metrics.line
     ctx.stroke()
   }
   stroke(plain, colors.ink)

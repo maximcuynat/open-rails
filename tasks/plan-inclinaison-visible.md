@@ -135,3 +135,15 @@ Le banc dessine désormais les repères (`BENCH_NO_INCLINATION=1` pour les retir
 ### Estimé
 
 - Coefficient de souplesse 0,2 (Duplex et TGV M), hauteur de la motrice du TGV M : voir la fin de `tasks/recherche-devers.md`.
+
+### Deuxième passe (2026-10-05) : cinq défauts corrigés
+
+- Flanc du train : gris ardoise (`TRAIN_FLANK_FILL`), distinct du toit bleu ciel et du surlignage du dévers (`--accent`), dans les deux thèmes.
+- Chevrons : taille, pas et trait en pixels d'écran avec un minimum (9 px de large, pas de 32 px, trait de 1,6 px) et un liseré de la couleur du fond ; pas de 48 px en vue rapprochée (`chevronMetrics`).
+- Étiquettes de pente : placées après les marqueurs de diagnostic et par le même mécanisme que les badges ; une étiquette qui toucherait un marqueur n'est pas dessinée.
+- Contour de sélection : il entoure ce qui est dessiné (toit et flanc, `TrainVehicleVisual.drawn`) et passe par-dessus la caisse quand elle penche ; la sélection à la souris reste sur l'emprise au sol.
+- Train déraillé : chaque véhicule garde sa silhouette point pour point (nez compris), large de la hauteur de caisse, de l'axe de la voie vers l'extérieur.
+- Tests : 1 871 (5 de plus). Le test du pas des chevrons, écrit à la première passe, lit maintenant `chevronMetrics` : le pas n'est plus une constante.
+- Vu à l'écran (captures `2x-*`) : arrêt en courbe clair et sombre, chevrons à 2,2 et 3 px/m, rampe raide avec son diagnostic, véhicule sélectionné, train couché, sortie de courbe, case « Dévers et pentes » cliquée dans le menu, déraillement atteint en conduisant (240 km/h dans la courbe de 500 m) : le train reste couché du même côté une fois sorti de la courbe.
+- Conduite : les touches W et A ont été pressées ; Q (desserrer) doit rester enfoncée, elle a été tenue par un évènement `keydown` envoyé à la page.
+- Reste : un train déraillé continue de glisser sur la voie pendant que la console annonce « Le train est immobilisé » (comportement existant, hors périmètre).

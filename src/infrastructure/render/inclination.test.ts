@@ -2,17 +2,17 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createCamera, type Camera } from '@infrastructure/render/camera'
 import { addCurveChain, addNode, addSegment, createNetwork, resetIdCounter } from '@domain/models/network'
 import { tangentArcPieces } from '@domain/geometry/curve'
-import { snapToNearestTrack } from '@domain/models/locomotive'
+import { positionOnSegment, snapToNearestTrack } from '@domain/models/locomotive'
 import { createVehicle, makeTrainSet, type TrainSet } from '@domain/models/train'
 import type { LineSettings } from '@domain/models/speedLimits'
 import { trackProfile, trackSpeedStats } from '@domain/models/trackSpeed'
 import type { Network, Point, RailNode, Segment } from '@domain/models/types'
-import { GAUGE, TUNNEL_ALPHA, renderNetwork, renderTrainSet, type RenderNetworkOptions } from '@infrastructure/render/renderer'
+import { GAUGE, TRAIN_FLANK_FILL, TUNNEL_ALPHA, renderNetwork, renderTrainSet, type RenderNetworkOptions } from '@infrastructure/render/renderer'
 import { trackLod } from '@infrastructure/render/lod'
 import { groupPiecesByLevel } from '@infrastructure/render/levelPieces'
 import { networkDerived } from '@infrastructure/render/networkDerived'
 import { CANT_MARK_LEVELS, cantMarkLevel, cantMarkStyle, cantRenderStats, cantStretches } from '@infrastructure/render/cantRender'
-import { CHEVRON_SPACING_PX, gradientLabel, renderGradientChevrons } from '@infrastructure/render/gradientRender'
+import { CHEVRON_HALF_PX, CHEVRON_MIN_LINE_PX, CHEVRON_SPACING_PX, chevronMetrics, gradientLabel, renderGradientChevrons } from '@infrastructure/render/gradientRender'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -26,7 +26,7 @@ const INK = '#1a1a1a'
 const DANGER = '#dc2626'
 /** Fills of a vehicle body and of the flank of a leaning one */
 const BODY_FILL = 'rgba(14, 165, 233, 0.09)'
-const FLANK_FILL = 'rgba(14, 165, 233, 0.45)'
+const FLANK_FILL = TRAIN_FLANK_FILL
 
 /** A `stroke`, `fill` or `fillText`, with the style it was made in and the points of its path */
 interface Paint {
@@ -148,9 +148,23 @@ function onCurve(side: 1 | -1, degrees: number): Point {
   return { x: 500 + RADIUS * Math.sin(a), y: side * RADIUS * (1 - Math.cos(a)) }
 }
 
-function trainAt(net: Network, world: Point): TrainSet {
+function trainAt(net: Network, world: Point, kind: 'loco' | 'wagon' = 'wagon'): TrainSet {
   const hit = snapToNearestTrack(net, world, 1)!
-  return makeTrainSet('T', [createVehicle(net, hit.segId, hit.t, 'wagon', 1)!])
+  return makeTrainSet('T', [createVehicle(net, hit.segId, hit.t, kind, 1)!])
+}
+
+/** Is `p` inside the polygon, or within `tolerance` of its edge? */
+function enclosed(p: [number, number], polygon: [number, number][], tolerance = 0.01): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside
+    const len2 = (xj - xi) ** 2 + (yj - yi) ** 2
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((p[0] - xi) * (xj - xi) + (p[1] - yi) * (yj - yi)) / len2)) : 0
+    if (Math.hypot(p[0] - (xi + t * (xj - xi)), p[1] - (yi + t * (yj - yi))) <= tolerance) return true
+  }
+  return inside
 }
 
 /** World point of a screen point */
@@ -201,6 +215,89 @@ describe('renderTrainSet: lean of the bodies', () => {
       // One fill and one stroke more than upright, nothing else
       expect(leaning.paints.length).toBe(plain.paints.length + 2)
     }
+  })
+
+  it('the flank is a shade of its own: neither the roof nor the accent of the cant mark', () => {
+    const { net } = curveLayout()
+    const world = onCurve(1, 45)
+    const cam = createCamera(world.x, world.y, 10)
+    const fills = draw(net, trainAt(net, world), cam, CLASSIC_160).paints.filter((p) => p.kind === 'fill').map((p) => p.fillStyle)
+    expect(fills).toContain(TRAIN_FLANK_FILL)
+    expect(TRAIN_FLANK_FILL).not.toBe(BODY_FILL)
+    // The cant mark is stroked in the accent colour (see below): a blue, where the flank is a slate grey
+    const rgb = /rgba\((\d+), (\d+), (\d+)/.exec(TRAIN_FLANK_FILL)!.slice(1).map(Number)
+    expect(rgb[2] - rgb[0]).toBeLessThan(60)
+    const accent = [0x25, 0x63, 0xeb]
+    expect(accent[2] - accent[0]).toBeGreaterThan(150)
+  })
+
+  it('the outline of a selected vehicle goes round what is drawn: the roof and the flank', () => {
+    const SELECTION = '#38bdf8'
+    const TARGET = '#f59e0b'
+    const select = (net: Network, train: TrainSet, cam: Camera, line?: LineSettings) => {
+      const rec = recordingContext()
+      renderTrainSet(rec.ctx, cam, VW, VH, net, train, true, false, false, undefined, train.vehicles[0].id, null, undefined, line)
+      return rec.paints
+    }
+    for (const kind of ['wagon', 'loco'] as const) {
+      const { net } = curveLayout()
+      const world = onCurve(1, 45)
+      const train = trainAt(net, world, kind)
+      const cam = createCamera(world.x, world.y, 10)
+      const paints = select(net, train, cam, CLASSIC_160)
+      const roof = paints.find((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL)!.path[0]
+      const flank = paints.find((p) => p.kind === 'fill' && p.fillStyle === FLANK_FILL)!.path[0]
+      const footprint = select(net, train, cam).find((p) => p.kind === 'stroke' && p.strokeStyle === SELECTION)!.path[0]
+      for (const color of [SELECTION, TARGET]) {
+        const outline = paints.find((p) => p.kind === 'stroke' && p.strokeStyle === color)!.path[0]
+        for (const p of [...roof, ...flank]) expect(enclosed(p, outline)).toBe(true)
+        // …and is drawn over the body, where the flank does not hide it
+        const at = (match: (p: Paint) => boolean): number => paints.findIndex(match)
+        expect(at((p) => p.kind === 'stroke' && p.strokeStyle === color)).toBeGreaterThan(at((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL))
+        // The footprint did not enclose the roof: it stands half a metre (5 px) off
+        expect(roof.every((p) => enclosed(p, footprint))).toBe(false)
+        expect(outline).not.toEqual(footprint)
+      }
+    }
+    // Upright, the outline is the footprint as before
+    const { net } = curveLayout()
+    const train = trainAt(net, { x: 200, y: 0 })
+    const cam = createCamera(200, 0, 10)
+    expect(select(net, train, cam, CLASSIC_160)).toEqual(select(net, train, cam))
+  })
+
+  it('a derailed power car lies on its side with its nose', () => {
+    const { net } = curveLayout()
+    const world = onCurve(1, 45)
+    const train = trainAt(net, world, 'loco')
+    const cam = createCamera(world.x, world.y, 10)
+    const upright = draw(net, train, cam).paints.find((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL)!.path[0]
+    train.derailed = { speed: 200, limit: 110 }
+    const paints = draw(net, train, cam, CLASSIC_160).paints
+    // Nothing but the flank shows: the whole silhouette in its shade, no roof
+    expect(paints.some((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL)).toBe(false)
+    const lying = paints.find((p) => p.kind === 'fill' && p.fillStyle === FLANK_FILL)!.path[0]
+    expect(lying).toHaveLength(upright.length)
+    expect(lying.length).toBeGreaterThan(4)
+    // Point for point the footprint, moved across the track only: the nose is still a nose
+    const veh = train.vehicles[0]
+    const front = positionOnSegment(net, veh.front.segId, veh.front.t)!
+    const rear = positionOnSegment(net, veh.rear.segId, veh.rear.t)!
+    const length = distance(front, rear)
+    const axis = { x: (front.x - rear.x) / length, y: (front.y - rear.y) / length }
+    const along = (p: [number, number]): number => p[0] * axis.x + p[1] * axis.y
+    const across = (p: [number, number]): number => -p[0] * axis.y + p[1] * axis.x
+    const spread = (points: [number, number][]): number => Math.max(...points.map(across)) - Math.min(...points.map(across))
+    lying.forEach((p, i) => expect(along(p)).toBeCloseTo(along(upright[i]), 6))
+    // As wide as the power car is high (4.1 m at 10 px/m), tapering to the tip like the footprint
+    expect(spread(lying)).toBeCloseTo(41, 6)
+    const tip = (points: [number, number][]): number => spread([points[0], points[points.length - 1]])
+    expect(tip(lying) / spread(lying)).toBeCloseTo(tip(upright) / spread(upright), 6)
+    expect(tip(lying)).toBeLessThan(spread(lying) / 2)
+    // To the outside of the curve, from the axis of the track
+    const reach = lying.map((p) => distance(toWorld(cam, p), centreOf(1)) - RADIUS)
+    expect(Math.min(...reach)).toBeGreaterThan(-0.3)
+    expect(Math.max(...reach)).toBeGreaterThan(3.8)
   })
 
   it('a derailed train is drawn lying towards the outside of the curve', () => {
@@ -435,9 +532,71 @@ describe('slope marks', () => {
         expect(x).toBeLessThan(301)
       }
       const xs = tips.map((tip) => tip[0]).sort((a, b) => a - b)
-      for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeCloseTo(CHEVRON_SPACING_PX, 6)
+      for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeCloseTo(chevronMetrics(scale, GAUGE).spacing, 6)
       expect(xs.length).toBeGreaterThan(5)
     }
+  })
+
+  it('chevrons stay readable down to the bottom of the detailed drawing, and do not crowd the close view', () => {
+    const { net } = ramp()
+    const measure = (scale: number) => {
+      const cam = createCamera(200, 0, scale)
+      expect(trackLod(scale, GAUGE)).toBe('detail')
+      const strokes = chevronStrokes(draw(net, cam, options()).paints)
+      const chevrons = strokes.flatMap((p) => p.path)
+      const xs = chevrons.map((sub) => sub[1][0]).sort((a, b) => a - b)
+      return {
+        // Distance from one arm end to the other, across the track
+        width: Math.abs(chevrons[0][0][1] - chevrons[0][2][1]),
+        pitch: xs[1] - xs[0],
+        line: Math.min(...strokes.map((p) => p.lineWidth)),
+        paints: draw(net, cam, options()).paints,
+      }
+    }
+    // 2.1 px/m: the two rails are 3 px apart, the least the detailed drawing shows
+    const far = measure(2.1)
+    expect(GAUGE * 2.1).toBeLessThan(3.1)
+    expect(far.width).toBeCloseTo(2 * CHEVRON_HALF_PX.min, 6)
+    expect(far.width).toBeGreaterThanOrEqual(9)
+    expect(far.line).toBeGreaterThanOrEqual(CHEVRON_MIN_LINE_PX)
+    expect(far.pitch).toBeCloseTo(CHEVRON_SPACING_PX.min, 6)
+    // Room between two chevrons: more than three times their length along the track
+    expect(far.pitch).toBeGreaterThan(3 * CHEVRON_HALF_PX.min * 1.6)
+    // Each chevron is rimmed in the background colour, under it
+    const ink = far.paints.findIndex((p) => p.kind === 'stroke' && p.strokeStyle === INK && p.path.every((sub) => sub.length === 3) && p.path.length > 0)
+    const rim = far.paints[ink - 1]
+    expect(rim.kind).toBe('stroke')
+    expect(rim.strokeStyle).toBe('#ffffff')
+    expect(rim.path).toEqual(far.paints[ink].path)
+    expect(rim.lineWidth).toBeGreaterThan(far.paints[ink].lineWidth + 2)
+    // Close up: no bigger than the track allows, and further apart
+    const close = measure(20)
+    expect(close.width).toBeCloseTo(2 * CHEVRON_HALF_PX.max, 6)
+    expect(close.width).toBeLessThan(GAUGE * 20)
+    expect(close.pitch).toBeCloseTo(CHEVRON_SPACING_PX.max, 6)
+  })
+
+  it('a slope label never stands on a diagnostic marker: the marker already gives the slope there', () => {
+    // 3 m in 50 m: 60 ‰, reported at the foot of the ramp
+    const { net } = new Layout().straight(100).straight(50, 0.5).straight(100)
+    const shown = { gradient, inclination: { line: CLASSIC_160 }, hideSectionBadges: true }
+    for (const scale of [0.9, 1]) {
+      const cam = createCamera(125, 0, scale)
+      // Without the diagnostics (driving view) the label is there
+      expect(labels(draw(net, cam, { ...shown, hideConstructionNodes: true }).paints).map((p) => p.text)).toEqual(['60 ‰'])
+      const paints = draw(net, cam, shown).paints
+      expect(paints.filter((p) => p.kind === 'fillText').map((p) => p.text)).toContain('Pente 60 ‰')
+      expect(labels(paints)).toEqual([])
+    }
+    // A long ramp: its label stands in the middle, clear of the marker at its foot — both are drawn
+    const long = new Layout().straight(100).straight(200, 2).straight(100)
+    const cam = createCamera(200, 0, 3)
+    const paints = draw(long.net, cam, shown).paints
+    const texts = paints.filter((p) => p.kind === 'fillText')
+    const marker = texts.find((p) => p.text === 'Pente 60 ‰')!
+    const label = labels(paints)
+    expect(label.map((p) => p.text)).toEqual(['60 ‰'])
+    expect(marker).toBeDefined()
   })
 
   it('the chevrons follow the way up, not the way the rail was laid', () => {

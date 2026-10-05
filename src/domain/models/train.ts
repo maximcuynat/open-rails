@@ -1006,6 +1006,13 @@ export interface TrainVehicleVisual {
   roof?: Point[]
   /** Flank showing beside the roof of a leaning body (see `leanedOutline`); absent or empty when none shows */
   flank?: Point[]
+  /**
+   * Outline of what is drawn of a leaning body, roof and flank together: what a highlight of the
+   * vehicle goes round. Absent when the body stands upright (the footprint is then what is drawn).
+   */
+  drawn?: Point[]
+  /** True when the body lies on its side (derailed): `roof` is its silhouette, flank up */
+  lying?: boolean
   windshield?: Point[]
   headlights?: { left: Point; right: Point }
   tgvDetails?: TGVDetails
@@ -1049,6 +1056,8 @@ export function getTrainSetVisuals(net: Network, train: TrainSet, line?: LineSet
     if (!leaned) return visual.polygon
     visual.roof = leaned.roof
     visual.flank = leaned.flank
+    visual.drawn = leaned.envelope
+    if (leaned.lying) visual.lying = true
     return leaned.roof
   }
 

@@ -943,6 +943,8 @@ export function renderNetwork(
   // Pixels between the two rails: what the thresholds of the overlays are measured against
   const gaugePx = gaugeOnScreen(cam.scale, GAUGE)
 
+  /** Screen rectangles the slope labels must keep clear of: section badges, then diagnostic markers */
+  const takenBoxes: BadgeBox[] = []
   {
     // 3. SECTION BADGES (LOD: multi-level representation according to the gauge on screen)
     // - Below BADGES_ALL_FROM_PX (macro view, schematic tier included): only the selected section
@@ -1044,19 +1046,8 @@ export function renderNetwork(
       ctx.restore()
     }
 
-    // Slope of each ramp (« 35 ‰ »), in the detailed and the line drawing. A label gives way to the
-    // section badges and to the longer ramps: same placement as the badges.
-    if (ramps && steepRails && gradientColors) {
-      ctx.save()
-      ctx.font = GRADIENT_LABEL_FONT
-      const labels = gradientLabelBoxes(ctx, cam, vw, vh, net, ramps, steepRails)
-      ctx.restore()
-      if (labels.length > 0) {
-        const taken: BadgeBox[] = placedBadges.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, selected: true, renamed: false, length: b.length }))
-        const kept = new Set<BadgeBox>(placeBadges<BadgeBox>([...taken, ...labels]))
-        drawGradientLabels(ctx, labels.filter((label) => kept.has(label)), gradientColors)
-      }
-    }
+    // The slope labels are placed further down, once the diagnostic markers are known
+    for (const b of placedBadges) takenBoxes.push({ x: b.x, y: b.y, w: b.w, h: b.h, selected: true, renamed: false, length: b.length })
   }
 
   // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
@@ -1309,6 +1300,8 @@ export function renderNetwork(
       const isErr = marker.severity === 'error'
       const badgeColor = isErr ? '#ef4444' : '#f59e0b'
       const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
+      // The diamond with its halo
+      takenBoxes.push({ x: sx - signR - 4, y: sy - signR - 4, w: 2 * (signR + 4), h: 2 * (signR + 4), selected: true, renamed: false, length: 0 })
 
       // Pulse halo
       ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
@@ -1341,6 +1334,7 @@ export function renderNetwork(
         ctx.font = '600 10px Archivo, system-ui, sans-serif'
         const tw = ctx.measureText(label).width
         const ty = sy - signR - 10
+        takenBoxes.push({ x: sx - tw / 2 - 5, y: ty - 7, w: tw + 10, h: 15, selected: true, renamed: false, length: 0 })
 
         ctx.fillStyle = badgeColor
         ctx.beginPath()
@@ -1354,6 +1348,20 @@ export function renderNetwork(
       }
 
       ctx.restore()
+    }
+  }
+
+  // 9. SLOPE of each ramp (« 35 ‰ »), in the detailed and the line drawing. A label gives way to
+  // the section badges, to the diagnostic markers (one of them already says « Pente 60 ‰ » at the
+  // foot of a ramp that is too steep) and to the longer ramps: same placement as the badges.
+  if (ramps && steepRails && gradientColors) {
+    ctx.save()
+    ctx.font = GRADIENT_LABEL_FONT
+    const labels = gradientLabelBoxes(ctx, cam, vw, vh, net, ramps, steepRails)
+    ctx.restore()
+    if (labels.length > 0) {
+      const kept = new Set<BadgeBox>(placeBadges<BadgeBox>([...takenBoxes, ...labels]))
+      drawGradientLabels(ctx, labels.filter((label) => kept.has(label)), gradientColors)
     }
   }
 }
@@ -4675,7 +4683,12 @@ function drawTrainSetBody(
   ctx.stroke()
 }
 
-/** Flank of a leaning body, seen from above beside its roof: the tint of the body, denser */
+/** Shade of the flank of a body: its side wall in shadow, apart from the sky blue of the roof and from the accent of the cant mark */
+export const TRAIN_FLANK_FILL = 'rgba(71, 85, 105, 0.78)'
+const TRAIN_FLANK_GHOST_FILL = 'rgba(71, 85, 105, 0.4)'
+const TRAIN_FLANK_EDGE = 'rgba(100, 116, 139, 0.95)'
+
+/** Flank of a leaning body, seen from above beside its roof: a side wall in shadow */
 function drawTrainSetFlank(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
@@ -4688,9 +4701,9 @@ function drawTrainSetFlank(
   ctx.moveTo(toSx(flank[0]), toSy(flank[0]))
   for (let pi = 1; pi < flank.length; pi++) ctx.lineTo(toSx(flank[pi]), toSy(flank[pi]))
   ctx.closePath()
-  ctx.fillStyle = isGhost ? 'rgba(14, 165, 233, 0.25)' : 'rgba(14, 165, 233, 0.45)'
+  ctx.fillStyle = isGhost ? TRAIN_FLANK_GHOST_FILL : TRAIN_FLANK_FILL
   ctx.fill()
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.50)'
+  ctx.strokeStyle = TRAIN_FLANK_EDGE
   ctx.lineWidth = Math.max(1, 1.2 * Math.sqrt(cam.scale))
   ctx.stroke()
 }
@@ -4781,6 +4794,26 @@ export function renderTrainSet(
     )
   }
 
+  /**
+   * Highlights of the leaning vehicles, drawn once the bodies are: under them, as the highlight of
+   * an upright vehicle is, they would be hidden by the flank
+   */
+  const overBodies: (() => void)[] = []
+  const strokeOutline = (outline: Point[], color: string, width: number): void => {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(toSx(outline[0]), toSy(outline[0]))
+    for (let pi = 1; pi < outline.length; pi++) {
+      ctx.lineTo(toSx(outline[pi]), toSy(outline[pi]))
+    }
+    ctx.closePath()
+    ctx.stroke()
+    ctx.restore()
+  }
+
   // Selection outline for entire train
   if (isSelected && !isGhost && !isDebugSkeleton && lod !== 'schematic') {
     ctx.save()
@@ -4789,6 +4822,12 @@ export function renderTrainSet(
     ctx.lineJoin = 'round'
     for (const v of visuals.vehicles) {
       if (inView(v.polygon) && inLevelBand(levelOf(v.id), band)) {
+        // Round what is drawn: the roof and the flank of a leaning body, else the footprint
+        const drawn = v.drawn
+        if (drawn) {
+          overBodies.push(() => strokeOutline(drawn, '#38bdf8', 1.5))
+          continue
+        }
         ctx.beginPath()
         ctx.moveTo(toSx(v.polygon[0]), toSy(v.polygon[0]))
         for (let pi = 1; pi < v.polygon.length; pi++) {
@@ -4804,7 +4843,10 @@ export function renderTrainSet(
   // Targeted vehicle highlight (when a specific car or loco in the train is selected)
   if (selectedVehicleId && !isGhost && lod !== 'schematic') {
     const selV = visuals.vehicles.find(v => v.id === selectedVehicleId)
-    if (selV && inView(selV.polygon) && inLevelBand(levelOf(selV.id), band)) {
+    const drawn = selV?.drawn
+    if (selV && drawn && inView(selV.polygon) && inLevelBand(levelOf(selV.id), band)) {
+      overBodies.push(() => strokeOutline(drawn, '#f59e0b', 2.5))
+    } else if (selV && inView(selV.polygon) && inLevelBand(levelOf(selV.id), band)) {
       ctx.save()
       ctx.strokeStyle = '#f59e0b'
       ctx.lineWidth = 2.5
@@ -4845,10 +4887,15 @@ export function renderTrainSet(
     if (lod === 'schematic' || !inView(v.polygon)) continue
     atLevel(levelOf(v.id), () => {
       // A leaning body: the flank it shows first, then its roof in place of the footprint
-      if (v.roof && v.flank && v.flank.length > 0) drawTrainSetFlank(ctx, cam, toSx, toSy, v.flank, isGhost)
-      drawTrainSetBody(ctx, cam, toSx, toSy, v.roof ?? v.polygon, isDebugSkeleton, telemetry)
+      // A body lying on its side shows nothing but its flank: its whole silhouette in that shade
+      if (v.roof && v.lying) drawTrainSetFlank(ctx, cam, toSx, toSy, v.roof, isGhost)
+      else if (v.roof && v.flank && v.flank.length > 0) drawTrainSetFlank(ctx, cam, toSx, toSy, v.flank, isGhost)
+      if (!v.lying) drawTrainSetBody(ctx, cam, toSx, toSy, v.roof ?? v.polygon, isDebugSkeleton, telemetry)
     })
   }
+
+  // The whole train first, the picked vehicle over it: the order they have under upright bodies
+  for (const draw of overBodies) draw()
 
   // 3.5 Delete mode hover highlight (contour rouge vibrant + badge Supprimer)
   if (deleteVehicleId && !isGhost && lod !== 'schematic') {
@@ -4861,10 +4908,11 @@ export function renderTrainSet(
       ctx.lineWidth = 3
       ctx.lineJoin = 'round'
       ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
+      const outline = delV.drawn ?? delV.polygon
       ctx.beginPath()
-      ctx.moveTo(toSx(delV.polygon[0]), toSy(delV.polygon[0]))
-      for (let pi = 1; pi < delV.polygon.length; pi++) {
-        ctx.lineTo(toSx(delV.polygon[pi]), toSy(delV.polygon[pi]))
+      ctx.moveTo(toSx(outline[0]), toSy(outline[0]))
+      for (let pi = 1; pi < outline.length; pi++) {
+        ctx.lineTo(toSx(outline[pi]), toSy(outline[pi]))
       }
       ctx.closePath()
       ctx.fill()

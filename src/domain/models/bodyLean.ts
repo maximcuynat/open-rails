@@ -152,6 +152,34 @@ export interface LeanedOutline {
   roof: Point[]
   /** The flank that shows on the side the body leans away from, from the sole bar up to the roof; empty when none shows */
   flank: Point[]
+  /** Outline of everything drawn, roof and flank together, point for point as the footprint */
+  envelope: Point[]
+  /** True for a body lying on its side: `roof` is then its whole silhouette, seen flank up */
+  lying: boolean
+}
+
+/** From this lean on (rad) a body is lying on its side */
+const LYING_FROM = Math.PI / 2 - 1e-6
+
+/**
+ * A body lying on its side, seen from above: its silhouette kept point for point (the nose of a
+ * power car included), as wide as the body is high, from the axis of the track out to the side it
+ * fell to.
+ */
+function lyingOutline(polygon: readonly Point[], rear: Point, ux: number, uy: number, fallen: Point, height: number): LeanedOutline {
+  const nx = -uy
+  const ny = ux
+  const laterals = polygon.map((p) => (p.x - rear.x) * nx + (p.y - rear.y) * ny)
+  const halfWidth = Math.max(...laterals.map(Math.abs))
+  // Side of the vehicle the body fell to: 1 = its left
+  const side = fallen.x * nx + fallen.y * ny >= 0 ? 1 : -1
+  const roof = polygon.map((p, i) => {
+    // The side wall that was on the far side now lies on the track axis, the other one `height` out
+    const out = halfWidth > 0 ? ((laterals[i] * side + halfWidth) / (2 * halfWidth)) * height : 0
+    const shift = out * side - laterals[i]
+    return { x: p.x + nx * shift, y: p.y + ny * shift }
+  })
+  return { roof, flank: [], envelope: roof, lying: true }
 }
 
 /**
@@ -171,6 +199,9 @@ export function leanedOutline(polygon: readonly Point[], rear: Point, front: Poi
   const offRear = roofOffset(lean.rear, height)
   const offFront = roofOffset(lean.front, height)
   if (Math.hypot(offRear.x, offRear.y) < LEAN_EPSILON && Math.hypot(offFront.x, offFront.y) < LEAN_EPSILON) return null
+  if (Math.abs(lean.front.angle) >= LYING_FROM && Math.abs(lean.rear.angle) >= LYING_FROM) {
+    return lyingOutline(polygon, rear, ux, uy, offFront, height)
+  }
   const cosRear = Math.cos(lean.rear.angle)
   const cosFront = Math.cos(lean.front.angle)
 
@@ -203,5 +234,7 @@ export function leanedOutline(polygon: readonly Point[], rear: Point, front: Poi
     for (const i of run) flank.push(sole[i])
     for (let k = run.length - 1; k >= 0; k--) flank.push(roof[run[k]])
   }
-  return { roof, flank }
+  // What is drawn in all: the sole bar on the side of the flank, the roof on the other
+  const envelope = start >= 0 ? polygon.map((_, i) => (far[i] ? sole[i] : roof[i])) : roof
+  return { roof, flank, envelope, lying: false }
 }
