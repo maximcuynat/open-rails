@@ -282,7 +282,10 @@ kbd {
 
 .tb-version {
   padding: 3px 6px;
+  border: none;
   border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
   color: var(--ink);
   font-size: 11px;
   font-weight: 600;
@@ -294,6 +297,22 @@ kbd {
 .tb-version:hover {
   background: var(--panel-2);
   opacity: 1;
+}
+
+.about-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.about-body p {
+  margin: 0;
+}
+
+.about-body a {
+  color: var(--accent);
 }
 
 /* ===== ToolBar Islands (Floating vertical pills, left) ===== */

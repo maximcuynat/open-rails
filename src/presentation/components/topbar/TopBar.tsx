@@ -37,6 +37,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
   const [nameDraft, setNameDraft] = useState(store.projectName)
   const [showNewModal, setShowNewModal] = useState(false)
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
+  const [showAboutModal, setShowAboutModal] = useState(false)
 
   const commitName = () => {
     setEditingName(false)
@@ -81,6 +82,7 @@ export function TopBar({ store, onFitView }: TopBarProps) {
 
   const helpItems: MenuItem[] = [
     { id: 'shortcuts', label: 'Raccourcis clavier' },
+    { id: 'about', label: 'À propos et licence' },
   ]
 
   const onFileSelect = (id: string) => {
@@ -198,6 +200,8 @@ export function TopBar({ store, onFitView }: TopBarProps) {
   const onHelpSelect = (id: string) => {
     if (id === 'shortcuts') {
       setShowShortcutsModal(true)
+    } else if (id === 'about') {
+      setShowAboutModal(true)
     }
   }
 
@@ -271,15 +275,13 @@ export function TopBar({ store, onFitView }: TopBarProps) {
               </span>
             )}
           </button>
-          <a
+          <button
             className="tb-version"
-            href={`${REPO_URL}/releases/tag/v${__APP_VERSION__}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`Open Rails v${__APP_VERSION__} — voir les notes de version`}
+            onClick={() => setShowAboutModal(true)}
+            title={`Open Rails v${__APP_VERSION__} — logiciel libre sous licence AGPL-3.0`}
           >
             v{__APP_VERSION__}
-          </a>
+          </button>
           <a
             className="tb-icon-btn"
             href={REPO_URL}
@@ -346,6 +348,35 @@ export function TopBar({ store, onFitView }: TopBarProps) {
       </Modal>
 
       {/* Modal Raccourcis Clavier (Figma Principle: Clarity & Discoverability) */}
+      <Modal
+        isOpen={showAboutModal}
+        title="À propos d'Open Rails"
+        closeLabel="Fermer"
+        onClose={() => setShowAboutModal(false)}
+      >
+        <div className="about-body">
+          <p>
+            <strong>Open Rails v{__APP_VERSION__}</strong> — éditeur et simulateur de voies ferrées.
+          </p>
+          <p>Copyright © 2026 Maxim Cuynat.</p>
+          <p>
+            Open Rails est un <strong>logiciel libre</strong>, distribué sous licence{' '}
+            <a href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">
+              GNU Affero General Public License v3.0
+            </a>{' '}
+            (AGPL-3.0). Vous pouvez l'utiliser, l'étudier, le modifier et le redistribuer ; toute version modifiée
+            distribuée ou mise à disposition sur un réseau doit être publiée sous la même licence, avec son code source.
+          </p>
+          <p>Ce logiciel est fourni sans aucune garantie.</p>
+          <p>
+            <a href={REPO_URL} target="_blank" rel="noopener noreferrer">Code source sur GitHub</a>
+            {' · '}
+            <a href={`${REPO_URL}/releases/tag/v${__APP_VERSION__}`} target="_blank" rel="noopener noreferrer">
+              Notes de version
+            </a>
+          </p>
+        </div>
+      </Modal>
       <Modal
         isOpen={showShortcutsModal}
         title="Raccourcis clavier Open Rails"
