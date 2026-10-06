@@ -1239,7 +1239,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         // While driving, a click never edits the trains: it only picks the train to drive
         if (store.isPlayMode) {
           const hitVehicle = store.findVehicleAt(world)
-          if (hitVehicle) store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
+          // A spectator only chooses the train to watch: the phone keeps the one it drives
+          if (hitVehicle && store.isSpectating) store.spectateTrain(hitVehicle.train.id)
+          else if (hitVehicle) store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
           redraw()
           return
         }

@@ -9,6 +9,11 @@ const HELD_BRAKE_COMMAND = { 'drive.brakeApply': 'apply', 'drive.brakeRelease': 
 
 /** Run a rebindable action. The caller has already checked that it is live in the current context. */
 function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void {
+  // A phone holds the desk: this keyboard no longer drives, it can only leave the drive
+  if (store.isSpectating && action.startsWith('drive.') && action !== 'drive.exit') {
+    e.preventDefault()
+    return
+  }
   switch (action) {
     case 'drive.notchUp':
     case 'drive.notchDown': {
@@ -115,6 +120,7 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
     } else if (e.key === 'Tab') {
       e.preventDefault()
       // TrainSet: take the cab at the other end; legacy locomotive: turn around
+      if (store.isSpectating) return
       if (store.selectedTrain) store.switchSelectedTrainCab()
       else store.flipLocomotiveDirection()
       return

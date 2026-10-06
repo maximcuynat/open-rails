@@ -25,11 +25,17 @@ function driveTrain(store: EditorStore, trainId: string): void {
  * take the handle out of the hand that holds it on the PC.
  */
 export function applyConsoleCommand(store: EditorStore, command: ConsoleCommand, source: BrakeSource = 'local'): void {
+  // A phone at the desk holds the controls: this screen only watches
+  const watching = store.isSpectating && source !== 'remote'
   if (command.type === 'selectTrain') {
-    driveTrain(store, command.trainId)
+    // Picking a train while watching chooses the one to follow, not the one the phone drives
+    if (watching) store.spectateTrain(command.trainId)
+    else driveTrain(store, command.trainId)
     return
   }
   if (!store.isPlayMode) return
+  // The only thing a spectator can do to the drive is to end it
+  if (watching && command.type !== 'releaseControls') return
   const train = store.selectedTrain
 
   switch (command.type) {

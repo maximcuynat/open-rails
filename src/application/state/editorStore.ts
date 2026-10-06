@@ -357,6 +357,55 @@ export class EditorStore {
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
+  /** A phone holds the driving desk (set by the remote session): this screen then only watches */
+  remoteDeskConnected = false
+  /** Train the camera follows while spectating; null = the train the phone drives */
+  spectatedTrainId: string | null = null
+
+  /** True while a phone drives and this screen watches: no console here, no driving from this keyboard */
+  get isSpectating(): boolean {
+    return this.isPlayMode && this.remoteDeskConnected
+  }
+
+  /** The train the camera follows in driving mode: the spectated one while spectating, else the driven one */
+  get cameraTrain(): TrainSet | null {
+    if (this.isSpectating && this.spectatedTrainId) {
+      const spectated = this.trains.find((t) => t.id === this.spectatedTrainId)
+      if (spectated) return spectated
+    }
+    return this.selectedTrain
+  }
+
+  /** Called by the remote session when a phone takes or leaves the desk */
+  setRemoteDeskConnected = (connected: boolean): void => {
+    if (this.remoteDeskConnected === connected) return
+    this.remoteDeskConnected = connected
+    this.spectatedTrainId = null
+    this.notify()
+  }
+
+  /** While spectating: follow this train with the camera (null = the train the phone drives) */
+  spectateTrain = (trainId: string | null): void => {
+    this.spectatedTrainId = trainId !== null && this.trains.some((t) => t.id === trainId) ? trainId : null
+    this.followLocomotiveCamera = true
+    this.centreCameraOnTrain(this.cameraTrain)
+    this.notify()
+  }
+
+  /** While spectating: stop following any train, the view moves freely */
+  setSpectatorFreeView = (): void => {
+    this.followLocomotiveCamera = false
+    this.notify()
+  }
+
+  private centreCameraOnTrain(train: TrainSet | null): void {
+    const lead = train?.vehicles[0]
+    const pos = lead ? positionOnSegment(this.network, lead.front.segId, lead.front.t) : null
+    if (pos) {
+      this.camera.x = pos.x
+      this.camera.y = pos.y
+    }
+  }
   showTrainDebug = false // Debug skeleton mode: see attachment points, pivots and accordions without body
   trainDebugOptions: TrainDebugOptions = {
     vectors: true,
@@ -3811,17 +3860,8 @@ export class EditorStore {
     if (this.selectedTrain) {
       this.locomotiveCurrentSpeed = this.selectedTrain.currentSpeed
     }
-    // Sync camera to selected train's lead vehicle
-    if (this.followLocomotiveCamera && this.selectedTrain) {
-      const lead = this.selectedTrain.vehicles[0]
-      if (lead) {
-        const pos = positionOnSegment(this.network, lead.front.segId, lead.front.t)
-        if (pos) {
-          this.camera.x = pos.x
-          this.camera.y = pos.y
-        }
-      }
-    }
+    // Sync camera to the lead vehicle of the followed train (the driven one, or the spectated one)
+    if (this.followLocomotiveCamera) this.centreCameraOnTrain(this.cameraTrain)
     this.notify()
   }
 }
