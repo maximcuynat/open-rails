@@ -181,6 +181,14 @@ describe('applyConsoleCommand', () => {
     expect(store.selectedTrainId).toBe(first.id)
     expect(second.brakeCommand).toBe('hold')
 
+    // Nor its traction handle: left under power, it coasts from the next step on
+    applyConsoleCommand(store, { type: 'notchStep', step: 1 })
+    expect(first.notch).toBeGreaterThan(0)
+    applyConsoleCommand(store, { type: 'selectTrain', trainId: second.id })
+    store.tickAllTrains(0.1)
+    expect(first.notch).toBe(0)
+    applyConsoleCommand(store, { type: 'selectTrain', trainId: first.id })
+
     // An unknown train changes nothing
     applyConsoleCommand(store, { type: 'selectTrain', trainId: 'nope' })
     expect(store.selectedTrainId).toBe(first.id)
