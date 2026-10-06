@@ -3883,6 +3883,8 @@ export class EditorStore {
     for (const train of this.trains) {
       // Nobody holds the brake handle of a train that is not driven
       if (train.id !== this.selectedTrainId && train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
+      // Nor its traction handle: a train left under power coasts, it does not keep pulling by itself
+      if (train.id !== this.selectedTrainId && train.notch > 0) setNotch(train, 0)
       // Stopping against an obstacle, holding at rest and rolling back are the domain's business
       tickTrainSet(this.network, train, dt, this.trains, occupancy, env)
       this.reportImpact(train)

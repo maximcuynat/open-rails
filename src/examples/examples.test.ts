@@ -401,7 +401,7 @@ describe('what each example is about', () => {
  */
 describe('Voie unique avec évitement: the two trains cross at the loop', () => {
   const ID = 'voie-unique-evitement'
-  const LOOP_Y = 4.5
+  const LOOP_Y = 8
 
   beforeEach(() => {
     resetMemoryStorage()
@@ -412,7 +412,7 @@ describe('Voie unique avec évitement: the two trains cross at the loop', () => 
     const store = openExample(ID)
     // An entry signal before each set of points, an exit signal at each end of each loop track, all path signals
     expect([...store.network.signals.values()].map((signal) => signal.role)).toEqual(Array(6).fill('protection'))
-    for (const [x, y] of [[-510, 0], [510, 0], [400, 0], [-400, 0], [400, LOOP_Y], [-400, LOOP_Y]]) signalAt(store, x, y)
+    for (const [x, y] of [[-510, 0], [510, 0], [370, 0], [-370, 0], [370, LOOP_Y], [-370, LOOP_Y]]) signalAt(store, x, y)
     expect(store.trains).toHaveLength(2)
     expect(headOf(store, store.trains[0]).x).toBeLessThan(-1000)
     expect(headOf(store, store.trains[1]).x).toBeGreaterThan(1000)
@@ -434,9 +434,9 @@ describe('Voie unique avec évitement: the two trains cross at the loop', () => 
         store.togglePlayMode()
         const eastPoints = pointsAt(store, 500, 0)
         const westPoints = pointsAt(store, -500, 0)
-        const exitOfFirst = signalAt(store, 400, 0)
+        const exitOfFirst = signalAt(store, 370, 0)
         const entryOfSecond = signalAt(store, 510, 0)
-        const exitOfSecond = signalAt(store, -400, LOOP_Y)
+        const exitOfSecond = signalAt(store, -370, LOOP_Y)
 
         // 1. The first train runs in from the west on the main track and stops at its exit signal,
         // closed: the second train stands on the single track beyond
@@ -444,7 +444,7 @@ describe('Voie unique avec évitement: the two trains cross at the loop', () => 
         const arrival = drive(store, () => headOf(store, first).x > 0 && first.currentSpeed === 0, 300)
         expect(arrival.faults).toEqual([])
         expect(headOf(store, first).x).toBeGreaterThan(300)
-        expect(headOf(store, first).x).toBeLessThan(400)
+        expect(headOf(store, first).x).toBeLessThan(370)
         expect(stateOf(store, exitOfFirst)).toBe('stop')
         // It is left as it is: stopped, reverser forward
         expect(first.reverser).toBe('forward')
@@ -508,6 +508,6 @@ describe('Voie unique avec évitement: the two trains cross at the loop', () => 
     const log = driveFlatOut(store, () => first.emergencyBrake || headOf(store, first).x > 480, 300)
     // The exit signal is closed, not at caution towards the points: passing it is the fault
     expect(log.faults).toContain(`${first.id}: passed a closed signal`)
-    expect(first.signalPassed?.signalId).toBe(signalAt(store, 400, 0).id)
+    expect(first.signalPassed?.signalId).toBe(signalAt(store, 370, 0).id)
   })
 })
