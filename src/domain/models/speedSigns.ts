@@ -17,6 +17,7 @@ import { segmentPartialLength } from './locomotive'
 import { exitsOf } from './routing'
 import { speedZonesRevision } from './speedZones'
 import { speedLimitAt, trackGeometryRevision } from './trackSpeed'
+import { networkCheckToken } from './networkWatch'
 
 /** A distant speed sign (« TIV à distance »): black figures on white, read by trains running one way */
 export interface SpeedSign {
@@ -148,15 +149,22 @@ function buildSigns(net: Network, line: LineSettings): SpeedSign[] {
   return signs
 }
 
+const tableKeys = new WeakMap<Network, { token: number; key: string }>()
+
 /** What the way up the track through the points is read from: the pairs of rails each table joins */
 function routeTablesKey(net: Network): string {
   if (net.junctions.size === 0) return ''
+  // The same revision: the tables are what they were
+  const token = networkCheckToken(net)
+  const known = tableKeys.get(net)
+  if (token !== undefined && known && known.token === token) return known.key
   let key = ''
   for (const junction of net.junctions.values()) {
     key += `${junction.id}@${junction.nodeId}:`
     for (const passage of junction.passages) key += `${passage.a}-${passage.b},`
     key += ';'
   }
+  if (token !== undefined) tableKeys.set(net, { token, key })
   return key
 }
 

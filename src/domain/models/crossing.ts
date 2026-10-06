@@ -2,6 +2,7 @@ import type { Network, NodeId, Point, Segment, SegmentId } from './types'
 import { invalidateJunctionIndex } from './routing'
 import { addNode, levelsMeet, nodeLevel, segmentHeightAt, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from './network'
 import { segmentEnds, shapeBounds, shapePolyline } from '../geometry/segmentGeometry'
+import { touchingLater } from '../geometry/spatialGrid'
 import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
 
@@ -284,8 +285,11 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
   // Shape and box of each rail, worked out once for all the pairs it is part of
   const shapes = segList.map((seg) => segmentEnds(net, seg))
   const boxes = shapes.map((shape) => (shape ? shapeBounds(shape) : null))
+  // Only rails whose boxes touch can cross: they are found on a grid, in the order a look at
+  // every pair would meet them
+  const touching = touchingLater(boxes)
   for (let i = 0; i < segList.length; i++) {
-    for (let j = i + 1; j < segList.length; j++) {
+    for (const j of touching(i)) {
       const s1 = segList[i]
       const s2 = segList[j]
 

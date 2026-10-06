@@ -2,6 +2,8 @@ import type { Network, NodeId, Point, RailNode, Segment, SegmentId, PathPiece } 
 import { closestParamOnShape, distanceToShape, segmentEnds, segmentShapeLength } from '../geometry/segmentGeometry'
 import { curveLength, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 import { generateId, resetIdCounter } from './ids'
+import { createCountedNetwork, touchNetwork } from './networkWatch'
+import { nodesWithin, railsWithin } from '../geometry/networkFollower'
 import { remapSignals } from './signals'
 import { remapSpeedZones } from './speedZones'
 import { duplicateReplacement, mergeReplacements, notifyRailReplaced, removalReplacement, type RailReplacement } from './trackObjects'
@@ -30,7 +32,7 @@ export function syncIdCounter(net: Network): void {
 }
 
 export function createNetwork(): Network {
-  return { nodes: new Map(), segments: new Map(), adjacency: new Map(), junctions: new Map(), speedZones: new Map(), signals: new Map() }
+  return createCountedNetwork()
 }
 
 /** Add a node at `pos`, at height `level` (in levels, 0 = ground; see `RailNode.level`). */
@@ -187,6 +189,7 @@ export function setNodesLevel(net: Network, nodeIds: Iterable<NodeId>, level: nu
     else node.level = target
     changed++
   }
+  if (changed > 0) touchNetwork(net)
   return changed
 }
 
@@ -211,6 +214,7 @@ export function addChildSegment(
     seg.parentSegmentId = ancestorId
     // A cant set by hand goes with the curve: each curved piece of the rail keeps it
     if (seg.kind === 'curve' && parent.cant !== undefined) seg.cant = parent.cant
+    touchNetwork(net)
   }
   return seg
 }
@@ -238,11 +242,12 @@ export function addCurveSegment(
  * curve whose control point is within `tolerance` of an earlier curve (and within 1 % of the chord,
  * so that a loose tolerance does not merge two genuinely different curves). The older rail is kept,
  * since trains may stand on it. (Two rails between the same two nodes are at the same height.)
+ * `among` limits the rails looked at, in the order of the network: those that may have a duplicate.
  * Returns the number of rails removed.
  */
-export function removeDuplicateSegments(net: Network, tolerance: number): number {
+export function removeDuplicateSegments(net: Network, tolerance: number, among?: readonly Segment[]): number {
   let removed = 0
-  for (const seg of Array.from(net.segments.values())) {
+  for (const seg of among ?? Array.from(net.segments.values())) {
     if (!net.segments.has(seg.id)) continue
     const a = net.nodes.get(seg.from)
     const b = net.nodes.get(seg.to)
@@ -578,7 +583,7 @@ export function hitNode(
   let best: NodeId | null = null
   let bestD = maxDist
   let bestLevel = 0
-  for (const node of net.nodes.values()) {
+  for (const node of nodesWithin(net, pos, maxDist)) {
     const d = dist(pos, node.pos)
     if (d >= maxDist) continue
     if (accept && !accept(node)) continue
@@ -833,7 +838,7 @@ export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId
   let best: SegmentId | null = null
   let bestD = maxDist
   let bestLevel = 0
-  for (const seg of net.segments.values()) {
+  for (const seg of railsWithin(net, pos, maxDist)) {
     const shape = segmentEnds(net, seg)
     if (!shape) continue
     const d = distanceToShape(shape, pos)

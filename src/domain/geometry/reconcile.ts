@@ -3,6 +3,7 @@ import { pathSlice } from './railPath'
 import { bezierPoint, bezierDerivative1, closestCurveParam } from './curve'
 import { closestParamOnShape, distanceToShape, pointOnShape, segmentBounds, segmentEnds, shapePolyline } from './segmentGeometry'
 import { isCrossingAngle } from '../models/crossing'
+import { NetworkFollower, segmentBox } from './networkFollower'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
 import { splitReplacement } from '../models/trackObjects'
 import { addNode, addChildSegment, addPathSegment, detachSegment, removeDuplicateSegments, replaceRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
@@ -273,6 +274,7 @@ function heightsApart(net: Network, s1: Segment, s2: Segment): boolean {
 interface ReconcileCandidate {
   type: 'weld' | 'split' | 'cross'
   nodeId?: NodeId
+  /** The rail the node was found on (weld, split), or the first of the two rails that cross */
   segId?: SegmentId
   seg2Id?: SegmentId
   crossPoint?: Point
@@ -280,6 +282,328 @@ interface ReconcileCandidate {
   crossT2?: number
   weldNodeId?: NodeId
   dist: number
+}
+
+/**
+ * What a node within `tolerance` of a rail it does not end calls for: welding it to the end of the
+ * rail it sits on, wiring it into the rail (a split), or nothing. Only where the two are at the
+ * same height; a lone node has none yet and meets any.
+ */
+function nodeRailCandidate(net: Network, node: RailNode, seg: Segment, tolerance: number): ReconcileCandidate | null {
+  if (seg.from === node.id || seg.to === node.id) return null
+  const nodeA = net.nodes.get(seg.from)
+  const nodeB = net.nodes.get(seg.to)
+  if (!nodeA || !nodeB) return null
+  // The rail lies inside its box (ends and control point, or path): most nodes are clear of it
+  const box = segmentBounds(net, seg)
+  if (
+    box &&
+    (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
+      node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
+  ) {
+    return null
+  }
+  // Sibling/adjacent branches of the same node diverge slowly near apex, do not split each other
+  if (isSiblingBranch(net, node, seg)) return null
+
+  const lone = (net.adjacency.get(node.id) ?? []).length === 0
+  const height = nodeLevel(node)
+  const meets = (other: number): boolean => lone || levelsMeet(height, other)
+
+  // Distance to endpoints
+  const distA = Math.hypot(node.pos.x - nodeA.pos.x, node.pos.y - nodeA.pos.y)
+  const distB = Math.hypot(node.pos.x - nodeB.pos.x, node.pos.y - nodeB.pos.y)
+  // Stacked on the rail end without being at its height: neither welded nor wired in
+  if (distA <= tolerance) {
+    return meets(nodeLevel(nodeA)) ? { type: 'weld', nodeId: node.id, segId: seg.id, weldNodeId: nodeA.id, dist: distA } : null
+  }
+  if (distB <= tolerance) {
+    return meets(nodeLevel(nodeB)) ? { type: 'weld', nodeId: node.id, segId: seg.id, weldNodeId: nodeB.id, dist: distB } : null
+  }
+
+  // Distance to segment interior
+  if (seg.kind === 'straight') {
+    const dx = nodeB.pos.x - nodeA.pos.x
+    const dy = nodeB.pos.y - nodeA.pos.y
+    const lenSq = dx * dx + dy * dy
+    if (lenSq < 1e-4) return null
+
+    const t = ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq
+    if (t > 0.005 && t < 0.995) {
+      const projX = nodeA.pos.x + t * dx
+      const projY = nodeA.pos.y + t * dy
+      const dist = Math.hypot(node.pos.x - projX, node.pos.y - projY)
+      if (dist <= tolerance && meets(segmentHeightAt(net, seg, t))) {
+        return { type: 'split', nodeId: node.id, segId: seg.id, dist }
+      }
+    }
+  } else if (seg.kind === 'curve' && seg.via) {
+    const bestT = closestCurveParam(node.pos, nodeA.pos, seg.via, nodeB.pos)
+    const onCurve = bezierPoint(bestT, nodeA.pos, seg.via, nodeB.pos)
+    const dist = Math.hypot(onCurve.x - node.pos.x, onCurve.y - node.pos.y)
+    if (bestT > 0.01 && bestT < 0.99 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
+      return { type: 'split', nodeId: node.id, segId: seg.id, dist }
+    }
+  } else if (seg.kind === 'path') {
+    const shape = segmentEnds(net, seg)
+    if (!shape) return null
+    const bestT = closestParamOnShape(shape, node.pos)
+    const dist = distanceToShape(shape, node.pos)
+    if (bestT > 0.005 && bestT < 0.995 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
+      return { type: 'split', nodeId: node.id, segId: seg.id, dist }
+    }
+  }
+  return null
+}
+
+/** The crossing of two rails that calls for a node on both (tracks placed across each other), if any */
+function railPairCandidate(net: Network, s1: Segment, s2: Segment, tolerance: number): ReconcileCandidate | null {
+  const n1A = net.nodes.get(s1.from)
+  const n1B = net.nodes.get(s1.to)
+  const n2A = net.nodes.get(s2.from)
+  const n2B = net.nodes.get(s2.to)
+  if (!n1A || !n1B || !n2A || !n2B) return null
+  const box1 = segmentBox(net, s1)!
+  const box2 = segmentBox(net, s2)!
+  if (box1.maxX < box2.minX || box1.minX > box2.maxX || box1.maxY < box2.minY || box1.minY > box2.maxY) return null
+  // One passes clear over the other along its whole length: a bridge, not a crossing
+  if (heightsApart(net, s1, s2)) return null
+  // Two straights out of a shared node cannot meet again; a curve can (it crosses a track twice)
+  const shareNode = s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to
+  if (shareNode && s1.kind === 'straight' && s2.kind === 'straight') return null
+
+  for (const res of findSegmentCrossings(s1, n1A.pos, n1B.pos, s2, n2A.pos, n2B.pos, shareNode)) {
+    // A crossing at a rail end is a node-on-segment case (weld or split), handled apart
+    const d1A = Math.hypot(res.point.x - n1A.pos.x, res.point.y - n1A.pos.y)
+    const d1B = Math.hypot(res.point.x - n1B.pos.x, res.point.y - n1B.pos.y)
+    const d2A = Math.hypot(res.point.x - n2A.pos.x, res.point.y - n2A.pos.y)
+    const d2B = Math.hypot(res.point.x - n2B.pos.x, res.point.y - n2B.pos.y)
+    if (
+      d1A > tolerance && d1B > tolerance && d2A > tolerance && d2B > tolerance &&
+      // Decided where they cross: a ramp meets a ground track near its foot only
+      levelsMeet(segmentHeightAt(net, s1, res.t1!), segmentHeightAt(net, s2, res.t2!))
+    ) {
+      return { type: 'cross', segId: s1.id, seg2Id: s2.id, crossPoint: res.point, crossT1: res.t1, crossT2: res.t2, dist: 0.001 }
+    }
+  }
+  return null
+}
+
+/**
+ * The next thing to mend, looking at every node against every rail, then at every pair of rails:
+ * the closest first, and among equals the first met. What the kept state must agree with.
+ */
+function nextCandidateExhaustive(net: Network, tolerance: number): ReconcileCandidate | null {
+  removeDuplicateSegments(net, tolerance)
+  const candidates: ReconcileCandidate[] = []
+  const nodeList = Array.from(net.nodes.values())
+  const segList = Array.from(net.segments.values())
+  for (const node of nodeList) {
+    for (const seg of segList) {
+      const found = nodeRailCandidate(net, node, seg, tolerance)
+      if (found) candidates.push(found)
+    }
+  }
+  for (let i = 0; i < segList.length; i++) {
+    for (let j = i + 1; j < segList.length; j++) {
+      const found = railPairCandidate(net, segList[i], segList[j], tolerance)
+      if (found) candidates.push(found)
+    }
+  }
+  // Sort candidates by ascending distance (closest/exact first)
+  candidates.sort((a, b) => a.dist - b.dist)
+  return candidates[0] ?? null
+}
+
+/**
+ * What the last reconcile pass knew of a network: every node and rail as it was (`NetworkFollower`),
+ * and what was still to mend. A pass over a network that changed a little since then only looks at
+ * the nodes and rails that changed against their surroundings, found on a grid. Whatever did not
+ * change meets the rest as it did before.
+ *
+ * A node counts as changed when it moved or changed height, and with it the rails that end on it;
+ * a rail when its ends, kind or control point changed. The nodes at the ends of a changed, new or
+ * removed rail are looked at again too: what they hang off decides what they may be wired into.
+ */
+class ReconcileState {
+  /** The rails are found from any point within the tolerance of their box */
+  private readonly follower: NetworkFollower
+  private candidates: ReconcileCandidate[] = []
+  /** Changed since the candidates were last brought up to date */
+  private readonly dirtyNodes = new Set<NodeId>()
+  private readonly dirtyRails = new Set<SegmentId>()
+  /** Changed since the rails laid over each other were last dropped */
+  private readonly unchecked = new Set<SegmentId>()
+
+  constructor(readonly tolerance: number) {
+    this.follower = new NetworkFollower(tolerance)
+  }
+
+  /**
+   * Takes the network as it stands for one that needs no mending (it was rebuilt from one that
+   * needed none): its nodes and rails are noted, not looked into.
+   */
+  adopt(net: Network): void {
+    this.follower.follow(net)
+  }
+
+  /** Drops the duplicate rails, then gives the next thing to mend: the closest, and among equals the first of the network */
+  next(net: Network): ReconcileCandidate | null {
+    this.follow(net)
+    this.updateCandidates(net)
+    const { nodes, rails } = this.follower
+    let best: ReconcileCandidate | null = null
+    let bestPhase = 0
+    let bestA = 0
+    let bestB = 0
+    for (const c of this.candidates) {
+      // Nodes on rails come before rails across each other, each in the order of the network
+      const phase = c.type === 'cross' ? 1 : 0
+      const a = phase === 1 ? rails.get(c.segId!)!.ord : nodes.get(c.nodeId!)!.ord
+      const b = phase === 1 ? rails.get(c.seg2Id!)!.ord : rails.get(c.segId!)!.ord
+      if (
+        !best || c.dist < best.dist ||
+        (c.dist === best.dist && (phase < bestPhase || (phase === bestPhase && (a < bestA || (a === bestA && b < bestB)))))
+      ) {
+        best = c
+        bestPhase = phase
+        bestA = a
+        bestB = b
+      }
+    }
+    return best
+  }
+
+  /** Takes note of what changed in the network and drops the rails now laid over another one */
+  follow(net: Network): void {
+    do {
+      this.noteChanges(net)
+    } while (this.dropDuplicates(net) > 0)
+  }
+
+  /** Takes note of what changed in the network since it was last looked at, without touching it */
+  private noteChanges(net: Network): void {
+    const changes = this.follower.follow(net)
+    for (const id of changes.movedNodes) this.dirtyNodes.add(id)
+    for (const id of changes.leftNodes) this.dirtyNodes.add(id)
+    for (const sid of changes.changedRails) {
+      const rec = this.follower.rails.get(sid)!
+      this.dirtyRails.add(sid)
+      this.unchecked.add(sid)
+      this.dirtyNodes.add(rec.from)
+      this.dirtyNodes.add(rec.to)
+    }
+  }
+
+  /** True when a pass now would leave the track as it is: nothing is left to mend and nothing changed since */
+  isSettled(net: Network): boolean {
+    this.noteChanges(net)
+    return this.candidates.length === 0 && this.dirtyNodes.size === 0 && this.dirtyRails.size === 0 && this.unchecked.size === 0
+  }
+
+  /**
+   * `removeDuplicateSegments` among the rails that join the same two nodes as a rail that changed,
+   * in the order of the network: no other rail can have become the duplicate of one.
+   */
+  private dropDuplicates(net: Network): number {
+    if (this.unchecked.size === 0) return 0
+    const among = new Map<SegmentId, Segment>()
+    for (const sid of this.unchecked) {
+      const seg = net.segments.get(sid)
+      if (!seg) continue
+      for (const oid of net.adjacency.get(seg.from) ?? []) {
+        const other = net.segments.get(oid)
+        if (!other) continue
+        if ((other.from === seg.from && other.to === seg.to) || (other.from === seg.to && other.to === seg.from)) among.set(oid, other)
+      }
+    }
+    this.unchecked.clear()
+    if (among.size < 2) return 0
+    const rails = this.follower.rails
+    const inOrder = [...among.values()].sort((a, b) => rails.get(a.id)!.ord - rails.get(b.id)!.ord)
+    return removeDuplicateSegments(net, this.tolerance, inOrder)
+  }
+
+  /** Forgets what was to mend on a node or rail that changed or went, and looks at those again */
+  private updateCandidates(net: Network): void {
+    const { dirtyNodes, dirtyRails, tolerance } = this
+    if (dirtyNodes.size === 0 && dirtyRails.size === 0) return
+    const { rails, railGrid, nodeGrid } = this.follower
+    this.candidates = this.candidates.filter((c) =>
+      !(c.nodeId !== undefined && (dirtyNodes.has(c.nodeId) || !net.nodes.has(c.nodeId))) &&
+      !(c.segId !== undefined && (dirtyRails.has(c.segId) || !net.segments.has(c.segId))) &&
+      !(c.seg2Id !== undefined && (dirtyRails.has(c.seg2Id) || !net.segments.has(c.seg2Id))),
+    )
+    const keep = (found: ReconcileCandidate | null): void => {
+      if (found) this.candidates.push(found)
+    }
+
+    // The grid answers by cell: the box of each rail, kept since it was placed, sets most aside
+    for (const nid of dirtyNodes) {
+      const node = net.nodes.get(nid)
+      if (!node) continue
+      const { x, y } = node.pos
+      for (const sid of railGrid.atPoint(x, y)) {
+        const rec = rails.get(sid)!
+        const box = rec.box!
+        if (x < box.minX - tolerance || x > box.maxX + tolerance || y < box.minY - tolerance || y > box.maxY + tolerance) continue
+        keep(nodeRailCandidate(net, node, rec.ref, tolerance))
+      }
+    }
+    for (const sid of dirtyRails) {
+      const rec = rails.get(sid)
+      if (!rec) continue
+      const seg = rec.ref
+      const box = rec.box
+      if (!box) continue
+      for (const nid of nodeGrid.inBox(box.minX - tolerance, box.minY - tolerance, box.maxX + tolerance, box.maxY + tolerance)) {
+        // A changed node has met every rail above
+        if (dirtyNodes.has(nid)) continue
+        const node = net.nodes.get(nid)!
+        const { x, y } = node.pos
+        if (x < box.minX - tolerance || x > box.maxX + tolerance || y < box.minY - tolerance || y > box.maxY + tolerance) continue
+        keep(nodeRailCandidate(net, node, seg, tolerance))
+      }
+      for (const oid of railGrid.inBox(box.minX, box.minY, box.maxX, box.maxY)) {
+        if (oid === sid) continue
+        const otherRec = rails.get(oid)!
+        const otherBox = otherRec.box!
+        if (box.maxX < otherBox.minX || box.minX > otherBox.maxX || box.maxY < otherBox.minY || box.minY > otherBox.maxY) continue
+        // Two changed rails meet once, from the first of the two; the first of a pair is the older rail
+        if (otherRec.ord < rec.ord) {
+          if (!dirtyRails.has(oid)) keep(railPairCandidate(net, otherRec.ref, seg, tolerance))
+        } else {
+          keep(railPairCandidate(net, seg, otherRec.ref, tolerance))
+        }
+      }
+    }
+    dirtyNodes.clear()
+    dirtyRails.clear()
+  }
+}
+
+const states = new WeakMap<Network, ReconcileState>()
+
+/**
+ * True when `reconcileNetworkIntersections(net, tolerance)` is known to leave the track as it is:
+ * the last pass at that tolerance found nothing more to mend, and no node or rail changed since.
+ * The network is not touched.
+ */
+export function isNetworkReconciled(net: Network, tolerance: number): boolean {
+  const state = states.get(net)
+  return state !== undefined && state.tolerance === tolerance && state.isSettled(net)
+}
+
+/**
+ * Take a network as reconciled at `tolerance` without looking into it: for one rebuilt, node for
+ * node and rail for rail, from a network that was (a step of the undo history). The next pass
+ * then only looks at what changed since. Ends, like a pass, by bringing the route tables in line.
+ */
+export function adoptReconciledNetwork(net: Network, tolerance: number): void {
+  const state = new ReconcileState(tolerance)
+  state.adopt(net)
+  states.set(net, state)
+  autoDetectJunctions(net)
 }
 
 /**
@@ -301,200 +625,38 @@ interface ReconcileCandidate {
  * passing over or under another one is left alone, two nodes stacked at a bridge stay apart, and a
  * ramp crosses a ground track near its foot but passes over it near its top. A node without any
  * rail is compatible with everything and takes the height of what it joins.
+ *
+ * What a pass found is kept with the network (`ReconcileState`): the next one only looks at what
+ * changed since. `exhaustive` keeps nothing and looks at every node against every rail and every
+ * pair of rails: the same result, at a cost that grows with the square of the network. It is what
+ * the tests check the kept state against.
  */
 export function reconcileNetworkIntersections(
   net: Network,
   tolerance = 0.10,
+  exhaustive = false,
 ): { splitCount: number; weldedCount: number } {
   let splitCount = 0
   let weldedCount = 0
   let iterations = 0
 
+  let state: ReconcileState | null = null
+  if (!exhaustive) {
+    state = states.get(net) ?? null
+    if (!state || state.tolerance !== tolerance) {
+      state = new ReconcileState(tolerance)
+      states.set(net, state)
+    }
+  }
+
+  let settled = false
   while (iterations < 40) {
     iterations++
-    removeDuplicateSegments(net, tolerance)
-    const candidates: ReconcileCandidate[] = []
-
-    const nodeList = Array.from(net.nodes.values())
-    const segList = Array.from(net.segments.values())
-
-    // Box of each rail (a curve lies inside the box of its control points), worked out once: most
-    // nodes and rails of a large network are far apart, and are set aside on it alone
-    const boxes = segList.map((seg) => segmentBounds(net, seg))
-
-    for (const node of nodeList) {
-      if (!net.nodes.has(node.id)) continue
-      // A node only meets the rails at its height; a lone node has none yet and meets any
-      const lone = (net.adjacency.get(node.id) ?? []).length === 0
-      const height = nodeLevel(node)
-      const meets = (other: number): boolean => lone || levelsMeet(height, other)
-
-      for (let k = 0; k < segList.length; k++) {
-        const seg = segList[k]
-        const box = boxes[k]
-        if (
-          box &&
-          (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
-            node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
-        ) {
-          continue
-        }
-        if (!net.segments.has(seg.id)) continue
-        if (seg.from === node.id || seg.to === node.id) continue
-        // Sibling/adjacent branches of the same node diverge slowly near apex, do not split each other
-        if (isSiblingBranch(net, node, seg)) continue
-
-        const nodeA = net.nodes.get(seg.from)
-        const nodeB = net.nodes.get(seg.to)
-        if (!nodeA || !nodeB) continue
-
-        // Distance to endpoints
-        const distA = Math.hypot(node.pos.x - nodeA.pos.x, node.pos.y - nodeA.pos.y)
-        const distB = Math.hypot(node.pos.x - nodeB.pos.x, node.pos.y - nodeB.pos.y)
-
-        if (distA <= tolerance) {
-          // Stacked on the rail end without being at its height: neither welded nor wired in
-          if (meets(nodeLevel(nodeA))) {
-            candidates.push({
-              type: 'weld',
-              nodeId: node.id,
-              weldNodeId: nodeA.id,
-              dist: distA,
-            })
-          }
-          continue
-        }
-        if (distB <= tolerance) {
-          if (meets(nodeLevel(nodeB))) {
-            candidates.push({
-              type: 'weld',
-              nodeId: node.id,
-              weldNodeId: nodeB.id,
-              dist: distB,
-            })
-          }
-          continue
-        }
-
-        // Distance to segment interior
-        if (seg.kind === 'straight') {
-          const dx = nodeB.pos.x - nodeA.pos.x
-          const dy = nodeB.pos.y - nodeA.pos.y
-          const lenSq = dx * dx + dy * dy
-          if (lenSq < 1e-4) continue
-
-          const t = ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq
-          if (t > 0.005 && t < 0.995) {
-            const projX = nodeA.pos.x + t * dx
-            const projY = nodeA.pos.y + t * dy
-            const dist = Math.hypot(node.pos.x - projX, node.pos.y - projY)
-            if (dist <= tolerance && meets(segmentHeightAt(net, seg, t))) {
-              candidates.push({
-                type: 'split',
-                nodeId: node.id,
-                segId: seg.id,
-                dist,
-              })
-            }
-          }
-        } else if (seg.kind === 'curve' && seg.via) {
-          // The curve lies inside the box of its control points: skip the nodes clear of it
-          if (
-            box &&
-            (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
-              node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
-          ) {
-            continue
-          }
-          const bestT = closestCurveParam(node.pos, nodeA.pos, seg.via, nodeB.pos)
-          const onCurve = bezierPoint(bestT, nodeA.pos, seg.via, nodeB.pos)
-          const dist = Math.hypot(onCurve.x - node.pos.x, onCurve.y - node.pos.y)
-          if (bestT > 0.01 && bestT < 0.99 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
-            candidates.push({
-              type: 'split',
-              nodeId: node.id,
-              segId: seg.id,
-              dist,
-            })
-          }
-        } else if (seg.kind === 'path') {
-          if (
-            box &&
-            (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
-              node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
-          ) {
-            continue
-          }
-          const shape = segmentEnds(net, seg)
-          if (!shape) continue
-          const bestT = closestParamOnShape(shape, node.pos)
-          const dist = distanceToShape(shape, node.pos)
-          if (bestT > 0.005 && bestT < 0.995 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
-            candidates.push({
-              type: 'split',
-              nodeId: node.id,
-              segId: seg.id,
-              dist,
-            })
-          }
-        }
-      }
+    const best = state ? state.next(net) : nextCandidateExhaustive(net, tolerance)
+    if (!best) {
+      settled = true
+      break
     }
-
-    // Check segment-segment geometric crossings (e.g. tracks placed across each other)
-    for (let i = 0; i < segList.length; i++) {
-      for (let j = i + 1; j < segList.length; j++) {
-        const s1 = segList[i]
-        const s2 = segList[j]
-        const box1 = boxes[i]
-        const box2 = boxes[j]
-        if (box1 && box2 && (box1.maxX < box2.minX || box1.minX > box2.maxX || box1.maxY < box2.minY || box1.minY > box2.maxY)) {
-          continue
-        }
-        if (!net.segments.has(s1.id) || !net.segments.has(s2.id)) continue
-        // One passes clear over the other along its whole length: a bridge, not a crossing
-        if (heightsApart(net, s1, s2)) continue
-        // Two straights out of a shared node cannot meet again; a curve can (it crosses a track twice)
-        const shareNode = s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to
-        if (shareNode && s1.kind === 'straight' && s2.kind === 'straight') continue
-
-        const n1A = net.nodes.get(s1.from)
-        const n1B = net.nodes.get(s1.to)
-        const n2A = net.nodes.get(s2.from)
-        const n2B = net.nodes.get(s2.to)
-        if (!n1A || !n1B || !n2A || !n2B) continue
-
-        for (const res of findSegmentCrossings(s1, n1A.pos, n1B.pos, s2, n2A.pos, n2B.pos, shareNode)) {
-          // A crossing at a rail end is a node-on-segment case (weld or split), handled above
-          const d1A = Math.hypot(res.point.x - n1A.pos.x, res.point.y - n1A.pos.y)
-          const d1B = Math.hypot(res.point.x - n1B.pos.x, res.point.y - n1B.pos.y)
-          const d2A = Math.hypot(res.point.x - n2A.pos.x, res.point.y - n2A.pos.y)
-          const d2B = Math.hypot(res.point.x - n2B.pos.x, res.point.y - n2B.pos.y)
-          if (
-            d1A > tolerance && d1B > tolerance && d2A > tolerance && d2B > tolerance &&
-            // Decided where they cross: a ramp meets a ground track near its foot only
-            levelsMeet(segmentHeightAt(net, s1, res.t1!), segmentHeightAt(net, s2, res.t2!))
-          ) {
-            candidates.push({
-              type: 'cross',
-              segId: s1.id,
-              seg2Id: s2.id,
-              crossPoint: res.point,
-              crossT1: res.t1,
-              crossT2: res.t2,
-              dist: 0.001,
-            })
-            break
-          }
-        }
-      }
-    }
-
-    if (candidates.length === 0) break
-
-    // Sort candidates by ascending distance (closest/exact first)
-    candidates.sort((a, b) => a.dist - b.dist)
-    const best = candidates[0]
 
     if (best.type === 'weld' && best.weldNodeId && best.nodeId) {
       weldNodes(net, best.weldNodeId, best.nodeId)
@@ -514,7 +676,11 @@ export function reconcileNetworkIntersections(
       splitCount += 2
     }
   }
-  removeDuplicateSegments(net, tolerance)
+  // Stopped with something still to mend: the last mend may have laid a rail over another
+  if (!settled) {
+    if (state) state.follow(net)
+    else removeDuplicateSegments(net, tolerance)
+  }
 
   // Re-detect all junctions in the reconciled network
   autoDetectJunctions(net)

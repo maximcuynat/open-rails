@@ -18,6 +18,7 @@ import { advanceTrainSet, createVehicle, makeTrainSet, setReverser } from './tra
 import { positionOnSegment } from './locomotive'
 import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import type { Network } from './types'
+import { networkChanged } from '@domain/models/networkWatch'
 
 /** Stem from the west to the apex at the origin, then a catalog #6 turnout: straight on east, diverging to +y */
 function tangentTurnout() {
@@ -361,6 +362,7 @@ describe('route tables stay as declared', () => {
 
     // The end of the branch is dropped onto the end of the main line
     c.pos = { ...b.pos }
+    networkChanged()
     reconcileNetworkIntersections(net)
 
     expect(net.adjacency.get(apex.id)).toHaveLength(2)
@@ -380,9 +382,11 @@ describe('route tables stay as declared', () => {
     expect(net.junctions.size).toBe(0)
 
     spurEnd.pos = { x: 100, y: 10 }
+    networkChanged()
     const [junction] = syncJunctions(net)
     setJunctionBranch(junction, 'diverging')
     spurEnd.pos = { x: 0, y: 100 }
+    networkChanged()
     syncJunctions(net)
 
     expect(net.junctions.size).toBe(0)

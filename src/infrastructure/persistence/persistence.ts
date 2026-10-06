@@ -1,7 +1,8 @@
 import type { Camera } from '@infrastructure/render/camera'
 import { segmentEnds } from '../../domain/geometry/segmentGeometry'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
-import { declareTurnout, findJunctionAtNode, invalidateJunctionIndex, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
+import { touchNetwork } from '../../domain/models/networkWatch'
+import { declareTurnout, findJunctionAtNode, junctionAdded, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
 import {
   DEFAULT_SIGNALLING_SETTINGS,
@@ -11,7 +12,7 @@ import {
   type SignallingLevel,
   type SignallingSettings,
 } from '../../domain/models/signals'
-import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
+import { adoptReconciledNetwork, reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
 import type { Junction, JunctionKind, Network, PathPiece, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
@@ -417,7 +418,7 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
     }
     if (typeof j.frogNumber === 'number') junction.frogNumber = j.frogNumber
     net.junctions.set(junction.id, junction)
-    invalidateJunctionIndex(net)
+    junctionAdded(net, junction)
     return
   }
 
@@ -492,8 +493,11 @@ function positiveNumber(value: unknown): number | undefined {
 /**
  * Reconstruct a full in-memory Network structure from serialized data,
  * rebuilding adjacency, resolving junctions, and synchronizing ID counters.
+ *
+ * `reconciledAt`: the tolerance at which the network the data was taken from is known to have been
+ * reconciled (`isNetworkReconciled`). Only for data that never left the memory of the editor.
  */
-export function deserializeNetwork(data: SerializedProject): {
+export function deserializeNetwork(data: SerializedProject, reconciledAt?: number): {
   network: Network
   projectName?: string
   camera?: SerializedCamera
@@ -617,22 +621,28 @@ export function deserializeNetwork(data: SerializedProject): {
   // A signal on a rail that is not in the file, or out of 0…1, is dropped
   cleanSignals(net)
 
-  // 5. Reconcile intersections; it ends by bringing the tables in line with the track
-  reconcileNetworkIntersections(
-    net,
-    placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance,
-  )
+  // 5. Reconcile intersections; it ends by bringing the tables in line with the track. A project
+  // known to have been reconciled at that very tolerance when it was written (`reconciledAt`: a
+  // step of the undo history) is taken as it is: looking at every rail again would find nothing.
+  const tolerance = placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance
+  if (reconciledAt === tolerance) adoptReconciledNetwork(net, tolerance)
+  else reconcileNetworkIntersections(net, tolerance)
 
   cleanSpeedZones(net)
   cleanSignals(net)
   syncIdCounter(net)
+  // Heights, cants and frog numbers were written onto the nodes, rails and tables in place
+  touchNetwork(net)
 
   // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
   const trains = deserializeTrains(net, data.trains)
   if (trains.length > 0) {
     const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys(), ...net.signals.keys()]
     for (const train of trains) ids.push(train.id, ...train.vehicles.map((v) => v.id))
-    resetIdCounter(Math.max(0, ...ids.map((id) => Number(id.match(/_(\d+)$/)?.[1] ?? 0))))
+    // One id at a time: a large network has more ids than a call takes arguments
+    let highest = 0
+    for (const id of ids) highest = Math.max(highest, Number(id.match(/_(\d+)$/)?.[1] ?? 0))
+    resetIdCounter(highest)
   }
 
   let camera: SerializedCamera | undefined

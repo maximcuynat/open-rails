@@ -9,7 +9,7 @@ import {
   RAIL_WIDTH,
   TUNNEL_ALPHA,
   TUNNEL_DASH,
-  getSegmentRenderIntervals,
+  segmentRenderIntervals,
   subdivideCurve,
   type ViewportBounds,
 } from './renderer'
@@ -104,6 +104,7 @@ export function renderLineTracks(
     for (let k = 0; k < subs.length; k++) add(batch, subs[k].a, subs[k].b, subs[k].via)
   }
 
+  const intervalsOf = segmentRenderIntervals(net)
   for (const piece of pieces) {
     const seg = piece.seg
     const ends = segmentEnds(net, seg)
@@ -113,7 +114,7 @@ export function renderLineTracks(
 
     if (level > 0) addPart(halo, ends, piece.t0, piece.t1)
 
-    for (const inter of getSegmentRenderIntervals(net, seg, ends.a, ends.b)) {
+    for (const inter of intervalsOf(seg, ends.a, ends.b)) {
       const t0 = whole ? inter.t0 : Math.max(inter.t0, piece.t0)
       const t1 = whole ? inter.t1 : Math.min(inter.t1, piece.t1)
       if (t1 <= t0) continue
@@ -263,13 +264,14 @@ export function renderDetailRails(
   const closed: LineBatch = []
   const selectedClosed: LineBatch = []
 
+  const intervalsOf = segmentRenderIntervals(net)
   for (const piece of pieces) {
     const seg = piece.seg
     const ends = segmentEnds(net, seg)
     if (!ends) continue
     const isSelected = selectedSegments.has(seg.id)
     const whole = isWholePiece(piece)
-    for (const inter of getSegmentRenderIntervals(net, seg, ends.a, ends.b)) {
+    for (const inter of intervalsOf(seg, ends.a, ends.b)) {
       const t0 = whole ? inter.t0 : Math.max(inter.t0, piece.t0)
       const t1 = whole ? inter.t1 : Math.min(inter.t1, piece.t1)
       if (t1 <= t0) continue

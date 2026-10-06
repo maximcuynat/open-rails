@@ -9,6 +9,7 @@ import { ROLLING_STOCK } from './rollingStock'
 import { localCant, trackCantOn, trackProfile } from './trackSpeed'
 import { createVehicle, getTrainSetVisuals, makeTrainSet, type TrainSet } from './train'
 import { bodyLeanAngle, leanAt, leanedOutline, rakeLean, roofOffset, vehicleLean } from './bodyLean'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -55,6 +56,7 @@ class Layout {
     const arc = tangentArcPieces(this.node.pos, { x: Math.cos(this.heading), y: Math.sin(this.heading) }, end.pos)!
     const rails = addCurveChain(this.net, this.node.id, end.id, arc.pieces)!.segments
     if (cant !== undefined) for (const rail of rails) rail.cant = cant
+    networkChanged()
     this.pieces.push(rails)
     this.node = end
     this.heading = endHeading

@@ -14,6 +14,7 @@ npm run build        # tsc --noEmit && vite build (typecheck gates the build)
 npm run typecheck    # tsc --noEmit
 npm test             # vitest run (whole suite, ~2 s)
 npm run test:watch   # vitest watch mode
+npm run bench        # vitest bench: one frame, one mouse move, one edit, on 13 527 rails (SCALE_COPIES=9: 122 000)
 
 npx vitest run src/domain/models/train.test.ts      # single file
 npx vitest run -t "<test name substring>"           # single test by name
@@ -40,7 +41,13 @@ The layering is not strictly inward: `EditorStore` imports from `infrastructure`
 
 The canvas does not go through React reconciliation. `Canvas.tsx` owns an imperative `draw()` that calls the `render*` functions from `infrastructure/render/renderer.ts` in a fixed order (grid → baseboard → network → trains → previews → gizmo → scale bar), and it also holds all pointer/wheel interaction logic for every tool. Forgetting `notify()` after a mutation means neither the panels nor the canvas update.
 
-`notify()` also runs `syncJunctions(network)` on every call. It does not re-derive turnouts: it keeps the route tables in line with the track (drops the ones whose node or rails are gone) and proposes a table only for a fork that has none.
+`notify()` also runs `syncJunctions(network)`, `cleanSpeedZones` and `cleanSignals` — only when the network changed since its last call (see the revision below). `syncJunctions` does not re-derive turnouts: it keeps the route tables in line with the track (drops the ones whose node or rails are gone) and proposes a table only for a fork that has none. Two lighter notifications exist: `notifyView()` (camera moved: canvas and minimap, no React render) and `notifyFrame()` (simulation). A plain hover over the canvas notifies nothing.
+
+### Network revision
+
+Everything kept from one frame to the next (sections and diagnostics in `networkDerived`, speed profile, blocks, the spatial index) asks `networkCheckToken(net)` (`domain/models/networkWatch.ts`) whether the network changed, instead of comparing all of it. A network made by `createNetwork()` counts for itself what is added to or removed from its maps. **Code that changes a node, a rail, a route table, a zone or a signal in place (`node.pos.x = …`, `seg.via = …`, `junction.active = …`) must call `touchNetwork(net)` afterwards** — or `networkChanged()` where it has no network at hand. `invalidateSignals`, `invalidateSpeedZones` and `invalidateJunctionIndex` already do. The tests run with every revision checked against the content (`src/testSetup.ts`): a forgotten call throws "changed in place without touchNetwork", in tests too. `store.sectionMeta` follows the same rule with `sectionMetaChanged(meta)`.
+
+`domain/geometry/networkFollower.ts` keeps the nodes and rails of a network on a grid (`SpatialGrid`): `railsInBox`, `nodesInBox`, `railsWithin`, `nodesWithin` give what a loop over the whole network would, in the same order — use them for anything that looks for what is near a point or in view. `reconcileNetworkIntersections` keeps its own state per network and only looks at what changed since its last pass (`exhaustive` is the reference the tests compare it with).
 
 Undo/redo is snapshot-based: `store.pushHistorySnapshot()` serializes the whole project through `serializeNetwork`, and `undo()`/`redo()` deserialize a snapshot back. Network-mutating actions must call `pushHistorySnapshot()` after they commit. `application/commands/` (`ICommand`, `CommandManager`) and `application/tools/ToolStrategy.ts` are scaffolding that nothing uses yet — tool behaviour is implemented as branches on `store.tool` inside `Canvas.tsx` and the store.
 

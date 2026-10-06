@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished } from 'vitest'
 import { addSegment, createNetwork, resetIdCounter } from './network'
 import { syncJunctions } from './junction'
 import { endOverhang } from './rollingStock'
@@ -27,6 +27,7 @@ import { advanceTrainSet, resetTrainControls, type TrainSet } from './train'
 import { BRAKE_PIPE_RELEASED, trainDynamics } from './trainDynamics'
 import type { Network, Signal } from './types'
 import { chain, crossoverLayout, drive, halt, headX, line, run, signalAt, singleTrackLayout, trainAt } from './signalling.testkit'
+import { networkChanged, verifyNetworkRevisions } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -284,6 +285,7 @@ describe('a route given is kept', () => {
     junction.active = junction.positions.findIndex((open) =>
       open.some((i) => [junction.passages[i].a, junction.passages[i].b].includes(main.rails[1].id)),
     )
+    networkChanged()
     return { net, main, branch, entry }
   }
 
@@ -491,6 +493,7 @@ describe('path signal at a junction', () => {
     junctionA.active = junctionA.positions.findIndex((open) =>
       open.some((i) => [junctionA.passages[i].a, junctionA.passages[i].b].includes(layout.crossover.id)),
     )
+    networkChanged()
     updateSignalling(net, [onA, onB], state)
     expect(stateOf(state, pb)).not.toBe('stop')
     expect(state.signals.get(pb.id)!.clearedFor).toBe(onB.id)
@@ -887,6 +890,9 @@ describe('cost', () => {
   }
 
   it('a few thousand rails and a few dozen signals: nothing is walked again while nothing changes', () => {
+    // Timed as the editor runs: without the check of the revisions the tests add
+    verifyNetworkRevisions(false)
+    onTestFinished(() => verifyNetworkRevisions(true))
     const { net, signals } = bigNetwork(3000, 40)
     expect(net.segments.size).toBeGreaterThan(3500)
     expect(signals).toHaveLength(40)

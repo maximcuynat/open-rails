@@ -13,6 +13,7 @@ import { turnoutDivergingSpeed } from '@domain/models/trackSpeed'
 import type { Junction, Signal } from '@domain/models/types'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { signalWorldPosition } from '@domain/services/signalLayout'
+import { networkChanged } from '@domain/models/networkWatch'
 
 // The drives simulate minutes of running step by step (three seconds of test on the 1 500 rails of
 // Marseille, more when the whole suite runs at once): well over the default five seconds
@@ -505,6 +506,7 @@ describe('Voie unique avec évitement: the two trains cross at the loop', () => 
     const store = takeControls(ID)
     const [first] = store.trains
     pointsAt(store, 500, 0).active = 1
+    networkChanged()
     const log = driveFlatOut(store, () => first.emergencyBrake || headOf(store, first).x > 480, 300)
     // The exit signal is closed, not at caution towards the points: passing it is the fault
     expect(log.faults).toContain(`${first.id}: passed a closed signal`)

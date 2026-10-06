@@ -4,7 +4,8 @@ import { computeTrackSections } from '@domain/models/sections'
 import { analyzeKinematics } from '@domain/services/kinematicDiagnostics'
 import { detectConnectedComponents, detectDeadEnds, detectLoops } from '@domain/services/pathfinding'
 import type { Network } from '@domain/models/types'
-import { networkDerived, POLYLINE_MAX_CHORDS, POLYLINE_TOLERANCE } from './networkDerived'
+import { networkDerived, sectionMetaChanged, POLYLINE_MAX_CHORDS, POLYLINE_TOLERANCE } from './networkDerived'
+import { networkChanged } from '@domain/models/networkWatch'
 
 function line(): { net: Network; ids: string[]; segs: string[] } {
   const net = createNetwork()
@@ -37,6 +38,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     const { net, ids } = line()
     const before = networkDerived(net)
     net.nodes.get(ids[2])!.pos.x = 90
+    networkChanged()
     const after = networkDerived(net)
     expect(after).not.toBe(before)
     expect(after.sections).toEqual(computeTrackSections(net))
@@ -47,6 +49,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     const { net, ids } = line()
     const before = networkDerived(net)
     net.nodes.get(ids[1])!.level = 1
+    networkChanged()
     expect(networkDerived(net)).not.toBe(before)
   })
 
@@ -59,6 +62,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     last = networkDerived(net)
 
     curve.via = { x: 75, y: 3 }
+    networkChanged()
     expect(networkDerived(net)).not.toBe(last)
     last = networkDerived(net)
 
@@ -84,6 +88,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     const before = networkDerived(net)
     expect(networkDerived(net)).toBe(before)
     net.junctions.get('j_test')!.active = 1
+    networkChanged()
     expect(networkDerived(net)).not.toBe(before)
   })
 
@@ -93,7 +98,28 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     const meta = { [id]: { name: 'Voie A' } }
     const named = networkDerived(net, meta)
     expect(named.sections[0].name).toBe('Voie A')
-    expect(networkDerived(net, { [id]: { name: 'Voie A' } })).toBe(named)
+    expect(networkDerived(net, meta)).toBe(named)
+    meta[id].name = 'Voie B'
+    sectionMetaChanged(meta)
+    expect(networkDerived(net, meta).sections[0].name).toBe('Voie B')
+  })
+
+  it('a change of the section settings made without a word is caught by the tests', () => {
+    const { net } = line()
+    const id = networkDerived(net).sections[0].id
+    const meta = { [id]: { name: 'Voie A' } }
+    networkDerived(net, meta)
+    meta[id].name = 'Voie B'
+    expect(() => networkDerived(net, meta)).toThrow(/without sectionMetaChanged/)
+  })
+
+  it('a network without revision tells the section settings apart by their content', () => {
+    const { net: made } = line()
+    const net = { ...made }
+    const id = networkDerived(net).sections[0].id
+    const meta = { [id]: { name: 'Voie A' } }
+    const named = networkDerived(net, meta)
+    expect(networkDerived(net, { ...meta })).toBe(named)
     meta[id].name = 'Voie B'
     expect(networkDerived(net, meta).sections[0].name).toBe('Voie B')
   })
@@ -101,6 +127,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
   it('keeps the diagnostics per gauge and slope settings', () => {
     const { net, ids } = line()
     net.nodes.get(ids[2])!.level = 1
+    networkChanged()
     const derived = networkDerived(net)
     const gradient = { levelHeight: 6, maxGradient: 0.035 }
     const issues = derived.kinematicIssues(1.435, gradient)
@@ -161,6 +188,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     // A node moved: the same graph, but nothing is kept across a change of the network
     const kept = derived.components()
     net.nodes.get(ids[1])!.pos.y = 2
+    networkChanged()
     expect(networkDerived(net).components()).not.toBe(kept)
     expect(networkDerived(net).components()).toEqual(detectConnectedComponents(net))
 
@@ -230,6 +258,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
       expect(networkDerived(net).sectionPolylines()[0].points.length).toBe(4)
 
       curve.via = { x: 50, y: 40 }
+      networkChanged()
       const bent = networkDerived(net).sectionPolylines()[0]
       const count = bent.points.length / 2
       expect(count).toBeGreaterThan(3)
@@ -242,8 +271,10 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     it('a section wholly below ground is flagged as a tunnel', () => {
       const { net, ids } = line()
       for (const id of ids) net.nodes.get(id)!.level = -1
+      networkChanged()
       expect(networkDerived(net).sectionPolylines()[0].tunnel).toBe(true)
       net.nodes.get(ids[0])!.level = 0
+      networkChanged()
       expect(networkDerived(net).sectionPolylines()[0].tunnel).toBe(false)
     })
 
@@ -252,6 +283,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
       const first = networkDerived(net).sectionPolylines()
       expect(networkDerived(net).sectionPolylines()).toBe(first)
       net.nodes.get(ids[2])!.pos.x = 90
+      networkChanged()
       const moved = networkDerived(net).sectionPolylines()
       expect(moved).not.toBe(first)
       expect(moved[0].maxX).toBe(90)

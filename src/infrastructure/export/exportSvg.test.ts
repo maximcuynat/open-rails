@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import { autoDetectJunctions } from '@domain/models/junction'
 import { generateRealisticSVG } from '@infrastructure/export/exportSvg'
+import { networkChanged } from '@domain/models/networkWatch'
 
 describe('generateRealisticSVG', () => {
   it('returns empty svg when network has no nodes', () => {
@@ -208,6 +209,7 @@ describe('generateRealisticSVG', () => {
       const n2 = addNode(net, { x: 246, y: 0 })
       addSegment(net, n1.id, n2.id)
       for (const node of net.nodes.values()) node.level = 0
+      networkChanged()
 
       const svg = generateRealisticSVG(net, 'Flat')
       expect(svg.match(/<g id="[^"]+"/g)).toEqual([

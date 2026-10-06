@@ -1,4 +1,5 @@
 import { generateId } from './ids'
+import { touchNetwork } from './networkWatch'
 import { segmentShapeLengthBetween } from '../geometry/segmentGeometry'
 import type { Network, NodeId, Segment, SegmentId, Signal, SignalId, SignalRole } from './types'
 import type { TrackPosition } from './locomotive'
@@ -144,6 +145,8 @@ export function invalidateSignals(net: Network): void {
   const state = stateOf(net)
   state.revision++
   state.index = null
+  // Signals are moved and turned in place: the network itself is told too
+  touchNetwork(net)
 }
 
 /**

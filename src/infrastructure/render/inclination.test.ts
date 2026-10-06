@@ -13,6 +13,7 @@ import { groupPiecesByLevel } from '@infrastructure/render/levelPieces'
 import { networkDerived } from '@infrastructure/render/networkDerived'
 import { CANT_MARK_LEVELS, cantMarkLevel, cantMarkStyle, cantRenderStats, cantStretches } from '@infrastructure/render/cantRender'
 import { CHEVRON_HALF_PX, CHEVRON_MIN_LINE_PX, CHEVRON_SPACING_PX, chevronMetrics, gradientLabel, renderGradientChevrons } from '@infrastructure/render/gradientRender'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -107,6 +108,7 @@ class Layout {
       y: this.node.pos.y + Math.sin(this.heading) * length,
     })
     next.level = level ?? this.node.level
+    networkChanged()
     this.pieces.push([addSegment(this.net, this.node.id, next.id)!])
     this.node = next
     return this
@@ -126,9 +128,11 @@ class Layout {
       y: centre.y - Math.cos(endHeading) * side * radius,
     })
     end.level = this.node.level
+    networkChanged()
     const arc = tangentArcPieces(this.node.pos, { x: Math.cos(this.heading), y: Math.sin(this.heading) }, end.pos)!
     const rails = addCurveChain(this.net, this.node.id, end.id, arc.pieces)!.segments
     for (const rail of rails) rail.cant = cant
+    networkChanged()
     this.pieces.push(rails)
     this.node = end
     this.heading = endHeading
@@ -447,11 +451,13 @@ describe('cant marks', () => {
 
     const below = curveLayout()
     for (const node of below.net.nodes.values()) node.level = -1
+    networkChanged()
     const [tunnel] = marks(drawTracks(below.net, cam, options()).paints)
     expect(tunnel.globalAlpha).toBeCloseTo(open.globalAlpha * TUNNEL_ALPHA, 9)
 
     const above = curveLayout()
     for (const node of above.net.nodes.values()) node.level = 1
+    networkChanged()
     expect(marks(drawTracks(above.net, cam, options(CLASSIC_160, { part: 'tracks', level: 0 })).paints)).toEqual([])
     const onDeck = drawTracks(above.net, cam, options(CLASSIC_160, { part: 'tracks', level: 1 }))
     expect(marks(onDeck.paints)).toHaveLength(1)
@@ -472,6 +478,7 @@ describe('cant marks', () => {
     expect(cantRenderStats.builds).toBe(builds)
     expect(trackSpeedStats.profileBuilds).toBe(profiles)
     pieces[1][0].cant = 80
+    networkChanged()
     drawTracks(net, cam, options())
     expect(cantRenderStats.builds).toBe(builds + 1)
   })
@@ -605,6 +612,7 @@ describe('slope marks', () => {
     const net = createNetwork()
     const top = addNode(net, { x: 300, y: 0 })
     top.level = 1
+    networkChanged()
     const foot = addNode(net, { x: 100, y: 0 })
     addSegment(net, top.id, foot.id)
     const cam = createCamera(200, 0, 8)

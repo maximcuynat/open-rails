@@ -1,4 +1,5 @@
 import type { Network, NodeId, Point, SegmentId } from '../models/types'
+import { touchNetwork } from '../models/networkWatch'
 import { viaFromArc, viaFromTwoTangents } from './tangent'
 
 export type NodeTransform =
@@ -120,4 +121,5 @@ export function applyNodeTransform(
     seg.via.x = via.x
     seg.via.y = via.y
   }
+  touchNetwork(net)
 }

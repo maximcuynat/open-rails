@@ -2,6 +2,7 @@ import type { Network, NodeId, SegmentId, Point, Segment } from '../models/types
 import { leaveDirectionOnShape, segmentEnds } from '../geometry/segmentGeometry'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import { placementThresholds } from '../geometry/scale'
+import { touchingLater } from '../geometry/spatialGrid'
 import { segmentEndLevels, segmentGradient } from '../models/network'
 
 export type KinematicIssueKind =
@@ -75,8 +76,11 @@ function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
     ends.push({ nodeId: node.id, pos: node.pos, segId: seg.id, ahead: { x: -into.x, y: -into.y } })
   }
 
+  // Only the ends within the heal tolerance of each other can face across a gap: they are found
+  // on a grid, in the order a look at every pair would meet them
+  const near = touchingLater(ends.map((end) => ({ minX: end.pos.x, maxX: end.pos.x, minY: end.pos.y, maxY: end.pos.y })), healTolerance)
   for (let i = 0; i < ends.length; i++) {
-    for (let j = i + 1; j < ends.length; j++) {
+    for (const j of near(i)) {
       const a = ends[i]
       const b = ends[j]
       if (a.segId === b.segId) continue

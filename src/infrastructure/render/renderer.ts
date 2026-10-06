@@ -11,6 +11,8 @@ import { isRenamedSection, type SectionMetadata, type TrackSection } from '@doma
 import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
 import type { LineSettings } from '@domain/models/speedLimits'
 import { networkDerived } from './networkDerived'
+import { nodesAmongInBox, nodesInBox, railsInBox } from '@domain/geometry/networkFollower'
+import { networkCheckToken } from '@domain/models/networkWatch'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type SectionStripeStyle } from './lodTracks'
@@ -406,6 +408,32 @@ export function subdivideStraight(
   return { a: sub.a, b: sub.b }
 }
 
+const intervalsKept = new WeakMap<Network, { token: number; ofRail: Map<string, SegmentSubInterval[]> }>()
+
+/**
+ * `getSegmentRenderIntervals` for the rails of a frame: what is worked out for a rail is kept until
+ * the network changes (its revision, see `networkWatch`), points thrown included. The intervals
+ * returned are shared: not to be modified.
+ */
+export function segmentRenderIntervals(net: Network): (seg: Segment, a: Point, b: Point) => SegmentSubInterval[] {
+  const token = networkCheckToken(net)
+  if (token === undefined) return (seg, a, b) => getSegmentRenderIntervals(net, seg, a, b)
+  let kept = intervalsKept.get(net)
+  if (!kept || kept.token !== token) {
+    kept = { token, ofRail: new Map() }
+    intervalsKept.set(net, kept)
+  }
+  const ofRail = kept.ofRail
+  return (seg, a, b) => {
+    let intervals = ofRail.get(seg.id)
+    if (!intervals) {
+      intervals = getSegmentRenderIntervals(net, seg, a, b)
+      ofRail.set(seg.id, intervals)
+    }
+    return intervals
+  }
+}
+
 /**
  * Compute sub-intervals for rendering a segment.
  * If the segment connects to an inactive turnout at seg.from or seg.to,
@@ -554,27 +582,32 @@ export function vehicleLevel(
   return Math.max(trackPositionLevel(net, vehicle.front), trackPositionLevel(net, vehicle.rear))
 }
 
+/** The rails in view (`isSegmentInBounds`), in the order of the network, found on its grid */
 function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
-  const visible: Segment[] = []
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    if (isSegmentInBounds(a.pos, b.pos, seg.via, bounds)) visible.push(seg)
+  return railsInBox(net, bounds)
+}
+
+/** Whether any node of the network is off the ground, kept until the network changes */
+const leveled = new WeakMap<Network, { token: number; any: boolean }>()
+
+function hasLevels(net: Network): boolean {
+  const token = networkCheckToken(net)
+  const known = leveled.get(net)
+  if (token !== undefined && known && known.token === token) return known.any
+  let any = false
+  for (const node of net.nodes.values()) {
+    if (node.level) {
+      any = true
+      break
+    }
   }
-  return visible
+  if (token !== undefined) leveled.set(net, { token, any })
+  return any
 }
 
 /** Levels of the rails in view, lowest first. A network without bridge or tunnel gives `[0]`. */
 export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: number): number[] {
-  let hasLevels = false
-  for (const node of net.nodes.values()) {
-    if (node.level) {
-      hasLevels = true
-      break
-    }
-  }
-  if (!hasLevels) return [0]
+  if (!hasLevels(net)) return [0]
   const levels = new Set<number>()
   for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) {
     for (const piece of segmentLevelPieces(net, seg)) levels.add(piece.band)
@@ -906,8 +939,13 @@ export function renderNetwork(
     const badges: (BadgeBox & { sec: TrackSection; text: string; cx: number; cy: number })[] = []
     ctx.save()
     ctx.font = '600 10px Archivo, system-ui, sans-serif'
-    for (const sec of options?.hideSectionBadges ? [] : trackSections) {
-      if (sec.segmentIds.length === 0) continue
+    // Where each badge stands is kept with the sections: most are out of view and set aside on that alone
+    const anchors = options?.hideSectionBadges ? null : derived.sectionBadgeAnchors()
+    for (let i = 0; anchors && i < trackSections.length; i++) {
+      const midPt = { x: anchors[2 * i], y: anchors[2 * i + 1] }
+      // (a badge without a place — NaN — is in no view)
+      if (!isPointInBounds(midPt, bounds)) continue
+      const sec = trackSections[i]
       const isSecSelected = selectedSections.has(sec)
       const renamed = isRenamedSection(sec)
 
@@ -923,23 +961,6 @@ export function renderNetwork(
         const secScreenLen = sec.totalLength * cam.scale
         if (!isSecSelected && !renamed && secScreenLen < sectionBadgeMinLength(lod, gaugePx)) continue
       }
-
-      const midSegIdx = Math.floor(sec.segmentIds.length / 2)
-      const midSegId = sec.segmentIds[midSegIdx]
-      const midSeg = net.segments.get(midSegId)
-      if (!midSeg) continue
-      const a = net.nodes.get(midSeg.from)
-      const b = net.nodes.get(midSeg.to)
-      if (!a || !b) continue
-
-      const midShape = midSeg.kind === 'path' ? segmentEnds(net, midSeg) : null
-      const midPt = midShape
-        ? pointOnShape(midShape, 0.5)
-        : midSeg.kind === 'curve' && midSeg.via
-          ? bezierPoint(0.5, a.pos, midSeg.via, b.pos)
-          : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
-
-      if (!isPointInBounds(midPt, bounds)) continue
 
       const sx = (midPt.x - cam.x) * cam.scale + vw / 2
       const sy = (midPt.y - cam.y) * cam.scale + vh / 2
@@ -1017,8 +1038,7 @@ export function renderNetwork(
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
   // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
   // Detail and rails tiers only: further out it is smaller than the stroke of the rail it ends.
-  for (const node of lod === 'detail' || lod === 'rails' ? net.nodes.values() : []) {
-    if (!isPointInBounds(node.pos, bounds)) continue
+  for (const node of lod === 'detail' || lod === 'rails' ? nodesInBox(net, bounds) : []) {
     if ((net.adjacency.get(node.id) ?? []).length === 1) {
       renderBufferStop(ctx, cam, node, net, vw, vh, options?.gauge ?? GAUGE)
     }
@@ -1030,8 +1050,10 @@ export function renderNetwork(
     // under the markers that stand out (selection, end of track, crossing)
     const shown: { sx: number; sy: number; selected: boolean; connectionCount: number }[] = []
     const plain: number[] = []
-    for (const node of net.nodes.values()) {
-      if (!isPointInBounds(node.pos, bounds)) continue
+    // Away from the two detailed tiers only the selected nodes show and, in the line tier, the ends
+    // of track (`nodeMarkerShown`): those are looked up instead of every node in view
+    const few = lod === 'schematic' ? selection.nodes : lod === 'line' ? new Set([...selection.nodes, ...derived.deadEnds()]) : null
+    for (const node of (few && nodesAmongInBox(net, few, bounds)) ?? nodesInBox(net, bounds)) {
       const selected = selection.nodes.has(node.id)
       const connectionCount = (net.adjacency.get(node.id) ?? []).length
       if (!nodeMarkerShown(lod, { selected, degree: connectionCount })) continue
@@ -2126,11 +2148,9 @@ export function renderBallastJoints(
   bounds?: ViewportBounds,
 ): void {
   const dummySel: Selection = { nodes: new Set(), segments: new Set() }
-  for (const node of net.nodes.values()) {
+  for (const node of bounds ? nodesInBox(net, bounds) : net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length < 2) continue
-
-    if (bounds && !isPointInBounds(node.pos, bounds)) continue
 
     const nx_scr = (node.pos.x - cam.x) * cam.scale + vw / 2
     const ny_scr = (node.pos.y - cam.y) * cam.scale + vh / 2
@@ -2191,11 +2211,9 @@ export function renderRailJoints(
   type JointPair = ReturnType<typeof getConnectedEndPairs>[number]
   const groups: JointPair[][] = [[], [], [], []]
 
-  for (const node of net.nodes.values()) {
+  for (const node of bounds ? nodesInBox(net, bounds) : net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length < 2) continue
-
-    if (bounds && !isPointInBounds(node.pos, bounds)) continue
 
     const nx_scr = (node.pos.x - cam.x) * s + vw / 2
     const ny_scr = (node.pos.y - cam.y) * s + vh / 2
@@ -2278,11 +2296,9 @@ export function renderFishplates(
 
   const hg = GAUGE / 2
 
-  for (const node of net.nodes.values()) {
+  for (const node of bounds ? nodesInBox(net, bounds) : net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length !== 2) continue
-
-    if (bounds && !isPointInBounds(node.pos, bounds)) continue
 
     const nx_scr = (node.pos.x - cam.x) * s + vw / 2
     const ny_scr = (node.pos.y - cam.y) * s + vh / 2

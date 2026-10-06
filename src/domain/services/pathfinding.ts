@@ -258,54 +258,68 @@ export function detectDeadEnds(net: Network): NodeId[] {
 /**
  * Detect simple cycles / loops in the network.
  * Returns an array of node cycles.
+ *
+ * A depth-first walk of the track from each node not reached yet: a rail that leads back to a node
+ * of the way come by closes a loop, which is that stretch of the way. The walk keeps its own stack
+ * (a line can be thousands of nodes long) and the way as one list with the place of each node in
+ * it, so that its cost follows the size of the network and of the loops it returns.
  */
 export function detectLoops(net: Network): NodeId[][] {
   const visited = new Set<NodeId>()
-  const parent = new Map<NodeId, NodeId | null>()
   const cycles: NodeId[][] = []
+  /** The way from the start of the walk to the node it is at, and where each of its nodes is in it */
+  const path: NodeId[] = []
+  const placeInPath = new Map<NodeId, number>()
+  /**
+   * Loops already found, by the two nodes their closing rail joins: the way between two nodes of
+   * the walk is the only one, so two loops are the same exactly when they close between the same
+   * two nodes (two rails laid between them).
+   */
+  const found = new Set<string>()
 
-  function dfs(curr: NodeId, par: NodeId | null, path: NodeId[]) {
-    visited.add(curr)
-    parent.set(curr, par)
-    path.push(curr)
-
-    const segIds = net.adjacency.get(curr) ?? []
-    for (const sid of segIds) {
-      const seg = net.segments.get(sid)
-      if (!seg) continue
-      const neighbor = seg.from === curr ? seg.to : seg.from
-      if (neighbor === par) continue
-
-      if (visited.has(neighbor)) {
-        // Cycle detected: neighbor is in the current path
-        const cycleStartIndex = path.indexOf(neighbor)
-        if (cycleStartIndex >= 0) {
-          const cycle = path.slice(cycleStartIndex)
-          // Avoid duplicate cycles of length 2
-          if (cycle.length > 2) {
-            // Normalize cycle to avoid permutations
-            const minIndex = cycle.indexOf([...cycle].sort()[0])
-            const normalized = [...cycle.slice(minIndex), ...cycle.slice(0, minIndex)]
-            const key = normalized.join(',')
-            const exists = cycles.some((c) => {
-              const cMin = c.indexOf([...c].sort()[0])
-              const cNorm = [...c.slice(cMin), ...c.slice(0, cMin)]
-              return cNorm.join(',') === key
-            })
-            if (!exists) {
-              cycles.push(cycle)
-            }
-          }
-        }
-      } else {
-        dfs(neighbor, curr, [...path])
-      }
-    }
+  interface Step {
+    node: NodeId
+    par: NodeId | null
+    segIds: SegmentId[]
+    next: number
+  }
+  const enter = (node: NodeId, par: NodeId | null): Step => {
+    visited.add(node)
+    placeInPath.set(node, path.length)
+    path.push(node)
+    return { node, par, segIds: net.adjacency.get(node) ?? [], next: 0 }
   }
 
-  for (const nodeId of net.nodes.keys()) {
-    if (!visited.has(nodeId)) {
-      dfs(nodeId, null, [])
+  for (const startId of net.nodes.keys()) {
+    if (visited.has(startId)) continue
+    const stack: Step[] = [enter(startId, null)]
+    while (stack.length > 0) {
+      const step = stack[stack.length - 1]
+      if (step.next >= step.segIds.length) {
+        stack.pop()
+        path.pop()
+        placeInPath.delete(step.node)
+        continue
+      }
+      const seg = net.segments.get(step.segIds[step.next++])
+      if (!seg) continue
+      const curr = step.node
+      const neighbor = seg.from === curr ? seg.to : seg.from
+      if (neighbor === step.par) continue
+
+      if (!visited.has(neighbor)) {
+        stack.push(enter(neighbor, curr))
+        continue
+      }
+      // Cycle detected when the neighbor is on the way come by
+      const cycleStartIndex = placeInPath.get(neighbor)
+      if (cycleStartIndex === undefined) continue
+      // Avoid duplicate cycles of length 2
+      if (path.length - cycleStartIndex <= 2) continue
+      const key = `${neighbor}>${curr}`
+      if (found.has(key)) continue
+      found.add(key)
+      cycles.push(path.slice(cycleStartIndex))
     }
   }
 
@@ -329,8 +343,9 @@ export function detectConnectedComponents(
     const queue = [startId]
     visited.add(startId)
 
-    while (queue.length > 0) {
-      const curr = queue.shift()!
+    // Read in order without taking its head off: a component can be the whole network
+    for (let head = 0; head < queue.length; head++) {
+      const curr = queue[head]
       compNodes.add(curr)
 
       const segIds = net.adjacency.get(curr) ?? []

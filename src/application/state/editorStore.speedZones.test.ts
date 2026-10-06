@@ -7,6 +7,7 @@ import { speedZonesAt } from '@domain/models/speedZones'
 import { addSpeedZoneBetween, speedZoneEnds, speedZoneLength } from '@domain/services/speedZoneLayout'
 import type { Network, Point, SpeedZone } from '@domain/models/types'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => {
   resetIdCounter(0)
@@ -189,6 +190,7 @@ describe('speed zones in the store', () => {
   it('follow their track when it is moved', () => {
     const { store, zone, nodes } = storeWithZone()
     for (const node of nodes) node.pos = { x: node.pos.x, y: node.pos.y + 40 }
+    networkChanged()
     store.markDirty()
     expect(world(store.network)).toEqual([{ id: zone.id, speed: 90, a: { x: 250, y: 40 }, b: { x: 750, y: 40 }, length: 500 }])
   })

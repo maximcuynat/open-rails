@@ -1,16 +1,16 @@
 import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, addPathSegment, detachSegment, replaceRail, segmentHeightAt, setNodesLevel } from './network'
 import { pathSlice } from '../geometry/railPath'
-import { networkChanged } from './networkWatch'
+import { networkChanged, touchNetwork } from './networkWatch'
 import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
 import { closestParamOnShape, pointOnShape, segmentEnds, shapePolyline } from '../geometry/segmentGeometry'
 import { isTraversableDeflection } from '../geometry/tangent'
 import { isCrossingAngle } from './crossing'
-import { findJunctionAtNode, invalidateJunctionIndex, junctionRails, leaveDirection } from './routing'
+import { findJunctionAtNode, invalidateJunctionIndex, junctionAdded, junctionRails, leaveDirection } from './routing'
 import type { Junction, JunctionId, Network, NodeId, Passage, Point, RailNode, Segment, SegmentId } from './types'
 
-export { findJunctionAtNode, invalidateJunctionIndex, junctionRails }
+export { findJunctionAtNode, invalidateJunctionIndex, junctionAdded, junctionRails }
 
 export interface TurnoutSpec {
   frogNumber: 4 | 6
@@ -81,7 +81,7 @@ export function declareTurnout(
   if (params.frogNumber !== undefined) junc.frogNumber = params.frogNumber
   if (params.activeBranch) setJunctionBranch(junc, params.activeBranch)
   net.junctions.set(junc.id, junc)
-  invalidateJunctionIndex(net)
+  junctionAdded(net, junc)
   return junc
 }
 
@@ -179,7 +179,7 @@ export function removeJunction(net: Network, id: JunctionId): void {
 export function setJunctionPosition(junction: Junction, index: number): void {
   if (index >= 0 && index < junction.positions.length && junction.active !== index) {
     junction.active = index
-    // Seen by what is kept of a network being driven on (`networkWatch`)
+    // Changed in place, in a network this does not know (`networkWatch`)
     networkChanged()
   }
 }
@@ -249,7 +249,7 @@ export function declareDoubleSlip(
     active: 0,
   }
   net.junctions.set(junc.id, junc)
-  invalidateJunctionIndex(net)
+  junctionAdded(net, junc)
   return junc
 }
 
@@ -539,6 +539,7 @@ export function normalizeTurnoutRoles(net: Network, junc: Junction): void {
   const branches = orderBranches(sides)
   junc.passages = branches.map((b) => ({ a: stemId, b }))
   junc.active = Math.max(0, branches.indexOf(openRail))
+  touchNetwork(net)
 }
 
 /**
@@ -653,6 +654,7 @@ function dropDeadPassages(net: Network, junc: Junction, rails: Set<SegmentId>): 
 
   const active = positions.findIndex((position) => position.some((i) => openBefore.some((p) => samePair(p, passages[i]))))
   const wasThreeWay = junc.kind === 'three_way'
+  touchNetwork(net)
   junc.passages = passages
   junc.positions = positions
   junc.active = Math.max(0, active)
@@ -702,6 +704,7 @@ function addThirdBranch(net: Network, junc: Junction, extraSegId: SegmentId): vo
   junc.passages = branches.map((b) => ({ a: stemId, b }))
   junc.positions = branches.map((_, i) => [i])
   junc.active = Math.max(0, branches.indexOf(openRail))
+  touchNetwork(net)
 }
 
 /**
@@ -981,6 +984,7 @@ export function toggleTurnoutHand(net: Network, junctionId: JunctionId): boolean
   if (divSeg && divSeg.via) {
     divSeg.via = reflectPoint(divSeg.via)
   }
+  touchNetwork(net)
 
   return true
 }

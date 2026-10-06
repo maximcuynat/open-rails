@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { mergeIntoLongRails } from '@domain/services/longRails'
 import { fitPath } from '@domain/geometry/arcFit'
-import { holdNetwork, networkChanged, releaseNetwork } from '@domain/models/networkWatch'
+import { networkChanged, networkCheckToken, touchNetwork } from '@domain/models/networkWatch'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
@@ -9,7 +9,7 @@ import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossi
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions, doubleSlipSideToward, throwDoubleSlipSide, type DoubleSlipSide } from '@domain/models/junction'
-import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
 import {
@@ -69,7 +69,7 @@ import { isConsolePreference, type ConsolePreference } from '@application/consol
 import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
 import type { Junction, JunctionId, Network, Point, Selection, Segment, SpeedZone } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
-import { networkDerived } from '@infrastructure/render/networkDerived'
+import { networkDerived, sectionMetaChanged } from '@infrastructure/render/networkDerived'
 import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
 import type { GradientLimits } from '@domain/services/kinematicDiagnostics'
 import type { Locomotive } from '@domain/models/locomotive'
@@ -701,8 +701,15 @@ export class EditorStore {
       this.history = this.history.slice(0, this.historyIndex + 1)
     }
     this.history.push(snapshot)
-    if (this.history.length > this.maxHistory) {
-      this.history.shift()
+    // A step taken from a track that needs no mending is put back without looking for any
+    const tolerance = this.getPlacementThresholds().reconcileTolerance
+    if (isNetworkReconciled(this.network, tolerance)) reconciledSteps.set(snapshot, tolerance)
+    // As many steps as the memory allows: fewer on a very large network, never less than one undo
+    const weight = (step: SerializedProject): number => step.nodes.length + step.segments.length
+    let total = 0
+    for (const step of this.history) total += weight(step)
+    while (this.history.length > 2 && (this.history.length > this.maxHistory || total > HISTORY_BUDGET)) {
+      total -= weight(this.history.shift()!)
     }
     this.historyIndex = this.history.length - 1
     this.pendingEdit = 'none'
@@ -716,7 +723,7 @@ export class EditorStore {
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
-        const res = deserializeNetwork(snapshot)
+        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot))
         this.network = res.network
         this.restoreTrains(res.trains)
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
@@ -750,7 +757,7 @@ export class EditorStore {
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
-        const res = deserializeNetwork(snapshot)
+        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot))
         this.network = res.network
         this.restoreTrains(res.trains)
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
@@ -817,6 +824,7 @@ export class EditorStore {
         }
       }
     }
+    sectionMetaChanged(this.sectionMeta)
     this.markDirty()
     this.notify()
   }
@@ -1008,12 +1016,40 @@ export class EditorStore {
     )
   }
 
+  /** The write of the project to localStorage that is waiting, if any */
+  private saveTimer: ReturnType<typeof setTimeout> | null = null
+  /** True when the last write to localStorage failed: the project is larger than the browser keeps */
+  autosaveFailed = false
+  /** Nodes and rails of the project when that write failed: a project that large is not written again */
+  private autosaveFailedSize = 0
+
   /**
-   * Immediately save layout state to localStorage.
+   * Save the project to localStorage. In the browser the write waits AUTOSAVE_DELAY_MS, so that
+   * a run of edits is written once: on a large network, writing the whole project costs more than
+   * the edit itself. Leaving the page writes at once (`flushPersistedState`). Without a window
+   * (the tests) it is written straight away.
    */
   savePersistedState = (): void => {
+    if (typeof window === 'undefined') {
+      this.flushPersistedState()
+      return
+    }
+    if (this.saveTimer !== null) return
+    this.saveTimer = setTimeout(() => this.flushPersistedState(), AUTOSAVE_DELAY_MS)
+  }
+
+  /** Write the project to localStorage now, whether or not a write was waiting */
+  flushPersistedState = (): void => {
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    // Putting a project the browser has no room for into text again at every edit is time spent
+    // for nothing: it is tried again once the project is smaller
+    const size = this.network.nodes.size + this.network.segments.size
+    if (this.autosaveFailed && size >= this.autosaveFailedSize) return
     const sections = networkDerived(this.network, this.sectionMeta).sections
-    saveNetworkToStorage(
+    const saved = saveNetworkToStorage(
       this.network,
       this.projectName,
       this.camera,
@@ -1035,6 +1071,13 @@ export class EditorStore {
       this.signallingSettings,
       this.signalDisplaySettings,
     )
+    if (!saved) this.autosaveFailedSize = size
+    if (saved === this.autosaveFailed) {
+      // The top bar says whether the project is kept by the browser
+      this.autosaveFailed = !saved
+      this.version++
+      this.listeners.forEach((l) => l())
+    }
   }
 
   /**
@@ -1055,6 +1098,11 @@ export class EditorStore {
     this.camera.y = 0
     this.camera.scale = 3
     this.dirty = false
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    this.autosaveFailed = false
     clearNetworkStorage()
     resetIdCounter(0)
     this.history = []
@@ -1076,17 +1124,25 @@ export class EditorStore {
 
   getVersion = (): number => this.version
 
+  /** The network `notify` last checked the route tables, zones and signals of, and its revision then */
+  private syncedNetwork: Network | null = null
+  private syncedToken: number | undefined = undefined
+
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
-    // Whatever was kept of the network while driving on it is checked again (see `networkWatch`)
-    networkChanged()
-    if (!this.isPlayMode) releaseNetwork(this.network)
     this.drivenDynamics = null
-    autoDetectJunctions(this.network)
-    // The domain moves the zones itself when a rail is replaced; this only drops what would be
-    // left on a rail taken out of the graph by other means
-    cleanSpeedZones(this.network)
-    cleanSignals(this.network)
+    // The route tables, zones and signals only need checking against a network that changed
+    // since they last were (see `networkWatch`)
+    const token = networkCheckToken(this.network)
+    if (token === undefined || token !== this.syncedToken || this.network !== this.syncedNetwork) {
+      autoDetectJunctions(this.network)
+      // The domain moves the zones itself when a rail is replaced; this only drops what would be
+      // left on a rail taken out of the graph by other means
+      cleanSpeedZones(this.network)
+      cleanSignals(this.network)
+      this.syncedNetwork = this.network
+      this.syncedToken = networkCheckToken(this.network)
+    }
     this.syncTrainsWithNetwork()
     this.version++
     this.listeners.forEach((l) => l())
@@ -1602,6 +1658,9 @@ export class EditorStore {
 
   markDirty = (): void => {
     this.dirty = true
+    // An edit was committed: whatever is kept of the network is compared again, even if a change
+    // made in place forgot to say so (`touchNetwork`)
+    networkChanged()
     if (!this.isUndoingRedoing) this.settleSignals()
     this.savePersistedState()
     this.pushHistorySnapshot(true)
@@ -1682,6 +1741,7 @@ export class EditorStore {
         seg.via.y = initVia.y
       }
     }
+    if (this.draggedNodeInitialPositions.size > 0) touchNetwork(this.network)
     if (this.draggedNodeInitialPositions.size > 0) this.realignTrains()
     this.unpinTrains()
     this.gizmoHoverAxis = null
@@ -1807,6 +1867,7 @@ export class EditorStore {
         dissolvedSeg = dissolveNode(this.network, nid)
         if (dissolvedSeg && oldMeta) {
           this.sectionMeta[dissolvedSeg.id] = { ...oldMeta }
+          sectionMetaChanged(this.sectionMeta)
         }
       }
 
@@ -3898,8 +3959,6 @@ export class EditorStore {
    */
   tickAllTrains = (dt: number): void => {
     if (!this.isPlayMode || dt <= 0) return
-    // Driven on, not edited: the network is compared once, then trusted between two notifications
-    holdNetwork(this.network)
     this.drivenDynamics = null
     const occupancy: TrainOccupancyCache = new Map()
     const env = this.drivingEnvironment
@@ -3956,6 +4015,15 @@ const STANDARD_TRACK_GAUGE = 1.435
 
 /** While trains run, the panels are rendered again at most this often, ms (the phone desk is sent its state at the same pace) */
 export const DRIVING_PANEL_PERIOD_MS = 100
+
+/** The steps of the undo history taken from a reconciled track, with the tolerance it was reconciled at */
+const reconciledSteps = new WeakMap<SerializedProject, number>()
+
+/** How long the write of the project to localStorage waits after an edit, ms: the edits made meanwhile are written with it */
+const AUTOSAVE_DELAY_MS = 400
+
+/** Nodes and rails the undo history keeps in all, over all its steps (50 steps of a network of 40 000) */
+const HISTORY_BUDGET = 2_000_000
 
 /** Hook: subscribe a React component to store version changes. */
 export function useEditorVersion(store: EditorStore): number {

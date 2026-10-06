@@ -9,6 +9,7 @@ import type { Junction, Network, Point, RailNode, Segment, Signal, SignalRole } 
 import { advanceTrainSet, createVehicle, makeTrainSet, type TrainSet } from './train'
 import { type SignalPassing, type SignallingState } from './signalling'
 import { tickSignalling, type TickSignallingOptions } from './trainSignalling'
+import { networkChanged } from '@domain/models/networkWatch'
 
 /** Lay rails through `points`, from `start` when given (the first point is then the next node) */
 export function chain(net: Network, points: Point[], start?: RailNode): { nodes: RailNode[]; rails: Segment[] } {
@@ -129,6 +130,7 @@ export function setPoints(net: Network, node: RailNode, a: Segment, b: Segment):
   if (index < 0) throw new Error(`no passage between ${a.id} and ${b.id}`)
   const position = junction.positions.findIndex((open) => open.includes(index))
   junction.active = position
+  networkChanged()
 }
 
 /**

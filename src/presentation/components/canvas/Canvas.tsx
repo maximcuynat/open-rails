@@ -2238,7 +2238,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
       if (!store.panning) {
-        if (
+        // A tool that follows the pointer: its preview is drawn again, and the contextual bar shows
+        // the live values of what is being laid
+        const followsPointer =
           store.tool === 'place' ||
           store.tool === 'curve' ||
           store.tool === 'turnout' ||
@@ -2248,7 +2250,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.signalPlacementMode !== null ||
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
-        ) {
+        if (followsPointer) {
           if (store.tool === 'locomotive') {
             if (store.trainToolSubMode === 'delete') {
               store.updateTrainDeleteHover(rawWorld)
@@ -2263,7 +2265,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.boxSelectEnd = rawWorld
           draw()
         }
-        store.notify()
+        // Otherwise the pointer only passes over the track (selection, view, driving): nothing a
+        // panel shows has changed, and the canvas was drawn again above where it had to be
+        if (followsPointer || store.draggingTrainItem) store.notify()
         return
       }
 

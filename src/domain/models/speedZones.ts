@@ -1,4 +1,5 @@
 import { generateId } from './ids'
+import { touchNetwork } from './networkWatch'
 import type { Network, SegmentId, SpeedZone, SpeedZoneId, TrackSpan } from './types'
 import { remapTrackSpanParts, TRACK_T_EPSILON, type RailReplacement } from './trackObjects'
 
@@ -88,6 +89,8 @@ export function invalidateSpeedZones(net: Network): void {
   const state = stateOf(net)
   state.revision++
   state.index = null
+  // Zones are resized and given another speed in place: the network itself is told too
+  touchNetwork(net)
 }
 
 /**
