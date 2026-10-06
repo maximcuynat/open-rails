@@ -3,6 +3,7 @@ import { networkChanged } from './networkWatch'
 import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
+import { segmentEnds, shapePolyline } from '../geometry/segmentGeometry'
 import { isTraversableDeflection } from '../geometry/tangent'
 import { isCrossingAngle } from './crossing'
 import { findJunctionAtNode, invalidateJunctionIndex, junctionRails, leaveDirection } from './routing'
@@ -315,12 +316,9 @@ const RAIL_SAMPLES = 24
 
 /** Points along a rail, starting from one of its end nodes */
 function railPolyline(net: Network, seg: Segment, fromNodeId: NodeId): Point[] {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return []
-  const pts: Point[] = seg.kind === 'curve' && seg.via
-    ? Array.from({ length: RAIL_SAMPLES + 1 }, (_, i) => bezierPoint(i / RAIL_SAMPLES, a.pos, seg.via!, b.pos))
-    : [a.pos, b.pos]
+  const ends = segmentEnds(net, seg)
+  if (!ends) return []
+  const pts = shapePolyline(ends, RAIL_SAMPLES)
   return seg.from === fromNodeId ? pts : pts.reverse()
 }
 
