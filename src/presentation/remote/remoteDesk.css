@@ -516,7 +516,7 @@ html.phone-desk-page body {
   background: var(--tone);
 }
 
-/* Solid mark: limit in force. Hollow mark: next lower limit */
+/* Solid mark: limit in force. Hollow mark: the limit ahead to brake for first */
 .phone-limit-mark {
   position: absolute;
   top: 50%;

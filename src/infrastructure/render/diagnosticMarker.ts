@@ -1,5 +1,6 @@
 import { gaugeOnScreen } from './lod'
 import { DIAGNOSTIC_LABEL_FROM_PX } from './lodOverlays'
+import type { LabelSpace } from './labelSpace'
 import { textWidth } from './textWidth'
 
 /** Gauge the rails of the network are drawn with (m): the one the tiers are read against */
@@ -24,6 +25,21 @@ export interface DiagnosticMarkerOptions {
    * marker itself is always drawn); the one written is added to the list
    */
   taken?: DiagnosticLabelBox[]
+  /**
+   * What is already written on this frame, all layers together: same rule as `taken`, against
+   * everything that stands there
+   */
+  space?: LabelSpace
+  /** What the diamond reads; « ! » when absent. The number of markers merged into this one */
+  mark?: string
+  /** No label, whatever the zoom: a marker that stands for several things that do not say the same */
+  noLabel?: boolean
+}
+
+/** Screen rectangle of the diamond of a marker at a zoom */
+export function diagnosticMarkerBox(sx: number, sy: number, scale: number): DiagnosticLabelBox {
+  const r = diagnosticMarkerRadius(scale)
+  return { x: sx - r, y: sy - r, w: 2 * r, h: 2 * r }
 }
 
 /** Half the width of the diamond of a marker at a zoom, px */
@@ -73,10 +89,10 @@ export function drawDiagnosticMarker(
   ctx.font = '900 11px Archivo, system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText('!', sx, sy)
+  ctx.fillText(options.mark ?? '!', sx, sy)
 
   // Label badge above if zoom is reasonable
-  if (gaugeOnScreen(scale, STANDARD_GAUGE) >= DIAGNOSTIC_LABEL_FROM_PX) {
+  if (!options.noLabel && gaugeOnScreen(scale, STANDARD_GAUGE) >= DIAGNOSTIC_LABEL_FROM_PX) {
     ctx.font = '600 10px Archivo, system-ui, sans-serif'
     const tw = textWidth(ctx, label)
     // Above the marker, or below it when what stands beside the track is above
@@ -84,7 +100,7 @@ export function drawDiagnosticMarker(
     const ty = below ? sy + signR + 11 : sy - signR - 10
     const box: DiagnosticLabelBox = { x: sx - tw / 2 - 5, y: ty - 7, w: tw + 10, h: 15 }
     const covered = options.taken?.some((o) => box.x < o.x + o.w && o.x < box.x + box.w && box.y < o.y + o.h && o.y < box.y + box.h)
-    if (!covered) {
+    if (!covered && (!options.space || options.space.claim(box))) {
       options.taken?.push(box)
       ctx.fillStyle = badgeColor
       ctx.beginPath()

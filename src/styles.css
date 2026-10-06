@@ -1999,6 +1999,18 @@ select.cb-step-select {
   border-color: var(--accent);
 }
 
+/* A field that does not apply (« Niveaux sans relief »): muted like every disabled control, with its unit and its label */
+.settings-input:disabled {
+  color: var(--ink-secondary);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-input:disabled + .settings-input-unit,
+.settings-field:has(.settings-input:disabled) .settings-sublabel {
+  opacity: 0.45;
+}
+
 .settings-input-unit {
   position: absolute;
   right: 10px;
@@ -2649,7 +2661,7 @@ select.cb-step-select {
 .console-round-dial:not(.speed-normal) .console-round-arc { stroke: var(--tone); }
 .console-round-dial:not(.speed-normal) :is(.console-needle, .console-hub) { fill: var(--tone); }
 
-/* Solid mark: limit in force. Hollow mark: next lower limit */
+/* Solid mark: limit in force. Hollow mark: the limit ahead to brake for first */
 .console-limit-mark { fill: var(--hud-fg); stroke: var(--hud); stroke-width: 1.5; }
 .console-limit-mark.is-next { fill: var(--hud); stroke: var(--hud-fg); stroke-width: 2; }
 .console-round-dial .console-limit-mark { fill: #fff; stroke: var(--dmi); }

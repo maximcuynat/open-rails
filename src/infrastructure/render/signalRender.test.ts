@@ -499,13 +499,14 @@ describe('flashing lamps on the canvas', () => {
 describe('signalling report on the canvas', () => {
   it('writes the label away from the head of the signal, and never over another label', () => {
     const { net, seg } = straightTrack()
-    // Two signals 20 m apart: at this zoom their labels would lie on each other
+    // Two signals 15 m apart: at this zoom their labels would lie on each other
     lay(net, seg.id, 0.5, true)
-    lay(net, seg.id, 0.52, true)
+    lay(net, seg.id, 0.515, true)
     const report = signalReport(net, { level: 'standard', line: DEFAULT_LINE_SETTINGS })
     expect(report.length).toBeGreaterThan(1)
     const { ctx, ops } = createRecordingContext()
-    renderNetwork(ctx, createCamera(500, 0, 1), VW, VH, net, noSelection(), {}, {
+    // 4 px/m: the detailed drawing, the two markers 60 px apart — apart enough to stay two
+    renderNetwork(ctx, createCamera(500, 0, 4), VW, VH, net, noSelection(), {}, {
       tool: 'select',
       signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
     })
@@ -515,6 +516,37 @@ describe('signalling report on the canvas', () => {
     expect(labels).toHaveLength(1)
     // The heads are above the track (trains running east): the label is below it
     expect(labels[0].args[2] as number).toBeGreaterThan(VH / 2)
+  })
+
+  it('merges the markers that would cover each other into one that shows how many it stands for', () => {
+    const { net, seg } = straightTrack()
+    lay(net, seg.id, 0.5, true)
+    lay(net, seg.id, 0.52, true)
+    const report = signalReport(net, { level: 'standard', line: DEFAULT_LINE_SETTINGS })
+    expect(report).toHaveLength(2)
+    const marks = (scale: number): string[] => {
+      const { ctx, ops } = createRecordingContext()
+      renderNetwork(ctx, createCamera(500, 0, scale), VW, VH, net, noSelection(), {}, {
+        tool: 'select',
+        signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
+      })
+      return texts(ops).filter((text) => /^(!|\d+)$/.test(text))
+    }
+    // 1 px/m (a track is a single line): 20 px apart, one marker for the two
+    expect(marks(1)).toEqual(['2'])
+    // 0.5 px/m, the same; 4 px/m (detailed drawing, 80 px apart): one each
+    expect(marks(0.5)).toEqual(['2'])
+    expect(marks(4)).toEqual(['!', '!'])
+    // The two rails drawn, the diamonds on each other (0.4 px/m apart at 2.5 px/m would be 50 px: brought closer)
+    const close = straightTrack()
+    lay(close.net, close.seg.id, 0.5, true)
+    lay(close.net, close.seg.id, 0.504, true)
+    const { ctx, ops } = createRecordingContext()
+    renderNetwork(ctx, createCamera(500, 0, 2.5), VW, VH, close.net, noSelection(), {}, {
+      tool: 'select',
+      signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
+    })
+    expect(texts(ops).filter((text) => /^(!|\d+)$/.test(text))).toEqual(['2'])
   })
 
   it('marks each entry of the report with its message, in the construction view only', () => {

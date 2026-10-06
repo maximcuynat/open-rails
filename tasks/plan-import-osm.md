@@ -80,3 +80,10 @@ Branche avancée sur `developement` (`de82ca9`) avant de coder. Contrat partagé
 - **Annonce de la prochaine limite corrigée** (`trackSpeed.ts`, `walkAhead`) : elle s'arrêtait à la première limite plus basse et masquait celle qui impose de freiner ; elle annonce maintenant celle qu'il faut freiner en premier (marge 1,5 sur la distance de freinage). Dijon conduit au pupitre sur 4 km sans incident ; 128 fichiers, 2312 tests, typecheck et build verts.
 - **À faire après la résolution avec la branche des affichages** : lisibilité du plan d'une gare importée (bandes de zones de vitesse, étiquettes de section et libellés du rapport se recouvrent) ; champs désactivés des réglages non grisés.
 - **Limites connues** : aiguilles importées en position par défaut (il faut les manœuvrer pour traverser une gare) ; sens de circulation des voies non lu ; rapport de contrôle qui juge trop courts les cantons de repères de LGV ; traversées-jonctions qui plient l'itinéraire direct (14 rails lents à Paris).
+
+## Résolution (2026-10-06)
+
+- Commits faits sur les deux branches ; `developement` (`835c9dd`) fusionné dans `feature/signalling-display` et dans `feature/osm-import`, puis `feature/signalling-display` fusionnée dans `feature/osm-import`. Aucun conflit. Après fusion : 133 fichiers de tests, 2412 passés, typecheck et build verts.
+- **Doublon à venir** : `tasks/plan-grands-reseaux.md` (autre session) prévoit un « Lot C — Import et simplification » avec son propre convertisseur `src/domain/services/osmImport.ts`, sa fenêtre d'import et la mention ODbL. Tout cela existe ici. Restent propres à ce plan : sortie en rails longs (`mergeIntoLongRails`), géoréférencement commun pour raccorder deux imports, « ajouter » au lieu de « remplacer », « Simplifier le réseau », carte LGV hors ligne. La session a été prévenue.
+- **Script Python** `tools/osm-import/osm_to_project.py` : toujours là, il a produit l'exemple de Marseille (`tools/examples/marseille-train.ts`, `src/examples/index.ts` le citent). À retirer quand l'exemple sera régénéré par la conversion intégrée : décision de l'utilisateur.
+- En cours : lisibilité du plan d'une gare importée.
