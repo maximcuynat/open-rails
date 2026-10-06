@@ -1,8 +1,8 @@
 import { generateId } from './ids'
+import { segmentShapeLengthBetween } from '../geometry/segmentGeometry'
 import type { Network, NodeId, Segment, SegmentId, Signal, SignalId, SignalRole } from './types'
 import type { TrackPosition } from './locomotive'
 import { remapTrackPosition, TRACK_T_EPSILON, type RailReplacement } from './trackObjects'
-import { bezierPoint } from '../geometry/curve'
 
 // ─────────────────── Signals ───────────────────
 //
@@ -84,23 +84,9 @@ function clearanceScale(options: SignalPlacementOptions): number {
   return typeof gauge === 'number' && gauge > 0 ? gauge / REFERENCE_GAUGE : 1
 }
 
-/** Length of the stretch `t0`…`t1` of a rail, m (the curve is measured on 16 chords) */
+/** Length of the stretch `t0`…`t1` of a rail, m */
 function stretchLength(net: Network, seg: Segment, t0: number, t1: number): number {
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return 0
-  if (seg.kind === 'straight' || !seg.via) {
-    return Math.abs(t1 - t0) * Math.hypot(to.pos.x - from.pos.x, to.pos.y - from.pos.y)
-  }
-  const steps = 16
-  let length = 0
-  let prev = bezierPoint(t0, from.pos, seg.via, to.pos)
-  for (let i = 1; i <= steps; i++) {
-    const p = bezierPoint(t0 + ((t1 - t0) * i) / steps, from.pos, seg.via, to.pos)
-    length += Math.hypot(p.x - prev.x, p.y - prev.y)
-    prev = p
-  }
-  return length
+  return segmentShapeLengthBetween(net, seg, t0, t1)
 }
 
 /** True for a node where tracks part, meet or cross: three rails or more */

@@ -122,6 +122,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A' },
         { id: 'clear', label: 'Tout désélectionner', separatorAfter: true },
         { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R' },
+        { id: 'long-rails', label: 'Simplifier en rails longs', disabled: store.isPlayMode || store.network.segments.size === 0 },
       ],
       onSelect: (id) => {
         switch (id) {
@@ -149,6 +150,17 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             store.reconcileTopology()
             showToast('Topologie et aiguillages réconciliés', 'info')
             break
+          case 'long-rails': {
+            const result = store.simplifyToLongRails()
+            if (!result) break
+            showToast(
+              result.after < result.before
+                ? `Réseau simplifié : ${result.before} rails → ${result.after}`
+                : 'Aucune enfilade de rails à simplifier',
+              result.after < result.before ? 'success' : 'info',
+            )
+            break
+          }
         }
       },
     },
@@ -165,6 +177,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'toggle-signal-blocks', label: 'Cantons', checked: store.signalBlocksVisible },
         { id: 'toggle-signal-reservations', label: 'Réservations (en conduite)', checked: store.showSignalReservations },
         { id: 'toggle-inclination', label: 'Dévers et pentes', checked: store.showInclination },
+        { id: 'toggle-driving-view', label: 'Vue de conduite épurée', checked: store.minimalDrivingView },
         { id: 'toggle-inspector', label: 'Inspecteur', checked: store.isSidePanelOpen, shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
         {
           id: 'theme',
@@ -218,6 +231,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'toggle-inclination':
             store.toggleInclination()
+            break
+          case 'toggle-driving-view':
+            store.toggleMinimalDrivingView()
             break
           case 'toggle-inspector':
             store.toggleSidePanel()

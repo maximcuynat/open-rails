@@ -1,7 +1,7 @@
 import type { Network, NodeId, Point, Segment, SegmentId } from './types'
 import { invalidateJunctionIndex } from './routing'
 import { addNode, levelsMeet, nodeLevel, segmentHeightAt, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from './network'
-import { discretizeCurve } from '../geometry/curve'
+import { segmentEnds, shapeBounds, shapePolyline } from '../geometry/segmentGeometry'
 import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
 
@@ -281,6 +281,9 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
 
   // 2. Check geometric intersections between distinct segments
   const segList = candidateSegments ?? Array.from(net.segments.values())
+  // Shape and box of each rail, worked out once for all the pairs it is part of
+  const shapes = segList.map((seg) => segmentEnds(net, seg))
+  const boxes = shapes.map((shape) => (shape ? shapeBounds(shape) : null))
   for (let i = 0; i < segList.length; i++) {
     for (let j = i + 1; j < segList.length; j++) {
       const s1 = segList[i]
@@ -289,30 +292,20 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
       // Skip segments sharing an endpoint
       if (s1.from === s2.from || s1.from === s2.to || s1.to === s2.from || s1.to === s2.to) continue
 
-      const n1A = net.nodes.get(s1.from)
-      const n1B = net.nodes.get(s1.to)
-      const n2A = net.nodes.get(s2.from)
-      const n2B = net.nodes.get(s2.to)
-      if (!n1A || !n1B || !n2A || !n2B) continue
+      const shape1 = shapes[i]
+      const shape2 = shapes[j]
+      const box1 = boxes[i]
+      const box2 = boxes[j]
+      if (!shape1 || !shape2 || !box1 || !box2) continue
 
       // Fast AABB pre-check before expensive curve discretization
-      const s1MinX = Math.min(n1A.pos.x, n1B.pos.x, s1.via ? s1.via.x : Infinity)
-      const s1MaxX = Math.max(n1A.pos.x, n1B.pos.x, s1.via ? s1.via.x : -Infinity)
-      const s1MinY = Math.min(n1A.pos.y, n1B.pos.y, s1.via ? s1.via.y : Infinity)
-      const s1MaxY = Math.max(n1A.pos.y, n1B.pos.y, s1.via ? s1.via.y : -Infinity)
-
-      const s2MinX = Math.min(n2A.pos.x, n2B.pos.x, s2.via ? s2.via.x : Infinity)
-      const s2MaxX = Math.max(n2A.pos.x, n2B.pos.x, s2.via ? s2.via.x : -Infinity)
-      const s2MinY = Math.min(n2A.pos.y, n2B.pos.y, s2.via ? s2.via.y : Infinity)
-      const s2MaxY = Math.max(n2A.pos.y, n2B.pos.y, s2.via ? s2.via.y : -Infinity)
-
-      if (s1MaxX < s2MinX || s1MinX > s2MaxX || s1MaxY < s2MinY || s1MinY > s2MaxY) {
+      if (box1.maxX < box2.minX || box1.minX > box2.maxX || box1.maxY < box2.minY || box1.minY > box2.maxY) {
         continue
       }
 
       // Discretize polyline for s1 and s2
-      const pts1 = s1.kind === 'curve' && s1.via ? discretizeCurve(n1A.pos, s1.via, n1B.pos, 16) : [n1A.pos, n1B.pos]
-      const pts2 = s2.kind === 'curve' && s2.via ? discretizeCurve(n2A.pos, s2.via, n2B.pos, 16) : [n2A.pos, n2B.pos]
+      const pts1 = shapePolyline(shape1, 16)
+      const pts2 = shapePolyline(shape2, 16)
 
       let foundCrossing: { point: Point; dir1: Point; dir2: Point } | null = null
 

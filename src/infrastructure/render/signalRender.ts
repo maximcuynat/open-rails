@@ -447,7 +447,8 @@ export function traceOffsetSpans(
   for (const span of spans) {
     const seg = net.segments.get(span.segId)
     if (!seg) continue
-    const steps = seg.kind === 'curve' && seg.via ? 8 : 1
+    // A long rail may wind: enough chords for the stripe to follow it
+    const steps = seg.kind === 'path' ? 8 * (seg.path?.length ?? 1) : seg.kind === 'curve' && seg.via ? 8 : 1
     const ascending = span.t1 >= span.t0
     for (let i = 0; i <= steps; i++) {
       const t = span.t0 + ((span.t1 - span.t0) * i) / steps

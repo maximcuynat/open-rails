@@ -1,4 +1,5 @@
 import type { Camera } from '@infrastructure/render/camera'
+import { segmentEnds, shapePolyline } from '@domain/geometry/segmentGeometry'
 import type { Network, SegmentId } from '@domain/models/types'
 import { bezierDerivative1, bezierPoint } from '@domain/geometry/curve'
 import { CANT_RANGE } from '@domain/models/cant'
@@ -135,7 +136,22 @@ function traceOuterRails(
     const to = seg && net.nodes.get(seg.to)
     if (!seg || !from || !to) continue
     const d = halfGauge * span.outside
-    if (seg.kind === 'curve' && seg.via) {
+    if (seg.kind === 'path') {
+      // A long rail: its path as chords, each point moved along the normal of the track there
+      const ends = segmentEnds(net, seg)
+      if (!ends) continue
+      const pts = shapePolyline(ends, 16, span.t0, span.t1)
+      pts.forEach((p, i) => {
+        const before = pts[Math.max(0, i - 1)]
+        const after = pts[Math.min(pts.length - 1, i + 1)]
+        const len = Math.hypot(after.x - before.x, after.y - before.y)
+        if (len < 1e-12) return
+        const x = (p.x - ((after.y - before.y) / len) * d) * scale + ox
+        const y = (p.y + ((after.x - before.x) / len) * d) * scale + oy
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      })
+    } else if (seg.kind === 'curve' && seg.via) {
       // Sub-curve of the quadratic Bézier, then its parallel: ends moved along their normals
       // ((−y, x) of the direction of the track), control point moved to where the moved tangents meet
       const a = bezierPoint(span.t0, from.pos, seg.via, to.pos)

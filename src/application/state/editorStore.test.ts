@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EditorStore, IMPACT_REPORT_SPEED, trainImpactMessage } from './editorStore'
+import { DRIVING_PANEL_PERIOD_MS, EditorStore, IMPACT_REPORT_SPEED, trainImpactMessage } from './editorStore'
 import * as trainModel from '@domain/models/train'
 import * as trainDynamicsModel from '@domain/models/trainDynamics'
 import { addNode, addSegment, addCurveSegment, resetIdCounter } from '@domain/models/network'
@@ -810,6 +810,71 @@ describe('camera-only notification', () => {
     store.notify()
     expect(notified).toBe(2)
     expect(store.getVersion()).toBe(version + 1)
+  })
+
+  it('notifyFrame draws every frame and renders the panels again at most every DRIVING_PANEL_PERIOD_MS', () => {
+    const store = new EditorStore()
+    let drawn = 0
+    store.subscribe(() => drawn++)
+    const now = vi.spyOn(performance, 'now')
+    try {
+      now.mockReturnValue(10_000)
+      store.notifyFrame()
+      const version = store.getVersion()
+
+      // Frames of the same tenth of a second: the canvas is told each time, the panels are not
+      now.mockReturnValue(10_016)
+      store.notifyFrame()
+      now.mockReturnValue(10_033)
+      store.notifyFrame()
+      expect(drawn).toBe(3)
+      expect(store.getVersion()).toBe(version)
+
+      now.mockReturnValue(10_000 + DRIVING_PANEL_PERIOD_MS)
+      store.notifyFrame()
+      expect(drawn).toBe(4)
+      expect(store.getVersion()).toBe(version + 1)
+
+      // Every train at a stand: nothing is drawn again until the panels are
+      now.mockReturnValue(10_000 + DRIVING_PANEL_PERIOD_MS + 16)
+      store.notifyFrame(false)
+      expect(drawn).toBe(4)
+      now.mockReturnValue(10_000 + 2 * DRIVING_PANEL_PERIOD_MS)
+      store.notifyFrame(false)
+      expect(drawn).toBe(5)
+      expect(store.getVersion()).toBe(version + 2)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('simplifyToLongRails merges the runs of small rails, in one undo step', () => {
+    const store = new EditorStore()
+    const xs = [0, 40, 90, 150].map((x) => addNode(store.network, { x, y: 0 }))
+    xs.slice(1).forEach((node, i) => addSegment(store.network, xs[i].id, node.id))
+    store.pushHistorySnapshot()
+
+    expect(store.simplifyToLongRails()).toEqual({ before: 3, after: 1 })
+    expect([...store.network.segments.values()][0].kind).toBe('path')
+    expect(store.network.nodes.size).toBe(2)
+
+    store.undo()
+    expect(store.network.segments.size).toBe(3)
+    expect([...store.network.segments.values()].every((seg) => seg.kind === 'straight')).toBe(true)
+
+    // Not while driving
+    store.isPlayMode = true
+    expect(store.simplifyToLongRails()).toBeNull()
+  })
+
+  it('the plain driving view is on by default, only while driving, and can be unticked', () => {
+    const store = new EditorStore()
+    expect(store.minimalDrivingView).toBe(true)
+    expect(store.isPlainDrivingView).toBe(false)
+    store.isPlayMode = true
+    expect(store.isPlainDrivingView).toBe(true)
+    store.toggleMinimalDrivingView()
+    expect(store.isPlainDrivingView).toBe(false)
   })
 
   it('saves and exports the same sections as a fresh computation, before and after an edit', () => {

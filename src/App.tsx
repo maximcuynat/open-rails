@@ -102,7 +102,7 @@ export default function App() {
           <ToolBar store={store} />
           <CanvasOverlay store={store} />
           <SidePanel store={store} />
-          {store.showMinimap && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
+          {store.showMinimap && !store.isPlainDrivingView && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
           <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>

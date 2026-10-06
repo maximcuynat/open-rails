@@ -10,6 +10,9 @@
  * This module must not import `train.ts` (which imports the physics, which imports this one).
  */
 
+import { pathChecksum, pathTightestCurve } from '../geometry/railPath'
+import { leaveVectorOnShape, segmentEnds } from '../geometry/segmentGeometry'
+import { networkCheckToken } from './networkWatch'
 import type { Junction, Network, NodeId, Segment, SegmentId, TrackSpan } from './types'
 import type { LineSettings, LineType, UpcomingSpeedLimit } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
@@ -44,9 +47,11 @@ class TrackSnapshot {
   private nums = new Float64Array(0)
   private strs: string[] = []
   revision = 0
+  /** `networkCheckToken` of the last comparison */
+  checkedAt: number | undefined = undefined
 
   update(net: Network): number {
-    const wanted = net.nodes.size * 2 + net.segments.size * 3
+    const wanted = net.nodes.size * 2 + net.segments.size * 4
     let changed = false
     if (this.nums.length !== wanted) {
       this.nums = new Float64Array(wanted)
@@ -75,7 +80,10 @@ class TrackSnapshot {
       if (nums[ni] !== vx) { nums[ni] = vx; changed = true }
       if (nums[ni + 1] !== vy) { nums[ni + 1] = vy; changed = true }
       if (nums[ni + 2] !== cant) { nums[ni + 2] = cant; changed = true }
-      ni += 3
+      // A long rail is known by its path
+      const path = seg.kind === 'path' && seg.path ? pathChecksum(seg.path) : 0
+      if (nums[ni + 3] !== path) { nums[ni + 3] = path; changed = true }
+      ni += 4
     }
     if (strs.length !== si) {
       strs.length = si
@@ -99,6 +107,10 @@ export function trackGeometryRevision(net: Network): number {
     snapshot = new TrackSnapshot()
     snapshots.set(net, snapshot)
   }
+  // A network being driven on: compared once, then trusted until it is said to have changed
+  const token = networkCheckToken(net)
+  if (token !== undefined && snapshot.checkedAt === token) return snapshot.revision
+  snapshot.checkedAt = token
   return snapshot.update(net)
 }
 
@@ -196,6 +208,13 @@ function resolveLine(line: LineSettings): ResolvedLine {
 
 /** Radius and hand of a curved rail, null when it is straight (or as good as) */
 function railGeometry(net: Network, seg: Segment): { radius: number; hand: 1 | -1 } | null {
+  if (seg.kind === 'path') {
+    // A long rail is taken at its tightest curve, all along: the speed and the cant of each of its
+    // curves in turn is still to come
+    const path = segmentEnds(net, seg)?.path
+    const tightest = path ? pathTightestCurve(path) : null
+    return tightest && tightest.radius <= MAX_CURVE_RADIUS ? tightest : null
+  }
   if (seg.kind !== 'curve' || !seg.via) return null
   const from = net.nodes.get(seg.from)
   const to = net.nodes.get(seg.to)
@@ -220,16 +239,15 @@ function railGeometry(net: Network, seg: Segment): { radius: number; hand: 1 | -
 
 /** Do the two curved rails meeting at `nodeId` run on with no kink there? */
 function meetSmoothly(net: Network, a: Segment, b: Segment, nodeId: NodeId): boolean {
-  const node = net.nodes.get(nodeId)
-  if (!node || !a.via || !b.via) return false
-  const ax = a.via.x - node.pos.x
-  const ay = a.via.y - node.pos.y
-  const bx = b.via.x - node.pos.x
-  const by = b.via.y - node.pos.y
-  const la = Math.hypot(ax, ay)
-  const lb = Math.hypot(bx, by)
+  const endsA = segmentEnds(net, a)
+  const endsB = segmentEnds(net, b)
+  if (!endsA?.via || !endsB?.via) return false
+  const va = leaveVectorOnShape(endsA, a.from === nodeId)
+  const vb = leaveVectorOnShape(endsB, b.from === nodeId)
+  const la = Math.hypot(va.x, va.y)
+  const lb = Math.hypot(vb.x, vb.y)
   if (la < 1e-9 || lb < 1e-9) return false
-  return -(ax * bx + ay * by) / (la * lb) >= Math.cos((SAME_CURVE_MAX_KINK_DEG * Math.PI) / 180)
+  return -(va.x * vb.x + va.y * vb.y) / (la * lb) >= Math.cos((SAME_CURVE_MAX_KINK_DEG * Math.PI) / 180)
 }
 
 /** The only other rail at a node that joins exactly two, else null */
