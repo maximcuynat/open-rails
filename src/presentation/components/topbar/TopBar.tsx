@@ -330,8 +330,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
               {store.projectName}
               {store.dirty && (
                 <span
-                  className="tb-dirty"
-                  title="Modifications non exportées dans un fichier (enregistrées automatiquement dans ce navigateur)"
+                  className={store.autosaveFailed ? 'tb-dirty tb-dirty-unsaved' : 'tb-dirty'}
+                  title={
+                    store.autosaveFailed
+                      ? "Modifications non exportées dans un fichier, et que ce navigateur n'a pas pu enregistrer (projet trop volumineux) : exportez le projet par Fichier ▸ Exporter"
+                      : 'Modifications non exportées dans un fichier (enregistrées automatiquement dans ce navigateur)'
+                  }
                 />
               )}
             </button>

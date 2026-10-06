@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { addCurveSegment, addNode, addSegment, createNetwork, gradientRamps, resetIdCounter, segmentGradient } from './network'
 import type { Network, RailNode, Segment } from './types'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -10,6 +11,7 @@ function line(points: [x: number, level: number][]): { net: Network; nodes: Rail
   const nodes = points.map(([x, level]) => {
     const node = addNode(net, { x, y: 0 })
     if (level !== 0) node.level = level
+    networkChanged()
     return node
   })
   const rails = nodes.slice(1).map((node, i) => addSegment(net, nodes[i].id, node.id)!)
@@ -38,6 +40,7 @@ describe('gradientRamps', () => {
     const net = createNetwork()
     const high = addNode(net, { x: 0, y: 0 })
     high.level = 1
+    networkChanged()
     const low = addNode(net, { x: 200, y: 0 })
     const rail = addSegment(net, high.id, low.id)!
     expect(segmentGradient(net, rail, 6)).toBeCloseTo(-30, 9)
@@ -55,6 +58,7 @@ describe('gradientRamps', () => {
     const nodes = levels.map((level, i) => {
       const node = addNode(net, { x: i * 100, y: 0 })
       node.level = level
+      networkChanged()
       return node
     })
     const a = addSegment(net, nodes[0].id, nodes[1].id)!
@@ -87,6 +91,7 @@ describe('gradientRamps', () => {
     const { net, nodes, rails } = line([[0, 0], [100, 0.5], [200, 1]])
     const side = addNode(net, { x: 200, y: 30 })
     side.level = 1
+    networkChanged()
     addSegment(net, nodes[1].id, side.id)
     const ramps = gradientRamps(net, 6)
     expect(ramps).toHaveLength(3)
@@ -98,6 +103,7 @@ describe('gradientRamps', () => {
     const a = addNode(net, { x: 0, y: 0 })
     const b = addNode(net, { x: 100, y: 100 })
     b.level = 1
+    networkChanged()
     addCurveSegment(net, a.id, b.id, { x: 100, y: 0 })
     const [ramp] = gradientRamps(net, 6)
     expect(ramp.length).toBeGreaterThan(141.4)

@@ -5,6 +5,7 @@ import { doubleSlipView, findJunctionAtNode } from '@domain/models/junction'
 import { createLocomotive, findJunctionAhead, steerJunction } from '@domain/models/locomotive'
 import { openExit } from '@domain/models/routing'
 import { deserializeNetwork, resetMemoryStorage, serializeNetwork } from '@infrastructure/persistence/persistence'
+import { networkChanged } from '@domain/models/networkWatch'
 
 /**
  * Store with a double slip at the origin: a straight track along x, and a curve leaving tangent to
@@ -83,6 +84,7 @@ describe('double slip in the editor', () => {
   it('keeps its table and its position through a save', () => {
     const { net, apex, rails, junction } = storeWithDoubleSlip()
     junction.active = 3
+    networkChanged()
     const loaded = deserializeNetwork(JSON.parse(JSON.stringify(serializeNetwork(net, 'P')))).network
     const restored = findJunctionAtNode(loaded, apex.id)!
     expect(restored.kind).toBe('double_slip')

@@ -4,6 +4,7 @@ import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from
 import { segmentLength } from '../services/pathfinding'
 import { doubleSlipSideOf, doubleSlipView, findJunctionAtNode, openPassage, turnoutView, type TurnoutBranch } from './junction'
 import { openExit, entriesOf, junctionRails } from './routing'
+import { railsWithin } from '../geometry/networkFollower'
 
 export type LocoId = string
 
@@ -1244,7 +1245,7 @@ export function snapToNearestTrack(
   let minDist = maxDist
   let closestLevel = 0
 
-  for (const seg of net.segments.values()) {
+  for (const seg of railsWithin(net, worldPos, maxDist)) {
     const proj = projectOnSegment(net, seg, worldPos)
     if (!proj) continue
     const { t, point: p } = proj

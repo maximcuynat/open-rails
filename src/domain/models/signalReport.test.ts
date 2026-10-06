@@ -6,6 +6,7 @@ import type { LineSettings } from './speedLimits'
 import { at, chain, crossoverLayout, junctionAt, line, signalAt, singleTrackLayout } from './signalling.testkit'
 import { LONE_SIGNAL_REACH } from './signalReport'
 import { addSignal } from './signals'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -80,7 +81,9 @@ describe('signalling report', () => {
     const { net } = layout
     // The layout has path signals before its points: turn them into block signals
     layout.pa.role = 'spacing'
+    networkChanged()
     layout.pb.role = 'spacing'
+    networkChanged()
     const found = signalReport(net).filter((e) => e.type === 'unprotected-switch')
     // Only the points on A part two routes for eastbound trains; those on B are met by the heel
     expect(found.map((e) => e.nodeId)).toEqual([layout.forkA.id])

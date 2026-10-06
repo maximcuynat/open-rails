@@ -2,6 +2,8 @@ import type { Network, NodeId, Point, Segment, SegmentId } from './types'
 import { invalidateJunctionIndex } from './routing'
 import { addNode, levelsMeet, nodeLevel, segmentHeightAt, setNodesLevel, MAX_LEVEL, MIN_LEVEL } from './network'
 import { discretizeCurve } from '../geometry/curve'
+import { segmentBox } from '../geometry/networkFollower'
+import { touchingLater } from '../geometry/spatialGrid'
 import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
 
@@ -281,8 +283,11 @@ export function detectCrossings(net: Network, candidateSegments?: Segment[]): Di
 
   // 2. Check geometric intersections between distinct segments
   const segList = candidateSegments ?? Array.from(net.segments.values())
+  // Only rails whose boxes touch can cross: they are found on a grid, in the order a look at
+  // every pair would meet them
+  const touching = touchingLater(segList.map((seg) => segmentBox(net, seg)))
   for (let i = 0; i < segList.length; i++) {
-    for (let j = i + 1; j < segList.length; j++) {
+    for (const j of touching(i)) {
       const s1 = segList[i]
       const s2 = segList[j]
 

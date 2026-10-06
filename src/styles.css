@@ -184,6 +184,11 @@ kbd {
   display: inline-block;
 }
 
+/* The browser could not keep the project: only an export saves it */
+.tb-dirty-unsaved {
+  background: var(--danger, #dc2626);
+}
+
 .menubar {
   display: flex;
   gap: 2px;

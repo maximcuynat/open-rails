@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished } from 'vitest'
 import { addCurveChain, addNode, addSegment, createNetwork, resetIdCounter } from './network'
 import { tangentArcPieces } from '../geometry/curve'
 import { snapToNearestTrack } from './locomotive'
@@ -22,6 +22,7 @@ import { advanceTrainSet, createVehicle, makeTrainSet, trainOccupancy, type Trai
 import { BRAKE_PIPE_RELEASED, trainDynamics } from './trainDynamics'
 import { declareTurnout, setJunctionBranch } from './junction'
 import { performTrackCut } from '../geometry/constructionTemplates'
+import { networkChanged, verifyNetworkRevisions } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -178,9 +179,11 @@ describe('cant and speed of a curved rail', () => {
     const layout = new Layout().straight(500).arc(500, 60).straight(500)
     const curve = layout.pieces[1][1]
     curve.cant = 80
+    networkChanged()
     expect(curveCant(layout.net, curve, CLASSIC_160)).toMatchObject({ cant: 80, automatic: false, maxSpeed: 100 })
     expect(curveCant(layout.net, layout.pieces[1][0], CLASSIC_160)).toMatchObject({ cant: 160, automatic: true, maxSpeed: 115 })
     delete curve.cant
+    networkChanged()
     expect(curveCant(layout.net, curve, CLASSIC_160)).toMatchObject({ cant: 160, automatic: true, maxSpeed: 115 })
   })
 
@@ -200,6 +203,7 @@ describe('cant and speed of a curved rail', () => {
     const net = layout.net
     const curve = layout.pieces[1][0]
     curve.cant = 120
+    networkChanged()
     const middle = { x: 500 + 1000 * Math.sin(Math.PI / 24), y: 1000 * (1 - Math.cos(Math.PI / 24)) }
     expect(snapToNearestTrack(net, middle, 1)!.segId).toBe(curve.id)
     expect(performTrackCut(net, middle)).toBe(true)
@@ -444,12 +448,14 @@ describe('what is kept from one frame to the next', () => {
     // A node of the curve is moved: the radius is read again
     const revision = trackGeometryRevision(net)
     curve.via = { x: curve.via!.x, y: curve.via!.y + 5 }
+    networkChanged()
     expect(trackGeometryRevision(net)).toBe(revision + 1)
     expect(curveCant(net, curve, CLASSIC_160)!.radius).not.toBeCloseTo(1000, 0)
     expect(builds()).toBe(before + 1)
 
     // A cant set by hand
     curve.cant = 60
+    networkChanged()
     expect(curveCant(net, curve, CLASSIC_160)).toMatchObject({ cant: 60, automatic: false })
     expect(builds()).toBe(before + 2)
 
@@ -533,6 +539,9 @@ describe('what is kept from one frame to the next', () => {
   })
 
   it('costs little: a frame on a network of 4 000 rails', () => {
+    // Timed as the editor runs: without the check of the revisions the tests add
+    verifyNetworkRevisions(false)
+    onTestFinished(() => verifyNetworkRevisions(true))
     const layout = new Layout()
     for (let i = 0; i < 400; i++) layout.straight(900, 3).arc(1500, i % 2 === 0 ? 30 : -30).straight(300, 5)
     const net = layout.net
@@ -546,9 +555,11 @@ describe('what is kept from one frame to the next', () => {
     }
     const build = time(() => {
       layout.pieces[1][0].cant = layout.pieces[1][0].cant === 100 ? 105 : 100
+      networkChanged()
       trackProfile(net, LGV_300)
     }, 20)
     delete layout.pieces[1][0].cant
+    networkChanged()
     const unchanged = time(() => trackProfile(net, LGV_300), 500)
     const standing = time(() => trainDynamics(net, train, env), 200)
     const moving = time(() => {

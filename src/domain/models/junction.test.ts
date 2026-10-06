@@ -24,6 +24,7 @@ import {
   openPassage,
 } from './junction'
 import { isRailClosedAt, openExit } from './routing'
+import { networkChanged } from '@domain/models/networkWatch'
 
 describe('TURNOUT_SPECS', () => {
   it('defines #6 and #4 Kato turnout specs', () => {
@@ -389,6 +390,7 @@ describe('autoDetectJunctions and the transition deflection limit', () => {
     const view = turnoutView(net, junc)!
     const branchEnd = [...net.nodes.values()][3]
     branchEnd.pos = { x: 0, y: 200 }
+    networkChanged()
     autoDetectJunctions(net)
     expect(net.junctions.size).toBe(0)
     // The main line is a plain track again

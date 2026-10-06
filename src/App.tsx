@@ -44,7 +44,8 @@ export default function App() {
   // Persist state when reloading or navigating away
   useEffect(() => {
     const handleUnload = () => {
-      store.savePersistedState()
+      // At once: the write that waits for the edits to pause would come too late
+      store.flushPersistedState()
     }
     window.addEventListener('beforeunload', handleUnload)
     window.addEventListener('pagehide', handleUnload)

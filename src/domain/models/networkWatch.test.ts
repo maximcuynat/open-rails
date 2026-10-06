@@ -1,54 +1,88 @@
-import { describe, expect, it } from 'vitest'
-import { addNode, addSegment, createNetwork } from './network'
-import { holdNetwork, networkChanged, networkCheckToken, releaseNetwork } from './networkWatch'
+import { afterEach, describe, expect, it } from 'vitest'
+import { addNode, addSegment, createNetwork, removeSegment } from './network'
+import { networkChanged, networkCheckToken, touchNetwork, verifyNetworkRevisions } from './networkWatch'
 import { trackGeometryRevision } from './trackSpeed'
 import { networkDerived } from '@infrastructure/render/networkDerived'
 import { declareTurnout, toggleJunction } from './junction'
+import type { Network } from './types'
 
 function line() {
   const net = createNetwork()
   const a = addNode(net, { x: 0, y: 0 })
   const b = addNode(net, { x: 100, y: 0 })
-  addSegment(net, a.id, b.id)
-  return { net, a, b }
+  const seg = addSegment(net, a.id, b.id)!
+  return { net, a, b, seg }
 }
 
-describe('a network held while it is driven on', () => {
-  it('is compared every time while it is not held', () => {
+// The suite runs with the revisions checked (see `src/testSetup.ts`); some tests here turn the check off
+afterEach(() => verifyNetworkRevisions(true))
+
+describe('the revision of a network', () => {
+  it('moves when a node or a rail is added or removed', () => {
+    const { net, seg } = line()
+    const first = networkCheckToken(net)!
+    expect(networkCheckToken(net)).toBe(first)
+    const c = addNode(net, { x: 200, y: 0 })
+    const second = networkCheckToken(net)!
+    expect(second).toBeGreaterThan(first)
+    removeSegment(net, seg.id)
+    expect(networkCheckToken(net)).toBeGreaterThan(second)
+    expect(net.nodes.has(c.id)).toBe(true)
+  })
+
+  it('moves when a change made in place is told', () => {
     const { net, b } = line()
+    const before = networkCheckToken(net)!
+    b.pos.x = 120
+    touchNetwork(net)
+    expect(networkCheckToken(net)).toBeGreaterThan(before)
+    const then = networkCheckToken(net)!
+    networkChanged()
+    expect(networkCheckToken(net)).toBeGreaterThan(then)
+  })
+
+  it('is not known for a network put together by hand: compared every time', () => {
+    const { net: made, b } = line()
+    const net: Network = { ...made }
     expect(networkCheckToken(net)).toBeUndefined()
     const before = trackGeometryRevision(net)
     b.pos.x = 120
     expect(trackGeometryRevision(net)).toBe(before + 1)
   })
 
-  it('held: the comparison is trusted until the network is said to have changed', () => {
+  it('unchanged: what is kept of the network is not compared again', () => {
+    verifyNetworkRevisions(false)
     const { net, b } = line()
-    holdNetwork(net)
     const before = trackGeometryRevision(net)
     const derived = networkDerived(net)
 
-    // Moved behind its back: not seen, which is the point — nothing moves a node while driving
+    // Moved without a word: not seen, which is what the revision is trusted for
     b.pos.x = 120
     expect(trackGeometryRevision(net)).toBe(before)
     expect(networkDerived(net)).toBe(derived)
 
-    // Any notification of the editor says so, and the change is found
-    networkChanged()
+    touchNetwork(net)
     expect(trackGeometryRevision(net)).toBe(before + 1)
     expect(networkDerived(net)).not.toBe(derived)
   })
 
-  it('released: compared every time again', () => {
+  it('checked in the tests: a change made in place without a word throws', () => {
     const { net, b } = line()
-    holdNetwork(net)
-    const before = trackGeometryRevision(net)
-    releaseNetwork(net)
-    b.pos.x = 130
-    expect(trackGeometryRevision(net)).toBe(before + 1)
+    networkCheckToken(net)
+    b.pos.x = 120
+    expect(() => networkCheckToken(net)).toThrow(/without touchNetwork/)
   })
 
-  it('points thrown are seen at once, without a notification', () => {
+  it('a revision that moved without a change leaves what is kept alone', () => {
+    const { net } = line()
+    const before = trackGeometryRevision(net)
+    const derived = networkDerived(net)
+    touchNetwork(net)
+    expect(trackGeometryRevision(net)).toBe(before)
+    expect(networkDerived(net)).toBe(derived)
+  })
+
+  it('points thrown are seen at once', () => {
     const net = createNetwork()
     const stem = addNode(net, { x: 0, y: 0 })
     const points = addNode(net, { x: 50, y: 0 })
@@ -58,7 +92,6 @@ describe('a network held while it is driven on', () => {
     const s1 = addSegment(net, points.id, straight.id)!
     const s2 = addSegment(net, points.id, branch.id)!
     const junction = declareTurnout(net, { nodeId: points.id, stemSegmentId: s0.id, straightSegmentId: s1.id, divergingSegmentId: s2.id })!
-    holdNetwork(net)
     const derived = networkDerived(net)
     expect(networkDerived(net)).toBe(derived)
 

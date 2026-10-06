@@ -4,7 +4,6 @@ import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
 import { doubleSlipView, findJunctionAtNode, findJunctionBySegment, turnoutView, type DoubleSlipSide } from '@domain/models/junction'
 import { leaveDirection } from '@domain/models/routing'
 import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
-import { detectCrossings } from '@domain/models/crossing'
 import {
   findSectionBySegment,
   type TrackSection,
@@ -379,29 +378,15 @@ function CurveCantFields({ store, cant }: { store: EditorStore; cant: CurveCant 
 /** Network overview — shown when nothing is selected. */
 function NetworkPanel({ store }: { store: EditorStore }) {
   const net = store.network
-  let totalLen = 0
-  let curveCount = 0
-  let straightCount = 0
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    if (seg.kind === 'curve' && seg.via) {
-      totalLen += curveLength(a.pos, seg.via, b.pos)
-      curveCount++
-    } else {
-      totalLen += Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
-      straightCount++
-    }
-  }
+  // Kept with the network: none of this is worked out again while the track does not change
+  const derived = networkDerived(net, store.sectionMeta)
+  const { length: totalLen, curves: curveCount, straights: straightCount } = derived.trackTotals()
 
   const formattedTotal =
     totalLen >= 1000
       ? `${(totalLen / 1000).toFixed(2)} m`
       : `${totalLen.toFixed(0)} mm`
 
-  // Kept with the network: none of the three is worked out again while the track does not change
-  const derived = networkDerived(net, store.sectionMeta)
   const deadEnds = derived.deadEnds().length
   const loops = derived.loops().length
   const components = derived.components().length
@@ -563,7 +548,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
     const ray = leaveDirection(store.network, seg, nodeId)
     return Math.abs(ray.x) >= Math.abs(ray.y) ? (ray.x > 0 ? '→' : '←') : ray.y > 0 ? '↓' : '↑'
   }
-  const crossing = detectCrossings(store.network).find((c) => c.nodeId === nodeId)
+  const crossing = networkDerived(store.network, store.sectionMeta).crossings().find((c) => c.nodeId === nodeId)
 
   const [x, setX] = useState(node.pos.x)
   const [y, setY] = useState(node.pos.y)

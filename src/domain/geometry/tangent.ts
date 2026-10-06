@@ -1,5 +1,6 @@
 import type { Point, Network, Segment, NodeId, RailNode, SegmentId } from '../models/types'
 import { bezierPoint, bezierDerivative1 } from './curve'
+import { nodesWithin, railsWithin } from './networkFollower'
 
 /** Outgoing tangent direction (normalized) at the end of a straight segment. */
 function straightTangent(from: Point, to: Point): Point {
@@ -316,7 +317,7 @@ export function getTrackTangentAt(
   // Priority 1: near an existing node (excluding excludeNodeId) that has connected segments
   let bestNode: RailNode | null = null
   let bestDist = tol
-  for (const node of net.nodes.values()) {
+  for (const node of nodesWithin(net, point, tol)) {
     if (excludeNodeId && node.id === excludeNodeId) continue
     const adj = net.adjacency.get(node.id)
     if (!adj || adj.length === 0) continue
@@ -346,7 +347,8 @@ export function getTrackTangentAt(
   let bestSeg: { id: SegmentId; seg: any } | null = null
   let bestSegDist = tol
 
-  for (const [id, seg] of net.segments.entries()) {
+  for (const seg of railsWithin(net, point, tol)) {
+    const id = seg.id
     if (excludeNodeId && (seg.from === excludeNodeId || seg.to === excludeNodeId)) {
       continue
     }

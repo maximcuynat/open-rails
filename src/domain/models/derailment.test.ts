@@ -17,6 +17,7 @@ import {
   type TrainSet,
 } from './train'
 import { BRAKE_PIPE_FULL_SERVICE, BRAKE_PIPE_RELEASED, PHYSICS_STEP, setBrakeCommand, trainDynamics, type DrivingEnvironment } from './trainDynamics'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -38,6 +39,7 @@ function eckwersheim(drop = 0): { net: Network; curve: Segment[]; before: Segmen
   expect(arc.radius).toBeCloseTo(945, 6)
   const curve = addCurveChain(net, entry.id, exit.id, arc.pieces)!.segments
   for (const seg of curve) seg.cant = 163
+  networkChanged()
   const after = addSegment(net, exit.id, end.id)!
   return { net, curve, before, after }
 }
@@ -229,9 +231,11 @@ describe('derailment', () => {
   it('a cant raised by hand saves the train, a cant taken off loses it sooner', () => {
     const { net, curve } = eckwersheim()
     for (const seg of curve) seg.cant = 180
+    networkChanged()
     const saved = running(rakeOn(net, curve[3].id, 0.5), 235)
     expect(checkDerailment(net, saved, ENV)).toBe(false)
     for (const seg of curve) seg.cant = 0
+    networkChanged()
     const lost = running(rakeOn(net, curve[3].id, 0.5), 215)
     expect(checkDerailment(net, lost, ENV)).toBe(true)
   })

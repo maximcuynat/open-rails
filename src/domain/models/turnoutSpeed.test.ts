@@ -15,6 +15,7 @@ import {
 import { trainDynamics, type DrivingEnvironment } from './trainDynamics'
 import { advanceTrainSet } from './train'
 import { chain, drive, junctionAt, setPoints, signalAt, trainAt } from './signalling.testkit'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -100,10 +101,13 @@ describe('speed of a turnout on its diverging route', () => {
   it('a stored frog number is the tangent', () => {
     const { net, junction } = fork(12)
     junction.frogNumber = 6 // tangent 1/6
+    networkChanged()
     expect(turnoutDivergingSpeed(net, junction, CLASSIC)).toBe(30)
     junction.frogNumber = 20 // 0.05
+    networkChanged()
     expect(turnoutDivergingSpeed(net, junction, CLASSIC)).toBe(90)
     junction.frogNumber = 46
+    networkChanged()
     expect(turnoutDivergingSpeed(net, junction, CLASSIC)).toBe(160)
   })
 

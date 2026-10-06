@@ -5,6 +5,7 @@ import { addSignal, removeSignal } from './signals'
 import { signalBlock, signalBlockStats, signalBlocks, signalRoute, signalTopology } from './signalBlocks'
 import type { TrackSpan } from './types'
 import { chain, crossoverLayout, junctionAt, line, setPoints, signalAt } from './signalling.testkit'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -145,8 +146,10 @@ describe('blocks are kept', () => {
 
     // The track moves under the signals: the block is measured again
     nodes[3].pos.x += 100
+    networkChanged()
     expect(signalBlock(net, first.id)!.length).toBeCloseTo(1800, 6)
     nodes[3].pos.x -= 100
+    networkChanged()
 
     removeSignal(net, second.id)
     expect(signalBlock(net, second.id)).toBeNull()

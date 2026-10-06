@@ -12,6 +12,7 @@ import { addNode, addSegment, createNetwork } from '@domain/models/network'
 import { createTrainSet, findCouplerSnap, vehicleRearEndPos, type TrainSet } from '@domain/models/train'
 import { createLocomotive } from '@domain/models/locomotive'
 import type { Network } from '@domain/models/types'
+import { networkChanged } from '@domain/models/networkWatch'
 
 const METHODS = [
   'save', 'restore', 'beginPath', 'moveTo', 'lineTo', 'stroke', 'fill', 'arc', 'rect', 'roundRect',
@@ -68,7 +69,9 @@ function straightWithTrain(level = 0): { net: Network; ts: TrainSet; segId: stri
   const n2 = addNode(net, { x: 400, y: 0 })
   if (level !== 0) {
     n1.level = level
+    networkChanged()
     n2.level = level
+    networkChanged()
   }
   const seg = addSegment(net, n1.id, n2.id)!
   const ts = createTrainSet(net, { x: 300, y: 0 }, 'loco')!
