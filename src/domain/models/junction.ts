@@ -1,4 +1,5 @@
 import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, detachSegment, replaceRail, segmentHeightAt, setNodesLevel } from './network'
+import { networkChanged } from './networkWatch'
 import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
@@ -174,7 +175,11 @@ export function removeJunction(net: Network, id: JunctionId): void {
 
 /** Put a device in one of its positions. Every change of position goes through here. */
 export function setJunctionPosition(junction: Junction, index: number): void {
-  if (index >= 0 && index < junction.positions.length) junction.active = index
+  if (index >= 0 && index < junction.positions.length && junction.active !== index) {
+    junction.active = index
+    // Seen by what is kept of a network being driven on (`networkWatch`)
+    networkChanged()
+  }
 }
 
 /** The branch a turnout is set to */

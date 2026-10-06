@@ -10,6 +10,7 @@
  * This module must not import `train.ts` nor `trainDynamics.ts`.
  */
 
+import { networkCheckToken } from './networkWatch'
 import type { JunctionId, Network, NodeId, SegmentId, Signal, SignalId, TrackSpan } from './types'
 import { segmentArcLength, segmentPartialLength } from './locomotive'
 import { exitsOf, leaveDirection } from './routing'
@@ -29,6 +30,8 @@ class TableSnapshot {
   private strs: string[] = []
   private nums: number[] = []
   revision = 0
+  /** `networkCheckToken` of the last comparison */
+  checkedAt: number | undefined = undefined
 
   update(net: Network): number {
     const strs = this.strs
@@ -73,6 +76,10 @@ function routeTablesRevision(net: Network): number {
     snapshot = new TableSnapshot()
     tableSnapshots.set(net, snapshot)
   }
+  // A network being driven on: compared once, then trusted until it is said to have changed
+  const token = networkCheckToken(net)
+  if (token !== undefined && snapshot.checkedAt === token) return snapshot.revision
+  snapshot.checkedAt = token
   return snapshot.update(net)
 }
 
