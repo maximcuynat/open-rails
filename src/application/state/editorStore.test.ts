@@ -848,6 +848,25 @@ describe('camera-only notification', () => {
     }
   })
 
+  it('simplifyToLongRails merges the runs of small rails, in one undo step', () => {
+    const store = new EditorStore()
+    const xs = [0, 40, 90, 150].map((x) => addNode(store.network, { x, y: 0 }))
+    xs.slice(1).forEach((node, i) => addSegment(store.network, xs[i].id, node.id))
+    store.pushHistorySnapshot()
+
+    expect(store.simplifyToLongRails()).toEqual({ before: 3, after: 1 })
+    expect([...store.network.segments.values()][0].kind).toBe('path')
+    expect(store.network.nodes.size).toBe(2)
+
+    store.undo()
+    expect(store.network.segments.size).toBe(3)
+    expect([...store.network.segments.values()].every((seg) => seg.kind === 'straight')).toBe(true)
+
+    // Not while driving
+    store.isPlayMode = true
+    expect(store.simplifyToLongRails()).toBeNull()
+  })
+
   it('the plain driving view is on by default, only while driving, and can be unticked', () => {
     const store = new EditorStore()
     expect(store.minimalDrivingView).toBe(true)

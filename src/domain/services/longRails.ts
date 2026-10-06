@@ -30,6 +30,9 @@ export interface LongRailOptions {
   cutStraightsOver: number
 }
 
+/** A curved rail is mapped onto the long rail in this many steps of its parameter */
+const CURVE_MAPPING_STEPS = 8
+
 interface ChainRail {
   seg: Segment
   /** True when the rail runs the way the chain is walked */
@@ -150,14 +153,26 @@ export function mergeIntoLongRails(net: Network, options: LongRailOptions): { be
     const long = addPathSegment(net, fromId, toId, pieces)
     if (!long) continue
 
-    // Each small rail now lies on its share of the long one, by length
+    // Each small rail now lies on its share of the long one, by length. The parameter of a curved
+    // rail does not run evenly along it: its share is handed over in several steps, each straight
+    // enough for a place on it to stay where it was
     let done = 0
     const inner: NodeId[] = []
     chain.forEach(({ seg, forward }, i) => {
-      const lo = done / total
+      const ends = segmentEnds(net, seg)!
+      const steps = ends.via ? CURVE_MAPPING_STEPS : 1
+      const place = (t: number): number => {
+        const along = shapeLengthBetween(ends, 0, t)
+        return (done + (forward ? along : lengths[i] - along)) / total
+      }
+      const shares = []
+      for (let k = 0; k < steps; k++) {
+        const from = k / steps
+        const to = (k + 1) / steps
+        shares.push({ segId: long.id, from, to, start: place(from), end: place(to) })
+      }
+      replaceRail(net, { oldId: seg.id, pieces: shares })
       done += lengths[i]
-      const hi = done / total
-      replaceRail(net, { oldId: seg.id, pieces: [{ segId: long.id, from: 0, to: 1, start: forward ? lo : hi, end: forward ? hi : lo }] })
       if (i < chain.length - 1) inner.push(forward ? seg.to : seg.from)
     })
     for (const { seg } of chain) detachSegment(net, seg.id)

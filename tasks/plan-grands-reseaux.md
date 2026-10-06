@@ -144,7 +144,7 @@ par translation (la caméra suit le train), sauvegarde en IndexedDB, annulation 
 
 - [ ] Lot P — pilotage épuré (première partie faite le 2026-10-06, voir ci-dessous)
 - [ ] Lot A — une seule géométrie de rail (première étape faite le 2026-10-06, voir plus bas)
-- [ ] Lot B — rail long
+- [ ] Lot B — rail long (cœur fait le 2026-10-06, voir plus bas)
 - [ ] Lot C — import et simplification
 - [ ] Lot D — selon mesures
 
@@ -202,6 +202,50 @@ par translation (la caméra suit le train), sauvegarde en IndexedDB, annulation 
 - [ ] `spanGeometry` (`speedZoneRender.ts`) et `traceOuterRails` (`cantRender.ts`) : les router change le dernier chiffre de leurs sorties ; à faire en l'acceptant.
 - [ ] Aimantation de l'éditeur, chacune avec son propre échantillonnage : `getTrackTangentAt`, `checkCurveJoins`, survol dans `Canvas.tsx`, `getStepPointsAlongSegment`, `signalRowPlaces`, pastilles et flèches à t = 0,5.
 - Reportés au lot B, parce qu'il s'agit d'une logique par forme et non d'un rebranchement : les deux coupes (`splitSegment`, `splitSegmentAtNode`), le rayon en un point (`getTrackCurvatureAt`, `railGeometry` : deux définitions aujourd'hui), le test nœud-sur-rail et `evalSegment` de la réconciliation.
+
+### Lot B — fait
+- `kind: 'path'` : un rail entre deux nœuds qui porte son tracé, une liste de `PathPiece`
+  (départ, cap, courbure signée, longueur ; droite = courbure 0). `t` = part de la longueur.
+- `src/domain/geometry/railPath.ts` : point et cap à une distance, courbure, point le plus proche,
+  pièces de dessin (arcs en quadratiques de 0,35 rad au plus), polyligne, coupe, sens inverse,
+  boîte. Un rail long suit ses nœuds : son tracé est lu tourné, mis à l'échelle et décalé sur eux.
+- Toutes les primitives de `segmentGeometry.ts` connaissent la troisième forme ; `curvatureOnShape` ajouté.
+- Coupes (`splitSegment`, `splitSegmentAtNode`), raccord d'une voie qui vient buter dessus
+  (réconciliation), identité (jamais pris pour le rail droit entre ses nœuds), rayon sous un bogie,
+  profil de vitesse, caches (`pathChecksum`), dessin (tous paliers, bandes de zone, marques de
+  dévers, bandes de signalisation), persistance.
+- Persistance : version 3 dès qu'un rail long est présent ; un fichier plus récent que
+  `PROJECT_VERSION` est refusé au lieu d'être lu de travers.
+- `src/domain/geometry/arcFit.ts` (`fitPath`) : polyligne → droites et arcs tangents sous
+  tolérance, extrémités et tangentes d'extrémité imposées exactement.
+- `src/domain/services/longRails.ts` (`mergeIntoLongRails`) : chaque enfilade de petits rails entre
+  deux nœuds utiles devient un rail long ; signaux, zones, trains et tables d'aiguillage suivent
+  (`replaceRail`, les rails courbes reportés en 8 pas). Option « une courbe par rail ».
+- Édition ▸ « Simplifier en rails longs » (`store.simplifyToLongRails`), annulable.
+
+Mesures sur Marseille Saint-Charles (tolérance 0,3 m) :
+
+| | Petits rails | Rails longs | Rails longs, une courbe par rail |
+|---|---|---|---|
+| Rails | 1 503 | 288 | 313 |
+| Nœuds | 1 441 | 226 | 251 |
+| Fichier JSON | 234 ko | 129 ko | 135 ko |
+| Chargement (désérialisation) | 139 ms | 63 ms | 58 ms |
+| Image, script seul (0,7 / 2,2 / 6 px/m) | 3,5 / 4,5 / 4,1 ms | 1,6 / 2,6 / 2,1 ms | 1,6 / 2,6 / 2,0 ms |
+
+Longueur totale conservée à 0,1 % près ; 124 aiguillages et 20 TJD relus à l'identique ; un point
+de la voie reste à moins de 1,1 m de sa place (écart latéral ≤ tolérance, le reste en longueur) ;
+aucune erreur cinématique ; la réconciliation ne retouche rien.
+
+### Lot B — reste
+- [ ] Vitesse, dévers et déraillement **par courbe** à l'intérieur d'un rail long (aujourd'hui : la
+      courbe la plus serrée vaut pour tout le rail, d'où l'option « une courbe par rail »).
+- [ ] Croisement d'une voie dessinée en travers d'un rail long (seul le raccord en bout est géré).
+- [ ] Voie parallèle d'un rail long, dévers réglé à la main, profil en long (hauteurs entre deux nœuds).
+- [ ] Sélection au rectangle d'un rail long ; libellés du panneau latéral (« Voie droite » affiché).
+- [ ] Aimantation de l'éditeur sur un rail long (`getTrackTangentAt`, survol dans `Canvas.tsx`, `getStepPointsAlongSegment`).
+- [ ] Conduite d'un train de bout en bout sur Marseille convertie, comparée au réseau d'origine.
+- [ ] `fitPath` : `chordTolerance` à régler pour l'import (points OSM espacés) ; cas dégénérés lents.
 
 ## Sources des recherches
 - Open Rails / MSTS, tronçons droite ou arc : https://raw.githubusercontent.com/openrails/openrails/master/Source/Orts.Formats.Msts/TrackSectionsFile.cs
