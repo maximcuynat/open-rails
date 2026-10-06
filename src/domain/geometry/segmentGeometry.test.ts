@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { addCurveSegment, addNode, addSegment, createNetwork } from '../models/network'
 import { bezierPoint, curveLength, curveLengthBetween, curveParamAtDistance } from './curve'
 import {
+  closestParamOnShape,
+  distanceToShape,
+  leaveDirectionOnShape,
+  leaveVectorOnShape,
   pointOnShape,
   segmentEnds,
   segmentShapeLength,
@@ -115,5 +119,41 @@ describe('shape of a rail', () => {
     const orphan = { ...straight, to: 'n_missing' }
     expect(segmentEnds(net, orphan)).toBeNull()
     expect(segmentShapeLength(net, orphan)).toBe(0)
+  })
+
+  it('leaves each end into the rail: towards the other end, along the curve when it is one', () => {
+    const line = segmentEnds(net, straight)!
+    expect(leaveDirectionOnShape(line, true)).toEqual({ x: 0.8, y: 0.6 })
+    expect(leaveDirectionOnShape(line, false)).toEqual({ x: -0.8, y: -0.6 })
+
+    const bend = segmentEnds(net, curve)!
+    // From b (80, 60) and from c (160, 60), both towards the control point (120, 90)
+    expect(leaveVectorOnShape(bend, true)).toEqual({ x: 40, y: 30 })
+    expect(leaveVectorOnShape(bend, false)).toEqual({ x: -40, y: 30 })
+    expect(leaveDirectionOnShape(bend, false)).toEqual({ x: -0.8, y: 0.6 })
+    // The direction of travel at an end is the leave direction there, turned round at `to`
+    expect(tangentOnShape(bend, 0)).toEqual(leaveDirectionOnShape(bend, true))
+    expect(tangentOnShape(bend, 1).x).toBeCloseTo(-leaveDirectionOnShape(bend, false).x)
+    expect(tangentOnShape(bend, 1).y).toBeCloseTo(-leaveDirectionOnShape(bend, false).y)
+  })
+
+  it('a rail without length leaves along +x, as everything that draws it expects', () => {
+    const point = { a: { x: 5, y: 5 }, b: { x: 5, y: 5 } }
+    expect(leaveDirectionOnShape(point, true)).toEqual({ x: 1, y: 0 })
+    expect(tangentOnShape(point, 0.5)).toEqual({ x: 1, y: 0 })
+  })
+
+  it('closest point: the foot of the perpendicular, held between the two ends', () => {
+    const line = segmentEnds(net, straight)!
+    expect(closestParamOnShape(line, { x: 40 - 6, y: 30 + 8 })).toBeCloseTo(0.5)
+    expect(distanceToShape(line, { x: 40 - 6, y: 30 + 8 })).toBeCloseTo(10)
+    expect(closestParamOnShape(line, { x: -50, y: -50 })).toBe(0)
+    expect(closestParamOnShape(line, { x: 500, y: 500 })).toBe(1)
+    expect(distanceToShape(line, { x: -3, y: -4 })).toBeCloseTo(5)
+
+    const bend = segmentEnds(net, curve)!
+    const onCurve = pointOnShape(bend, 0.37)
+    expect(closestParamOnShape(bend, onCurve)).toBeCloseTo(0.37, 6)
+    expect(distanceToShape(bend, onCurve)).toBeLessThan(0.05)
   })
 })

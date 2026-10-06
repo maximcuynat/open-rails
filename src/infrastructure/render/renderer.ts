@@ -1,4 +1,5 @@
 export type { Camera } from '@infrastructure/render/camera'
+import { leaveVectorOnShape, segmentEnds } from '@domain/geometry/segmentGeometry'
 import { isRailClosedAt } from '@domain/models/routing'
 import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
@@ -1945,41 +1946,15 @@ export function getNodeSegmentEndVector(
   seg: Segment,
   nodeId: NodeId,
 ): { tangent: Point; normal: Point } {
-  const nodeA = net.nodes.get(seg.from)
-  const nodeB = net.nodes.get(seg.to)
-  if (!nodeA || !nodeB) {
+  const ends = segmentEnds(net, seg)
+  if (!ends) {
     return { tangent: { x: 1, y: 0 }, normal: { x: 0, y: 1 } }
   }
-
-  let tx = 0
-  let ty = 0
-
-  if (seg.kind === 'curve' && seg.via) {
-    if (seg.from === nodeId) {
-      // Outgoing at t = 0 (direction from nodeA towards nodeB along curve)
-      const tan = bezierTangent(0, nodeA.pos, seg.via, nodeB.pos)
-      tx = tan.x
-      ty = tan.y
-    } else {
-      // Outgoing at t = 1 (direction away from nodeB back into curve towards nodeA)
-      const tan = bezierTangent(1, nodeA.pos, seg.via, nodeB.pos)
-      tx = -tan.x
-      ty = -tan.y
-    }
-  } else {
-    // Straight segment
-    if (seg.from === nodeId) {
-      tx = nodeB.pos.x - nodeA.pos.x
-      ty = nodeB.pos.y - nodeA.pos.y
-    } else {
-      tx = nodeA.pos.x - nodeB.pos.x
-      ty = nodeA.pos.y - nodeB.pos.y
-    }
-  }
-
-  const len = Math.hypot(tx, ty)
-  const ux = len > 0.0001 ? tx / len : 1
-  const uy = len > 0.0001 ? ty / len : 0
+  // Into the rail from the node: towards its other end, along the curve when it is one
+  const leave = leaveVectorOnShape(ends, seg.from === nodeId)
+  const len = Math.hypot(leave.x, leave.y)
+  const ux = len > 0.0001 ? leave.x / len : 1
+  const uy = len > 0.0001 ? leave.y / len : 0
   const nx = -uy
   const ny = ux
 

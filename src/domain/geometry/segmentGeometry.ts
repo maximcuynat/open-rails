@@ -1,5 +1,5 @@
 import type { Network, Point, Segment } from '../models/types'
-import { bezierPoint, curveLengthBetween, curveParamAtDistance } from './curve'
+import { bezierPoint, closestCurveParam, curveLengthBetween, curveParamAtDistance, distToCurve } from './curve'
 
 // ─────────────────── The shape of a rail, in one place ───────────────────
 //
@@ -41,6 +41,41 @@ export function tangentOnShape(ends: SegmentEnds, t: number): Point {
   }
   const len = Math.hypot(dx, dy)
   return len === 0 ? { x: 1, y: 0 } : { x: dx / len, y: dy / len }
+}
+
+/**
+ * Vector along which a rail leaves one of its ends, into the rail: from `seg.from` when `atFrom`,
+ * from `seg.to` otherwise. Not normalised (its length says nothing); null vector for a rail without
+ * length there.
+ */
+export function leaveVectorOnShape(ends: SegmentEnds, atFrom: boolean): Point {
+  const here = atFrom ? ends.a : ends.b
+  const towards = ends.via ?? (atFrom ? ends.b : ends.a)
+  return { x: towards.x - here.x, y: towards.y - here.y }
+}
+
+/** Unit direction in which a rail leaves one of its ends, into the rail; +x for a rail without length there */
+export function leaveDirectionOnShape(ends: SegmentEnds, atFrom: boolean): Point {
+  const v = leaveVectorOnShape(ends, atFrom)
+  const len = Math.hypot(v.x, v.y)
+  return len > 0 ? { x: v.x / len, y: v.y / len } : { x: 1, y: 0 }
+}
+
+/** Parameter (0…1) of the point of a rail closest to `p` */
+export function closestParamOnShape(ends: SegmentEnds, p: Point): number {
+  if (ends.via) return closestCurveParam(p, ends.a, ends.via, ends.b)
+  const dx = ends.b.x - ends.a.x
+  const dy = ends.b.y - ends.a.y
+  const len2 = dx * dx + dy * dy
+  const t = len2 === 0 ? 0 : ((p.x - ends.a.x) * dx + (p.y - ends.a.y) * dy) / len2
+  return Math.max(0, Math.min(1, t))
+}
+
+/** Distance from `p` to a rail (world metres) */
+export function distanceToShape(ends: SegmentEnds, p: Point): number {
+  if (ends.via) return distToCurve(p, ends.a, ends.via, ends.b)
+  const t = closestParamOnShape(ends, p)
+  return Math.hypot(ends.a.x + (ends.b.x - ends.a.x) * t - p.x, ends.a.y + (ends.b.y - ends.a.y) * t - p.y)
 }
 
 /** Length of a rail between the parameters `t0` and `t1`, whichever is the larger (world metres) */

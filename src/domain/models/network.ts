@@ -1,6 +1,6 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
-import { segmentShapeLength } from '../geometry/segmentGeometry'
-import { closestCurveParam, curveLength, distToCurve, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
+import { closestParamOnShape, distanceToShape, segmentEnds, segmentShapeLength } from '../geometry/segmentGeometry'
+import { curveLength, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 import { generateId, resetIdCounter } from './ids'
 import { remapSignals } from './signals'
 import { remapSpeedZones } from './speedZones'
@@ -796,19 +796,9 @@ export function spreadGradient(net: Network, segmentIds: Iterable<SegmentId>): n
 export function segmentHeightNear(net: Network, seg: Segment, pos: Point): number {
   const ends = segmentEndLevels(net, seg)
   if (ends.from === ends.to) return ends.from
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return ends.from
-  let t: number
-  if (seg.kind === 'curve' && seg.via) {
-    t = closestCurveParam(pos, a.pos, seg.via, b.pos)
-  } else {
-    const dx = b.pos.x - a.pos.x
-    const dy = b.pos.y - a.pos.y
-    const len2 = dx * dx + dy * dy
-    t = len2 === 0 ? 0 : ((pos.x - a.pos.x) * dx + (pos.y - a.pos.y) * dy) / len2
-  }
-  return ends.from + (ends.to - ends.from) * Math.max(0, Math.min(1, t))
+  const shape = segmentEnds(net, seg)
+  if (!shape) return ends.from
+  return ends.from + (ends.to - ends.from) * closestParamOnShape(shape, pos)
 }
 
 /** Find the closest segment to a point within a max distance (the upper one of two stacked rails). */
@@ -817,13 +807,9 @@ export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId
   let bestD = maxDist
   let bestLevel = 0
   for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    const d =
-      seg.kind === 'curve' && seg.via
-        ? distToCurve(pos, a.pos, seg.via, b.pos)
-        : distToSegment(pos, a.pos, b.pos)
+    const shape = segmentEnds(net, seg)
+    if (!shape) continue
+    const d = distanceToShape(shape, pos)
     if (d >= maxDist) continue
     const level = segmentHeightNear(net, seg, pos)
     if (best === null || isCloserOrAbove(d, level, bestD, bestLevel)) {
