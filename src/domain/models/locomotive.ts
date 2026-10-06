@@ -2,6 +2,7 @@ import type { Network, NodeId, Point, Segment, SegmentId, Junction, TrackSpan } 
 import { generateId, isCloserOrAbove, segmentHeightAt } from './network'
 import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength } from '../services/pathfinding'
+import { pointOnShape, segmentEnds, segmentShapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
 import { doubleSlipSideOf, doubleSlipView, findJunctionAtNode, openPassage, turnoutView, type TurnoutBranch } from './junction'
 import { openExit, entriesOf, junctionRails } from './routing'
 
@@ -25,39 +26,14 @@ export interface Locomotive {
 
 export function positionOnSegment(net: Network, segId: SegmentId, t: number): Point | null {
   const seg = net.segments.get(segId)
-  if (!seg) return null
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return null
-  if (seg.kind === 'straight' || !seg.via) {
-    return {
-      x: from.pos.x + (to.pos.x - from.pos.x) * t,
-      y: from.pos.y + (to.pos.y - from.pos.y) * t,
-    }
-  } else {
-    return bezierPoint(t, from.pos, seg.via, to.pos)
-  }
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? pointOnShape(ends, t) : null
 }
 
 export function tangentOnSegment(net: Network, segId: SegmentId, t: number): Point | null {
   const seg = net.segments.get(segId)
-  if (!seg) return null
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return null
-  if (seg.kind === 'straight' || !seg.via) {
-    const dx = to.pos.x - from.pos.x
-    const dy = to.pos.y - from.pos.y
-    const len = Math.hypot(dx, dy)
-    if (len === 0) return { x: 1, y: 0 }
-    return { x: dx / len, y: dy / len }
-  } else {
-    const dx = 2 * (1 - t) * (seg.via.x - from.pos.x) + 2 * t * (to.pos.x - seg.via.x)
-    const dy = 2 * (1 - t) * (seg.via.y - from.pos.y) + 2 * t * (to.pos.y - seg.via.y)
-    const len = Math.hypot(dx, dy)
-    if (len === 0) return { x: 1, y: 0 }
-    return { x: dx / len, y: dy / len }
-  }
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? tangentOnShape(ends, t) : null
 }
 
 export function segmentArcLength(net: Network, segId: SegmentId): number {
@@ -88,34 +64,10 @@ export interface WalkOptions {
 /** Arc length between two parametric positions on a segment. */
 export function segmentPartialLength(net: Network, segId: SegmentId, tStart: number, tEnd: number): number {
   const seg = net.segments.get(segId)
-  if (!seg) return 0
-  const fromNode = net.nodes.get(seg.from)
-  const toNode = net.nodes.get(seg.to)
-  if (!fromNode || !toNode) return 0
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const fullLen = Math.hypot(toNode.pos.x - fromNode.pos.x, toNode.pos.y - fromNode.pos.y)
-    return Math.abs(tEnd - tStart) * fullLen
-  }
-
-  const N = 32
-  let length = 0
-  const dir = tEnd >= tStart ? 1 : -1
-  const step = Math.abs(tEnd - tStart) / N
-  let prev: Point | null = null
-
-  for (let i = 0; i <= N; i++) {
-    const t = tStart + dir * step * i
-    const p = bezierPoint(t, fromNode.pos, seg.via, toNode.pos)
-    if (prev) {
-      length += Math.hypot(p.x - prev.x, p.y - prev.y)
-    }
-    prev = p
-  }
-  return length
+  return seg ? segmentShapeLengthBetween(net, seg, tStart, tEnd) : 0
 }
 
-/** Helper to move parametric t along a segment by a given distance in the backward direction. */
+/** Parameter `dist` further back along a segment, for a vehicle heading `forward` (towards `seg.to`) or not */
 function moveWithinSegmentBackward(
   net: Network,
   segId: SegmentId,
@@ -124,44 +76,8 @@ function moveWithinSegmentBackward(
   dist: number
 ): number {
   const seg = net.segments.get(segId)
-  if (!seg) return currentT
-  const segLen = segmentArcLength(net, segId)
-  if (segLen === 0) return currentT
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const dt = dist / segLen
-    return forward ? currentT - dt : currentT + dt
-  }
-
-  // Pour les courbes Bézier, recherche dichotomique pour trouver t tel que partialLength = dist
-  let low = forward ? 0 : currentT
-  let high = forward ? currentT : 1
-
-  for (let iter = 0; iter < 32; iter++) {
-    const mid = (low + high) / 2
-    const len = forward
-      ? segmentPartialLength(net, segId, mid, currentT)
-      : segmentPartialLength(net, segId, currentT, mid)
-
-    if (Math.abs(len - dist) < 1e-6) {
-      return mid
-    }
-    if (forward) {
-      if (len > dist) {
-        low = mid
-      } else {
-        high = mid
-      }
-    } else {
-      if (len > dist) {
-        high = mid
-      } else {
-        low = mid
-      }
-    }
-  }
-
-  return (low + high) / 2
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? shapeParamAtDistance(ends, currentT, forward ? -dist : dist) : currentT
 }
 
 /**
@@ -272,7 +188,7 @@ export function createLocomotive(
   }
 }
 
-/** Helper to move parametric t along a segment by a given distance in the forward direction. */
+/** Parameter `dist` further on along a segment, for a vehicle heading `forward` (towards `seg.to`) or not */
 function moveWithinSegmentForward(
   net: Network,
   segId: SegmentId,
@@ -281,44 +197,8 @@ function moveWithinSegmentForward(
   dist: number
 ): number {
   const seg = net.segments.get(segId)
-  if (!seg) return currentT
-  const segLen = segmentArcLength(net, segId)
-  if (segLen === 0) return currentT
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const dt = dist / segLen
-    return forward ? currentT + dt : currentT - dt
-  }
-
-  // Pour les courbes Bézier, recherche dichotomique
-  let low = forward ? currentT : 0
-  let high = forward ? 1 : currentT
-
-  for (let iter = 0; iter < 32; iter++) {
-    const mid = (low + high) / 2
-    const len = forward
-      ? segmentPartialLength(net, segId, currentT, mid)
-      : segmentPartialLength(net, segId, mid, currentT)
-
-    if (Math.abs(len - dist) < 1e-6) {
-      return mid
-    }
-    if (forward) {
-      if (len > dist) {
-        high = mid
-      } else {
-        low = mid
-      }
-    } else {
-      if (len > dist) {
-        low = mid
-      } else {
-        high = mid
-      }
-    }
-  }
-
-  return (low + high) / 2
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? shapeParamAtDistance(ends, currentT, forward ? dist : -dist) : currentT
 }
 
 /**
