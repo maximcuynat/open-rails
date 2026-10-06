@@ -4,7 +4,7 @@ import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
-import { leaveVectorOnShape, segmentEnds, shapeBoundsMeet, shapePieces, type SegmentEnds } from '@domain/geometry/segmentGeometry'
+import { leaveVectorOnShape, pointOnShape, segmentEnds, segmentShapeLength, shapeBoundsMeet, shapePieces, tangentOnShape, type SegmentEnds } from '@domain/geometry/segmentGeometry'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
@@ -425,9 +425,11 @@ export function getSegmentRenderIntervals(
     return [{ t0: 0, t1: 1, isTurnout: false }]
   }
 
-  const len = seg.kind === 'curve' && seg.via
-    ? curveLength(a, seg.via, b)
-    : Math.hypot(b.x - a.x, b.y - a.y)
+  const len = seg.kind === 'path'
+    ? segmentShapeLength(net, seg)
+    : seg.kind === 'curve' && seg.via
+      ? curveLength(a, seg.via, b)
+      : Math.hypot(b.x - a.x, b.y - a.y)
 
   if (len <= 0.1) {
     return [{ t0: 0, t1: 1, isTurnout: true }]
@@ -930,9 +932,12 @@ export function renderNetwork(
       const b = net.nodes.get(midSeg.to)
       if (!a || !b) continue
 
-      const midPt = midSeg.kind === 'curve' && midSeg.via
-        ? bezierPoint(0.5, a.pos, midSeg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+      const midShape = midSeg.kind === 'path' ? segmentEnds(net, midSeg) : null
+      const midPt = midShape
+        ? pointOnShape(midShape, 0.5)
+        : midSeg.kind === 'curve' && midSeg.via
+          ? bezierPoint(0.5, a.pos, midSeg.via, b.pos)
+          : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
 
       if (!isPointInBounds(midPt, bounds)) continue
 
@@ -1134,9 +1139,12 @@ export function renderNetwork(
       const dirSign = (isForward ? 1 : -1) * (alongForward ? 1 : -1)
 
       // Center point of segment
-      const mid = seg.kind === 'curve' && seg.via
-        ? bezierPoint(0.5, a.pos, seg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+      const longShape = seg.kind === 'path' ? segmentEnds(net, seg) : null
+      const mid = longShape
+        ? pointOnShape(longShape, 0.5)
+        : seg.kind === 'curve' && seg.via
+          ? bezierPoint(0.5, a.pos, seg.via, b.pos)
+          : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
 
       if (!isPointInBounds(mid, bounds)) continue
 
@@ -1145,6 +1153,10 @@ export function renderNetwork(
       let ty = b.pos.y - a.pos.y
       if (seg.kind === 'curve' && seg.via) {
         const tVec = bezierTangent(0.5, a.pos, seg.via, b.pos)
+        tx = tVec.x
+        ty = tVec.y
+      } else if (longShape) {
+        const tVec = tangentOnShape(longShape, 0.5)
         tx = tVec.x
         ty = tVec.y
       }

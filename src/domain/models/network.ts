@@ -1,4 +1,4 @@
-import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
+import type { Network, NodeId, Point, RailNode, Segment, SegmentId, PathPiece } from './types'
 import { closestParamOnShape, distanceToShape, segmentEnds, segmentShapeLength } from '../geometry/segmentGeometry'
 import { curveLength, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 import { generateId, resetIdCounter } from './ids'
@@ -60,6 +60,8 @@ export function findSameRail(
   for (const sid of net.adjacency.get(a) ?? []) {
     const s = net.segments.get(sid)
     if (!s || !((s.from === a && s.to === b) || (s.from === b && s.to === a))) continue
+    // A long rail is never taken for the plain rail between its two nodes
+    if (s.kind === 'path') continue
     if (!via) {
       if (s.kind === 'straight' || !s.via) return s
     } else if (s.kind === 'curve' && s.via && Math.hypot(s.via.x - via.x, s.via.y - via.y) <= viaTolerance) {
@@ -80,6 +82,28 @@ export function addSegment(net: Network, from: NodeId, to: NodeId): Segment | nu
   const existing = findSameRail(net, from, to)
   if (existing) return existing
   const seg: Segment = { id: generateId('s'), from, to, kind: 'straight' }
+  net.segments.set(seg.id, seg)
+  net.adjacency.get(from)!.push(seg.id)
+  net.adjacency.get(to)!.push(seg.id)
+  return seg
+}
+
+/**
+ * Join two nodes with a long rail: one rail that carries its whole path, `pieces`, from `from` to
+ * `to` (see `PathPiece`). Null when a node is missing, the two are the same, or there is no piece.
+ * `parent`: the rail this one is a piece of, as for `addChildSegment`.
+ */
+export function addPathSegment(
+  net: Network,
+  from: NodeId,
+  to: NodeId,
+  pieces: readonly PathPiece[],
+  parent?: Segment,
+): Segment | null {
+  if (from === to || pieces.length === 0) return null
+  if (!net.nodes.has(from) || !net.nodes.has(to)) return null
+  const seg: Segment = { id: generateId('s'), from, to, kind: 'path', path: pieces }
+  if (parent) seg.parentSegmentId = parent.parentSegmentId ?? parent.id
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
@@ -223,6 +247,8 @@ export function removeDuplicateSegments(net: Network, tolerance: number): number
     const a = net.nodes.get(seg.from)
     const b = net.nodes.get(seg.to)
     if (!a || !b) continue
+    // Long rails are told apart by their path: none is dropped as the double of another rail
+    if (seg.kind === 'path') continue
     const isCurve = seg.kind === 'curve' && !!seg.via
     const viaTolerance = Math.min(2 * tolerance, 0.01 * Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y))
     // `seg` is the older one: the map iterates in insertion order
@@ -230,6 +256,7 @@ export function removeDuplicateSegments(net: Network, tolerance: number): number
       const other = net.segments.get(sid)
       if (!other || other.id === seg.id) continue
       if (!((other.from === seg.from && other.to === seg.to) || (other.from === seg.to && other.to === seg.from))) continue
+      if (other.kind === 'path') continue
       const otherIsCurve = other.kind === 'curve' && !!other.via
       if (isCurve !== otherIsCurve) continue
       if (isCurve && Math.hypot(other.via!.x - seg.via!.x, other.via!.y - seg.via!.y) > viaTolerance) continue
