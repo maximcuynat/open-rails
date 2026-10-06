@@ -427,6 +427,57 @@ describe('limit ahead', () => {
     setJunctionBranch(junction, 'straight')
     expect(limitAhead(net, train, 160, 3000, CLASSIC_160)).toBeNull()
   })
+
+  it('a mild limit does not hide the low one right behind it: the one to brake for first is announced', () => {
+    // 30 m at 150 km/h, then 60 km/h: what a short curve ahead of a station makes
+    const layout = new Layout().straight(6000, 12)
+    const net = layout.net
+    const env = { levelHeight: 6, line: CLASSIC_160 }
+    const train = rakeOn(net, layout.pieces[0][0].id, 0.5)
+    const head = headX(net, train)
+    addSpeedZoneBetween(net, at(net, head + 1000), at(net, head + 1030), 150)
+    addSpeedZoneBetween(net, at(net, head + 1030), at(net, head + 1600), 60)
+
+    // At rest there is nothing to brake for: the nearest
+    expect(trainDynamics(net, train, env).nextSpeedLimit).toEqual({ speed: 150, distance: expect.closeTo(1000, 3) })
+    // Under 60 km/h neither asks for anything yet
+    expect(trainDynamics(net, running(train, 55), env).nextSpeedLimit).toEqual({ speed: 150, distance: expect.closeTo(1000, 3) })
+    // At 160 km/h the 60 is what the driver has to brake for, and the distance is its own
+    const fast = trainDynamics(net, running(train, 160), env)
+    expect(fast.stoppingDistance).toBeGreaterThan(30)
+    expect(fast.nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(1030, 3) })
+    // …all the way to it
+    expect(advanceTrainSet(net, train, 900)).toBe(true)
+    expect(trainDynamics(net, train, env).nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(130, 3) })
+    // Head in the 150: only the 60 is left
+    expect(advanceTrainSet(net, train, 110)).toBe(true)
+    const inside = trainDynamics(net, running(train, 150), env)
+    expect(inside.speedLimit).toBeCloseTo(150 / 3.6, 9)
+    expect(inside.nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(20, 3) })
+  })
+
+  it('a low limit far behind a mild one waits its turn, and a higher one behind a lower is never announced', () => {
+    const layout = new Layout().straight(12000, 12)
+    const net = layout.net
+    const env = { levelHeight: 6, line: LGV_300 }
+    const train = running(rakeOn(net, layout.pieces[0][0].id, 0.5), 300)
+    const head = headX(net, train)
+    addSpeedZoneBetween(net, at(net, head + 500), at(net, head + 5300), 270)
+    addSpeedZoneBetween(net, at(net, head + 5300), at(net, head + 5600), 60)
+    addSpeedZoneBetween(net, at(net, head + 5600), at(net, head + 6000), 160)
+    const dynamics = trainDynamics(net, train, env)
+    // Both are within reach, and the 270 comes long before the braking for the 60 has to start
+    expect(dynamics.stoppingDistance * 1.5).toBeGreaterThan(5300)
+    expect(dynamics.stoppingDistance * 1.5).toBeLessThan(6000)
+    expect(dynamics.nextSpeedLimit).toEqual({ speed: 270, distance: expect.closeTo(500, 3) })
+    // A train that needs half as much again to stop has to brake for the 60 already
+    const heavy = { speed: 300, stoppingDistance: dynamics.stoppingDistance * 1.5 }
+    expect(limitAhead(net, { ...train }, 300, 6000, LGV_300, {}, heavy)).toEqual({ speed: 60, distance: expect.closeTo(5300, 3) })
+    // Running under the 270, the 60 is the only lower limit left: the 160 behind it is not one to brake for
+    expect(advanceTrainSet(net, train, 1000)).toBe(true)
+    expect(trainDynamics(net, running(train, 270), env).nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(4300, 3) })
+    expect(limitAhead(net, train, 60, 6000, LGV_300)).toBeNull()
+  })
 })
 
 describe('what is kept from one frame to the next', () => {
