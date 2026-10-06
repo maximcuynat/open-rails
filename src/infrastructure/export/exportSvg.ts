@@ -4,6 +4,7 @@ import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
 import { segmentHeightNear } from '@domain/models/network'
 import type { Camera } from '@infrastructure/render/camera'
+import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL, type OsmSource } from '@domain/import/osmTypes'
 import { detectCrossings, lineLineIntersection } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import {
@@ -65,8 +66,11 @@ class LeveledElements {
  * the level it is really at, so that only its upper part is on a deck and only its lower part in a
  * tunnel.
  * A network that stays on the ground gives the same seven groups as ever.
+ *
+ * `attribution` is the mention a network made from open data must carry (OpenStreetMap, ODbL): it
+ * is written in the description of the file and in the bottom-left corner of the drawing.
  */
-export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): string {
+export function generateRealisticSVG(net: Network, projectName = 'Open Rails', attribution?: string): string {
   if (net.nodes.size === 0) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"></svg>`
   }
@@ -794,9 +798,17 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
         })
         .join('\n  ')
 
+  // The mention of the source stays readable whatever the size of the network
+  const mention = attribution ? escapeXml(attribution) : ''
+  const mentionSize = f(Math.max(1.5, Math.max(vbW, vbH) / 110))
+  const attributionDesc = mention ? `\n  <desc>${mention}</desc>` : ''
+  const attributionText = mention
+    ? `\n  <text id="attribution" x="${f(vbX + mentionSize)}" y="${f(vbY + vbH - mentionSize)}" font-family="sans-serif" font-size="${mentionSize}" fill="#526071">${mention}</text>`
+    : ''
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX} ${vbY} ${vbW} ${vbH}" width="${vbW}mm" height="${vbH}mm">
-  <title>${projectName}</title>
+  <title>${projectName}</title>${attributionDesc}
   <defs>
     <style>
       .ballast { fill: #dcd6cc; stroke: #c2b9aa; stroke-width: 0.8; stroke-linejoin: round; }
@@ -827,15 +839,25 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
       .tunnel .rail, .tunnel .rail-head { stroke-dasharray: 3 2.5; }
     </style>
   </defs>
-  ${body}
+  ${body}${attributionText}
 </svg>`
 }
 
 /**
  * Trigger SVG download in the browser.
  */
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** The mention an exported drawing carries when the network comes from OpenStreetMap */
+export function osmSvgAttribution(source: OsmSource | null | undefined): string | undefined {
+  if (!source) return undefined
+  return `${OSM_ATTRIBUTION} (ODbL), données du ${source.dataDate.slice(0, 10)} — ${OSM_COPYRIGHT_URL}`
+}
+
 export function exportSVG(store: EditorStore): void {
-  const svg = generateRealisticSVG(store.network, store.projectName)
+  const svg = generateRealisticSVG(store.network, store.projectName, osmSvgAttribution(store.osmSource))
   download(svg, `${store.projectName.replace(/\s+/g, '-').toLowerCase()}.svg`, 'image/svg+xml')
 }
 

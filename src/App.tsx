@@ -12,6 +12,7 @@ import { DrivingDock } from '@presentation/components/hud/DrivingDock'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
 import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
+import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@domain/import/osmTypes'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
@@ -103,6 +104,17 @@ export default function App() {
           <CanvasOverlay store={store} />
           <SidePanel store={store} />
           {store.showMinimap && !store.isPlainDrivingView && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
+          {/* The mention the ODbL asks for, as long as the network shown comes from OpenStreetMap */}
+          {store.osmSource && (
+            <a
+              className={`osm-attribution${store.showMinimap && !store.isPlainDrivingView ? ' above-minimap' : ''}`}
+              href={OSM_COPYRIGHT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {OSM_ATTRIBUTION}
+            </a>
+          )}
           <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>

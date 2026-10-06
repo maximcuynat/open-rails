@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import { autoDetectJunctions } from '@domain/models/junction'
-import { generateRealisticSVG } from '@infrastructure/export/exportSvg'
+import { generateRealisticSVG, osmSvgAttribution } from '@infrastructure/export/exportSvg'
 
 describe('generateRealisticSVG', () => {
   it('returns empty svg when network has no nodes', () => {
@@ -317,5 +317,46 @@ describe('generateRealisticSVG', () => {
       ])
       expect(svg.match(/class="bridge-abutment" \/>/g)).toHaveLength(1)
     })
+  })
+})
+
+describe('mention of the source in an exported drawing', () => {
+  const track = () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 500, y: 0 })
+    addSegment(net, a.id, b.id)
+    return net
+  }
+
+  it('is absent from a network drawn by hand', () => {
+    expect(osmSvgAttribution(null)).toBeUndefined()
+    const svg = generateRealisticSVG(track(), 'Plan')
+    expect(svg).not.toContain('OpenStreetMap')
+    expect(svg).not.toContain('<desc>')
+  })
+
+  it('names OpenStreetMap, the licence, the date of the data and the address of the copyright page', () => {
+    const mention = osmSvgAttribution({ lat: 48.84, lon: 2.37, dataDate: '2026-10-06T07:12:00Z', importedAt: '2026-10-06T09:30:00.000Z' })
+    expect(mention).toBe('© les contributeurs d’OpenStreetMap (ODbL), données du 2026-10-06 — https://www.openstreetmap.org/copyright')
+  })
+
+  it('is written in the description of the file and drawn in its bottom-left corner', () => {
+    const mention = osmSvgAttribution({ lat: 48.84, lon: 2.37, dataDate: '2026-10-06', importedAt: '2026-10-06T09:30:00.000Z' })!
+    const svg = generateRealisticSVG(track(), 'Plan', mention)
+    expect(svg).toContain(`<desc>${mention}</desc>`)
+    const text = /<text id="attribution" x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)<\/text>/.exec(svg)
+    expect(text?.[3]).toBe(mention)
+    const [, , vbX, vbY, , vbH] = /viewBox="((-?\d+) (-?\d+) (\d+) (\d+))"/.exec(svg)!.map(Number)
+    expect(Number(text![1])).toBeGreaterThan(vbX)
+    expect(Number(text![2])).toBeLessThan(vbY + vbH)
+    expect(Number(text![2])).toBeGreaterThan(vbY + vbH * 0.8)
+    // Drawn last: nothing of the track covers it
+    expect(svg.indexOf('id="attribution"')).toBeGreaterThan(svg.lastIndexOf('</g>'))
+  })
+
+  it('escapes what would break the file', () => {
+    const svg = generateRealisticSVG(track(), 'Plan', 'A & B <c>')
+    expect(svg).toContain('<desc>A &amp; B &lt;c&gt;</desc>')
   })
 })
