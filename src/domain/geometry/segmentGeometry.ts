@@ -1,10 +1,12 @@
 import type { Network, Point, Segment } from '../models/types'
 import { bezierPoint, closestCurveParam, curveLengthBetween, curveParamAtDistance, distToCurve } from './curve'
+import { pathAt, pathClosest, pathCurvatureAt, pathDrawnPieces, pathOf, pathPolyline, railPath, reversedPieces, type RailPath } from './railPath'
 
 // ─────────────────── The shape of a rail, in one place ───────────────────
 //
-// A rail is a straight line between its two nodes, or a quadratic curve through a control point.
-// Everything that asks where a rail goes — a point or a direction at a parameter, a length, the
+// A rail is a straight line between its two nodes, a quadratic curve through a control point, or
+// a long rail that carries a whole path of lines and arcs (`railPath.ts`). Everything that asks
+// where a rail goes — a point or a direction at a parameter, a length, the
 // parameter a distance further — asks here, so that there is one answer to each and one place to
 // teach a new shape of rail. The parameter `t` runs from 0 at `seg.from` to 1 at `seg.to`.
 
@@ -14,6 +16,8 @@ export interface SegmentEnds {
   b: Point
   /** Control point of a curved rail; absent for a straight one */
   via?: Point
+  /** Path of a long rail, from `a` to `b`; absent for the two other shapes */
+  path?: RailPath
 }
 
 /** Ends (and control point) of a rail, null when one of its nodes is missing */
@@ -24,17 +28,30 @@ export function segmentEnds(net: Network, seg: Segment): SegmentEnds | null {
   // A curve whose control point was lost is read as the straight line between its ends. Always the
   // same three fields: the drawing loops read these objects for every rail of every frame, and the
   // engine reads objects of one shape faster than objects of two
-  return { a: from.pos, b: to.pos, via: seg.kind === 'curve' ? seg.via : undefined }
+  return {
+    a: from.pos,
+    b: to.pos,
+    via: seg.kind === 'curve' ? seg.via : undefined,
+    path: seg.kind === 'path' && seg.path ? railPath(seg.path, from.pos, to.pos) : undefined,
+  }
 }
 
 /** Point of a rail at parameter `t` */
 export function pointOnShape(ends: SegmentEnds, t: number): Point {
+  if (ends.path) {
+    const at = pathAt(ends.path, t * ends.path.length)
+    return { x: at.x, y: at.y }
+  }
   if (ends.via) return bezierPoint(t, ends.a, ends.via, ends.b)
   return { x: ends.a.x + (ends.b.x - ends.a.x) * t, y: ends.a.y + (ends.b.y - ends.a.y) * t }
 }
 
 /** Unit direction of a rail at parameter `t`, towards `seg.to`; +x for a rail without length */
 export function tangentOnShape(ends: SegmentEnds, t: number): Point {
+  if (ends.path) {
+    const { heading } = pathAt(ends.path, t * ends.path.length)
+    return { x: Math.cos(heading), y: Math.sin(heading) }
+  }
   let dx = ends.b.x - ends.a.x
   let dy = ends.b.y - ends.a.y
   if (ends.via) {
@@ -51,6 +68,10 @@ export function tangentOnShape(ends: SegmentEnds, t: number): Point {
  * length there.
  */
 export function leaveVectorOnShape(ends: SegmentEnds, atFrom: boolean): Point {
+  if (ends.path) {
+    const { heading } = pathAt(ends.path, atFrom ? 0 : ends.path.length)
+    return atFrom ? { x: Math.cos(heading), y: Math.sin(heading) } : { x: -Math.cos(heading), y: -Math.sin(heading) }
+  }
   const here = atFrom ? ends.a : ends.b
   const towards = ends.via ?? (atFrom ? ends.b : ends.a)
   return { x: towards.x - here.x, y: towards.y - here.y }
@@ -65,6 +86,7 @@ export function leaveDirectionOnShape(ends: SegmentEnds, atFrom: boolean): Point
 
 /** Parameter (0…1) of the point of a rail closest to `p` */
 export function closestParamOnShape(ends: SegmentEnds, p: Point): number {
+  if (ends.path) return ends.path.length > 0 ? pathClosest(ends.path, p).s / ends.path.length : 0
   if (ends.via) return closestCurveParam(p, ends.a, ends.via, ends.b)
   const dx = ends.b.x - ends.a.x
   const dy = ends.b.y - ends.a.y
@@ -75,6 +97,7 @@ export function closestParamOnShape(ends: SegmentEnds, p: Point): number {
 
 /** Distance from `p` to a rail (world metres) */
 export function distanceToShape(ends: SegmentEnds, p: Point): number {
+  if (ends.path) return pathClosest(ends.path, p).distance
   if (ends.via) return distToCurve(p, ends.a, ends.via, ends.b)
   const t = closestParamOnShape(ends, p)
   return Math.hypot(ends.a.x + (ends.b.x - ends.a.x) * t - p.x, ends.a.y + (ends.b.y - ends.a.y) * t - p.y)
@@ -82,16 +105,19 @@ export function distanceToShape(ends: SegmentEnds, p: Point): number {
 
 /** Length of a rail between the parameters `t0` and `t1`, whichever is the larger (world metres) */
 export function shapeLengthBetween(ends: SegmentEnds, t0: number, t1: number): number {
+  // On a long rail the parameter is the share of its length
+  if (ends.path) return Math.abs(t1 - t0) * ends.path.length
   if (ends.via) return curveLengthBetween(ends.a, ends.via, ends.b, t0, t1)
   return Math.abs(t1 - t0) * Math.hypot(ends.b.x - ends.a.x, ends.b.y - ends.a.y)
 }
 
 /**
  * Parameter of the place `distance` along a rail from the one at `t`: towards `seg.to` when
- * positive, towards `seg.from` when negative. Not held within 0…1 on a straight rail — the caller
- * knows how much rail is left — and stopped at the end reached on a curve.
+ * positive, towards `seg.from` when negative. Not held within 0…1 on a straight rail nor on a long
+ * one — the caller knows how much rail is left — and stopped at the end reached on a curve.
  */
 export function shapeParamAtDistance(ends: SegmentEnds, t: number, distance: number): number {
+  if (ends.path) return ends.path.length === 0 ? t : t + distance / ends.path.length
   if (ends.via) return curveParamAtDistance(ends.a, ends.via, ends.b, t, distance)
   const length = Math.hypot(ends.b.x - ends.a.x, ends.b.y - ends.a.y)
   return length === 0 ? t : t + distance / length
@@ -99,6 +125,10 @@ export function shapeParamAtDistance(ends: SegmentEnds, t: number, distance: num
 
 /** Velocity of a rail at parameter `t`: its direction towards `seg.to`, not brought to unit length */
 export function derivativeOnShape(ends: SegmentEnds, t: number): Point {
+  if (ends.path) {
+    const { heading } = pathAt(ends.path, t * ends.path.length)
+    return { x: Math.cos(heading) * ends.path.length, y: Math.sin(heading) * ends.path.length }
+  }
   if (!ends.via) return { x: ends.b.x - ends.a.x, y: ends.b.y - ends.a.y }
   const u = 1 - t
   return {
@@ -109,16 +139,43 @@ export function derivativeOnShape(ends: SegmentEnds, t: number): Point {
 
 /** The same rail read from its other end: `t` there is `1 − t` here */
 export function reversedShape(ends: SegmentEnds): SegmentEnds {
-  return { a: ends.b, b: ends.a, via: ends.via }
+  return { a: ends.b, b: ends.a, via: ends.via, path: ends.path && pathOf(reversedPieces(ends.path.pieces)) }
+}
+
+/**
+ * Signed curvature of a rail at parameter `t`, 1/m: positive where it turns towards increasing
+ * heading, 0 on a straight rail. Its inverse is the radius there.
+ */
+export function curvatureOnShape(ends: SegmentEnds, t: number): number {
+  if (ends.path) return pathCurvatureAt(ends.path, t * ends.path.length)
+  if (!ends.via) return 0
+  const d = derivativeOnShape(ends, t)
+  const speed = Math.hypot(d.x, d.y)
+  if (speed < 1e-12) return 0
+  // Second derivative of a quadratic curve: constant, 2·(a − 2·via + b)
+  const ddx = 2 * (ends.a.x - 2 * ends.via.x + ends.b.x)
+  const ddy = 2 * (ends.a.y - 2 * ends.via.y + ends.b.y)
+  return (d.x * ddy - d.y * ddx) / (speed * speed * speed)
 }
 
 // ─────────────────── A rail as a polyline ───────────────────
+
+/** An arc of a long rail is flattened in chords of at most this turn (radians), as a curved rail of 15° in 16 chords is */
+const PATH_CHORD_TURN = 0.02
 
 /**
  * Number of chords that keep the flattened line of a rail within `tolerance` (world metres) of it;
  * 1 for a straight rail and for a flat curve.
  */
 export function shapeChordCount(ends: SegmentEnds, tolerance: number): number {
+  if (ends.path) {
+    // Per arc: a chord of an arc strays from it by R·(1 − cos(θ/2)) ≈ L²·κ/8
+    let most = 1
+    for (const piece of ends.path.pieces) {
+      most = Math.max(most, Math.ceil(Math.sqrt((piece.length * piece.length * Math.abs(piece.curvature)) / 8 / tolerance)))
+    }
+    return most
+  }
   if (!ends.via) return 1
   // The curve is at most half the distance from the control point to the middle of the chord away
   // from its chord, and cutting it in n divides that by n²
@@ -129,9 +186,11 @@ export function shapeChordCount(ends: SegmentEnds, tolerance: number): number {
 /**
  * Points of a rail in order, from the parameter `t0` to `t1` (the whole rail when left out): a
  * curve as `chords` chords evenly spread in `t`, a straight rail as its two ends whatever the
- * count. The caller chooses the count — a fixed one, or `shapeChordCount` for a tolerance.
+ * count. The caller chooses the count — a fixed one, or `shapeChordCount` for a tolerance. A long
+ * rail gives the ends of its pieces and at most `chords` chords on each of its arcs.
  */
 export function shapePolyline(ends: SegmentEnds, chords: number, t0 = 0, t1 = 1): Point[] {
+  if (ends.path) return pathPolyline(ends.path, t0 * ends.path.length, t1 * ends.path.length, PATH_CHORD_TURN, Math.max(1, chords))
   if (!ends.via) {
     return t0 === 0 && t1 === 1 ? [ends.a, ends.b] : [pointOnShape(ends, t0), pointOnShape(ends, t1)]
   }
@@ -155,6 +214,7 @@ export interface ShapeBox {
  * never leaves. Larger than the curve itself, which is enough to set aside what is clear of a rail.
  */
 export function shapeBounds(ends: SegmentEnds): ShapeBox {
+  if (ends.path) return ends.path.box
   const { a, b, via } = ends
   let minX = a.x < b.x ? a.x : b.x
   let maxX = a.x > b.x ? a.x : b.x
@@ -171,6 +231,10 @@ export function shapeBounds(ends: SegmentEnds): ShapeBox {
 
 /** True when the box of a rail (`shapeBounds`) and `box` overlap or touch; nothing is allocated */
 export function shapeBoundsMeet(ends: SegmentEnds, box: ShapeBox): boolean {
+  if (ends.path) {
+    const own = ends.path.box
+    return !(own.maxX < box.minX || own.minX > box.maxX || own.maxY < box.minY || own.minY > box.maxY)
+  }
   const { a, b, via } = ends
   let minX = a.x < b.x ? a.x : b.x
   let maxX = a.x > b.x ? a.x : b.x
@@ -200,10 +264,11 @@ export function segmentBounds(net: Network, seg: Segment): ShapeBox | null {
  * What a rail is drawn from between the parameters `t0` and `t1`, in the order walked (`t0` may be
  * the larger one): a list of lines and quadratic curves, each with the ends and control point a
  * canvas or an SVG path takes as they are. A straight rail and a curve give one piece — the rail
- * itself when the stretch is all of it, the exact sub-curve otherwise; the list is there for a
- * rail made of several.
+ * itself when the stretch is all of it, the exact sub-curve otherwise; a long rail gives a line per
+ * straight piece and its arcs as quadratic curves.
  */
 export function shapePieces(ends: SegmentEnds, t0 = 0, t1 = 1): SegmentEnds[] {
+  if (ends.path) return pathDrawnPieces(ends.path, t0 * ends.path.length, t1 * ends.path.length)
   if (t0 <= 0 && t1 >= 1) return [ends]
   const a = pointOnShape(ends, t0)
   const b = pointOnShape(ends, t1)

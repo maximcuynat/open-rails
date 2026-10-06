@@ -1,4 +1,5 @@
 import type { Network, NodeId, SegmentId } from '@domain/models/types'
+import { pathChecksum } from '@domain/geometry/railPath'
 import { networkCheckToken } from '@domain/models/networkWatch'
 import { gradientRamps, type GradientRamp, type RampRail } from '@domain/models/network'
 import { reversedShape, segmentEnds, shapeChordCount, shapePolyline } from '@domain/geometry/segmentGeometry'
@@ -145,6 +146,7 @@ class NetworkSnapshot {
       num(seg.via ? 1 : 0)
       num(seg.via?.x ?? 0)
       num(seg.via?.y ?? 0)
+      num(seg.kind === 'path' && seg.path ? pathChecksum(seg.path) : 0)
     }
     for (const [nodeId, segIds] of net.adjacency) {
       str(nodeId)

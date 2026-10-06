@@ -2,7 +2,7 @@ import type { Network, NodeId, Point, Segment, SegmentId, Junction, TrackSpan } 
 import { generateId, isCloserOrAbove, segmentHeightAt } from './network'
 import { curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength } from '../services/pathfinding'
-import { closestParamOnShape, pointOnShape, segmentEnds, segmentShapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
+import { closestParamOnShape, curvatureOnShape, pointOnShape, segmentEnds, segmentShapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
 import { doubleSlipSideOf, doubleSlipView, findJunctionAtNode, openPassage, turnoutView, type TurnoutBranch } from './junction'
 import { openExit, entriesOf, junctionRails } from './routing'
 
@@ -1255,6 +1255,21 @@ export interface TrackCurvature {
 /** Compute curvature radius and outward (centrifugal) normal at a given track position */
 export function getTrackCurvatureAt(net: Network, pos: TrackPosition): TrackCurvature {
   const seg = net.segments.get(pos.segId)
+  if (seg?.kind === 'path') {
+    // On a long rail the curvature is that of the arc under the bogie
+    const ends = segmentEnds(net, seg)
+    const curvature = ends ? curvatureOnShape(ends, pos.t) : 0
+    if (!ends || Math.abs(curvature) < 1 / 50000) return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+    const tangent = tangentOnShape(ends, pos.t)
+    // The centre lies to the side the heading turns to; the centrifugal push points away from it
+    const towardsCentre = curvature > 0 ? { x: -tangent.y, y: tangent.x } : { x: tangent.y, y: -tangent.x }
+    const turnsToIncreasingHeading = pos.forward ? curvature > 0 : curvature < 0
+    return {
+      radius: 1 / Math.abs(curvature),
+      side: turnsToIncreasingHeading ? 'right' : 'left',
+      outwardNormal: { x: -towardsCentre.x, y: -towardsCentre.y },
+    }
+  }
   if (!seg || seg.kind === 'straight' || !seg.via) {
     return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
   }

@@ -1,4 +1,5 @@
 import type { Camera } from '@infrastructure/render/camera'
+import { segmentEnds, shapePieces } from '@domain/geometry/segmentGeometry'
 import type { Network, Point, SegmentId, SpeedZone, TrackSpan } from '@domain/models/types'
 import { bezierDerivative1, bezierPoint } from '@domain/geometry/curve'
 import { positionOnSegment, segmentPartialLength, tangentOnSegment } from '@domain/models/locomotive'
@@ -75,11 +76,18 @@ export function traceTrackSpans(
   const sx = (x: number): number => (x - cam.x) * cam.scale + vw / 2
   const sy = (y: number): number => (y - cam.y) * cam.scale + vh / 2
   for (const span of spans) {
-    const line = spanGeometry(net, span.segId, span.t0, span.t1)
-    if (!line) continue
-    ctx.moveTo(sx(line.a.x), sy(line.a.y))
-    if (line.via) ctx.quadraticCurveTo(sx(line.via.x), sy(line.via.y), sx(line.b.x), sy(line.b.y))
-    else ctx.lineTo(sx(line.b.x), sy(line.b.y))
+    const seg = net.segments.get(span.segId)
+    // A long rail is traced piece by piece; the two other shapes are one piece
+    const shape = seg?.kind === 'path' ? segmentEnds(net, seg) : null
+    const lines = shape ? shapePieces(shape, span.t0, span.t1) : [spanGeometry(net, span.segId, span.t0, span.t1)]
+    let started = false
+    for (const line of lines) {
+      if (!line) continue
+      if (!started) ctx.moveTo(sx(line.a.x), sy(line.a.y))
+      started = true
+      if (line.via) ctx.quadraticCurveTo(sx(line.via.x), sy(line.via.y), sx(line.b.x), sy(line.b.y))
+      else ctx.lineTo(sx(line.b.x), sy(line.b.y))
+    }
   }
 }
 
