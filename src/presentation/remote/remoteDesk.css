@@ -784,3 +784,6 @@ html.phone-desk-page body {
   .phone-desk.is-landscape .phone-info-stats,
   .phone-desk.is-landscape .thumb-pad-foot { display: none; }
 }
+
+/* The red of a fault (closed signal passed, overspeed) wins over the background of the panel */
+.phone-info > .console-signals.is-fault { background: #4a1014; }

@@ -104,7 +104,8 @@ export function CabDisplay({ cab }: { cab: CabView }) {
  * The signalling block of a console: fixed size, so nothing moves when an alert comes or goes.
  * First line: what the next signal (or the cab) shows and how far it is. Second line: the most
  * pressing note — brake alert, closed signal passed, running on sight, route awaited, closed signal
- * further ahead — the others in the tooltip.
+ * further ahead — the others in the tooltip. The whole block turns red when the driver has to act:
+ * flashing to brake now, steady after a closed signal passed or an overspeed.
  */
 export function SignalPanel({ signals, className }: { signals: SignalsView; className?: string }) {
   const { next, cab } = signals
@@ -114,7 +115,7 @@ export function SignalPanel({ signals, className }: { signals: SignalsView; clas
   const tone = cab ? '' : next?.color ? ` signal-${next.color}` : next ? '' : ' is-empty'
   const hint = [`${signals.title} : ${label}${distance && distance !== '—' ? ` à ${distance}` : ''}`, ...signals.notes.map((n) => n.text)].join(' — ')
   return (
-    <div className={`console-signals${signals.brakeAlert ? ' is-alert' : ''}${className ? ` ${className}` : ''}`} title={hint}>
+    <div className={`console-signals${signals.urgency === 'calm' ? '' : ` is-${signals.urgency}`}${className ? ` ${className}` : ''}`} title={hint}>
       <div className="console-signals-icon">
         {cab ? <CabDisplay cab={cab} /> : next ? <SignalHead head={next} /> : <span className="console-signals-none" />}
       </div>
