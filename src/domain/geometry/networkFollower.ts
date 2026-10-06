@@ -1,23 +1,11 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from '../models/types'
 import { networkCheckToken } from '../models/networkWatch'
 import { SpatialGrid, gridCellSize, type Box } from './spatialGrid'
+import { segmentBounds } from './segmentGeometry'
 
-/** Box holding a rail (a curve lies inside the box of its control points), null when one of its nodes is missing */
+/** Box holding a rail (`segmentBounds`: its ends and control point, or its path), null when one of its nodes is missing */
 export function segmentBox(net: Network, seg: Segment): Box | null {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return null
-  let minX = Math.min(a.pos.x, b.pos.x)
-  let maxX = Math.max(a.pos.x, b.pos.x)
-  let minY = Math.min(a.pos.y, b.pos.y)
-  let maxY = Math.max(a.pos.y, b.pos.y)
-  if (seg.via) {
-    minX = Math.min(minX, seg.via.x)
-    maxX = Math.max(maxX, seg.via.x)
-    minY = Math.min(minY, seg.via.y)
-    maxY = Math.max(maxY, seg.via.y)
-  }
-  return { minX, maxX, minY, maxY }
+  return segmentBounds(net, seg)
 }
 
 export interface NodeRecord {
@@ -37,6 +25,8 @@ export interface RailRecord {
   kind: Segment['kind']
   vx: number | undefined
   vy: number | undefined
+  /** Path of a long rail: replaced, never changed in place */
+  path: Segment['path']
   /** Box of the rail as it is on the grid; null while one of its nodes is missing */
   box: Box | null
   /** Rank of the rail in the network when it was last followed */
@@ -130,10 +120,10 @@ export class NetworkFollower {
       const vy = seg.via?.y
       const rec = this.rails.get(seg.id)
       if (!rec) {
-        this.rails.set(seg.id, { ref: seg, from: seg.from, to: seg.to, kind: seg.kind, vx, vy, box: null, ord, pass })
+        this.rails.set(seg.id, { ref: seg, from: seg.from, to: seg.to, kind: seg.kind, vx, vy, path: seg.path, box: null, ord, pass })
         changed.add(seg.id)
       } else {
-        if (rec.ref !== seg || rec.from !== seg.from || rec.to !== seg.to || rec.kind !== seg.kind || rec.vx !== vx || rec.vy !== vy) {
+        if (rec.ref !== seg || rec.from !== seg.from || rec.to !== seg.to || rec.kind !== seg.kind || rec.vx !== vx || rec.vy !== vy || rec.path !== seg.path) {
           leftNodes.push(rec.from, rec.to)
           rec.ref = seg
           rec.from = seg.from
@@ -141,6 +131,7 @@ export class NetworkFollower {
           rec.kind = seg.kind
           rec.vx = vx
           rec.vy = vy
+          rec.path = seg.path
           changed.add(seg.id)
         }
         rec.ord = ord

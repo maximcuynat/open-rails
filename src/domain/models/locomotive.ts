@@ -1,7 +1,8 @@
 import type { Network, NodeId, Point, Segment, SegmentId, Junction, TrackSpan } from './types'
 import { generateId, isCloserOrAbove, segmentHeightAt } from './network'
-import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
+import { curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength } from '../services/pathfinding'
+import { closestParamOnShape, curvatureOnShape, pointOnShape, segmentEnds, segmentShapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
 import { doubleSlipSideOf, doubleSlipView, findJunctionAtNode, openPassage, turnoutView, type TurnoutBranch } from './junction'
 import { openExit, entriesOf, junctionRails } from './routing'
 import { railsWithin } from '../geometry/networkFollower'
@@ -26,39 +27,14 @@ export interface Locomotive {
 
 export function positionOnSegment(net: Network, segId: SegmentId, t: number): Point | null {
   const seg = net.segments.get(segId)
-  if (!seg) return null
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return null
-  if (seg.kind === 'straight' || !seg.via) {
-    return {
-      x: from.pos.x + (to.pos.x - from.pos.x) * t,
-      y: from.pos.y + (to.pos.y - from.pos.y) * t,
-    }
-  } else {
-    return bezierPoint(t, from.pos, seg.via, to.pos)
-  }
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? pointOnShape(ends, t) : null
 }
 
 export function tangentOnSegment(net: Network, segId: SegmentId, t: number): Point | null {
   const seg = net.segments.get(segId)
-  if (!seg) return null
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return null
-  if (seg.kind === 'straight' || !seg.via) {
-    const dx = to.pos.x - from.pos.x
-    const dy = to.pos.y - from.pos.y
-    const len = Math.hypot(dx, dy)
-    if (len === 0) return { x: 1, y: 0 }
-    return { x: dx / len, y: dy / len }
-  } else {
-    const dx = 2 * (1 - t) * (seg.via.x - from.pos.x) + 2 * t * (to.pos.x - seg.via.x)
-    const dy = 2 * (1 - t) * (seg.via.y - from.pos.y) + 2 * t * (to.pos.y - seg.via.y)
-    const len = Math.hypot(dx, dy)
-    if (len === 0) return { x: 1, y: 0 }
-    return { x: dx / len, y: dy / len }
-  }
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? tangentOnShape(ends, t) : null
 }
 
 export function segmentArcLength(net: Network, segId: SegmentId): number {
@@ -89,34 +65,10 @@ export interface WalkOptions {
 /** Arc length between two parametric positions on a segment. */
 export function segmentPartialLength(net: Network, segId: SegmentId, tStart: number, tEnd: number): number {
   const seg = net.segments.get(segId)
-  if (!seg) return 0
-  const fromNode = net.nodes.get(seg.from)
-  const toNode = net.nodes.get(seg.to)
-  if (!fromNode || !toNode) return 0
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const fullLen = Math.hypot(toNode.pos.x - fromNode.pos.x, toNode.pos.y - fromNode.pos.y)
-    return Math.abs(tEnd - tStart) * fullLen
-  }
-
-  const N = 32
-  let length = 0
-  const dir = tEnd >= tStart ? 1 : -1
-  const step = Math.abs(tEnd - tStart) / N
-  let prev: Point | null = null
-
-  for (let i = 0; i <= N; i++) {
-    const t = tStart + dir * step * i
-    const p = bezierPoint(t, fromNode.pos, seg.via, toNode.pos)
-    if (prev) {
-      length += Math.hypot(p.x - prev.x, p.y - prev.y)
-    }
-    prev = p
-  }
-  return length
+  return seg ? segmentShapeLengthBetween(net, seg, tStart, tEnd) : 0
 }
 
-/** Helper to move parametric t along a segment by a given distance in the backward direction. */
+/** Parameter `dist` further back along a segment, for a vehicle heading `forward` (towards `seg.to`) or not */
 function moveWithinSegmentBackward(
   net: Network,
   segId: SegmentId,
@@ -125,44 +77,8 @@ function moveWithinSegmentBackward(
   dist: number
 ): number {
   const seg = net.segments.get(segId)
-  if (!seg) return currentT
-  const segLen = segmentArcLength(net, segId)
-  if (segLen === 0) return currentT
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const dt = dist / segLen
-    return forward ? currentT - dt : currentT + dt
-  }
-
-  // Pour les courbes Bézier, recherche dichotomique pour trouver t tel que partialLength = dist
-  let low = forward ? 0 : currentT
-  let high = forward ? currentT : 1
-
-  for (let iter = 0; iter < 32; iter++) {
-    const mid = (low + high) / 2
-    const len = forward
-      ? segmentPartialLength(net, segId, mid, currentT)
-      : segmentPartialLength(net, segId, currentT, mid)
-
-    if (Math.abs(len - dist) < 1e-6) {
-      return mid
-    }
-    if (forward) {
-      if (len > dist) {
-        low = mid
-      } else {
-        high = mid
-      }
-    } else {
-      if (len > dist) {
-        high = mid
-      } else {
-        low = mid
-      }
-    }
-  }
-
-  return (low + high) / 2
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? shapeParamAtDistance(ends, currentT, forward ? -dist : dist) : currentT
 }
 
 /**
@@ -273,7 +189,7 @@ export function createLocomotive(
   }
 }
 
-/** Helper to move parametric t along a segment by a given distance in the forward direction. */
+/** Parameter `dist` further on along a segment, for a vehicle heading `forward` (towards `seg.to`) or not */
 function moveWithinSegmentForward(
   net: Network,
   segId: SegmentId,
@@ -282,44 +198,8 @@ function moveWithinSegmentForward(
   dist: number
 ): number {
   const seg = net.segments.get(segId)
-  if (!seg) return currentT
-  const segLen = segmentArcLength(net, segId)
-  if (segLen === 0) return currentT
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const dt = dist / segLen
-    return forward ? currentT + dt : currentT - dt
-  }
-
-  // Pour les courbes Bézier, recherche dichotomique
-  let low = forward ? currentT : 0
-  let high = forward ? 1 : currentT
-
-  for (let iter = 0; iter < 32; iter++) {
-    const mid = (low + high) / 2
-    const len = forward
-      ? segmentPartialLength(net, segId, currentT, mid)
-      : segmentPartialLength(net, segId, mid, currentT)
-
-    if (Math.abs(len - dist) < 1e-6) {
-      return mid
-    }
-    if (forward) {
-      if (len > dist) {
-        high = mid
-      } else {
-        low = mid
-      }
-    } else {
-      if (len > dist) {
-        low = mid
-      } else {
-        high = mid
-      }
-    }
-  }
-
-  return (low + high) / 2
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? shapeParamAtDistance(ends, currentT, forward ? dist : -dist) : currentT
 }
 
 /**
@@ -1190,49 +1070,10 @@ export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'l
 
 /** Closest point of one segment to a world position: its parameter `t` and the point itself. */
 export function projectOnSegment(net: Network, seg: Segment, worldPos: Point): { t: number; point: Point } | null {
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return null
-
-  let t: number
-  let p: Point
-  if (seg.kind === 'straight' || !seg.via) {
-    // Exact orthogonal projection on the straight rail
-    const dx = to.pos.x - from.pos.x
-    const dy = to.pos.y - from.pos.y
-    const len2 = dx * dx + dy * dy
-    t = len2 === 0 ? 0 : ((worldPos.x - from.pos.x) * dx + (worldPos.y - from.pos.y) * dy) / len2
-    t = Math.max(0, Math.min(1, t))
-    p = { x: from.pos.x + dx * t, y: from.pos.y + dy * t }
-  } else {
-    // Curve: coarse sampling, then refine around the best sample
-    const via = seg.via
-    const distAt = (u: number) => {
-      const q = bezierPoint(u, from.pos, via, to.pos)
-      return Math.hypot(q.x - worldPos.x, q.y - worldPos.y)
-    }
-    const N = 32
-    t = 0
-    let best = Infinity
-    for (let i = 0; i <= N; i++) {
-      const d = distAt(i / N)
-      if (d < best) {
-        best = d
-        t = i / N
-      }
-    }
-    let lo = Math.max(0, t - 1 / N)
-    let hi = Math.min(1, t + 1 / N)
-    for (let iter = 0; iter < 24; iter++) {
-      const m1 = lo + (hi - lo) / 3
-      const m2 = hi - (hi - lo) / 3
-      if (distAt(m1) < distAt(m2)) hi = m2
-      else lo = m1
-    }
-    t = (lo + hi) / 2
-    p = bezierPoint(t, from.pos, via, to.pos)
-  }
-  return { t, point: p }
+  const ends = segmentEnds(net, seg)
+  if (!ends) return null
+  const t = closestParamOnShape(ends, worldPos)
+  return { t, point: pointOnShape(ends, t) }
 }
 
 export function snapToNearestTrack(
@@ -1415,6 +1256,21 @@ export interface TrackCurvature {
 /** Compute curvature radius and outward (centrifugal) normal at a given track position */
 export function getTrackCurvatureAt(net: Network, pos: TrackPosition): TrackCurvature {
   const seg = net.segments.get(pos.segId)
+  if (seg?.kind === 'path') {
+    // On a long rail the curvature is that of the arc under the bogie
+    const ends = segmentEnds(net, seg)
+    const curvature = ends ? curvatureOnShape(ends, pos.t) : 0
+    if (!ends || Math.abs(curvature) < 1 / 50000) return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+    const tangent = tangentOnShape(ends, pos.t)
+    // The centre lies to the side the heading turns to; the centrifugal push points away from it
+    const towardsCentre = curvature > 0 ? { x: -tangent.y, y: tangent.x } : { x: tangent.y, y: -tangent.x }
+    const turnsToIncreasingHeading = pos.forward ? curvature > 0 : curvature < 0
+    return {
+      radius: 1 / Math.abs(curvature),
+      side: turnsToIncreasingHeading ? 'right' : 'left',
+      outwardNormal: { x: -towardsCentre.x, y: -towardsCentre.y },
+    }
+  }
   if (!seg || seg.kind === 'straight' || !seg.via) {
     return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
   }

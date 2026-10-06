@@ -3,7 +3,8 @@ import { isRailClosedAt } from '@domain/models/routing'
 import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
-import { bezierDerivative1, bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
+import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
+import { leaveVectorOnShape, pointOnShape, segmentEnds, segmentShapeLength, shapeBoundsMeet, shapePieces, tangentOnShape, type SegmentEnds } from '@domain/geometry/segmentGeometry'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
@@ -353,23 +354,8 @@ export function isSegmentInBounds(
   via: Point | undefined,
   bounds: ViewportBounds,
 ): boolean {
-  let minX = a.x < b.x ? a.x : b.x
-  let maxX = a.x > b.x ? a.x : b.x
-  let minY = a.y < b.y ? a.y : b.y
-  let maxY = a.y > b.y ? a.y : b.y
-
-  if (via) {
-    if (via.x < minX) minX = via.x
-    if (via.x > maxX) maxX = via.x
-    if (via.y < minY) minY = via.y
-    if (via.y > maxY) maxY = via.y
-  }
-
   // If outside viewport on any axis, it is completely culled
-  if (maxX < bounds.minX || minX > bounds.maxX) return false
-  if (maxY < bounds.minY || minY > bounds.maxY) return false
-
-  return true
+  return shapeBoundsMeet({ a, b, via }, bounds)
 }
 
 /** True when the points at `nodeId` are set against this rail (see `isRailClosedAt`) */
@@ -400,15 +386,9 @@ export function subdivideCurve(
   if (t0 <= 0 && t1 >= 1) {
     return { p0, via, p2 }
   }
-  const subP0 = bezierPoint(t0, p0, via, p2)
-  const subP2 = bezierPoint(t1, p0, via, p2)
-  const d0 = bezierDerivative1(t0, p0, via, p2)
-  const dt = t1 - t0
-  const subVia = {
-    x: subP0.x + (dt / 2) * d0.x,
-    y: subP0.y + (dt / 2) * d0.y,
-  }
-  return { p0: subP0, via: subVia, p2: subP2 }
+  // A quadratic curve gives one piece, and it is a curve
+  const sub = shapePieces({ a: p0, b: p2, via }, t0, t1)[0]
+  return { p0: sub.a, via: sub.via!, p2: sub.b }
 }
 
 /**
@@ -423,12 +403,9 @@ export function subdivideStraight(
   if (t0 <= 0 && t1 >= 1) {
     return { a: p0, b: p2 }
   }
-  const dx = p2.x - p0.x
-  const dy = p2.y - p0.y
-  return {
-    a: { x: p0.x + t0 * dx, y: p0.y + t0 * dy },
-    b: { x: p0.x + t1 * dx, y: p0.y + t1 * dy },
-  }
+  // A straight rail gives one piece
+  const sub = shapePieces({ a: p0, b: p2 }, t0, t1)[0]
+  return { a: sub.a, b: sub.b }
 }
 
 const intervalsKept = new WeakMap<Network, { token: number; ofRail: Map<string, SegmentSubInterval[]> }>()
@@ -476,9 +453,11 @@ export function getSegmentRenderIntervals(
     return [{ t0: 0, t1: 1, isTurnout: false }]
   }
 
-  const len = seg.kind === 'curve' && seg.via
-    ? curveLength(a, seg.via, b)
-    : Math.hypot(b.x - a.x, b.y - a.y)
+  const len = seg.kind === 'path'
+    ? segmentShapeLength(net, seg)
+    : seg.kind === 'curve' && seg.via
+      ? curveLength(a, seg.via, b)
+      : Math.hypot(b.x - a.x, b.y - a.y)
 
   if (len <= 0.1) {
     return [{ t0: 0, t1: 1, isTurnout: true }]
@@ -636,16 +615,13 @@ export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: nu
   return [...levels].sort((x, y) => x - y)
 }
 
-/** Geometry of a piece of rail: the whole rail, or the part of it between `t0` and `t1` */
-function pieceGeometry(net: Network, piece: TrackPiece): { a: Point; b: Point; via?: Point } | null {
-  const from = net.nodes.get(piece.seg.from)
-  const to = net.nodes.get(piece.seg.to)
-  if (!from || !to) return null
-  if (piece.seg.kind === 'curve' && piece.seg.via) {
-    const sub = subdivideCurve(from.pos, piece.seg.via, to.pos, piece.t0, piece.t1)
-    return { a: sub.p0, b: sub.p2, via: sub.via }
-  }
-  return subdivideStraight(from.pos, to.pos, piece.t0, piece.t1)
+/**
+ * Geometry of a piece of rail — the whole rail, or the part of it between `t0` and `t1` — as the
+ * lines and curves it is drawn from; none when one of its nodes is missing
+ */
+function pieceGeometry(net: Network, piece: TrackPiece): SegmentEnds[] {
+  const ends = segmentEnds(net, piece.seg)
+  return ends ? shapePieces(ends, piece.t0, piece.t1) : []
 }
 
 function traceCenterline(
@@ -705,25 +681,25 @@ export function renderBridgeDecks(
   ctx.strokeStyle = edge
   ctx.lineWidth = deckPx
   for (const piece of pieces) {
-    const e = pieceGeometry(net, piece)
-    if (!e) continue
-    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
-    ctx.stroke()
+    for (const e of pieceGeometry(net, piece)) {
+      traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
+      ctx.stroke()
+    }
   }
 
   // Deck: the background colour (opaque, it hides the lower rails), lightly tinted with the ink
   // so that it reads as a slab in the light theme as in the dark one.
   ctx.lineWidth = Math.max(1, deckPx - 2 * parapetPx)
   for (const piece of pieces) {
-    const e = pieceGeometry(net, piece)
-    if (!e) continue
-    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
-    ctx.strokeStyle = paper
-    ctx.globalAlpha = 1
-    ctx.stroke()
-    ctx.strokeStyle = ink
-    ctx.globalAlpha = 0.08
-    ctx.stroke()
+    for (const e of pieceGeometry(net, piece)) {
+      traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
+      ctx.strokeStyle = paper
+      ctx.globalAlpha = 1
+      ctx.stroke()
+      ctx.strokeStyle = ink
+      ctx.globalAlpha = 0.08
+      ctx.stroke()
+    }
   }
   ctx.globalAlpha = 1
 
@@ -1185,9 +1161,12 @@ export function renderNetwork(
       const dirSign = (isForward ? 1 : -1) * (alongForward ? 1 : -1)
 
       // Center point of segment
-      const mid = seg.kind === 'curve' && seg.via
-        ? bezierPoint(0.5, a.pos, seg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+      const longShape = seg.kind === 'path' ? segmentEnds(net, seg) : null
+      const mid = longShape
+        ? pointOnShape(longShape, 0.5)
+        : seg.kind === 'curve' && seg.via
+          ? bezierPoint(0.5, a.pos, seg.via, b.pos)
+          : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
 
       if (!isPointInBounds(mid, bounds)) continue
 
@@ -1196,6 +1175,10 @@ export function renderNetwork(
       let ty = b.pos.y - a.pos.y
       if (seg.kind === 'curve' && seg.via) {
         const tVec = bezierTangent(0.5, a.pos, seg.via, b.pos)
+        tx = tVec.x
+        ty = tVec.y
+      } else if (longShape) {
+        const tVec = tangentOnShape(longShape, 0.5)
         tx = tVec.x
         ty = tVec.y
       }
@@ -1970,41 +1953,15 @@ export function getNodeSegmentEndVector(
   seg: Segment,
   nodeId: NodeId,
 ): { tangent: Point; normal: Point } {
-  const nodeA = net.nodes.get(seg.from)
-  const nodeB = net.nodes.get(seg.to)
-  if (!nodeA || !nodeB) {
+  const ends = segmentEnds(net, seg)
+  if (!ends) {
     return { tangent: { x: 1, y: 0 }, normal: { x: 0, y: 1 } }
   }
-
-  let tx = 0
-  let ty = 0
-
-  if (seg.kind === 'curve' && seg.via) {
-    if (seg.from === nodeId) {
-      // Outgoing at t = 0 (direction from nodeA towards nodeB along curve)
-      const tan = bezierTangent(0, nodeA.pos, seg.via, nodeB.pos)
-      tx = tan.x
-      ty = tan.y
-    } else {
-      // Outgoing at t = 1 (direction away from nodeB back into curve towards nodeA)
-      const tan = bezierTangent(1, nodeA.pos, seg.via, nodeB.pos)
-      tx = -tan.x
-      ty = -tan.y
-    }
-  } else {
-    // Straight segment
-    if (seg.from === nodeId) {
-      tx = nodeB.pos.x - nodeA.pos.x
-      ty = nodeB.pos.y - nodeA.pos.y
-    } else {
-      tx = nodeA.pos.x - nodeB.pos.x
-      ty = nodeA.pos.y - nodeB.pos.y
-    }
-  }
-
-  const len = Math.hypot(tx, ty)
-  const ux = len > 0.0001 ? tx / len : 1
-  const uy = len > 0.0001 ? ty / len : 0
+  // Into the rail from the node: towards its other end, along the curve when it is one
+  const leave = leaveVectorOnShape(ends, seg.from === nodeId)
+  const len = Math.hypot(leave.x, leave.y)
+  const ux = len > 0.0001 ? leave.x / len : 1
+  const uy = len > 0.0001 ? leave.y / len : 0
   const nx = -uy
   const ny = ux
 

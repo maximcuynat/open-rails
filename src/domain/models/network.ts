@@ -1,5 +1,6 @@
-import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
-import { closestCurveParam, curveLength, distToCurve, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
+import type { Network, NodeId, Point, RailNode, Segment, SegmentId, PathPiece } from './types'
+import { closestParamOnShape, distanceToShape, segmentEnds, segmentShapeLength } from '../geometry/segmentGeometry'
+import { curveLength, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 import { generateId, resetIdCounter } from './ids'
 import { createCountedNetwork, touchNetwork } from './networkWatch'
 import { nodesWithin, railsWithin } from '../geometry/networkFollower'
@@ -61,6 +62,8 @@ export function findSameRail(
   for (const sid of net.adjacency.get(a) ?? []) {
     const s = net.segments.get(sid)
     if (!s || !((s.from === a && s.to === b) || (s.from === b && s.to === a))) continue
+    // A long rail is never taken for the plain rail between its two nodes
+    if (s.kind === 'path') continue
     if (!via) {
       if (s.kind === 'straight' || !s.via) return s
     } else if (s.kind === 'curve' && s.via && Math.hypot(s.via.x - via.x, s.via.y - via.y) <= viaTolerance) {
@@ -81,6 +84,28 @@ export function addSegment(net: Network, from: NodeId, to: NodeId): Segment | nu
   const existing = findSameRail(net, from, to)
   if (existing) return existing
   const seg: Segment = { id: generateId('s'), from, to, kind: 'straight' }
+  net.segments.set(seg.id, seg)
+  net.adjacency.get(from)!.push(seg.id)
+  net.adjacency.get(to)!.push(seg.id)
+  return seg
+}
+
+/**
+ * Join two nodes with a long rail: one rail that carries its whole path, `pieces`, from `from` to
+ * `to` (see `PathPiece`). Null when a node is missing, the two are the same, or there is no piece.
+ * `parent`: the rail this one is a piece of, as for `addChildSegment`.
+ */
+export function addPathSegment(
+  net: Network,
+  from: NodeId,
+  to: NodeId,
+  pieces: readonly PathPiece[],
+  parent?: Segment,
+): Segment | null {
+  if (from === to || pieces.length === 0) return null
+  if (!net.nodes.has(from) || !net.nodes.has(to)) return null
+  const seg: Segment = { id: generateId('s'), from, to, kind: 'path', path: pieces }
+  if (parent) seg.parentSegmentId = parent.parentSegmentId ?? parent.id
   net.segments.set(seg.id, seg)
   net.adjacency.get(from)!.push(seg.id)
   net.adjacency.get(to)!.push(seg.id)
@@ -227,6 +252,8 @@ export function removeDuplicateSegments(net: Network, tolerance: number, among?:
     const a = net.nodes.get(seg.from)
     const b = net.nodes.get(seg.to)
     if (!a || !b) continue
+    // Long rails are told apart by their path: none is dropped as the double of another rail
+    if (seg.kind === 'path') continue
     const isCurve = seg.kind === 'curve' && !!seg.via
     const viaTolerance = Math.min(2 * tolerance, 0.01 * Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y))
     // `seg` is the older one: the map iterates in insertion order
@@ -234,6 +261,7 @@ export function removeDuplicateSegments(net: Network, tolerance: number, among?:
       const other = net.segments.get(sid)
       if (!other || other.id === seg.id) continue
       if (!((other.from === seg.from && other.to === seg.to) || (other.from === seg.to && other.to === seg.from))) continue
+      if (other.kind === 'path') continue
       const otherIsCurve = other.kind === 'curve' && !!other.via
       if (isCurve !== otherIsCurve) continue
       if (isCurve && Math.hypot(other.via!.x - seg.via!.x, other.via!.y - seg.via!.y) > viaTolerance) continue
@@ -583,10 +611,7 @@ export function segmentGradient(net: Network, seg: Segment, levelHeight: number)
 
 /** Length of a rail on the plan (world metres), the run its slope is measured over. 0 when an end is missing. */
 export function segmentRunLength(net: Network, seg: Segment): number {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return 0
-  return seg.kind === 'curve' && seg.via ? curveLength(a.pos, seg.via, b.pos) : Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
+  return segmentShapeLength(net, seg)
 }
 
 /**
@@ -803,19 +828,9 @@ export function spreadGradient(net: Network, segmentIds: Iterable<SegmentId>): n
 export function segmentHeightNear(net: Network, seg: Segment, pos: Point): number {
   const ends = segmentEndLevels(net, seg)
   if (ends.from === ends.to) return ends.from
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return ends.from
-  let t: number
-  if (seg.kind === 'curve' && seg.via) {
-    t = closestCurveParam(pos, a.pos, seg.via, b.pos)
-  } else {
-    const dx = b.pos.x - a.pos.x
-    const dy = b.pos.y - a.pos.y
-    const len2 = dx * dx + dy * dy
-    t = len2 === 0 ? 0 : ((pos.x - a.pos.x) * dx + (pos.y - a.pos.y) * dy) / len2
-  }
-  return ends.from + (ends.to - ends.from) * Math.max(0, Math.min(1, t))
+  const shape = segmentEnds(net, seg)
+  if (!shape) return ends.from
+  return ends.from + (ends.to - ends.from) * closestParamOnShape(shape, pos)
 }
 
 /** Find the closest segment to a point within a max distance (the upper one of two stacked rails). */
@@ -824,13 +839,9 @@ export function hitSegment(net: Network, pos: Point, maxDist: number): SegmentId
   let bestD = maxDist
   let bestLevel = 0
   for (const seg of railsWithin(net, pos, maxDist)) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    const d =
-      seg.kind === 'curve' && seg.via
-        ? distToCurve(pos, a.pos, seg.via, b.pos)
-        : distToSegment(pos, a.pos, b.pos)
+    const shape = segmentEnds(net, seg)
+    if (!shape) continue
+    const d = distanceToShape(shape, pos)
     if (d >= maxDist) continue
     const level = segmentHeightNear(net, seg, pos)
     if (best === null || isCloserOrAbove(d, level, bestD, bestLevel)) {

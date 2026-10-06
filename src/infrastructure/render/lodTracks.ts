@@ -1,4 +1,5 @@
 import type { Network, Point } from '@domain/models/types'
+import { segmentEnds, shapePieces, type SegmentEnds } from '@domain/geometry/segmentGeometry'
 import type { TrackSection } from '@domain/models/sections'
 import type { Camera } from './camera'
 import { isWholePiece, type TrackPiece } from './levelPieces'
@@ -10,7 +11,6 @@ import {
   TUNNEL_DASH,
   segmentRenderIntervals,
   subdivideCurve,
-  subdivideStraight,
   type ViewportBounds,
 } from './renderer'
 
@@ -98,34 +98,28 @@ export function renderLineTracks(
     if (via) batch.push(via.x * s + ox, via.y * s + oy)
     else batch.push(NaN, NaN)
   }
-  const addPart = (batch: LineBatch, a: Point, b: Point, via: Point | undefined, t0: number, t1: number): void => {
-    if (via) {
-      const sub = subdivideCurve(a, via, b, t0, t1)
-      add(batch, sub.p0, sub.p2, sub.via)
-    } else {
-      const sub = subdivideStraight(a, b, t0, t1)
-      add(batch, sub.a, sub.b)
-    }
+  const addPart = (batch: LineBatch, ends: SegmentEnds, t0: number, t1: number): void => {
+    // By index: this runs for every rail of every frame
+    const subs = shapePieces(ends, t0, t1)
+    for (let k = 0; k < subs.length; k++) add(batch, subs[k].a, subs[k].b, subs[k].via)
   }
 
   const intervalsOf = segmentRenderIntervals(net)
   for (const piece of pieces) {
     const seg = piece.seg
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    const via = seg.kind === 'curve' ? seg.via : undefined
+    const ends = segmentEnds(net, seg)
+    if (!ends) continue
     const isSelected = selectedSegments.has(seg.id)
     const whole = isWholePiece(piece)
 
-    if (level > 0) addPart(halo, a.pos, b.pos, via, piece.t0, piece.t1)
+    if (level > 0) addPart(halo, ends, piece.t0, piece.t1)
 
-    for (const inter of intervalsOf(seg, a.pos, b.pos)) {
+    for (const inter of intervalsOf(seg, ends.a, ends.b)) {
       const t0 = whole ? inter.t0 : Math.max(inter.t0, piece.t0)
       const t1 = whole ? inter.t1 : Math.min(inter.t1, piece.t1)
       if (t1 <= t0) continue
       const batch = inter.isTurnout ? (isSelected ? selectedClosed : closed) : isSelected ? selected : normal
-      addPart(batch, a.pos, b.pos, via, t0, t1)
+      addPart(batch, ends, t0, t1)
     }
   }
 
@@ -273,25 +267,25 @@ export function renderDetailRails(
   const intervalsOf = segmentRenderIntervals(net)
   for (const piece of pieces) {
     const seg = piece.seg
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    const via = seg.kind === 'curve' ? seg.via : undefined
+    const ends = segmentEnds(net, seg)
+    if (!ends) continue
     const isSelected = selectedSegments.has(seg.id)
     const whole = isWholePiece(piece)
-    for (const inter of intervalsOf(seg, a.pos, b.pos)) {
+    for (const inter of intervalsOf(seg, ends.a, ends.b)) {
       const t0 = whole ? inter.t0 : Math.max(inter.t0, piece.t0)
       const t1 = whole ? inter.t1 : Math.min(inter.t1, piece.t1)
       if (t1 <= t0) continue
       const batch = inter.isTurnout ? (isSelected ? selectedClosed : closed) : isSelected ? selected : normal
-      if (via) {
-        const sub = subdivideCurve(a.pos, via, b.pos, t0, t1)
-        addOffsetCurve(batch, sub.p0, sub.via, sub.p2, hg, s, ox, oy)
-        addOffsetCurve(batch, sub.p0, sub.via, sub.p2, -hg, s, ox, oy)
-      } else {
-        const sub = subdivideStraight(a.pos, b.pos, t0, t1)
-        addOffsetLine(batch, sub.a, sub.b, hg, s, ox, oy)
-        addOffsetLine(batch, sub.a, sub.b, -hg, s, ox, oy)
+      const subs = shapePieces(ends, t0, t1)
+      for (let k = 0; k < subs.length; k++) {
+        const sub = subs[k]
+        if (sub.via) {
+          addOffsetCurve(batch, sub.a, sub.via, sub.b, hg, s, ox, oy)
+          addOffsetCurve(batch, sub.a, sub.via, sub.b, -hg, s, ox, oy)
+        } else {
+          addOffsetLine(batch, sub.a, sub.b, hg, s, ox, oy)
+          addOffsetLine(batch, sub.a, sub.b, -hg, s, ox, oy)
+        }
       }
     }
   }
@@ -362,9 +356,8 @@ export function renderSectionStripes(
   const batches = new Map<string, { style: SectionStripeStyle; lines: LineBatch }>()
   for (const piece of pieces) {
     const seg = piece.seg
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
+    const ends = segmentEnds(net, seg)
+    if (!ends) continue
     const style = styleOf(seg.id)
     const key = `${style.color}|${style.station}|${style.selected}`
     let batch = batches.get(key)
@@ -372,13 +365,14 @@ export function renderSectionStripes(
       batch = { style, lines: [] }
       batches.set(key, batch)
     }
-    const via = seg.kind === 'curve' ? seg.via : undefined
-    if (via) {
-      const sub = subdivideCurve(a.pos, via, b.pos, piece.t0, piece.t1)
-      batch.lines.push(sub.p0.x * s + ox, sub.p0.y * s + oy, sub.p2.x * s + ox, sub.p2.y * s + oy, sub.via.x * s + ox, sub.via.y * s + oy)
-    } else {
-      const sub = subdivideStraight(a.pos, b.pos, piece.t0, piece.t1)
-      batch.lines.push(sub.a.x * s + ox, sub.a.y * s + oy, sub.b.x * s + ox, sub.b.y * s + oy, NaN, NaN)
+    const subs = shapePieces(ends, piece.t0, piece.t1)
+    for (let k = 0; k < subs.length; k++) {
+      const sub = subs[k]
+      if (sub.via) {
+        batch.lines.push(sub.a.x * s + ox, sub.a.y * s + oy, sub.b.x * s + ox, sub.b.y * s + oy, sub.via.x * s + ox, sub.via.y * s + oy)
+      } else {
+        batch.lines.push(sub.a.x * s + ox, sub.a.y * s + oy, sub.b.x * s + ox, sub.b.y * s + oy, NaN, NaN)
+      }
     }
   }
 

@@ -1,8 +1,10 @@
-import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, detachSegment, replaceRail, segmentHeightAt, setNodesLevel } from './network'
+import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, addPathSegment, detachSegment, replaceRail, segmentHeightAt, setNodesLevel } from './network'
+import { pathSlice } from '../geometry/railPath'
 import { networkChanged, touchNetwork } from './networkWatch'
 import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
+import { closestParamOnShape, pointOnShape, segmentEnds, shapePolyline } from '../geometry/segmentGeometry'
 import { isTraversableDeflection } from '../geometry/tangent'
 import { isCrossingAngle } from './crossing'
 import { findJunctionAtNode, invalidateJunctionIndex, junctionAdded, junctionRails, leaveDirection } from './routing'
@@ -315,12 +317,9 @@ const RAIL_SAMPLES = 24
 
 /** Points along a rail, starting from one of its end nodes */
 function railPolyline(net: Network, seg: Segment, fromNodeId: NodeId): Point[] {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return []
-  const pts: Point[] = seg.kind === 'curve' && seg.via
-    ? Array.from({ length: RAIL_SAMPLES + 1 }, (_, i) => bezierPoint(i / RAIL_SAMPLES, a.pos, seg.via!, b.pos))
-    : [a.pos, b.pos]
+  const ends = segmentEnds(net, seg)
+  if (!ends) return []
+  const pts = shapePolyline(ends, RAIL_SAMPLES)
   return seg.from === fromNodeId ? pts : pts.reverse()
 }
 
@@ -856,6 +855,23 @@ export function splitSegment(
     const seg2 = addChildSegment(net, seg, midNode.id, nodeB.id, q1)!
     replaceRail(net, splitReplacement(seg, t, seg1, seg2))
     return { midNode, seg1, seg2, t }
+  } else if (seg.kind === 'path') {
+    // A long rail is cut where its path is: each half keeps its share of the pieces. The parameter
+    // of a long rail is the share of its length, so what stands on it stays where it is
+    const ends = segmentEnds(net, seg)
+    if (ends?.path && ends.path.length > 0) {
+      const t = Math.max(0.005, Math.min(0.995, closestParamOnShape(ends, splitPoint)))
+      const at = t * ends.path.length
+      midNode.pos = pointOnShape(ends, t)
+      setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
+      const first = pathSlice(ends.path, 0, at)
+      const second = pathSlice(ends.path, at, ends.path.length)
+      detachSegment(net, segmentId)
+      const seg1 = addPathSegment(net, nodeA.id, midNode.id, first, seg)!
+      const seg2 = addPathSegment(net, midNode.id, nodeB.id, second, seg)!
+      replaceRail(net, splitReplacement(seg, t, seg1, seg2))
+      return { midNode, seg1, seg2, t }
+    }
   }
 
   return null

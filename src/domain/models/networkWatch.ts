@@ -118,6 +118,8 @@ class ContentRecord {
       put(seg.via?.y)
       put(seg.parentSegmentId)
       put(seg.cant)
+      // Replaced, never changed in place: the list itself tells
+      put(seg.path)
     }
     for (const [nodeId, segIds] of net.adjacency) {
       label = `rails of node ${nodeId}`

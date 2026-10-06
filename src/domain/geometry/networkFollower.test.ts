@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { addCurveSegment, addNode, addSegment, createNetwork, hitNode, hitSegment, removeSegment, resetIdCounter } from '../models/network'
+import { addCurveSegment, addNode, addPathSegment, addSegment, createNetwork, hitNode, hitSegment, removeSegment, resetIdCounter } from '../models/network'
+import { pathAt, pathOf, pieceEnd } from './railPath'
+import { reconcileNetworkIntersections } from './reconcile'
+import { serializeNetwork } from '../../infrastructure/persistence/persistence'
+import type { PathPiece } from '../models/types'
 import { touchNetwork } from '../models/networkWatch'
 import { snapToNearestTrack } from '../models/locomotive'
 import { getTrackTangentAt } from './tangent'
@@ -146,5 +150,66 @@ describe('reading a network through its index', () => {
     const b = addNode(net, { x: 1400, y: 1300 }, 1)
     addSegment(net, a.id, b.id)
     expect(check()).toBeGreaterThan(40)
+  })
+})
+
+/** A long rail from (x, y): 100 m straight, then 300 m of a curve of 150 m radius — far off the line between its two nodes */
+function longRailPieces(x: number, y: number): PathPiece[] {
+  const first: PathPiece = { x, y, heading: 0, curvature: 0, length: 100 }
+  const turn = pieceEnd(first)
+  return [first, { x: turn.x, y: turn.y, heading: turn.heading, curvature: 1 / 150, length: 300 }]
+}
+
+describe('long rails through the index', () => {
+  /** Short rails all around, and a few long rails among them */
+  const withLongRails = (): { net: Network; onTheCurve: { x: number; y: number }[] } => {
+    const net = scatter(31, 500, 3000)
+    const onTheCurve: { x: number; y: number }[] = []
+    for (let i = 0; i < 4; i++) {
+      const pieces = longRailPieces(400 + i * 600, 5000 + i * 37)
+      const end = pieceEnd(pieces[1])
+      const a = addNode(net, { x: pieces[0].x, y: pieces[0].y })
+      const b = addNode(net, { x: end.x, y: end.y })
+      addPathSegment(net, a.id, b.id, pieces)
+      const middle = pathAt(pathOf(pieces), 260)
+      onTheCurve.push({ x: middle.x, y: middle.y })
+    }
+    return { net, onTheCurve }
+  }
+
+  it('finds a long rail from a point of its curve, far from the line between its nodes', () => {
+    const { net, onTheCurve } = withLongRails()
+    for (const p of onTheCurve) {
+      const near = { x: p.x + 0.3, y: p.y - 0.2 }
+      const hit = hitSegment(net, near, 2)
+      expect(hit).not.toBeNull()
+      expect(net.segments.get(hit!)!.kind).toBe('path')
+      expect(hit).toBe(hitSegment(plain(net), near, 2))
+      expect(snapToNearestTrack(net, near, 2)).toEqual(snapToNearestTrack(plain(net), near, 2))
+      expect(railsInBox(net, { minX: p.x - 1, minY: p.y - 1, maxX: p.x + 1, maxY: p.y + 1 })).toEqual(
+        railsInBox(plain(net), { minX: p.x - 1, minY: p.y - 1, maxX: p.x + 1, maxY: p.y + 1 }),
+      )
+    }
+  })
+
+  it('a node laid on the curve of a long rail cuts it, from the kept state as with every pair looked at', () => {
+    const build = (): Network => {
+      resetIdCounter(0)
+      const { net, onTheCurve } = withLongRails()
+      reconcileNetworkIntersections(net, 0.1)
+      // A track that ends on the curve of the first long rail
+      const end = addNode(net, { x: onTheCurve[0].x, y: onTheCurve[0].y })
+      const far = addNode(net, { x: onTheCurve[0].x + 40, y: onTheCurve[0].y + 90 })
+      addSegment(net, end.id, far.id)
+      return net
+    }
+    const kept = build()
+    const keptResult = reconcileNetworkIntersections(kept, 0.1)
+    const exhaustive = build()
+    // The first pass of `build` was made from the kept state on both: this one tells the two apart
+    const exhaustiveResult = reconcileNetworkIntersections(exhaustive, 0.1, true)
+    expect(keptResult).toEqual(exhaustiveResult)
+    expect(keptResult.splitCount).toBe(1)
+    expect(serializeNetwork(kept, 'x')).toEqual(serializeNetwork(exhaustive, 'x'))
   })
 })

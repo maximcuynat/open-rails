@@ -100,17 +100,75 @@ export function discretizeCurve(p0: Point, via: Point, p2: Point, samples: numbe
   return pts
 }
 
-/** Approximate arc length of a quadratic Bezier by sampling. */
-export function curveLength(p0: Point, via: Point, p2: Point, samples = 64): number {
-  let len = 0
-  let prev = p0
-  for (let i = 1; i <= samples; i++) {
-    const t = i / samples
-    const pt = bezierPoint(t, p0, via, p2)
-    len += Math.hypot(pt.x - prev.x, pt.y - prev.y)
-    prev = pt
+// Gauss–Legendre nodes and weights, 8 points on −1…1
+const GAUSS_NODES = [0.1834346424956498, 0.525532409916329, 0.7966664774136267, 0.9602898564975363]
+const GAUSS_WEIGHTS = [0.362683783378362, 0.3137066458778873, 0.2223810344533745, 0.1012285362903763]
+/** A stretch of curve is measured in this many panels of 8 points */
+const LENGTH_PANELS = 2
+
+/**
+ * Length of the quadratic curve p0 → via → p2 between the parameters `t0` and `t1`, whichever is
+ * the larger. The speed of the point along the curve is integrated (Gauss–Legendre): on a curve of
+ * track this is the length to well under a micrometre, for 16 evaluations — where summing chords
+ * needs hundreds to get near, and falls short of the curve.
+ */
+export function curveLengthBetween(p0: Point, via: Point, p2: Point, t0: number, t1: number): number {
+  const lo = Math.min(t0, t1)
+  const hi = Math.max(t0, t1)
+  if (hi <= lo) return 0
+  // Derivative of the curve: 2·((via − p0) + t·(p0 − 2·via + p2))
+  const bx = via.x - p0.x
+  const by = via.y - p0.y
+  const ax = p0.x - 2 * via.x + p2.x
+  const ay = p0.y - 2 * via.y + p2.y
+  const panel = (hi - lo) / LENGTH_PANELS
+  const half = panel / 2
+  let sum = 0
+  for (let k = 0; k < LENGTH_PANELS; k++) {
+    const mid = lo + panel * (k + 0.5)
+    for (let i = 0; i < GAUSS_NODES.length; i++) {
+      const offset = half * GAUSS_NODES[i]
+      for (const t of [mid - offset, mid + offset]) {
+        sum += GAUSS_WEIGHTS[i] * Math.hypot(bx + t * ax, by + t * ay)
+      }
+    }
   }
-  return len
+  return 2 * half * sum
+}
+
+/** Length of the quadratic curve p0 → via → p2 (see `curveLengthBetween`). `_samples` is no longer used. */
+export function curveLength(p0: Point, via: Point, p2: Point, _samples?: number): number {
+  return curveLengthBetween(p0, via, p2, 0, 1)
+}
+
+/**
+ * Parameter of the point `distance` along the curve from the one at `t`: towards p2 when positive,
+ * towards p0 when negative, stopped at the ends (0 or 1) when the curve is shorter than that.
+ */
+export function curveParamAtDistance(p0: Point, via: Point, p2: Point, t: number, distance: number): number {
+  if (distance === 0) return t
+  const end = distance > 0 ? 1 : 0
+  const wanted = Math.abs(distance)
+  if (curveLengthBetween(p0, via, p2, t, end) <= wanted) return end
+  const bx = via.x - p0.x
+  const by = via.y - p0.y
+  const ax = p0.x - 2 * via.x + p2.x
+  const ay = p0.y - 2 * via.y + p2.y
+  const speed = (u: number): number => 2 * Math.hypot(bx + u * ax, by + u * ay)
+  // Newton on the length run, kept between the two ends of the search
+  let lo = Math.min(t, end)
+  let hi = Math.max(t, end)
+  let u = t + distance / Math.max(speed(t), 1e-12)
+  for (let i = 0; i < 24; i++) {
+    if (!(u > lo && u < hi)) u = (lo + hi) / 2
+    const error = curveLengthBetween(p0, via, p2, t, u) - wanted
+    if (Math.abs(error) < 1e-9) break
+    // Too far along the way of travel, or not far enough: the answer is on the other side
+    if ((error > 0) === (distance > 0)) hi = u
+    else lo = u
+    u -= (Math.sign(distance) * error) / Math.max(speed(u), 1e-12)
+  }
+  return Math.max(0, Math.min(1, u))
 }
 
 /** Choose a sample count based on curve length and scale for adequate resolution. */

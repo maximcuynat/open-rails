@@ -1,4 +1,5 @@
-import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
+import type { Network, NodeId, Segment, SegmentId } from '../models/types'
+import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { isPassageOpen, isRailClosedAt } from '../models/routing'
 import type { SectionMetadata } from '../models/sections'
 
@@ -18,29 +19,9 @@ export interface PathfindingOptions {
   sectionMeta?: Record<string, SectionMetadata>
 }
 
-/** Compute the physical length of a segment in millimeters. */
+/** Length of a rail along its track, in world metres */
 export function segmentLength(net: Network, seg: Segment): number {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return 0
-  if (seg.kind === 'straight' || !seg.via) {
-    return Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
-  }
-  // Numerical arc length of quadratic Bézier curve
-  const N = 16
-  let len = 0
-  let prev = a.pos
-  for (let i = 1; i <= N; i++) {
-    const t = i / N
-    const mt = 1 - t
-    const cur: Point = {
-      x: mt * mt * a.pos.x + 2 * mt * t * seg.via.x + t * t * b.pos.x,
-      y: mt * mt * a.pos.y + 2 * mt * t * seg.via.y + t * t * b.pos.y,
-    }
-    len += Math.hypot(cur.x - prev.x, cur.y - prev.y)
-    prev = cur
-  }
-  return len
+  return segmentShapeLength(net, seg)
 }
 
 /** Find segment between two nodes if one exists. */

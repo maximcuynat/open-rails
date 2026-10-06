@@ -1,7 +1,9 @@
 import type { Network, NodeId, SegmentId } from '@domain/models/types'
+import { pathChecksum } from '@domain/geometry/railPath'
 import { networkCheckToken, verifyingNetworkRevisions } from '@domain/models/networkWatch'
 import { gradientRamps, type GradientRamp, type RampRail } from '@domain/models/network'
 import { bezierPoint, curveLength } from '@domain/geometry/curve'
+import { pointOnShape, reversedShape, segmentEnds, shapeChordCount, shapePolyline } from '@domain/geometry/segmentGeometry'
 import { detectCrossings, type DiamondCrossing } from '@domain/models/crossing'
 import {
   computeTrackSections,
@@ -73,14 +75,6 @@ export const POLYLINE_TOLERANCE = 0.5
 /** Most chords one curved rail is flattened into */
 export const POLYLINE_MAX_CHORDS = 8
 
-/** Number of chords that keep a quadratic curve within `POLYLINE_TOLERANCE`; 1 for a flat one */
-function chordCount(ax: number, ay: number, vx: number, vy: number, bx: number, by: number): number {
-  // The curve is at most half the distance from the control point to the middle of the chord away
-  // from its chord, and cutting it in n divides that by n²
-  const sagitta = Math.hypot(vx - (ax + bx) / 2, vy - (ay + by) / 2) / 2
-  return Math.min(POLYLINE_MAX_CHORDS, Math.max(1, Math.ceil(Math.sqrt(sagitta / POLYLINE_TOLERANCE))))
-}
-
 function sectionPolyline(net: Network, section: TrackSection): SectionPolyline | null {
   const pts: number[] = []
   let tunnel = true
@@ -92,16 +86,14 @@ function sectionPolyline(net: Network, section: TrackSection): SectionPolyline |
     const reversed = seg.to === current && seg.from !== current
     const start = net.nodes.get(reversed ? seg.to : seg.from)
     const end = net.nodes.get(reversed ? seg.from : seg.to)
-    if (!start || !end) continue
+    const shape = segmentEnds(net, seg)
+    if (!start || !end || !shape) continue
     if ((start.level ?? 0) >= 0 || (end.level ?? 0) >= 0) tunnel = false
     if (pts.length === 0) pts.push(start.pos.x, start.pos.y)
-    if (seg.kind === 'curve' && seg.via) {
-      const n = chordCount(start.pos.x, start.pos.y, seg.via.x, seg.via.y, end.pos.x, end.pos.y)
-      for (let i = 1; i < n; i++) {
-        const p = bezierPoint(i / n, start.pos, seg.via, end.pos)
-        pts.push(p.x, p.y)
-      }
-    }
+    // The points between the two ends: as many chords as keep the line within POLYLINE_TOLERANCE
+    const walked = reversed ? reversedShape(shape) : shape
+    const line = shapePolyline(walked, Math.min(POLYLINE_MAX_CHORDS, shapeChordCount(walked, POLYLINE_TOLERANCE)))
+    for (let i = 1; i < line.length - 1; i++) pts.push(line[i].x, line[i].y)
     pts.push(end.pos.x, end.pos.y)
     current = end.id
   }
@@ -165,6 +157,7 @@ class NetworkSnapshot {
       num(seg.via ? 1 : 0)
       num(seg.via?.x ?? 0)
       num(seg.via?.y ?? 0)
+      num(seg.kind === 'path' && seg.path ? pathChecksum(seg.path) : 0)
     }
     for (const [nodeId, segIds] of net.adjacency) {
       str(nodeId)
@@ -297,9 +290,12 @@ function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | un
           const a = mid && net.nodes.get(mid.from)
           const b = mid && net.nodes.get(mid.to)
           if (!mid || !a || !b) return
-          const at = mid.kind === 'curve' && mid.via
-            ? bezierPoint(0.5, a.pos, mid.via, b.pos)
-            : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+          const midShape = mid.kind === 'path' ? segmentEnds(net, mid) : null
+          const at = midShape
+            ? pointOnShape(midShape, 0.5)
+            : mid.kind === 'curve' && mid.via
+              ? bezierPoint(0.5, a.pos, mid.via, b.pos)
+              : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
           badgeAnchors![2 * i] = at.x
           badgeAnchors![2 * i + 1] = at.y
         })

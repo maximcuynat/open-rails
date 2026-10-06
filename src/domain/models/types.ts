@@ -18,7 +18,24 @@ export interface RailNode {
   level?: number
 }
 
-export type SegmentKind = 'straight' | 'curve'
+export type SegmentKind = 'straight' | 'curve' | 'path'
+
+/**
+ * One piece of the path of a long rail: a straight line (curvature 0) or a circular arc, given
+ * from its own start — where it begins, the direction of travel there, how hard it turns and how
+ * long it runs. The pieces of a rail follow each other tangent to tangent.
+ */
+export interface PathPiece {
+  /** Start of the piece, world metres */
+  x: number
+  y: number
+  /** Direction of travel at the start, radians (`atan2(dy, dx)`) */
+  heading: number
+  /** Signed curvature, 1/m: positive turns towards increasing heading; 0 for a straight line */
+  curvature: number
+  /** Length along the piece, metres */
+  length: number
+}
 
 export interface Segment {
   id: SegmentId
@@ -27,6 +44,13 @@ export interface Segment {
   kind: SegmentKind
   /** Control point for curved segments (midpoint arc definition). */
   via?: Point
+  /**
+   * Path of a long rail (`kind: 'path'`), from `from` to `to`: what an imported line is made of
+   * between two junctions, in one rail. Never changed in place — replaced by a new list. When its
+   * nodes are moved the rail follows them: its path is read turned, scaled and shifted onto where
+   * they now are (see `railPath`).
+   */
+  path?: readonly PathPiece[]
   /** Parent segment ID if this segment was split from another segment */
   parentSegmentId?: SegmentId
   /** Cant of a curved rail in mm, set by hand; absent = computed from its radius and speed (see `curveCant`) */

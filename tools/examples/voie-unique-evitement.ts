@@ -4,12 +4,12 @@ import { ExampleBuilder, EAST, WEST } from './builder'
 /** A secondary line */
 const LINE = { lineSpeed: 100, lineType: 'classic' } as const
 /** The loop track lies this far (m) south of the main track */
-const LOOP_OFFSET = 4.5
+const LOOP_OFFSET = 8
 /** The points of the loop are at ±POINTS on the main track; each branch reaches the loop track ADVANCE metres further in */
 const POINTS = 500
-const ADVANCE = 90
+const ADVANCE = 120
 /** The exit signals stand at ±EXIT, where the two tracks are a full track spacing apart */
-const EXIT = 400
+const EXIT = 370
 
 /**
  * « Voie unique avec évitement »: a single track with one passing loop and a train on each side.

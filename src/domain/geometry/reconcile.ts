@@ -1,10 +1,12 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from '../models/types'
-import { bezierPoint, bezierDerivative1, closestCurveParam, discretizeCurve } from './curve'
+import { pathSlice } from './railPath'
+import { bezierPoint, bezierDerivative1, closestCurveParam } from './curve'
+import { closestParamOnShape, distanceToShape, pointOnShape, segmentBounds, segmentEnds, shapePolyline } from './segmentGeometry'
 import { isCrossingAngle } from '../models/crossing'
 import { NetworkFollower, segmentBox } from './networkFollower'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
 import { splitReplacement } from '../models/trackObjects'
-import { addNode, addChildSegment, detachSegment, removeDuplicateSegments, replaceRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
+import { addNode, addChildSegment, addPathSegment, detachSegment, removeDuplicateSegments, replaceRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
 
 /**
  * Split an existing segment at an existing node that lies on it.
@@ -78,6 +80,22 @@ export function splitSegmentAtNode(
     const seg2 = addChildSegment(net, seg, node.id, nodeB.id, q1)!
     replaceRail(net, splitReplacement(seg, t, seg1, seg2))
     return { seg1, seg2 }
+  } else if (seg.kind === 'path') {
+    // A long rail is cut where its path is: each half keeps its share of the pieces
+    const ends = segmentEnds(net, seg)
+    if (ends?.path && ends.path.length > 0) {
+      const t = at ?? Math.max(0.005, Math.min(0.995, closestParamOnShape(ends, node.pos)))
+      const cut = t * ends.path.length
+      node.pos = pointOnShape(ends, t)
+      adoptHeight(t)
+      const first = pathSlice(ends.path, 0, cut)
+      const second = pathSlice(ends.path, cut, ends.path.length)
+      detachSegment(net, segmentId)
+      const seg1 = addPathSegment(net, nodeA.id, node.id, first, seg)!
+      const seg2 = addPathSegment(net, node.id, nodeB.id, second, seg)!
+      replaceRail(net, splitReplacement(seg, t, seg1, seg2))
+      return { seg1, seg2 }
+    }
   }
   return null
 }
@@ -182,6 +200,9 @@ function findSegmentCrossings(
   b2: Point,
   shareNode: boolean,
 ): SegmentCrossing[] {
+  // A long rail comes with its nodes where it meets other tracks: it is not searched for crossings
+  // (a track drawn across one is joined to it at its ends, by the node-on-rail pass)
+  if (s1.kind === 'path' || s2.kind === 'path') return []
   const curve1 = s1.kind === 'curve' && !!s1.via
   const curve2 = s2.kind === 'curve' && !!s2.via
 
@@ -194,8 +215,8 @@ function findSegmentCrossings(
     // Two curves out of a shared node meet again close to it: search on a finer polyline
     const n1 = curve1 ? (shareNode ? 32 : 16) : 1
     const n2 = curve2 ? (shareNode ? 32 : 16) : 1
-    const pts1 = curve1 ? discretizeCurve(a1, s1.via!, b1, n1) : [a1, b1]
-    const pts2 = curve2 ? discretizeCurve(a2, s2.via!, b2, n2) : [a2, b2]
+    const pts1 = shapePolyline({ a: a1, b: b1, via: curve1 ? s1.via : undefined }, n1)
+    const pts2 = shapePolyline({ a: a2, b: b2, via: curve2 ? s2.via : undefined }, n2)
     for (let i = 0; i < n1; i++) {
       for (let j = 0; j < n2; j++) {
         const d1x = pts1[i + 1].x - pts1[i].x
@@ -273,13 +294,12 @@ function nodeRailCandidate(net: Network, node: RailNode, seg: Segment, tolerance
   const nodeA = net.nodes.get(seg.from)
   const nodeB = net.nodes.get(seg.to)
   if (!nodeA || !nodeB) return null
-  // The rail lies inside the box of its ends and control point: most nodes are clear of it
-  const via = seg.via
+  // The rail lies inside its box (ends and control point, or path): most nodes are clear of it
+  const box = segmentBounds(net, seg)
   if (
-    node.pos.x < Math.min(nodeA.pos.x, nodeB.pos.x, via ? via.x : Infinity) - tolerance ||
-    node.pos.x > Math.max(nodeA.pos.x, nodeB.pos.x, via ? via.x : -Infinity) + tolerance ||
-    node.pos.y < Math.min(nodeA.pos.y, nodeB.pos.y, via ? via.y : Infinity) - tolerance ||
-    node.pos.y > Math.max(nodeA.pos.y, nodeB.pos.y, via ? via.y : -Infinity) + tolerance
+    box &&
+    (node.pos.x < box.minX - tolerance || node.pos.x > box.maxX + tolerance ||
+      node.pos.y < box.minY - tolerance || node.pos.y > box.maxY + tolerance)
   ) {
     return null
   }
@@ -322,6 +342,14 @@ function nodeRailCandidate(net: Network, node: RailNode, seg: Segment, tolerance
     const onCurve = bezierPoint(bestT, nodeA.pos, seg.via, nodeB.pos)
     const dist = Math.hypot(onCurve.x - node.pos.x, onCurve.y - node.pos.y)
     if (bestT > 0.01 && bestT < 0.99 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
+      return { type: 'split', nodeId: node.id, segId: seg.id, dist }
+    }
+  } else if (seg.kind === 'path') {
+    const shape = segmentEnds(net, seg)
+    if (!shape) return null
+    const bestT = closestParamOnShape(shape, node.pos)
+    const dist = distanceToShape(shape, node.pos)
+    if (bestT > 0.005 && bestT < 0.995 && dist <= tolerance && meets(segmentHeightAt(net, seg, bestT))) {
       return { type: 'split', nodeId: node.id, segId: seg.id, dist }
     }
   }

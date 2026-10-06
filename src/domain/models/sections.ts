@@ -1,5 +1,5 @@
 import type { Network, NodeId, SegmentId, Segment, Point } from './types'
-import { curveLength } from '../geometry/curve'
+import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { segmentTangentAt } from '../geometry/tangent'
 import { findJunctionAtNode } from './junction'
 
@@ -104,15 +104,7 @@ export function computeTrackSections(
   const visitedSegments = new Set<SegmentId>()
 
   // Helper to compute length of a segment
-  const getSegLength = (seg: Segment): number => {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) return 0
-    if (seg.kind === 'curve' && seg.via) {
-      return curveLength(a.pos, seg.via, b.pos)
-    }
-    return Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
-  }
+  const getSegLength = (seg: Segment): number => segmentShapeLength(net, seg)
 
   /**
    * Find the through-route continuation of prevSegId across currNode, if one exists.
