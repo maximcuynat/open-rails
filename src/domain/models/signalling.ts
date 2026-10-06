@@ -27,6 +27,12 @@
  *   free (what happens on another branch of the block does not take it back), and dropped when the
  *   train is further than `approachDistance` from the signal (so 300 m when it stops), turns
  *   back, or is parked.
+ * - Points set against a route. A route that stops on points set against it (trailing points set
+ *   for the other branch, a double slip set for another rail) leads nowhere: it is not a route to
+ *   an end of track. It is never given, whichever the signal and the level, and a route given
+ *   before the points were thrown is taken back; the signal is closed, and a train running up to
+ *   such points holds the track as far as them but not the points themselves, which stay free for
+ *   whoever they are set for — or to be thrown.
  * - Signals. A signal a train has been given the route past is open. Otherwise a path signal is at
  *   `stop`, and a block signal is at `stop` when its block is occupied or holds a reservation. An
  *   open signal shows `caution` when the next signal on its route is at `stop` or when the route
@@ -50,6 +56,7 @@ import { rakeOccupancy } from './occupancy'
 import { isSwitchNode, signalsOnRail, DEFAULT_SIGNALLING_SETTINGS, type SignallingLevel, type SignallingSettings } from './signals'
 import {
   isOneWayWall,
+  isSetAgainst,
   railLengthIn,
   routeExitOf,
   signalRouteIn,
@@ -122,8 +129,9 @@ export type SignalState = 'stop' | 'caution' | 'clear'
  * Why a signal shows what it shows. `occupied`: a train is in its block. `reserved`: its block
  * holds a route given through another signal. `no-route`: a path signal no train has a route from.
  * `next-stop`: the next signal on the route is closed. `track-end`: the route runs to an end of track.
+ * `points-against`: a block signal whose route stops on points set against it.
  */
-export type SignalCause = 'occupied' | 'reserved' | 'no-route' | 'next-stop' | 'track-end'
+export type SignalCause = 'occupied' | 'reserved' | 'no-route' | 'next-stop' | 'track-end' | 'points-against'
 
 export interface SignalStatus {
   state: SignalState
@@ -179,8 +187,9 @@ export interface TrackClearance {
   blocks: number
   /**
    * What ends them. `occupied`: a block that is not free (a closed block signal). `absolute`: a
-   * closed path signal, a one-way signal met from behind, or the end of the track. Null when
-   * nothing is met.
+   * closed path signal, a one-way signal met from behind, the end of the track, or points set
+   * against the route (met in the train's own block, or closing the block signal before them).
+   * Null when nothing is met.
    */
   obstacle: 'occupied' | 'absolute' | null
   /** The signal ahead when this was counted, null when there is none in sight */
@@ -223,6 +232,8 @@ interface RouteAhead {
   walked: number
   /** True when the route stops there: end of track, or points set against the train */
   ended: boolean
+  /** The points the route stops on because they are set against the train, null otherwise: it does not hold them */
+  blockedAt: NodeId | null
   /** Distance from the origin to the bogie under the leading end of the train, m */
   offset: number
   /** Distance from that bogie to the leading end, m */
@@ -452,9 +463,12 @@ function opposedBeyond(ctx: TickContext, route: SignalRoute, trainId: TrainSetId
 /**
  * May the train be given the route past this signal — or, when it `held` it already, keep it? (see
  * the rules at the top of the file). A route held is only lost when its own track is no longer
- * free: what happens elsewhere in the block does not close a signal in front of a train.
+ * free, or no longer leads on (points thrown against it): what happens elsewhere in the block does
+ * not close a signal in front of a train.
  */
 function canGrant(ctx: TickContext, trainId: TrainSetId, signal: Signal, route: SignalRoute, held: boolean): boolean {
+  // A route that stops on points set against it leads nowhere: never given, and taken back if it was
+  if (route.blockedAt !== null) return false
   for (const span of route.spans) {
     if (!spanFree(ctx, trainId, span.segId, span.t0, span.t1)) return false
   }
@@ -490,6 +504,7 @@ function walkRouteAhead(
     met: [],
     walked: 0,
     ended: false,
+    blockedAt: null,
     offset: 0,
     overhang: start.overhang,
     spanIndex: 0,
@@ -529,6 +544,7 @@ function walkRouteAhead(
     const exit = exitId ? net.segments.get(exitId) : undefined
     if (!exit) {
       route.ended = true
+      if (isSetAgainst(net, topology, segId, ascending, direction)) route.blockedAt = nodeId
       break
     }
     segId = exit.id
@@ -590,8 +606,11 @@ function clearanceAhead(
   for (let blocks = 1; blocks <= CLEARANCE_BLOCKS; blocks++) {
     const signal = net.signals.get(id)
     if (!signal) break
-    if (statuses.get(id)?.state === 'stop') {
-      return { blocks, obstacle: signal.role === 'protection' ? 'absolute' : 'occupied', markerId }
+    const status = statuses.get(id)
+    if (status?.state === 'stop') {
+      // Points set against the route beyond a block signal are no train ahead: a stop like a path signal's
+      const absolute = signal.role === 'protection' || status.cause === 'points-against'
+      return { blocks, obstacle: absolute ? 'absolute' : 'occupied', markerId }
     }
     const beyond = signalRouteIn(net, topology, id)
     if (!beyond) break
@@ -732,7 +751,8 @@ function reserveAhead(
     }
     if (!spanFree(ctx, trainId, span.segId, from, span.t1)) break
     claimSpan(ctx, record, span.segId, from, span.t1)
-    if (span.exitNode !== null) {
+    // Points set against the train are where its route stops: it does not hold them
+    if (span.exitNode !== null && !(i === route.spans.length - 1 && span.exitNode === route.blockedAt)) {
       if (!nodeFree(ctx, trainId, span.exitNode)) break
       claimNode(ctx, record, span.exitNode)
     }
@@ -961,6 +981,10 @@ export function updateSignalling(
       } else if (block && heldBlocks.has(block)) {
         status.state = 'stop'
         status.cause = 'reserved'
+      } else if (signalRouteIn(net, topology, signal.id)?.blockedAt != null) {
+        // Its route stops on points set against it: no train is let past
+        status.state = 'stop'
+        status.cause = 'points-against'
       }
     }
     statuses.set(signal.id, status)
