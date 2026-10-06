@@ -202,6 +202,19 @@ describe('control figures: real and regulatory', () => {
     expect(down.gradientPermille).toBeCloseTo(-35, 6)
     expect(down.gradeForce).toBeCloseTo(-dynamics.gradeForce, 6)
   })
+
+  it('levels without relief: the same ramp weighs nothing when a level has no height', () => {
+    const { net, segId, length } = line(5000, 35)
+    const train = running(trainset(net, segId, 2000, length), 100)
+    const flat = trainDynamics(net, train, { levelHeight: 0 })
+    expect(flat.gradientPermille).toBeCloseTo(0, 12)
+    expect(flat.gradeForce).toBeCloseTo(0, 12)
+    // Exactly the train on level track
+    const level = line(5000)
+    const onLevel = trainDynamics(level.net, running(trainset(level.net, level.segId, 2000, level.length), 100), level.env)
+    expect(flat.acceleration).toBeCloseTo(onLevel.acceleration, 12)
+    expect(flat.stoppingDistance).toBeCloseTo(onLevel.stoppingDistance, 6)
+  })
 })
 
 describe('control figures: reference model (tasks/recherche-traction-sim.py)', () => {

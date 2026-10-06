@@ -47,6 +47,11 @@ describe('rampSummary', () => {
     expect(rampSummary(steep.net, steep.seg, REAL)).toMatchObject({ gradient: '60 ‰ en montée', tooSteep: true })
   })
 
+  it('levels without relief (a level height of 0): the two levels, no height and no slope', () => {
+    const { net, seg } = rail(0, 1)
+    expect(rampSummary(net, seg, { ...REAL, levelHeight: 0 })).toEqual({ from: 'Sol', to: 'Pont +1', rise: null, gradient: null, tooSteep: false })
+  })
+
   it('the height climbed follows the height of a level and the display unit', () => {
     const { net, seg } = rail(0, 1)
     expect(rampSummary(net, seg, { levelHeight: 0.069, maxGradient: 35, unit: 'cm' })!.rise).toBe('6.90 cm')

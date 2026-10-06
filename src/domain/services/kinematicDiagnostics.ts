@@ -157,7 +157,10 @@ function detectSteepGradients(net: Network, limits: GradientLimits): KinematicIs
   return issues
 }
 
-/** What a slope is measured against: the height of one level (world metres) and the steepest slope allowed (‰) */
+/**
+ * What a slope is measured against: the height of one level (world metres) and the steepest slope allowed (‰).
+ * A height of 0 is a project whose levels have no relief: every slope is zero, nothing is steep.
+ */
 export interface GradientLimits {
   levelHeight: number
   maxGradient: number
