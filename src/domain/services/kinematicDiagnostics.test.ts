@@ -308,6 +308,13 @@ describe('kinematicDiagnostics', () => {
     const steep = (net: Parameters<typeof analyzeKinematics>[0], l = limits) =>
       analyzeKinematics(net, undefined, l).filter((i) => i.kind === 'steep_gradient')
 
+    it('reports nothing when the levels have no relief (a level height of 0)', () => {
+      const up = ramp(100, 0, 1) // 60 ‰ with relief
+      expect(steep(up.net)).toHaveLength(1)
+      expect(steep(up.net, { levelHeight: 0, maxGradient: 35 })).toHaveLength(0)
+      expect(steep(ramp(1, -3, 3).net, { levelHeight: 0, maxGradient: 35 })).toHaveLength(0)
+    })
+
     it('reports a ramp steeper than the limit, with its slope, at its lower end', () => {
       // One level (6 m) over 100 m: 60 ‰
       const up = ramp(100, 0, 1)

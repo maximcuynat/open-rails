@@ -107,7 +107,7 @@ export function splitSegmentAtNode(
  * along the same line. Those limits are relative to the rail lengths, not to the tolerance, so that
  * a loose (heal) tolerance cannot fold a real turnout branch back onto its main line.
  */
-function isSiblingBranch(net: Network, node: RailNode, seg: Segment): boolean {
+export function isSiblingBranch(net: Network, node: RailNode, seg: Segment): boolean {
   for (const sid of net.adjacency.get(node.id) ?? []) {
     const link = net.segments.get(sid)
     if (!link) continue
@@ -191,7 +191,7 @@ function crossStraightCurve(a: Point, b: Point, p0: Point, via: Point, p2: Point
  * Straight/curve pairs are solved exactly; two curves are searched on polylines, then each hit is
  * refined with Newton iterations on the true curves so that the point lies on both tracks.
  */
-function findSegmentCrossings(
+export function findSegmentCrossings(
   s1: Segment,
   a1: Point,
   b1: Point,

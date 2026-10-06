@@ -35,7 +35,7 @@ import {
 
 /** What the track gives the physics beyond its plan geometry */
 export interface DrivingEnvironment {
-  /** Height of one track level in world metres (`store.levelHeight`): turns levels into slopes */
+  /** Height of one track level in world metres: turns levels into slopes. 0 for levels without relief: no grade force */
   levelHeight: number
   /** Line speed and line type of the project (`store.lineSettings`); the defaults when absent */
   line?: LineSettings
@@ -159,7 +159,7 @@ export interface TrainDynamics {
   lateralAcceleration: number
   /** Speed limit the train runs under, m/s: the lowest of its own maximum, the line, the zones and the curves under it */
   speedLimit: number
-  /** Next lower speed limit along the route ahead, null when there is none within reach */
+  /** Lower speed limit along the route ahead the train has to brake for first, null when there is none within reach */
   nextSpeedLimit: UpcomingSpeedLimit | null
   /** Largest cant deficiency under a vehicle, mm (0 on straight track) */
   cantDeficiency: number

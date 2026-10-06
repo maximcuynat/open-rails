@@ -1,14 +1,18 @@
 import { Modal } from '../common/Modal'
+import { formatDataDate } from '@application/import/osmReport'
+import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL, type OsmSource } from '@domain/import/osmTypes'
 
 export const REPO_URL = 'https://github.com/maximcuynat/open-rails'
 export const RELEASE_NOTES_URL = `${REPO_URL}/releases/tag/v${__APP_VERSION__}`
 
 interface AboutModalProps {
   isOpen: boolean
+  /** Where the open network comes from, when it was imported from OpenStreetMap */
+  osmSource?: OsmSource | null
   onClose: () => void
 }
 
-export function AboutModal({ isOpen, onClose }: AboutModalProps) {
+export function AboutModal({ isOpen, osmSource, onClose }: AboutModalProps) {
   return (
     <Modal isOpen={isOpen} title="À propos d'Open Rails" closeLabel="Fermer" onClose={onClose}>
       <div className="about-body">
@@ -32,6 +36,19 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
           </a>
           , sous licence ODbL.
         </p>
+        {osmSource && (
+          <p>
+            Le réseau ouvert a été importé d'OpenStreetMap (données du {formatDataDate(osmSource.dataDate)}) :{' '}
+            <a href={OSM_COPYRIGHT_URL} target="_blank" rel="noopener noreferrer">
+              {OSM_ATTRIBUTION}
+            </a>
+            , sous licence{' '}
+            <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener noreferrer">
+              ODbL 1.0
+            </a>
+            . S'il est partagé, il le reste sous cette licence, avec cette mention.
+          </p>
+        )}
         <p>
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">Code source sur GitHub</a>
           {' · '}

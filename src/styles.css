@@ -2004,6 +2004,18 @@ select.cb-step-select {
   border-color: var(--accent);
 }
 
+/* A field that does not apply (« Niveaux sans relief »): muted like every disabled control, with its unit and its label */
+.settings-input:disabled {
+  color: var(--ink-secondary);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-input:disabled + .settings-input-unit,
+.settings-field:has(.settings-input:disabled) .settings-sublabel {
+  opacity: 0.45;
+}
+
 .settings-input-unit {
   position: absolute;
   right: 10px;
@@ -2654,7 +2666,7 @@ select.cb-step-select {
 .console-round-dial:not(.speed-normal) .console-round-arc { stroke: var(--tone); }
 .console-round-dial:not(.speed-normal) :is(.console-needle, .console-hub) { fill: var(--tone); }
 
-/* Solid mark: limit in force. Hollow mark: next lower limit */
+/* Solid mark: limit in force. Hollow mark: the limit ahead to brake for first */
 .console-limit-mark { fill: var(--hud-fg); stroke: var(--hud); stroke-width: 1.5; }
 .console-limit-mark.is-next { fill: var(--hud); stroke: var(--hud-fg); stroke-width: 2; }
 .console-round-dial .console-limit-mark { fill: #fff; stroke: var(--dmi); }
@@ -3552,4 +3564,335 @@ select.cb-step-select {
   line-height: 12px;
   background: rgba(0, 0, 0, 0.25);
   border: none;
+}
+
+/* ===== OpenStreetMap import window ===== */
+.modal-dialog.osm-dialog {
+  max-width: 680px;
+}
+
+.osm-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.osm-place-input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 10px;
+}
+
+.osm-results {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.osm-results li + li {
+  border-top: 1px solid var(--border);
+}
+
+.osm-result {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 0;
+  border-left: 3px solid transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.osm-result:hover {
+  background: var(--panel);
+}
+
+.osm-result.is-active {
+  border-left-color: var(--accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.osm-result-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.osm-result-kind {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+  opacity: 0.7;
+}
+
+.osm-radius-row {
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.osm-radius-field {
+  width: 112px;
+  flex-shrink: 0;
+}
+
+.osm-zone-summary,
+.osm-loaded-text,
+.osm-issue-text,
+.osm-locator-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+}
+
+.osm-zone-summary span,
+.osm-loaded-text span,
+.osm-issue-text span,
+.osm-locator-text span {
+  opacity: 0.75;
+}
+
+.osm-zone-summary span.is-error {
+  opacity: 1;
+  color: var(--danger);
+}
+
+.osm-loaded,
+.osm-speed-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.osm-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  border: 0;
+  min-width: 0;
+}
+
+.osm-option-count {
+  opacity: 0.7;
+}
+
+.osm-speed-row label {
+  flex: 1;
+}
+
+.osm-speed-select {
+  width: 112px;
+  flex-shrink: 0;
+  padding-right: 10px;
+}
+
+.settings-checkbox-row.is-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.osm-figures {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.osm-figures.is-wide {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.osm-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+}
+
+.osm-figure dd {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.osm-figure dt {
+  font-size: var(--font-size-xs);
+  opacity: 0.75;
+}
+
+.osm-message {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ink);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  font-size: var(--font-size-sm);
+}
+
+.osm-message.is-error {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.osm-note {
+  font-size: var(--font-size-sm);
+  opacity: 0.85;
+}
+
+.osm-note a {
+  color: var(--accent);
+}
+
+.osm-issues {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.osm-issue {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px 12px;
+  background: var(--panel-2);
+}
+
+.osm-issue + .osm-issue {
+  border-top: 1px solid var(--border);
+}
+
+.osm-issue-count {
+  min-width: 32px;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.osm-footer-status {
+  margin-right: auto;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.osm-file-btn {
+  margin-right: auto;
+}
+
+.osm-dialog .modal-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+  transform: none;
+}
+
+/* A place of the report shown on the plan: the window shrinks to a strip, the plan stays usable */
+.osm-locator {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--space-4));
+  padding: var(--space-2) var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.osm-locator-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.osm-place-marker {
+  position: fixed;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--paper);
+  pointer-events: none;
+  z-index: var(--z-minimap);
+}
+
+/* Mention asked by the ODbL, over the plan while an imported network is shown */
+.osm-attribution {
+  position: absolute;
+  left: 12px;
+  bottom: calc(12px + var(--minimap-lift, 0px));
+  z-index: var(--z-minimap);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  color: var(--ink);
+  font-size: var(--font-size-xs);
+  text-decoration: none;
+  opacity: 0.8;
+}
+
+.osm-attribution:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* The mini-map (120 px high) holds the corner: the mention sits on top of it, clear of the scale bar */
+.osm-attribution.above-minimap {
+  bottom: calc(12px + var(--minimap-lift, 0px) + 120px + 6px);
+}
+
+@media (max-width: 720px) {
+  .osm-options {
+    grid-template-columns: 1fr;
+  }
+
+  .osm-figures,
+  .osm-figures.is-wide {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .osm-radius-row,
+  .osm-loaded,
+  .osm-locator {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .osm-radius-field {
+    width: 100%;
+  }
+
+  .osm-dialog .modal-footer {
+    flex-wrap: wrap;
+  }
 }

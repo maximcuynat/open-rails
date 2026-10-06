@@ -22,6 +22,7 @@ import { deserializeTrains, serializeTrains } from '../../domain/models/train'
 import type { SerializedTrain, TrainSet } from '../../domain/models/train'
 import { DEFAULT_LINE_SETTINGS, LINE_SPEED_RANGE, type LineSettings, type LineType } from '../../domain/models/speedLimits'
 import { CANT_RANGE } from '../../domain/models/cant'
+import type { OsmSource } from '../../domain/import/osmTypes'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -148,6 +149,10 @@ export interface SerializedProject {
   levelHeight?: number
   /** Steepest slope allowed, in ‰ (absent from files saved before ramps: default of the scale) */
   maxGradient?: number
+  /** Levels without relief: they only stack the tracks, every slope is zero. Only written when on */
+  flatLevels?: boolean
+  /** Where the network was imported from (OpenStreetMap); absent from a project drawn by hand */
+  osmSource?: OsmSource
   /** Ceiling speed of the line, km/h; only written when it is not the default one */
   lineSpeed?: number
   /** Conventional or high-speed line; only written when it is not the default one */
@@ -193,6 +198,12 @@ function copySectionMeta(meta: Record<string, any>): Record<string, any> {
   return Object.fromEntries(Object.entries(meta).map(([id, value]) => [id, { ...value }]))
 }
 
+/** What an import leaves in a project beyond its track: levels without relief, and where the data comes from */
+export interface ProjectOrigin {
+  flatLevels?: boolean
+  osmSource?: OsmSource | null
+}
+
 /**
  * Serialize a railway network into a pure JSON-friendly data structure.
  * What the network holds itself (rails, route tables, speed zones, signals) is read from `net`.
@@ -218,6 +229,7 @@ export function serializeNetwork(
   line?: Partial<LineSettings>,
   signalling?: Partial<SignallingSettings>,
   signalDisplay?: SignalDisplaySettings,
+  origin?: ProjectOrigin,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -337,6 +349,9 @@ export function serializeNetwork(
     trackSpacing,
     levelHeight: gradient?.levelHeight,
     maxGradient: gradient?.maxGradient,
+    // A project drawn by hand carries neither: it is written back as it was
+    flatLevels: origin?.flatLevels ? true : undefined,
+    osmSource: origin?.osmSource ? { ...origin.osmSource } : undefined,
     // A project on the default line carries neither: a file saved before lines existed is written back as it was
     lineSpeed: line?.lineSpeed !== DEFAULT_LINE_SETTINGS.lineSpeed ? line?.lineSpeed : undefined,
     lineType: line?.lineType !== DEFAULT_LINE_SETTINGS.lineType ? line?.lineType : undefined,
@@ -490,6 +505,15 @@ function positiveNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+/** The provenance read from a file: kept only when every field is usable */
+function storedOsmSource(value: unknown): OsmSource | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { lat, lon, dataDate, importedAt } = value as Record<string, unknown>
+  if (typeof lat !== 'number' || !Number.isFinite(lat) || typeof lon !== 'number' || !Number.isFinite(lon)) return undefined
+  if (typeof dataDate !== 'string' || typeof importedAt !== 'string') return undefined
+  return { lat, lon, dataDate, importedAt }
+}
+
 /**
  * Reconstruct a full in-memory Network structure from serialized data,
  * rebuilding adjacency, resolving junctions, and synchronizing ID counters.
@@ -510,6 +534,8 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   trackSpacing?: number
   levelHeight?: number
   maxGradient?: number
+  flatLevels?: boolean
+  osmSource?: OsmSource
   lineSpeed?: number
   lineType?: LineType
   signallingLevel?: SignallingLevel
@@ -669,6 +695,8 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
     trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
     levelHeight: positiveNumber(data.levelHeight),
     maxGradient: positiveNumber(data.maxGradient),
+    flatLevels: data.flatLevels === true ? true : undefined,
+    osmSource: storedOsmSource(data.osmSource),
     lineSpeed: storedLineSpeed(data.lineSpeed),
     lineType: data.lineType === 'classic' || data.lineType === 'highSpeed' ? data.lineType : undefined,
     signallingLevel: isSignallingLevel(data.signallingLevel) ? data.signallingLevel : undefined,
@@ -746,6 +774,7 @@ export function saveNetworkToStorage(
   line?: Partial<LineSettings>,
   signalling?: Partial<SignallingSettings>,
   signalDisplay?: SignalDisplaySettings,
+  origin?: ProjectOrigin,
 ): boolean {
   try {
     const storage = getStorage()
@@ -771,6 +800,7 @@ export function saveNetworkToStorage(
       line,
       signalling,
       signalDisplay,
+      origin,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -796,6 +826,8 @@ export function loadNetworkFromStorage(): {
   trackSpacing?: number
   levelHeight?: number
   maxGradient?: number
+  flatLevels?: boolean
+  osmSource?: OsmSource
   lineSpeed?: number
   lineType?: LineType
   signallingLevel?: SignallingLevel

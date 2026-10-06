@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { MenuBar, type MenuDef } from './Menu'
 import { AboutModal, REPO_URL, RELEASE_NOTES_URL } from './AboutModal'
 import { ShortcutsModal } from './ShortcutsModal'
@@ -11,6 +11,9 @@ import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
 import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
+
+// The import window brings the whole conversion with it: loaded when it is first opened
+const OsmImportModal = lazy(() => import('./OsmImportModal').then((module) => ({ default: module.OsmImportModal })))
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -33,6 +36,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showAboutModal, setShowAboutModal] = useState(false)
   const [showRemoteModal, setShowRemoteModal] = useState(false)
+  const [showOsmImport, setShowOsmImport] = useState(false)
 
   const commitName = () => {
     setEditingName(false)
@@ -54,6 +58,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
+        { id: 'import-osm', label: 'Importer depuis OpenStreetMap…' },
         {
           id: 'examples',
           label: 'Exemples',
@@ -93,6 +98,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'import-json':
             importJSON(store)
+            break
+          case 'import-osm':
+            setShowOsmImport(true)
             break
           case 'export-json':
             exportJSON(store)
@@ -420,7 +428,13 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         <p>{pendingExample?.description}</p>
         <p>L'exemple remplace le plan actuel : toutes les voies non exportées seront effacées.</p>
       </Modal>
-      <AboutModal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} />
+      {/* Mounted on opening: each import starts from a blank window */}
+      {showOsmImport && (
+        <Suspense fallback={null}>
+          <OsmImportModal store={store} onClose={() => setShowOsmImport(false)} />
+        </Suspense>
+      )}
+      <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} onClose={() => setShowAboutModal(false)} />
       <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
       <SettingsModal

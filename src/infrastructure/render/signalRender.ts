@@ -18,9 +18,11 @@ import { speedSigns, type SpeedSign } from '@domain/models/speedSigns'
 import type { LineSettings } from '@domain/models/speedLimits'
 import { speedZonesRevision } from '@domain/models/speedZones'
 import { signalHeading, signalWorldPosition } from '@domain/services/signalLayout'
-import { diagnosticMarkerRadius, drawDiagnosticMarker, type DiagnosticLabelBox } from './diagnosticMarker'
+import { diagnosticMarkerBox, diagnosticMarkerRadius, drawDiagnosticMarker, type DiagnosticLabelBox } from './diagnosticMarker'
+import type { LabelSpace, ScreenBox } from './labelSpace'
 import { trackPositionBand, type TrackPiece } from './levelPieces'
 import { trackLod } from './lod'
+import { clusterMarkers, reportClusterRadius, type MarkerSeverity } from './lodOverlays'
 import { themeInk } from './themeInk'
 
 // ─────────────────── Signals on the canvas ───────────────────
@@ -58,6 +60,8 @@ const MARKER_BLUE = '#1d4ed8'
 const MARKER_YELLOW = '#facc15'
 const SPEED_SIGN_BG = '#ffffff'
 const SPEED_SIGN_INK = '#111827'
+/** Half the side of the plate of a distant speed sign, px */
+const SPEED_SIGN_HALF = 9
 
 /**
  * Colours of the blocks, taken in turn in the order of the signals. Cool hues only: green, yellow
@@ -503,7 +507,7 @@ export function drawSpeedSign(ctx: CanvasRenderingContext2D, at: Point, heading:
   const left = leftOf(heading)
   const cx = at.x + left.x * (sizes.offset + 4)
   const cy = at.y + left.y * (sizes.offset + 4)
-  const half = 9
+  const half = SPEED_SIGN_HALF
   ctx.save()
   ctx.strokeStyle = ink
   ctx.lineWidth = 1.5
@@ -537,6 +541,15 @@ export function drawSpeedSign(ctx: CanvasRenderingContext2D, at: Point, heading:
   ctx.restore()
 }
 
+/** Screen rectangle of the plate of a distant speed sign (see `drawSpeedSign`) */
+export function speedSignBox(at: Point, heading: Point, sign: Pick<SpeedSign, 'diamond'>, sizes: SignalSizes): ScreenBox {
+  const left = leftOf(heading)
+  const cx = at.x + left.x * (sizes.offset + 4)
+  const cy = at.y + left.y * (sizes.offset + 4)
+  const half = sign.diamond ? SPEED_SIGN_HALF * 1.35 : SPEED_SIGN_HALF
+  return { x: cx - half, y: cy - half, w: 2 * half, h: 2 * half }
+}
+
 // ─────────────────── The whole signalling layer ───────────────────
 
 export interface SignalRenderOptions {
@@ -558,6 +571,12 @@ export interface SignalRenderOptions {
   line?: LineSettings
   /** Driving: false between two flashes of the flashing lamps (`signalFlashOn`). Absent: lit */
   flashOn?: boolean
+  /**
+   * What is already written on this frame. The signals and the markers of the report take their
+   * room in it; a distant speed sign or a label of the report that would cover something there is
+   * left out
+   */
+  space?: LabelSpace
 }
 
 /** The stretches of `spans` that lie on the pieces of rail `ranges` holds, each kept in the direction it is walked */
@@ -663,12 +682,41 @@ export function renderSignalling(
     return x < -margin || x > vw + margin || y < -margin || y > vh + margin ? null : { x, y }
   }
 
+  const space = options.space
+  const lod = trackLod(cam.scale, gauge)
+  // The report: one marker per entry in view, the ones that would cover each other merged into one
+  interface ReportMark { x: number; y: number; severity: MarkerSeverity; label?: string; away?: Point; count: number }
+  const marks: ReportMark[] = []
+  if (options.report && net.signals.size > 0 && options.line) {
+    const layout = signalLayout(net, trackKey)
+    const headings = new Map<SignalId, Point>()
+    for (const placed of layout.signals) headings.set(placed.signal.id, placed.heading)
+    for (const { pos, entry } of reportOf(net, layout, options.level, options.line)) {
+      const at = toScreen(pos)
+      if (!at) continue
+      const heading = headings.get(entry.signalId)
+      const head = heading ? leftOf(heading) : null
+      marks.push({ x: at.x, y: at.y, severity: 'warning', label: reportLabel(entry), away: head ? { x: -head.x, y: -head.y } : undefined, count: 1 })
+    }
+  }
+  // A marker that still stands for one entry keeps the side its label goes to
+  const reportMarks: ReportMark[] = marks.length < 2
+    ? marks
+    : clusterMarkers(marks, reportClusterRadius(lod, diagnosticMarkerRadius(cam.scale))).map((cluster) =>
+      (cluster.count === 1 && marks.find((mark) => mark.x === cluster.x && mark.y === cluster.y)) || cluster)
+
   if (net.signals.size > 0) {
     const layout = signalLayout(net, trackKey)
+    // The head of a signal is about as wide as it is long: a square around it is its room
+    const room = 4 * sizes.lamp + 4
 
     for (const placed of layout.signals) {
       const at = toScreen(placed.pos)
       if (!at) continue
+      if (space) {
+        const left = leftOf(placed.heading)
+        space.reserve({ x: at.x + left.x * sizes.offset - room / 2, y: at.y + left.y * sizes.offset - room / 2, w: room, h: room })
+      }
       const status = options.state ? signalStatus(options.state, placed.signal) : defaultSignalStatus(placed.signal)
       const id = placed.signal.id
       const selected = id === options.selectedId
@@ -682,36 +730,32 @@ export function renderSignalling(
     }
   }
 
+  // The diamonds of the report are always drawn: they take their room before the signs
+  if (space) for (const mark of reportMarks) space.reserve(diagnosticMarkerBox(mark.x, mark.y, cam.scale))
+
   for (const sign of signs) {
     const pos = positionOnSegment(net, sign.segId, sign.t)
     const tangent = tangentOnSegment(net, sign.segId, sign.t)
     const at = pos && toScreen(pos)
     if (!at || !tangent) continue
-    drawSpeedSign(ctx, at, sign.forward ? tangent : { x: -tangent.x, y: -tangent.y }, sign, sizes, ink)
+    const heading = sign.forward ? tangent : { x: -tangent.x, y: -tangent.y }
+    // A sign that would cover a signal, a marker or another sign waits for a closer look
+    if (space && !space.claim(speedSignBox(at, heading, sign, sizes))) continue
+    drawSpeedSign(ctx, at, heading, sign, sizes, ink)
   }
 
-  if (options.report && net.signals.size > 0 && options.line) {
-    const layout = signalLayout(net, trackKey)
-    const headings = new Map<SignalId, Point>()
-    for (const placed of layout.signals) headings.set(placed.signal.id, placed.heading)
+  if (reportMarks.length > 0) {
     // A label never covers the head of its signal nor another label: it goes on the other side of
-    // the track, and the ones that would overlap wait for a closer zoom
-    const taken: DiagnosticLabelBox[] = []
-    const marks: { at: Point; entry: SignalReportEntry }[] = []
-    const radius = diagnosticMarkerRadius(cam.scale)
-    for (const { pos, entry } of reportOf(net, layout, options.level, options.line)) {
-      const at = toScreen(pos)
-      if (!at) continue
-      marks.push({ at, entry })
-      // Nor the diamond of another marker
-      taken.push({ x: at.x - radius, y: at.y - radius, w: 2 * radius, h: 2 * radius })
-    }
-    for (const { at, entry } of marks) {
-      const heading = headings.get(entry.signalId)
-      const head = heading ? leftOf(heading) : null
-      drawDiagnosticMarker(ctx, at.x, at.y, cam.scale, 'warning', reportLabel(entry), {
-        away: head ? { x: -head.x, y: -head.y } : undefined,
+    // the track, and the ones that would overlap wait for a closer zoom. Nor the diamond of
+    // another marker.
+    const taken: DiagnosticLabelBox[] = reportMarks.map((mark) => diagnosticMarkerBox(mark.x, mark.y, cam.scale))
+    for (const mark of reportMarks) {
+      drawDiagnosticMarker(ctx, mark.x, mark.y, cam.scale, 'warning', mark.label ?? '', {
+        away: mark.away,
         taken,
+        space,
+        mark: mark.count > 1 ? String(mark.count) : undefined,
+        noLabel: mark.label === undefined,
       })
     }
   }

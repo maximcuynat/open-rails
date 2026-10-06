@@ -54,6 +54,7 @@ import {
   clearNetworkStorage,
   deserializeNetwork,
   serializeNetwork,
+  type ProjectOrigin,
   type SerializedProject,
   type SignalDisplaySettings,
 } from '@infrastructure/persistence/persistence'
@@ -72,6 +73,7 @@ import type { SectionMetadata } from '@domain/models/sections'
 import { networkDerived, sectionMetaChanged } from '@infrastructure/render/networkDerived'
 import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
 import type { GradientLimits } from '@domain/services/kinematicDiagnostics'
+import type { OsmSource } from '@domain/import/osmTypes'
 import type { Locomotive } from '@domain/models/locomotive'
 import {
   createLocomotive,
@@ -329,6 +331,10 @@ export class EditorStore {
   onOverspeed: ((train: TrainSet, overspeed: CabOverspeed) => void) | null = null
   levelHeight: number = 6 // height of one track level in world meters (6 m at 1:1, scaled down for model scales)
   maxGradient: number = 35 // steepest slope allowed, in ‰ (a ramp above it is reported)
+  /** Levels without relief: they only say which track passes over which, every slope is zero (see `gradientLimits`) */
+  flatLevels: boolean = false
+  /** Where the network was imported from (OpenStreetMap), null for a project drawn by hand */
+  osmSource: OsmSource | null = null
   lineSpeed: number = DEFAULT_LINE_SETTINGS.lineSpeed // ceiling speed of the line, km/h
   lineType: LineType = DEFAULT_LINE_SETTINGS.lineType // conventional or high-speed line: rules for cant
   /** Signalling level of the project: the same signals read as block / path signals or as French signals */
@@ -692,9 +698,11 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
-      this.gradientLimits,
+      this.gradientSettings,
       this.lineSettings,
       this.signallingSettings,
+      undefined,
+      this.projectOrigin,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
@@ -736,6 +744,7 @@ export class EditorStore {
           this.parallelOffset = res.trackSpacing
         }
         this.restoreGradientSettings(res)
+        this.osmSource = res.osmSource ?? null
         this.restoreLineSettings(res)
         this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
@@ -770,6 +779,7 @@ export class EditorStore {
           this.parallelOffset = res.trackSpacing
         }
         this.restoreGradientSettings(res)
+        this.osmSource = res.osmSource ?? null
         this.restoreLineSettings(res)
         this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
@@ -924,6 +934,7 @@ export class EditorStore {
       this.parallelOffset = saved.trackSpacing
     }
     this.restoreGradientSettings(saved)
+    this.osmSource = saved.osmSource ?? null
     this.restoreLineSettings(saved)
     this.restoreSignallingSettings(saved)
     this.restoreSignalDisplay(saved)
@@ -966,6 +977,8 @@ export class EditorStore {
       this.parallelOffset = res.trackSpacing
     }
     this.restoreGradientSettings(res)
+    // The provenance belongs to the loaded file, like the section names
+    this.osmSource = res.osmSource ?? null
     this.restoreLineSettings(res)
     this.restoreSignallingSettings(res)
     this.restoreSignalDisplay(res)
@@ -1009,10 +1022,11 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
-      this.gradientLimits,
+      this.gradientSettings,
       this.lineSettings,
       this.signallingSettings,
       this.signalDisplaySettings,
+      this.projectOrigin,
     )
   }
 
@@ -1066,10 +1080,11 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
-      this.gradientLimits,
+      this.gradientSettings,
       this.lineSettings,
       this.signallingSettings,
       this.signalDisplaySettings,
+      this.projectOrigin,
     )
     if (!saved) this.autosaveFailedSize = size
     if (saved === this.autosaveFailed) {
@@ -1089,6 +1104,8 @@ export class EditorStore {
     this.restoreTrains([])
     this.restoreSignallingSettings({})
     this.restoreSignalDisplay({})
+    this.flatLevels = false
+    this.osmSource = null
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.tool = 'pan'
@@ -2082,9 +2099,31 @@ export class EditorStore {
     return true
   }
 
-  /** What slopes are measured against (see `analyzeKinematics`): the two slope settings of the project */
+  /**
+   * What slopes are measured against (see `analyzeKinematics`), for the diagnostics, the drawing,
+   * the panels and the driving physics alike. With levels without relief a level has no height:
+   * every slope is zero, so nothing is reported, marked or felt by a train.
+   */
   get gradientLimits(): GradientLimits {
+    return { levelHeight: this.flatLevels ? 0 : this.levelHeight, maxGradient: this.maxGradient }
+  }
+
+  /** The slope settings as the project stores them, whether the levels have relief or not */
+  private get gradientSettings(): GradientLimits {
     return { levelHeight: this.levelHeight, maxGradient: this.maxGradient }
+  }
+
+  /** What an import leaves in the project, saved with it */
+  private get projectOrigin(): ProjectOrigin {
+    return { flatLevels: this.flatLevels, osmSource: this.osmSource }
+  }
+
+  /** Levels with or without relief. One undo step when it changed. */
+  setFlatLevels = (value: boolean): void => {
+    if (value === this.flatLevels) return
+    this.flatLevels = value
+    this.markDirty()
+    this.notify()
   }
 
   /**
@@ -2107,10 +2146,11 @@ export class EditorStore {
   }
 
   /** Slope settings read from a project; one saved without them gets those of its scale */
-  private restoreGradientSettings(saved: { levelHeight?: number; maxGradient?: number }): void {
+  private restoreGradientSettings(saved: { levelHeight?: number; maxGradient?: number; flatLevels?: boolean }): void {
     const preset = SCALE_PRESETS[this.scalePreset] ?? SCALE_PRESETS['1:1']
     this.levelHeight = saved.levelHeight ?? preset.defaultLevelHeight
     this.maxGradient = saved.maxGradient ?? preset.defaultMaxGradient
+    this.flatLevels = saved.flatLevels ?? false
   }
 
   /** Line settings read from a project; one saved without them is on the default line */
@@ -3116,7 +3156,7 @@ export class EditorStore {
 
   /** What the track gives the driving physics beyond its plan geometry */
   get drivingEnvironment(): DrivingEnvironment {
-    const env: DrivingEnvironment = { levelHeight: this.levelHeight, line: this.lineSettings }
+    const env: DrivingEnvironment = { levelHeight: this.gradientLimits.levelHeight, line: this.lineSettings }
     // The pro level weighs on the speed limit of a train; the standard level changes nothing
     if (this.signallingLevel === 'pro') {
       env.signalling = { level: 'pro', speedCapOf: (train) => signalSpeedCap(this.signalling, train.id, 'pro') }

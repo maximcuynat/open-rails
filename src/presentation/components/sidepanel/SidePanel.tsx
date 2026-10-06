@@ -587,10 +587,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   }
 
   const isDeadEnd = adj.length === 1
-  const kinematicIssues = networkDerived(store.network, store.sectionMeta).kinematicIssues(store.gauge, {
-    levelHeight: store.levelHeight,
-    maxGradient: store.maxGradient,
-  }).filter((i) => i.nodeId === nodeId)
+  const kinematicIssues = networkDerived(store.network, store.sectionMeta).kinematicIssues(store.gauge, store.gradientLimits).filter((i) => i.nodeId === nodeId)
 
   return (
     <>
@@ -884,11 +881,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
   }
 
   // Null for a flat rail: nothing more than its level is shown
-  const ramp = rampSummary(store.network, seg, {
-    levelHeight: store.levelHeight,
-    maxGradient: store.maxGradient,
-    unit: store.unit,
-  })
+  const ramp = rampSummary(store.network, seg, { ...store.gradientLimits, unit: store.unit })
 
   const selectNode = (id: string) => {
     store.setSelection({ nodes: new Set([id]), segments: new Set() })
@@ -966,8 +959,8 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
           <>
             <Field label="Niveau de départ" value={ramp.from} />
             <Field label="Niveau d’arrivée" value={ramp.to} />
-            <Field label="Dénivelé" value={ramp.rise} />
-            <Field
+            {ramp.rise !== null && <Field label="Dénivelé" value={ramp.rise} />}
+            {ramp.gradient !== null && <Field
               label="Pente"
               value={
                 <span
@@ -977,7 +970,7 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
                   {ramp.gradient}
                 </span>
               }
-            />
+            />}
           </>
         )}
         {seg.kind === 'curve' && seg.via && (

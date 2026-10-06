@@ -238,12 +238,12 @@ export function LimitBoard({ view }: { view: ConsoleView }) {
   return <span className="console-limit" title="Limite de vitesse en cours, km/h">{view.limit.label}</span>
 }
 
-/** The next lower limit as its announcement board, black on white, and the distance to it */
+/** The limit ahead the train has to brake for first, as its announcement board, black on white, and the distance to it */
 export function NextLimitBoard({ view }: { view: ConsoleView }) {
   if (!view.nextLimit) return <>—</>
   return (
     <>
-      <span className="console-limit is-next" title="Prochaine limite plus basse, km/h">{view.nextLimit.label}</span>
+      <span className="console-limit is-next" title="Limite à anticiper : celle qui fait freiner en premier, km/h">{view.nextLimit.label}</span>
       <span className="console-limit-distance" title="Distance jusqu’à cette limite">{view.nextLimit.distance}</span>
     </>
   )
@@ -263,7 +263,7 @@ export function LimitCorners({ view }: { view: ConsoleView }) {
         </div>
       )}
       {view.nextLimit && (
-        <div className="console-corner-limit is-next" title="Prochaine limite plus basse et distance jusqu’à elle">
+        <div className="console-corner-limit is-next" title="Limite à anticiper : celle qui fait freiner en premier, et distance jusqu’à elle">
           <small>{view.nextLimit.distance}</small>
           <span className="console-limit is-next">{view.nextLimit.label}</span>
         </div>

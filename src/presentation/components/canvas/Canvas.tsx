@@ -363,7 +363,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const networkOptions: RenderNetworkOptions = {
       tool: store.tool,
       gauge: store.gauge,
-      gradient: { levelHeight: store.levelHeight, maxGradient: store.maxGradient },
+      gradient: store.gradientLimits,
       // Cant and slopes marked on the track: part of it, so they stay while driving — but for the plain view
       inclination: store.showInclination && !plainView ? { line: store.lineSettings } : undefined,
       // Driving: clean view, only the track (turnout positions included) and the trains

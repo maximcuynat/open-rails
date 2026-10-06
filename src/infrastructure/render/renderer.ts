@@ -21,18 +21,23 @@ import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGrad
 import { trackProfile } from '@domain/models/trackSpeed'
 import { gaugeOnScreen, nodeMarkerShown, trackLod } from './lod'
 import {
+  BADGE_CROWD_LIMIT,
+  BADGE_CROWD_REACH_X_PX,
+  BADGE_CROWD_REACH_Y_PX,
   BADGE_FULL_FROM_PX,
   DIAGNOSTIC_CLUSTER_RADIUS_PX,
   DIAGNOSTIC_LABEL_FROM_PX,
   clusterMarkers,
   diagnosticsClustered,
   placeBadges,
+  plainJointScale,
   sectionArrowSegments,
   sectionBadgeMinLength,
   sectionBadgeWanted,
   type BadgeBox,
   type MarkerSeverity,
 } from './lodOverlays'
+import { LabelSpace, crowdedPoints, type ScreenBox } from './labelSpace'
 import { textWidth } from './textWidth'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
@@ -844,7 +849,7 @@ export function renderNetwork(
     if (!showsTrackObjects) return
     const alpha = level < 0 ? TUNNEL_ALPHA : 1
     // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
-    if (!options?.hideSpeedZoneBands) renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod)
+    if (!options?.hideSpeedZoneBands) renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod, derived)
     // Blocks and track held for the trains: stripes beside the rails of this level
     renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, alpha, options?.signals)
   }
@@ -910,6 +915,8 @@ export function renderNetwork(
       // The two rails of every track in a handful of strokes, then the stripe of the sections
       const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
       for (const group of levelGroups) {
+        // The two rails can be told apart: so can a bridge, which gets its deck as in the detailed drawing
+        renderBridgeDecks(ctx, cam, vw, vh, net, group.pieces, group.level, GAUGE)
         drawTrackUnderlays(group.pieces, group.level)
         drawCantMarks(group.pieces, group.level)
         renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true)
@@ -924,6 +931,74 @@ export function renderNetwork(
 
   // Pixels between the two rails: what the thresholds of the overlays are measured against
   const gaugePx = gaugeOnScreen(cam.scale, GAUGE)
+
+  // What is written over the tracks shares the room of the screen (`LabelSpace`): the markers that
+  // are always drawn take theirs first — diagnostics, signals —, then the labels ask for it, most
+  // important first: labels of the diagnostics and of the report, speed boards, section badges,
+  // slopes. A label that would cover something is left for a closer look; its marker stays.
+  const space = new LabelSpace()
+
+  // KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents):
+  // one marker per issue, with its label when there is room for it. Once the rails are no longer
+  // drawn in detail, the markers that would pile up are merged into one that shows how many it
+  // stands for. Placed here, drawn last (8), over the nodes they stand on.
+  const diagnosticMarkers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string; labelBox?: ScreenBox }[] = []
+  const diagnosticRadius = Math.max(8, Math.min(13, 1.6 * cam.scale))
+  if (!hideConstructionNodes) {
+    const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
+    for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
+      if (options?.quietNodeIds?.has(issue.nodeId)) continue
+      const node = net.nodes.get(issue.nodeId)
+      if (!node || !isPointInBounds(node.pos, bounds)) continue
+      markers.push({
+        x: (node.pos.x - cam.x) * cam.scale + vw / 2,
+        y: (node.pos.y - cam.y) * cam.scale + vh / 2,
+        severity: issue.severity,
+        mark: '!',
+        label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
+      })
+    }
+    const merged = !diagnosticsClustered(lod)
+      ? markers
+      : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
+        ...c, mark: c.count > 1 ? String(c.count) : '!',
+      }))
+    // Every diamond first, then the labels: a label never covers a diamond
+    for (const marker of merged) {
+      const r = diagnosticRadius
+      space.reserve({ x: marker.x - r, y: marker.y - r, w: 2 * r, h: 2 * r })
+    }
+    if (merged.some((marker) => marker.label !== undefined)) {
+      ctx.save()
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      for (const marker of merged) {
+        if (marker.label === undefined) {
+          diagnosticMarkers.push(marker)
+          continue
+        }
+        const tw = textWidth(ctx, marker.label)
+        const labelBox = { x: marker.x - tw / 2 - 5, y: marker.y - diagnosticRadius - 17, w: tw + 10, h: 15 }
+        diagnosticMarkers.push({ ...marker, labelBox: space.claim(labelBox) ? labelBox : undefined })
+      }
+      ctx.restore()
+    } else {
+      diagnosticMarkers.push(...merged)
+    }
+  }
+
+  // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
+  // with the bands at far zoom.
+  if (showsTrackObjects) {
+    // Signals stand beside the track, above the rails; hidden with the boards at far zoom. They
+    // come first: a signal is always drawn, a board gives way to it.
+    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, { ...options.signals, space })
+    renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
+      highlight: options?.speedZones,
+      gauge: GAUGE,
+      showOverlaps: !hideConstructionNodes,
+      space,
+    })
+  }
 
   /** Screen rectangles the slope labels must keep clear of: section badges, then diagnostic markers */
   const takenBoxes: BadgeBox[] = []
@@ -994,7 +1069,19 @@ export function renderNetwork(
     }
     ctx.restore()
 
-    const placedBadges = placeBadges(badges)
+    // A badge the user did not ask for — neither picked nor named by him — is left out in a crowd
+    // of them: on a yard the tracks are read first, and a closer look spreads the badges apart.
+    // The others never cover one another, nor what is already written on the frame.
+    const inCrowd = crowdedPoints(badges.map((b) => ({ x: b.cx, y: b.cy })), BADGE_CROWD_REACH_X_PX, BADGE_CROWD_REACH_Y_PX, BADGE_CROWD_LIMIT)
+    const wanted = badges.filter((b, i) => b.selected || b.renamed || !inCrowd[i])
+    const noOverlap = placeBadges(wanted)
+    for (const b of noOverlap) if (b.selected) space.reserve(b)
+    const fits = new Set(
+      noOverlap.filter((b) => !b.selected)
+        .sort((p, q) => Number(q.renamed) - Number(p.renamed) || q.length - p.length)
+        .filter((b) => space.claim(b)),
+    )
+    const placedBadges = noOverlap.filter((b) => b.selected || fits.has(b))
     for (const badge of placedBadges) {
       const { sec, text, cx: sx, cy: badgeY, w: bgW, h: bgH, selected: isSecSelected } = badge
       ctx.save()
@@ -1023,17 +1110,6 @@ export function renderNetwork(
     for (const b of placedBadges) takenBoxes.push({ x: b.x, y: b.y, w: b.w, h: b.h, selected: true, renamed: false, length: b.length })
   }
 
-  // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
-  // with the bands at far zoom.
-  if (showsTrackObjects) {
-    renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
-      highlight: options?.speedZones,
-      gauge: GAUGE,
-      showOverlaps: !hideConstructionNodes,
-    })
-    // Signals stand beside the track, above the rails; hidden with the boards at far zoom
-    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, options.signals)
-  }
 
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
   // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
@@ -1062,6 +1138,8 @@ export function renderNetwork(
       if (!selected && connectionCount !== 0 && connectionCount !== 1 && connectionCount !== 4) plain.push(sx, sy)
       else shown.push({ sx, sy, selected, connectionCount })
     }
+    // Fewer pixels each when the view holds a great many of them (a yard): the tracks come first
+    const jointSize = plainJointScale(plain.length / 2)
     if (plain.length > 0) {
       // Intermediate joint or junction: neat white dot
       const discs = (radius: number): void => {
@@ -1073,9 +1151,9 @@ export function renderNetwork(
         ctx.fill()
       }
       ctx.fillStyle = '#334155'
-      discs(4)
+      discs(4 * jointSize)
       ctx.fillStyle = '#ffffff'
-      discs(2.5)
+      discs(2.5 * jointSize)
     }
     for (const { sx, sy, selected, connectionCount } of shown) {
 
@@ -1118,7 +1196,7 @@ export function renderNetwork(
         ctx.restore()
       } else if (connectionCount === 4) {
         // Diamond crossing intersection node (zone de cisaillement / conflit logique)
-        const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale))
+        const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale)) * jointSize
         ctx.save()
         ctx.fillStyle = '#0f172a'
         ctx.strokeStyle = '#38bdf8'
@@ -1264,85 +1342,61 @@ export function renderNetwork(
     }
   }
 
-  // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
-  if (!hideConstructionNodes) {
-    // One marker per issue, with its label when there is room for it. Once the rails are no
-    // longer drawn in detail, the markers that would pile up are merged into one that shows how
-    // many it stands for.
-    const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
-    for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
-      if (options?.quietNodeIds?.has(issue.nodeId)) continue
-      const node = net.nodes.get(issue.nodeId)
-      if (!node || !isPointInBounds(node.pos, bounds)) continue
-      markers.push({
-        x: (node.pos.x - cam.x) * cam.scale + vw / 2,
-        y: (node.pos.y - cam.y) * cam.scale + vh / 2,
-        severity: issue.severity,
-        mark: '!',
-        label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
-      })
-    }
-    const drawn = !diagnosticsClustered(lod)
-      ? markers
-      : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
-        ...c, mark: c.count > 1 ? String(c.count) : '!',
-      }))
-    for (const marker of drawn) {
-      const { x: sx, y: sy, label } = marker
+  // 8. KINEMATIC DIAGNOSTICS: the markers placed above, drawn over the nodes
+  for (const marker of diagnosticMarkers) {
+    const { x: sx, y: sy, label, labelBox } = marker
 
-      ctx.save()
-      const isErr = marker.severity === 'error'
-      const badgeColor = isErr ? '#ef4444' : '#f59e0b'
-      const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
-      // The diamond with its halo
-      takenBoxes.push({ x: sx - signR - 4, y: sy - signR - 4, w: 2 * (signR + 4), h: 2 * (signR + 4), selected: true, renamed: false, length: 0 })
+    ctx.save()
+    const isErr = marker.severity === 'error'
+    const badgeColor = isErr ? '#ef4444' : '#f59e0b'
+    const signR = diagnosticRadius
+    // The diamond with its halo
+    takenBoxes.push({ x: sx - signR - 4, y: sy - signR - 4, w: 2 * (signR + 4), h: 2 * (signR + 4), selected: true, renamed: false, length: 0 })
 
-      // Pulse halo
-      ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
-      ctx.beginPath()
-      ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
-      ctx.fill()
+    // Pulse halo
+    ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
+    ctx.beginPath()
+    ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
+    ctx.fill()
 
-      // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+    // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+    ctx.fillStyle = badgeColor
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(sx, sy - signR)
+    ctx.lineTo(sx + signR, sy)
+    ctx.lineTo(sx, sy + signR)
+    ctx.lineTo(sx - signR, sy)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+
+    // Exclamation point or angle
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '900 11px Archivo, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(marker.mark, sx, sy)
+
+    // Label badge above if zoom is reasonable and nothing stands there
+    if (label !== undefined && labelBox) {
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      const ty = sy - signR - 10
+      takenBoxes.push({ ...labelBox, selected: true, renamed: false, length: 0 })
+
       ctx.fillStyle = badgeColor
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.5
       ctx.beginPath()
-      ctx.moveTo(sx, sy - signR)
-      ctx.lineTo(sx + signR, sy)
-      ctx.lineTo(sx, sy + signR)
-      ctx.lineTo(sx - signR, sy)
-      ctx.closePath()
+      ctx.roundRect(labelBox.x, labelBox.y, labelBox.w, labelBox.h, 3)
       ctx.fill()
-      ctx.stroke()
 
-      // Exclamation point or angle
       ctx.fillStyle = '#ffffff'
-      ctx.font = '900 11px Archivo, system-ui, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(marker.mark, sx, sy)
-
-      // Label badge above if zoom is reasonable
-      if (label !== undefined) {
-        ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const tw = textWidth(ctx, label)
-        const ty = sy - signR - 10
-        takenBoxes.push({ x: sx - tw / 2 - 5, y: ty - 7, w: tw + 10, h: 15, selected: true, renamed: false, length: 0 })
-
-        ctx.fillStyle = badgeColor
-        ctx.beginPath()
-        ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
-        ctx.fill()
-
-        ctx.fillStyle = '#ffffff'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(label, sx, ty)
-      }
-
-      ctx.restore()
+      ctx.fillText(label, sx, ty)
     }
+
+    ctx.restore()
   }
 
   // 9. SLOPE of each ramp (« 35 ‰ »), in the detailed and the line drawing. A label gives way to
@@ -1355,7 +1409,7 @@ export function renderNetwork(
     ctx.restore()
     if (labels.length > 0) {
       const kept = new Set<BadgeBox>(placeBadges<BadgeBox>([...takenBoxes, ...labels]))
-      drawGradientLabels(ctx, labels.filter((label) => kept.has(label)), gradientColors)
+      drawGradientLabels(ctx, labels.filter((label) => kept.has(label) && space.claim(label)), gradientColors)
     }
   }
 }

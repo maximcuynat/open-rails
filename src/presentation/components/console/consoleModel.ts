@@ -228,7 +228,7 @@ export interface LimitMark {
   label: string
 }
 
-/** The next lower limit: where it is on the dial and how far ahead it starts */
+/** The limit ahead to brake for first: where it is on the dial and how far ahead it starts */
 export interface NextLimitMark extends LimitMark {
   /** « 850 m », « 1,2 km » */
   distance: string
