@@ -396,14 +396,10 @@ describe('what each example is about', () => {
 })
 
 /**
- * « Voie unique avec évitement » is generated (`tools/examples/voie-unique-evitement.ts`) but held
- * back from the menu: driven the way a player drives, its two trains lock each other at the loop.
- * The network and its signals are right; the signalling opens a path signal whose route ends on
- * points set against its train, and gives that train the points (the bug is shown on its own in
- * `src/domain/models/signalling.pointsAgainst.test.ts`). Once that is fixed, the expected failure
- * below turns red: make it a plain test and add the example to `EXAMPLES`.
+ * « Voie unique avec évitement »: the crossing at the loop, driven the way a player drives it. The
+ * train that arrives first is left waiting at its exit signal, reverser forward; nobody is parked.
  */
-describe('Voie unique avec évitement (held back from the menu)', () => {
+describe('Voie unique avec évitement: the two trains cross at the loop', () => {
   const ID = 'voie-unique-evitement'
   const LOOP_Y = 4.5
 
@@ -412,42 +408,8 @@ describe('Voie unique avec évitement (held back from the menu)', () => {
     resetIdCounter()
   })
 
-  /** The first train is driven from the west onto the main track of the loop, up to its closed exit signal */
-  function firstTrainIn(): EditorStore {
-    const store = takeControls(ID)
-    const [first] = store.trains
-    const log = drive(store, () => headOf(store, first).x > 0 && first.currentSpeed === 0, 300)
-    expect(log.faults).toEqual([])
-    // Stopped on the main track before its exit signal, which the train waiting in the east keeps closed
-    expect(headOf(store, first).x).toBeGreaterThan(300)
-    expect(headOf(store, first).x).toBeLessThan(400)
-    expect(stateOf(store, signalAt(store, 400, 0))).toBe('stop')
-    return store
-  }
-
-  /** The second train is taken, the points of the east end are thrown for the loop track and it is driven in */
-  function secondTrainIn(store: EditorStore): void {
-    const second = store.trains[1]
-    store.selectTrainById(second.id)
-    store.setSelectedTrainReverser('forward')
-    expect(steerPointsTo(store, pointsAt(store, 500, 0).id, 1)).toBe(true)
-    // It stops 30 m short of the exit signal at the west end of the loop track
-    const log = drive(store, () => headOf(store, second).x < 0 && second.currentSpeed === 0, 300, () => headOf(store, second).x + 370)
-    expect(log.faults).toEqual([])
-    expect(headOf(store, second).x).toBeLessThan(-300)
-    expect(headOf(store, second).y).toBeCloseTo(LOOP_Y, 6)
-  }
-
-  it('is not offered in the menu', () => {
-    expect(EXAMPLES.some((example) => example.id === ID)).toBe(false)
-  })
-
-  it('is a sound network, signalled the French way, with a train on each side', () => {
-    const data = readExample(ID)
+  it('is signalled the French way, with a train on each side', () => {
     const store = openExample(ID)
-    expect(JSON.parse(JSON.stringify(store.exportProject()))).toEqual(data)
-    expect(analyzeKinematics(store.network, store.gauge, store.gradientLimits)).toEqual([])
-    expect(signalReport(store.network, { level: store.signallingLevel, line: store.lineSettings })).toEqual([])
     // An entry signal before each set of points, an exit signal at each end of each loop track, all path signals
     expect([...store.network.signals.values()].map((signal) => signal.role)).toEqual(Array(6).fill('protection'))
     for (const [x, y] of [[-510, 0], [510, 0], [400, 0], [-400, 0], [400, LOOP_Y], [-400, LOOP_Y]]) signalAt(store, x, y)
@@ -456,33 +418,96 @@ describe('Voie unique avec évitement (held back from the menu)', () => {
     expect(headOf(store, store.trains[1]).x).toBeGreaterThan(1000)
   })
 
-  it('lets the two trains cross at the loop when each one is parked, reverser on neutral, before the other moves', () => {
-    const store = firstTrainIn()
-    const [first, second] = store.trains
-    store.setSelectedTrainReverser('neutral')
-    secondTrainIn(store)
-    store.setSelectedTrainReverser('neutral')
+  /** How the player throws points: a click on them, or the steering keys of the driven train */
+  const THROWS = {
+    'a click on the points': (store: EditorStore, points: Junction, position: number): boolean =>
+      points.active === position || (store.toggleActiveJunction(points.id) && points.active === position),
+    'the steering keys': (store: EditorStore, points: Junction, position: number): boolean => steerPointsTo(store, points.id, position),
+  }
 
-    // The first train has its points put back and leaves to the east, past the second one
-    store.selectTrainById(first.id)
-    store.setSelectedTrainReverser('forward')
-    expect(steerPointsTo(store, pointsAt(store, 500, 0).id, 0)).toBe(true)
-    const out = drive(store, () => headOf(store, first).x > 1500 && first.currentSpeed === 0, 300, () => 1800 - headOf(store, first).x)
-    expect(out.faults).toEqual([])
-    // Then the second one, to the west
-    store.selectTrainById(second.id)
-    store.setSelectedTrainReverser('forward')
-    expect(steerPointsTo(store, pointsAt(store, -500, 0).id, 1)).toBe(true)
-    expect(drive(store, () => headOf(store, second).x < -1500, 300).faults).toEqual([])
+  for (const order of ['as listed', 'reversed'] as const) {
+    for (const [how, throwPoints] of Object.entries(THROWS)) {
+      it(`trains ${order} in the list, points thrown with ${how}`, () => {
+        const store = openExample(ID)
+        const [first, second] = store.trains
+        if (order === 'reversed') store.trains = [second, first]
+        store.togglePlayMode()
+        const eastPoints = pointsAt(store, 500, 0)
+        const westPoints = pointsAt(store, -500, 0)
+        const exitOfFirst = signalAt(store, 400, 0)
+        const entryOfSecond = signalAt(store, 510, 0)
+        const exitOfSecond = signalAt(store, -400, LOOP_Y)
 
-    expect(headOf(store, first).x).toBeGreaterThan(1500)
-    expect(headOf(store, second).x).toBeLessThan(-1500)
-  })
+        // 1. The first train runs in from the west on the main track and stops at its exit signal,
+        // closed: the second train stands on the single track beyond
+        store.selectTrainById(first.id)
+        const arrival = drive(store, () => headOf(store, first).x > 0 && first.currentSpeed === 0, 300)
+        expect(arrival.faults).toEqual([])
+        expect(headOf(store, first).x).toBeGreaterThan(300)
+        expect(headOf(store, first).x).toBeLessThan(400)
+        expect(stateOf(store, exitOfFirst)).toBe('stop')
+        // It is left as it is: stopped, reverser forward
+        expect(first.reverser).toBe('forward')
 
-  it.fails('lets the two trains cross at the loop as a player drives them, the first one left waiting at its signal', () => {
-    const store = firstTrainIn()
-    // The first train waits with its reverser forward, as a driver leaves it at a closed signal.
-    // The second one never gets its route into the loop: the first has taken the points
-    secondTrainIn(store)
+        // 2. The second train is taken and the east points are thrown for the loop track: they are
+        // against the first train, which neither gets its signal nor takes them
+        store.selectTrainById(second.id)
+        store.setSelectedTrainReverser('forward')
+        store.tickAllTrains(0.1)
+        expect(stateOf(store, entryOfSecond)).toBe('stop')
+        expect(throwPoints(store, eastPoints, 1)).toBe(true)
+        store.tickAllTrains(0.1)
+        expect(stateOf(store, exitOfFirst)).toBe('stop')
+        expect(nodeReservedBy(store.signalling, eastPoints.nodeId)).not.toBe(first.id)
+
+        // It gets its route into the loop on the way, and stops 30 m short of its own exit signal
+        let entryGiven = false
+        let exitOfFirstOpened = false
+        const entering = drive(
+          store,
+          () => {
+            if (signalStatus(store.signalling, entryOfSecond).clearedFor === second.id) entryGiven = true
+            if (stateOf(store, exitOfFirst) !== 'stop') exitOfFirstOpened = true
+            return headOf(store, second).x < 0 && second.currentSpeed === 0
+          },
+          300,
+          () => headOf(store, second).x + 370,
+        )
+        expect(entering.faults).toEqual([])
+        expect(entryGiven).toBe(true)
+        expect(exitOfFirstOpened).toBe(false)
+        expect(headOf(store, second).x).toBeLessThan(-300)
+        expect(headOf(store, second).y).toBeCloseTo(LOOP_Y, 6)
+        // Its own exit is closed: the west points are set for the main track, against it, and free
+        expect(stateOf(store, exitOfSecond)).toBe('stop')
+        expect(nodeReservedBy(store.signalling, westPoints.nodeId)).toBeNull()
+
+        // 3. The first train has the east points put back and leaves, past the second one; it is
+        // stopped again further on (a train left to itself keeps its handle where it was)
+        store.selectTrainById(first.id)
+        expect(throwPoints(store, eastPoints, 0)).toBe(true)
+        const leavingEast = drive(store, () => headOf(store, first).x > 1500 && first.currentSpeed === 0, 300, () => 1800 - headOf(store, first).x)
+        expect(leavingEast.faults).toEqual([])
+
+        // 4. Then the second one, to the west
+        store.selectTrainById(second.id)
+        expect(throwPoints(store, westPoints, 1)).toBe(true)
+        const leavingWest = drive(store, () => headOf(store, second).x < -1500, 300)
+        expect(leavingWest.faults).toEqual([])
+
+        expect(headOf(store, first).x).toBeGreaterThan(1500)
+        expect(headOf(store, second).x).toBeLessThan(-1500)
+      })
+    }
+  }
+
+  it('a train that runs on past its exit signal while the points are against it is caught at the signal', () => {
+    const store = takeControls(ID)
+    const [first] = store.trains
+    pointsAt(store, 500, 0).active = 1
+    const log = driveFlatOut(store, () => first.emergencyBrake || headOf(store, first).x > 480, 300)
+    // The exit signal is closed, not at caution towards the points: passing it is the fault
+    expect(log.faults).toContain(`${first.id}: passed a closed signal`)
+    expect(first.signalPassed?.signalId).toBe(signalAt(store, 400, 0).id)
   })
 })

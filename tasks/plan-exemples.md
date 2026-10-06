@@ -25,19 +25,21 @@
 
 - [x] `tools/examples/` : un générateur par exemple (`builder.ts` porte les gestes de l'éditeur : voie, arc,
   aiguillage parallèle, bretelle, signal, zone de vitesse, rame complète), projet écrit par `store.exportProject()`
-- [x] Six exemples au menu, du plus simple au plus chargé : Premiers tours de roue, Rampe et courbe,
-  Saut-de-mouton, Bifurcation, Terminus, Gare de passage (type Aix-en-Provence TGV) ; Marseille en dernier
+- [x] Sept exemples au menu, du plus simple au plus chargé : Premiers tours de roue, Rampe et courbe,
+  Saut-de-mouton, Bifurcation, Terminus, Voie unique avec évitement, Gare de passage (type Aix-en-Provence TGV) ;
+  Marseille en dernier
 - [x] Une rame à quai dans Marseille Saint-Charles (`marseille-train.ts` n'ajoute que la clé `trains` au fichier)
 - [x] Un exemple qui porte une caméra s'ouvre dessus (sa rame, à 4 px/m) ; les autres sont cadrés en entier
 - [x] Tests `src/examples/examples.test.ts` + `driving.testkit.ts` : relecture sans perte, aucun défaut
   cinématique, contrôle de la signalisation vide, rame complète sur la voie, conduite simulée par les appels
   du clavier, et ce que chaque exemple montre
-- [ ] « Voie unique avec évitement » : généré (`src/examples/voie-unique-evitement.json`) mais **pas au menu**.
-  Un carré dont l'itinéraire bute sur une aiguille tournée contre son train s'ouvre quand même et prend
-  l'aiguille : le train qui attend à la sortie de l'évitement verrouille l'aiguille tournée pour celui qui
-  entre, et les deux se bloquent. Tests en échec attendu (`it.fails`) dans
-  `src/domain/models/signalling.pointsAgainst.test.ts` et `examples.test.ts` ; une fois corrigé, ajouter
-  l'exemple à `EXAMPLES`.
+- [x] « Voie unique avec évitement » : au menu, entre Terminus et Gare de passage (2026-10-06). Le défaut qui le
+  retenait est corrigé dans le domaine : un itinéraire qui bute sur une aiguille tournée contre son train n'est
+  plus un itinéraire « vers une fin de voie » (`SignalRoute.blockedAt`). Son signal reste fermé — carré comme
+  sémaphore, cause `points-against` pour ce dernier —, l'itinéraire déjà donné est repris si l'aiguille est
+  tournée ensuite, et le train tient la voie jusqu'à l'aiguille sans tenir l'aiguille. Les deux rames se
+  croisent dans les deux ordres de la liste, aiguilles tournées au clic ou aux flèches, sans mise au neutre
+  (`examples.test.ts`) ; cas voisins dans `src/domain/models/signalling.pointsAgainst.test.ts`.
 
 Régénérer : `npx vite-node tools/examples/generate.ts` (tous), ou `npx vite-node tools/examples/generate.ts terminus` (un seul).
 

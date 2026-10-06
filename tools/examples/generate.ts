@@ -20,7 +20,6 @@ const GENERATORS: Record<string, () => SerializedProject> = {
   'premiers-tours-de-roue': premiersToursDeRoue,
   'gare-de-passage': gareDePassage,
   bifurcation,
-  // Written, but held back from the menu until the signalling lets its two trains cross (see `examples.test.ts`)
   'voie-unique-evitement': voieUniqueEvitement,
   'saut-de-mouton': sautDeMouton,
   'rampe-et-courbe': rampeEtCourbe,
