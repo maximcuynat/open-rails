@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { holdNetwork, networkChanged, releaseNetwork } from '@domain/models/networkWatch'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
@@ -1026,6 +1027,10 @@ export class EditorStore {
 
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
+    // Whatever was kept of the network while driving on it is checked again (see `networkWatch`)
+    networkChanged()
+    if (!this.isPlayMode) releaseNetwork(this.network)
+    this.drivenDynamics = null
     autoDetectJunctions(this.network)
     // The domain moves the zones itself when a rail is replaced; this only drops what would be
     // left on a rail taken out of the graph by other means
@@ -1044,6 +1049,45 @@ export class EditorStore {
    */
   notifyView = (): void => {
     this.listeners.forEach((l) => l())
+  }
+
+  /** When the panels were last rendered again from the simulation loop, ms */
+  private lastFrameRender = 0
+
+  /**
+   * Tell the subscribers that the trains moved, from the simulation loop. The canvas draws every
+   * frame a train moved (`moved`); the panels (driving console, toolbar) are only rendered again every
+   * `DRIVING_PANEL_PERIOD_MS`, which is as fast as their figures can be read. The network is not
+   * checked: a train that runs does not change it, and whatever does — points thrown, a command of
+   * the driver — calls `notify` itself.
+   */
+  notifyFrame = (moved = true): void => {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const panels = now - this.lastFrameRender >= DRIVING_PANEL_PERIOD_MS || now < this.lastFrameRender
+    if (panels) {
+      this.lastFrameRender = now
+      this.version++
+    }
+    // Every train at a stand: the picture is the one already on screen. It is drawn again with the
+    // panels only, for what still changes without a train moving (a signal clearing, a gauge).
+    if (moved || panels) this.listeners.forEach((l) => l())
+  }
+
+  /**
+   * Driving view kept to what a driver reads — rails, points, route, signals, speed boards, trains:
+   * the grid, the stripes of the sections, the bands of the speed zones, the marks of cant and
+   * slope and the scale bar are left out while driving. Ticked by default.
+   */
+  minimalDrivingView = true
+
+  /** True while the canvas draws the plain driving view */
+  get isPlainDrivingView(): boolean {
+    return this.isPlayMode && this.minimalDrivingView
+  }
+
+  toggleMinimalDrivingView = (): void => {
+    this.minimalDrivingView = !this.minimalDrivingView
+    this.notify()
   }
 
   setTool = (t: Tool): void => {
@@ -3050,8 +3094,15 @@ export class EditorStore {
   /** Forces, pressures and stopping distance of the selected train, as the physics sees them now */
   get selectedTrainDynamics(): TrainDynamics | null {
     const train = this.selectedTrain
-    return train ? trainDynamics(this.network, train, this.drivingEnvironment) : null
+    if (!train) return null
+    // The simulation step has just worked them out for this very state of the train: the stopping
+    // distance alone is a whole braking run integrated, not to be done twice per frame
+    if (this.drivenDynamics?.train === train) return this.drivenDynamics.dynamics
+    return trainDynamics(this.network, train, this.drivingEnvironment)
   }
+
+  /** Dynamics of the driven train as of the last simulation step; dropped by any notification */
+  private drivenDynamics: { train: TrainSet; dynamics: TrainDynamics } | null = null
 
   /** Put the selected train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
   setSelectedTrainNotch = (notch: number): void => {
@@ -3775,6 +3826,9 @@ export class EditorStore {
    */
   tickAllTrains = (dt: number): void => {
     if (!this.isPlayMode || dt <= 0) return
+    // Driven on, not edited: the network is compared once, then trusted between two notifications
+    holdNetwork(this.network)
+    this.drivenDynamics = null
     const occupancy: TrainOccupancyCache = new Map()
     const env = this.drivingEnvironment
     for (const train of this.trains) {
@@ -3822,9 +3876,15 @@ export class EditorStore {
         }
       }
     }
-    this.notify()
+    // Kept for the console, which shows the same figures: worked out now if the step did not need them
+    const driven = this.selectedTrain
+    this.drivenDynamics = driven ? { train: driven, dynamics: dynamicsOfDriven(driven) } : null
+    this.notifyFrame(this.trains.some((train) => train.currentSpeed !== 0))
   }
 }
+
+/** While trains run, the panels are rendered again at most this often, ms (the phone desk is sent its state at the same pace) */
+export const DRIVING_PANEL_PERIOD_MS = 100
 
 /** Hook: subscribe a React component to store version changes. */
 export function useEditorVersion(store: EditorStore): number {

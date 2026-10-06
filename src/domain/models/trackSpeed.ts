@@ -10,6 +10,7 @@
  * This module must not import `train.ts` (which imports the physics, which imports this one).
  */
 
+import { networkCheckToken } from './networkWatch'
 import type { Junction, Network, NodeId, Segment, SegmentId, TrackSpan } from './types'
 import type { LineSettings, LineType, UpcomingSpeedLimit } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
@@ -44,6 +45,8 @@ class TrackSnapshot {
   private nums = new Float64Array(0)
   private strs: string[] = []
   revision = 0
+  /** `networkCheckToken` of the last comparison */
+  checkedAt: number | undefined = undefined
 
   update(net: Network): number {
     const wanted = net.nodes.size * 2 + net.segments.size * 3
@@ -99,6 +102,10 @@ export function trackGeometryRevision(net: Network): number {
     snapshot = new TrackSnapshot()
     snapshots.set(net, snapshot)
   }
+  // A network being driven on: compared once, then trusted until it is said to have changed
+  const token = networkCheckToken(net)
+  if (token !== undefined && snapshot.checkedAt === token) return snapshot.revision
+  snapshot.checkedAt = token
   return snapshot.update(net)
 }
 

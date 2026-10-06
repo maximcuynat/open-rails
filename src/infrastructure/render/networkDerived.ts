@@ -1,4 +1,5 @@
 import type { Network, NodeId, SegmentId } from '@domain/models/types'
+import { networkCheckToken } from '@domain/models/networkWatch'
 import { gradientRamps, type GradientRamp, type RampRail } from '@domain/models/network'
 import { bezierPoint } from '@domain/geometry/curve'
 import {
@@ -189,6 +190,8 @@ class NetworkSnapshot {
 
 interface CacheEntry {
   snapshot: NetworkSnapshot
+  /** `networkCheckToken` of the last comparison */
+  checkedAt: number | undefined
   metaKey: string
   derived: NetworkDerived
 }
@@ -272,12 +275,16 @@ export function networkDerived(net: Network, sectionMeta?: Record<string, Sectio
   if (!entry) {
     const snapshot = new NetworkSnapshot()
     snapshot.update(net)
-    entry = { snapshot, metaKey, derived: compute(net, sectionMeta) }
+    entry = { snapshot, checkedAt: networkCheckToken(net), metaKey, derived: compute(net, sectionMeta) }
     cache.set(net, entry)
     return entry.derived
   }
-  // Always updated, even when the metadata alone changed: the snapshot must follow the network
-  const changed = entry.snapshot.update(net)
+  // A network being driven on: compared once, then trusted until it is said to have changed
+  const token = networkCheckToken(net)
+  const trusted = token !== undefined && entry.checkedAt === token
+  entry.checkedAt = token
+  // Otherwise always updated, even when the metadata alone changed: the snapshot must follow the network
+  const changed = !trusted && entry.snapshot.update(net)
   if (changed || entry.metaKey !== metaKey) {
     entry.metaKey = metaKey
     entry.derived = compute(net, sectionMeta)

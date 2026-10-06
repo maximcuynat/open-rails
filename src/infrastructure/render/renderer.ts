@@ -494,6 +494,13 @@ export interface RenderNetworkOptions {
   hideConstructionNodes?: boolean
   hideSectionCenterline?: boolean
   onlyRenamedSectionBadges?: boolean
+  /** No band under the rails of the speed zones; their boards stay (plain driving view) */
+  hideSpeedZoneBands?: boolean
+  /**
+   * Never the detailed drawing of the rails, however close the view: the two rails as plain
+   * strokes, without their head nor their joints (plain driving view)
+   */
+  plainRails?: boolean
   /** No section badge at all, selected section included (driving view) */
   hideSectionBadges?: boolean
   /**
@@ -774,7 +781,8 @@ export function renderNetwork(
   const onlyRenamedSectionBadges = options?.onlyRenamedSectionBadges ?? isPan
 
   // Level of detail of this frame: the rails are drawn with the constant `GAUGE`, so it reads that one
-  const lod = trackLod(cam.scale, GAUGE)
+  const tier = trackLod(cam.scale, GAUGE)
+  const lod = options?.plainRails && tier === 'detail' ? 'rails' : tier
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
@@ -827,7 +835,7 @@ export function renderNetwork(
     if (!showsTrackObjects) return
     const alpha = level < 0 ? TUNNEL_ALPHA : 1
     // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
-    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod)
+    if (!options?.hideSpeedZoneBands) renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod)
     // Blocks and track held for the trains: stripes beside the rails of this level
     renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, alpha, options?.signals)
   }
@@ -4716,13 +4724,16 @@ export function renderTrainSet(
   deleteVehicleId?: string | null,
   band?: LevelBand,
   line?: LineSettings,
+  /** Plain driving view: bodies only, never the bogies nor the gangways, however close the view */
+  plain = false,
 ): void {
   // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
   // beyond the train (stopping distance, vectors), so it is never skipped.
   const bounds = getViewportBounds(cam, vw, vh)
   if (!isDebugSkeleton && !vehiclesInBounds(net, train.vehicles, bounds)) return
   const inView = (points: Point[]): boolean => pointsInBounds(points, bounds)
-  const lod = trackLod(cam.scale, GAUGE)
+  const tier = trackLod(cam.scale, GAUGE)
+  const lod = plain && tier === 'detail' ? 'rails' : tier
 
   // The lean of the bodies only shows close up: further out it is under a pixel, and not asked for
   const visuals = getTrainSetVisuals(net, train, lod === 'detail' ? line : undefined)

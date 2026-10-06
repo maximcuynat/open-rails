@@ -837,6 +837,13 @@ describe('speed zones on the canvas', () => {
     expect(ops.filter(isBoardText)).toHaveLength(2)
   })
 
+  it('plain driving view: the boards stay, the band goes', () => {
+    const { net } = tracksWithZone(0)
+    const ops = draw(net, { hideConstructionNodes: true, hideSectionBadges: true, hideSpeedZoneBands: true })
+    expect(ops.filter(isBandStroke)).toHaveLength(0)
+    expect(ops.filter(isBoardText)).toHaveLength(2)
+  })
+
   it('marks the stretch two zones share with the diagnostic marker, in the construction view only', () => {
     const { net, zone } = tracksWithZone(0)
     const other = addSpeedZoneBetween(net, at(net, 110), at(net, 180), 60)!
