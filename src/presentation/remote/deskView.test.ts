@@ -2,15 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ConsoleState, FleetEntry } from '@application/console/consoleContract'
 import type { RemoteDeskSnapshot } from '@application/remote/remoteDesk'
 import {
-  BAND_DESIGN,
   NEW_SESSION,
-  PORTRAIT_DESIGN,
-  SIGNALS_HEIGHT,
   compositionLabel,
-  deskDesign,
   deskOrientation,
   deskScreen,
-  fitStage,
   fleetSpeedLabel,
   hapticFor,
   idleState,
@@ -170,33 +165,6 @@ describe('deskOrientation', () => {
   })
 })
 
-describe('fitStage', () => {
-  it('scales the band to the width of a phone lying on its side', () => {
-    const fit = fitStage(844, 334, BAND_DESIGN)
-    expect(fit.scale).toBeCloseTo(844 / 984)
-    expect(fit.width).toBeCloseTo(984)
-    expect(fit.height * fit.scale).toBeCloseTo(334)
-  })
-
-  it('scales the portrait desk to the width, or to the height on a short screen', () => {
-    expect(fitStage(390, 700, PORTRAIT_DESIGN).scale).toBeCloseTo(1)
-    expect(fitStage(360, 520, PORTRAIT_DESIGN).scale).toBeCloseTo(360 / 390)
-    const short = fitStage(390, 432, PORTRAIT_DESIGN)
-    expect(short.scale).toBeCloseTo(0.8)
-    // The stage then gets wider than its design: scaled, it still covers the box
-    expect(short.width * short.scale).toBeCloseTo(390)
-  })
-
-  it('never grows past its largest scale', () => {
-    expect(fitStage(1024, 1366, PORTRAIT_DESIGN).scale).toBe(PORTRAIT_DESIGN.maxScale)
-    expect(fitStage(2560, 1200, BAND_DESIGN).scale).toBe(BAND_DESIGN.maxScale)
-  })
-
-  it('survives a box that has no size yet', () => {
-    expect(fitStage(0, 0, PORTRAIT_DESIGN).scale).toBe(1)
-  })
-})
-
 describe('hapticFor', () => {
   it('answers every notch and control with a short tick', () => {
     expect(hapticFor({ type: 'notchSet', notch: 3 })).toBe(12)
@@ -255,28 +223,5 @@ describe('turnoutView', () => {
 
   it('leaves the buttons usable when the PC does not say', () => {
     expect(turnoutView(undefined)).toEqual({ label: 'Aiguillage suivant', side: null, enabled: true })
-  })
-})
-
-describe('deskDesign', () => {
-  it('is the band on its side and the levers upright, as before, on a network without signal', () => {
-    expect(deskDesign('landscape', state())).toBe(BAND_DESIGN)
-    expect(deskDesign('portrait', state())).toBe(PORTRAIT_DESIGN)
-  })
-
-  it('makes room for the signalling block on a network that has signals', () => {
-    const signals = {
-      level: 'standard' as const,
-      next: null,
-      closedDistance: null,
-      brakeAlert: false,
-      waiting: false,
-      onSight: false,
-      onSightSpeed: 30,
-      passed: null,
-      cab: null,
-    }
-    expect(deskDesign('landscape', state({ signals }))).toEqual({ ...BAND_DESIGN, minHeight: BAND_DESIGN.minHeight + SIGNALS_HEIGHT })
-    expect(deskDesign('portrait', state({ signals }))).toEqual({ ...PORTRAIT_DESIGN, minHeight: PORTRAIT_DESIGN.minHeight + SIGNALS_HEIGHT })
   })
 })

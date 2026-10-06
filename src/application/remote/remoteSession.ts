@@ -55,7 +55,12 @@ export function createRemoteSession(deps: RemoteSessionDeps): RemoteSession {
         scheduler: deps.scheduler,
         generateRoom: deps.generateRoom,
       })
-      offHost = host.subscribe(emit)
+      const opened = host
+      offHost = host.subscribe(() => {
+        // The PC turns spectator while a phone holds the desk
+        store.setRemoteDeskConnected(opened.getSnapshot().deskConnected)
+        emit()
+      })
       emit()
     },
     close() {
@@ -66,6 +71,7 @@ export function createRemoteSession(deps: RemoteSessionDeps): RemoteSession {
       host = null
       // Puts back a brake the phone was holding, then closes the room and the link
       closing.stop()
+      store.setRemoteDeskConnected(false)
       emit()
     },
   }

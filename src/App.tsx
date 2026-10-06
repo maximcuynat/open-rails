@@ -85,7 +85,7 @@ export default function App() {
   }, [store.theme])
 
   // Which driving console fits the canvas area, and what it pushes aside (mini-map, debug panel)
-  const arrangement = arrangeConsole(vp.w, vp.h, store.consolePreference, store.isPlayMode, store.showTrainDebug)
+  const arrangement = arrangeConsole(vp.w, vp.h, store.consolePreference, store.isPlayMode && !store.isSpectating, store.showTrainDebug)
   const canvasAreaStyle = {
     '--console-scale': arrangement.scale,
     '--minimap-lift': `${arrangement.placement.minimapLift}px`,
