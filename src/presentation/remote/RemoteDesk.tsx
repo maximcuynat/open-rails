@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { ConsoleCommand, ConsoleState, FleetEntry } from '@application/console/consoleContract'
 import {
   DESK_QUERY_PARAM,
@@ -6,24 +6,19 @@ import {
   normalizeRoomCode,
   roomFromPageUrl,
 } from '@application/remote/protocol'
-import { DrivingConsole } from '@presentation/components/console/DrivingConsole'
 import { ConsoleIcon } from '@presentation/components/console/instruments'
 import { newSignalPassed } from '@presentation/components/console/consoleModel'
 import {
   compositionLabel,
-  deskDesign,
   deskOrientation,
   deskScreen,
-  fitStage,
   fleetSpeedLabel,
   hapticFor,
   turnoutView,
   type DeskScreen,
-  type StageDesign,
-  type StageFit,
 } from './deskView'
 import { useAppViewport, useRemoteDesk, useViewportSize, useWakeLock, vibrate } from './deskHooks'
-import { PortraitDesk } from './PortraitDesk'
+import { TwoThumbDesk } from './TwoThumbDesk'
 import './remoteDesk.css'
 
 /**
@@ -42,7 +37,6 @@ export default function RemoteDesk() {
   useAppViewport()
 
   const orientation = deskOrientation(viewport.width, viewport.height)
-  const landscape = orientation === 'landscape'
   const screen = deskScreen(room, snapshot, session, browsing)
   const awake = useWakeLock(screen.kind === 'desk' || screen.kind === 'fleet')
   const online = snapshot.joined
@@ -145,15 +139,24 @@ export default function RemoteDesk() {
         return (
           <>
             {!screen.online && <CutBanner />}
-            <DeskBar
+            {/* Remounted when the link drops or comes back: a pad held at that moment lets go */}
+            <TwoThumbDesk
+              key={`pads-${screen.online}`}
               state={screen.state}
-              online={screen.online}
-              landscape={landscape}
-              onBrowse={() => setBrowsing(true)}
-              onRelease={release}
+              fleet={snapshot.fleet}
+              canSwitchCab={readCanSwitchCab(screen.state)}
+              cut={!screen.online}
+              bar={
+                <DeskBar
+                  state={screen.state}
+                  online={screen.online}
+                  onBrowse={() => setBrowsing(true)}
+                  onRelease={release}
+                  onCommand={command}
+                />
+              }
               onCommand={command}
             />
-            <Desk screen={screen} fleet={snapshot.fleet} landscape={landscape} onCommand={command} />
           </>
         )
     }
@@ -291,12 +294,10 @@ function FleetList({ room, fleet, online, pending, awake, onPick }: {
 const readTurnout = (state: ConsoleState) => (state as Partial<ConsoleState>).upcomingTurnout
 const readCanSwitchCab = (state: ConsoleState) => (state as Partial<ConsoleState>).canSwitchCab === true
 
-/** The two ways out of the desk, the next turnout and the other cab */
-function DeskBar({ state, online, landscape, onBrowse, onRelease, onCommand }: {
+/** The two ways out of the desk and the next turnout, on one row */
+function DeskBar({ state, online, onBrowse, onRelease, onCommand }: {
   state: ConsoleState
   online: boolean
-  /** Upright, the cab change sits between the levers instead */
-  landscape: boolean
   onBrowse: () => void
   onRelease: () => void
   onCommand: (command: ConsoleCommand) => void
@@ -311,90 +312,16 @@ function DeskBar({ state, online, landscape, onBrowse, onRelease, onCommand }: {
       disabled={!online || !turnout.enabled}
       onClick={() => onCommand({ type: 'steer', side })}
     >
-      {side === 'left' && <ConsoleIcon name="steerLeft" />}
-      <span>{side === 'left' ? 'Gauche' : 'Droite'}</span>
-      {side === 'right' && <ConsoleIcon name="steerRight" />}
+      <ConsoleIcon name={side === 'left' ? 'steerLeft' : 'steerRight'} />
     </button>
   )
   return (
-    <header className={`phone-bar${online ? '' : ' is-cut'}`}>
-      <div className="phone-bar-exit">
-        <button type="button" className="phone-btn" disabled={!online} onClick={onBrowse}>Changer de train</button>
-        <button type="button" className="phone-btn is-danger" disabled={!online} onClick={onRelease}>Rendre les commandes</button>
-      </div>
-      <div className="phone-bar-track">
-        {steer('left', 'gauche')}
-        <span className="phone-turnout">{turnout.label}</span>
-        {steer('right', 'droite')}
-        {/* Always there on its side, so the turnout buttons never slide under a thumb */}
-        {landscape && (
-          <button
-            type="button"
-            className="phone-btn phone-cab"
-            disabled={!online || !readCanSwitchCab(state)}
-            aria-label="Changer de cabine"
-            onClick={() => onCommand({ type: 'switchCab' })}
-          >
-            Cabine
-          </button>
-        )}
-      </div>
+    <header className="phone-bar">
+      <button type="button" className="phone-btn" disabled={!online} aria-label="Changer de train" onClick={onBrowse}>Trains</button>
+      {steer('left', 'gauche')}
+      <span className="phone-turnout">{turnout.label}</span>
+      {steer('right', 'droite')}
+      <button type="button" className="phone-btn is-danger" disabled={!online} aria-label="Rendre les commandes" onClick={onRelease}>Rendre</button>
     </header>
-  )
-}
-
-function Desk({ screen, fleet, landscape, onCommand }: {
-  screen: Extract<DeskScreen, { kind: 'desk' }>
-  fleet: readonly FleetEntry[]
-  landscape: boolean
-  onCommand: (command: ConsoleCommand) => void
-}) {
-  return (
-    <ScaledStage design={deskDesign(landscape ? 'landscape' : 'portrait', screen.state)} className={screen.online ? '' : 'is-cut'}>
-      {/* Remounted when the link drops or comes back: a lever held at that moment lets go */}
-      {landscape ? (
-        <DrivingConsole key={`band-${screen.online}`} layout="band" state={screen.state} fleet={fleet} onCommand={onCommand} />
-      ) : (
-        <PortraitDesk
-          key={`portrait-${screen.online}`}
-          state={screen.state}
-          fleet={fleet}
-          canSwitchCab={readCanSwitchCab(screen.state)}
-          onCommand={onCommand}
-        />
-      )}
-    </ScaledStage>
-  )
-}
-
-/**
- * Lays its content out at the size of a design and scales it to cover the room it is given.
- * A transform rather than `zoom`: pointer positions and bounding boxes then agree in every browser.
- */
-function ScaledStage({ design, className, children }: { design: StageDesign; className: string; children: ReactNode }) {
-  const box = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
-  useLayoutEffect(() => {
-    const element = box.current
-    if (!element) return
-    const measure = () => {
-      const width = element.clientWidth
-      const height = element.clientHeight
-      setSize((previous) => (previous && previous.width === width && previous.height === height ? previous : { width, height }))
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-  const fit: StageFit | null = size && size.width > 0 && size.height > 0 ? fitStage(size.width, size.height, design) : null
-  return (
-    <div ref={box} className={`phone-stage ${className}`}>
-      {fit && (
-        <div className="phone-stage-inner" style={{ width: fit.width, height: fit.height, transform: `scale(${fit.scale})` }}>
-          {children}
-        </div>
-      )}
-    </div>
   )
 }

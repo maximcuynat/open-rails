@@ -196,7 +196,7 @@ html.phone-desk-page body {
   pointer-events: none;
 }
 
-.phone-stage.is-cut .phone-stage-inner,
+.phone-pads.is-cut > *,
 .phone-fleet.is-cut .phone-trains,
 .phone-fleet.is-cut .phone-empty {
   opacity: 0.45;
@@ -343,97 +343,56 @@ html.phone-desk-page body {
   color: var(--hud-dim);
 }
 
-/* --- Bar above the desk: the ways out, the next turnout, the other cab --- */
-.phone-bar {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--phone-gap);
-}
-
-.phone-bar.is-cut { opacity: 0.6; }
-
-.phone-bar-exit,
-.phone-bar-track {
-  display: flex;
-  align-items: center;
-  gap: var(--phone-gap);
-  min-width: 0;
-}
-
-.phone-bar-exit .phone-btn { flex: 1; padding: 0 8px; }
-
-.phone-turnout {
-  flex: 1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: center;
-  color: var(--hud-dim);
-  padding: 0 2px;
-}
-
-.phone-steer { flex: none; min-width: 92px; }
-.phone-steer .console-icon { width: 18px; height: 18px; }
-.phone-cab { flex: none; }
-
-.phone-desk.is-landscape .phone-bar {
-  flex-direction: row;
-  align-items: center;
-}
-
-.phone-desk.is-landscape .phone-bar-exit { flex: none; }
-.phone-desk.is-landscape .phone-bar-track { flex: 1; }
-.phone-desk.is-landscape .phone-btn { min-height: 42px; }
-.phone-desk.is-landscape .phone-steer { min-width: 80px; }
-
-@media (max-width: 720px) {
-  .phone-desk.is-landscape .phone-steer { min-width: 46px; }
-  .phone-desk.is-landscape .phone-steer span { display: none; }
-  .phone-desk.is-landscape .phone-btn { padding: 0 10px; font-size: 13px; }
-  .phone-desk.is-landscape .phone-turnout { font-size: 12px; }
-}
-
-@media (max-width: 380px) {
-  .phone-desk.is-portrait .phone-bar-exit .phone-btn { font-size: 13px; }
-  .phone-desk.is-portrait .phone-steer { min-width: 84px; }
-}
-
-
-/* --- Stage: the desk laid out at its design size and scaled to the room left --- */
-.phone-stage {
+/* --- The desk: one lever per thumb, laid out on the real screen ---
+ * Upright: the bar, the speed, the two pads side by side, the foot. On its side: a pad at each
+ * edge, and the bar, the speed and the foot stacked between them.
+ */
+.phone-desk .phone-pads {
   position: relative;
+  inset: auto;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-}
-
-.phone-stage-inner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-}
-
-/* The stage does the scaling, and the whole of it takes the finger */
-.phone-desk .console-stage {
   zoom: 1;
   padding: 0;
   z-index: auto;
   pointer-events: auto;
+  display: grid;
+  gap: var(--phone-gap);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'bar bar'
+    'info info'
+    'brake traction'
+    'foot foot';
+}
+
+.phone-desk .phone-pads:not(.has-brake) {
+  grid-template-areas:
+    'bar bar'
+    'info info'
+    'traction traction'
+    'foot foot';
+}
+
+.phone-desk.is-landscape .phone-pads {
+  grid-template-columns: minmax(140px, 24%) minmax(0, 1fr) minmax(140px, 24%);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'brake bar traction'
+    'brake info traction'
+    'brake foot traction';
+}
+
+.phone-desk.is-landscape .phone-pads:not(.has-brake) {
+  grid-template-areas:
+    'bar bar traction'
+    'info info traction'
+    'foot foot traction';
 }
 
 /* The state comes ten times a second: ease between two of them instead of redrawing every frame */
-.phone-desk .console-arc { transition: d 120ms linear; }
 .phone-desk .console-bar i { transition: width 120ms linear; }
-
-/* A knob a thumb can find */
-.phone-desk .console-knob-body {
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: scale(1.2, 1.3);
-}
 
 .phone-panel {
   background: var(--hud);
@@ -441,22 +400,53 @@ html.phone-desk-page body {
   border-radius: 14px;
 }
 
-/* --- Upright: speed, gauges, then the two levers --- */
-.phone-portrait {
+/* --- Bar: the ways out and the next turnout --- */
+.phone-bar {
+  grid-area: bar;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: stretch;
+  gap: var(--phone-gap);
+  min-width: 0;
 }
 
-.phone-speed {
+.phone-bar .phone-btn {
   flex: none;
+  min-height: 52px;
+  padding: 0 12px;
+}
+
+.phone-bar .phone-steer { min-width: 56px; padding: 0; }
+.phone-steer .console-icon { width: 24px; height: 24px; }
+
+.phone-turnout {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--hud-dim);
+}
+
+.phone-desk.is-landscape .phone-turnout { font-size: 12px; }
+
+/* --- Speed and what the track asks --- */
+.phone-info {
+  grid-area: info;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 14px 12px;
+  min-height: 0;
+  padding: 8px 12px 10px;
+  overflow: hidden;
 }
 
-.phone-speed-head {
+.phone-desk.is-landscape .phone-info { justify-content: space-between; }
+
+.phone-info-head,
+.phone-info-stats {
+  flex: none;
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -464,7 +454,15 @@ html.phone-desk-page body {
   overflow: hidden;
 }
 
-.phone-speed-row {
+.phone-info-stats {
+  font-size: 13px;
+  color: var(--hud-dim);
+}
+
+.phone-info-stats b { color: var(--hud-fg); }
+
+.phone-info-row {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -472,7 +470,7 @@ html.phone-desk-page body {
 }
 
 .phone-speed-value {
-  font-size: 76px;
+  font-size: 68px;
   font-weight: 800;
   line-height: 0.95;
   letter-spacing: -0.03em;
@@ -486,9 +484,14 @@ html.phone-desk-page body {
   white-space: nowrap;
 }
 
-.phone-speed .console-stats {
+.phone-info .console-stats {
   font-size: 15px;
-  gap: 2px 14px;
+  gap: 3px 12px;
+}
+
+.phone-speed-scale {
+  flex: none;
+  position: relative;
 }
 
 .phone-speed-bar {
@@ -513,10 +516,6 @@ html.phone-desk-page body {
   background: var(--tone);
 }
 
-.phone-speed-scale {
-  position: relative;
-}
-
 /* Solid mark: limit in force. Hollow mark: next lower limit */
 .phone-limit-mark {
   position: absolute;
@@ -535,178 +534,253 @@ html.phone-desk-page body {
   border-color: var(--hud-fg);
 }
 
-/* The signalling block, in the flow of the speed panel and as wide as it */
-.phone-speed > .console-signals {
+/* The signalling block, in the flow of the panel and as wide as it */
+.phone-info > .console-signals {
+  flex: none;
   width: auto;
   background: var(--hud-2);
   box-shadow: none;
 }
 
-.phone-speed > .console-signals .console-signals-main { font-size: 16px; }
-.phone-speed > .console-signals .console-signals-note { font-size: 13px; }
+.phone-info > .console-signals .console-signals-main { font-size: 16px; }
+.phone-info > .console-signals .console-signals-note { font-size: 13px; }
 
-/* Over the desk, without moving a lever */
-.phone-portrait > .console-derail {
+/* Over the desk, without moving a pad */
+.phone-pads > .console-derail {
   position: absolute;
   left: 50%;
   top: 42%;
   transform: translate(-50%, -50%);
   width: max-content;
+  max-width: 92%;
   margin: 0;
   z-index: 2;
 }
 
-.phone-air {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
-}
-
-.phone-air .console-gauges { gap: 6px; }
-.phone-air .console-gauge { width: 106px; height: 68px; }
-
-.phone-air-side {
+/* --- Thumb pads: the whole zone is the lever --- */
+.thumb-pad {
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
+  min-height: 0;
+  padding: 10px 10px 8px;
+  overflow: hidden;
+  touch-action: none;
+  transition: border-color 120ms linear, background-color 120ms linear;
 }
 
-.phone-air .console-rev { font-size: 15px; }
-.phone-air .console-rev button { padding: 8px 12px; }
-.phone-air .console-flip { align-self: center; padding: 9px 12px; font-size: 14px; }
+.thumb-pad.is-brake { grid-area: brake; }
+.thumb-pad.is-traction { grid-area: traction; }
 
-.phone-levers {
+/* Everything in it is drawing: the pad itself takes the thumb */
+.thumb-pad > * { pointer-events: none; }
+
+.thumb-pad.is-held {
+  border-color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 7%, var(--hud));
+}
+
+.thumb-pad.is-disabled { opacity: 0.45; }
+
+.thumb-pad-title {
+  position: absolute;
+  top: 7px;
+  left: 12px;
+}
+
+/* The travel; its margins leave room for half a knob at each stop */
+.thumb-pad-track {
+  position: relative;
   flex: 1;
   min-height: 0;
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
+  margin: 36px 0 26px;
 }
 
-.phone-lever-box {
-  flex: 2 1 0;
-  min-width: 0;
+.thumb-pad-stop {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 18px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 8px 4px 4px;
+  gap: 8px;
+  transform: translateY(-50%);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 18px;
+  color: var(--hud-dim);
 }
 
-/* The lever is as tall as the box allows and keeps the proportions of its drawing (never
-   letterboxed), so a position under the finger maps onto its travel exactly */
-.phone-lever-fit {
-  flex: 1 1 0;
-  min-height: 0;
-  align-self: stretch;
+.thumb-pad-stop::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--hud-line);
+}
+
+.thumb-pad-stop.is-bare::after { height: 0; background: none; border-top: 1px dashed var(--hud-line); }
+.thumb-pad-stop.is-on { color: var(--hud-fg); }
+
+.thumb-pad-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tone) 18%, transparent);
+}
+
+.thumb-pad-knob {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  container-type: size;
+  transform: translateY(-50%);
+  border-radius: 12px;
+  color: #06101f;
+  background: var(--tone);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--tone) 45%, transparent), 0 3px 8px rgba(0, 0, 0, 0.45);
+  transition: top 90ms ease-out, background-color 120ms linear;
 }
 
-.phone-lever-fit .console-lever {
-  flex: none;
-  width: auto;
-  height: min(100cqh, 100cqw * 290 / 80);
-  aspect-ratio: 80 / 290;
-}
-
-.phone-lever-fit .console-lever.is-wide {
-  height: min(100cqh, 100cqw * 290 / 120);
-  aspect-ratio: 120 / 290;
-}
-
-.phone-lever-box.is-brake { flex-grow: 3; }
-
-.phone-levers-mid {
-  flex: none;
-  width: 98px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 0;
-}
-
-.phone-desk .phone-estop {
-  width: 92px;
-  height: 92px;
-  font-size: 13px;
-  border-width: 5px;
-  touch-action: manipulation;
-}
-
-.phone-portrait .phone-cab {
-  width: 100%;
-  min-height: 52px;
-  padding: 4px;
-  font-size: 13px;
-  line-height: 1.2;
-  white-space: normal;
-}
-
-.phone-handle {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  text-align: center;
-}
-
-.phone-handle-value {
-  font-size: 19px;
+.thumb-pad-knob b {
+  font-size: 18px;
   font-weight: 800;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
-.phone-handle .console-bar { width: 100%; }
+/* The brake follows the thumb exactly while held, and springs back when let go */
+.thumb-pad.is-brake.is-held .thumb-pad-knob { transition: background-color 120ms linear; }
+.thumb-pad.is-spring .thumb-pad-knob { transition: top 180ms cubic-bezier(0.3, 1.4, 0.5, 1), background-color 120ms linear; }
 
-/* --- On its side: the band of the PC, stretched over the height the screen leaves --- */
-.phone-desk .console-tools { display: none; }
-
-/* The tools are gone: the signalling block that rides above them takes their row, in the flow */
-.phone-desk .console-toolrow > .console-signals {
-  position: static;
-  transform: none;
-  width: 300px;
-  box-shadow: none;
+.thumb-pad-foot {
+  flex: none;
+  min-height: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  text-align: center;
+  white-space: nowrap;
 }
 
-.phone-desk .console-stage-band { justify-content: center; }
+.thumb-pad-value {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--tone);
+}
 
-.phone-desk .console-band {
+.thumb-pad-foot .console-bar { width: 100%; }
+
+.thumb-pad-air {
+  font-size: 13px;
+  color: var(--hud-dim);
+}
+
+.thumb-pad-air b { color: var(--hud-fg); }
+
+/* --- Foot: reverser, other cab, emergency stop --- */
+.phone-foot {
+  grid-area: foot;
+  display: flex;
+  align-items: stretch;
+  gap: var(--phone-gap);
+  min-width: 0;
+  min-height: 64px;
+}
+
+.phone-foot .console-rev-row {
+  flex: 3 1 0;
+  min-width: 0;
+  gap: 0;
+}
+
+.phone-foot .console-rev {
   flex: 1;
-  width: 100%;
-  height: auto;
-  min-height: 176px;
-  max-height: 420px;
-  box-shadow: none;
+  align-self: stretch;
+  font-size: 18px;
+  font-weight: 800;
+  background: var(--hud);
+  border-radius: 12px;
 }
 
-.phone-desk .console-band .console-zone { justify-content: space-between; }
-/* The dial and its figures are placed from the top of their zone: they stay there, and the
-   reverser goes down to the row of the buttons */
-.phone-desk .console-band .console-mid { justify-content: flex-start; }
-.phone-desk .console-band .console-mid .console-rev-row,
-.phone-desk .console-band .console-mid .console-flip { margin-top: auto; margin-bottom: 4px; }
-.phone-desk .console-band .console-gauges { gap: 14px; }
-.phone-desk .console-band .console-gauge { width: 118px; height: 76px; }
+.phone-foot .console-rev button {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
 
-/* The room gained goes to what the thumbs press */
-.phone-desk .console-band .console-hold { flex: 1; max-height: 130px; }
-.phone-desk .console-band .console-hold .console-btn { justify-content: center; font-size: 15px; }
-.phone-desk .console-band .console-notch { padding: 14px 0; font-size: 12px; }
-.phone-desk .console-band .console-row { flex: 1; max-height: 130px; align-items: stretch; }
-.phone-desk .console-band .console-row > b { align-self: center; }
-.phone-desk .console-band .console-step { height: auto; min-width: 54px; justify-content: center; font-size: 22px; }
-.phone-desk .console-band .console-emergency { flex: 1; font-size: 15px; }
-.phone-desk .console-band .console-rev button { padding: 12px 24px; font-size: 16px; }
-.phone-desk .console-band .console-flip { padding: 12px 18px; font-size: 15px; }
+.phone-foot .console-flip {
+  flex: 1;
+  align-self: stretch;
+  justify-content: center;
+  font-size: 16px;
+  border-radius: 12px;
+}
+
+.phone-foot .phone-cab {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+.phone-foot .phone-estop {
+  flex: 2.4 1 0;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  text-transform: uppercase;
+  white-space: normal;
+  color: #fff;
+  background: var(--hud-red);
+  border: 3px solid #7f1d1d;
+  border-radius: 12px;
+}
+
+.phone-foot .phone-estop:active { background: #b91c1c; }
+.phone-foot .phone-estop.is-active { background: #7f1d1d; border-color: var(--hud-red); }
+
+/* --- Small screens: what the thumbs press keeps its size, the read-outs give way --- */
+.thumb-pad-track { container-type: size; }
+
+/* A short travel names one stop out of two; the knob always names the one it is on */
+@container (max-height: 210px) {
+  .thumb-pad-stop:nth-child(even) span { display: none; }
+}
+
+@media (max-width: 360px) {
+  .phone-desk.is-portrait .phone-bar .phone-btn { padding: 0 9px; font-size: 13px; }
+  .phone-desk.is-portrait .phone-bar .phone-steer { min-width: 48px; padding: 0; }
+  .phone-desk.is-portrait .phone-speed-value { font-size: 58px; }
+}
+
+@media (max-height: 700px) {
+  .phone-desk.is-portrait .phone-info-head,
+  .phone-desk.is-portrait .phone-info-stats { display: none; }
+  .phone-desk.is-portrait .phone-speed-value { font-size: 54px; }
+}
+
+@media (max-height: 600px) {
+  .phone-desk.is-portrait .thumb-pad-foot { display: none; }
+}
+
+@media (max-height: 380px) {
+  .phone-desk.is-landscape .phone-info-head { display: none; }
+  .phone-desk.is-landscape .phone-speed-value { font-size: 56px; }
+  .phone-desk.is-landscape .phone-bar .phone-btn { min-height: 46px; }
+  .phone-desk.is-landscape .phone-foot { min-height: 56px; }
+}
+
+@media (max-height: 340px) {
+  .phone-desk.is-landscape .phone-info-stats,
+  .phone-desk.is-landscape .thumb-pad-foot { display: none; }
+}

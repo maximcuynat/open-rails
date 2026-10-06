@@ -20,7 +20,7 @@ Dimensions de la zone du canevas (pas de l'écran). Fonction pure `chooseConsole
 
 - Réglage « Console de conduite » dans Affichage : Automatique (défaut), Bandeau, Écran de bord, Manettes. Enregistré avec les autres préférences.
 - Une console imposée qui ne tient pas dans la fenêtre est réduite (échelle minimale 0,8), jamais coupée.
-- Sur le téléphone : portrait = manettes agrandies avec les deux manomètres en plus ; paysage = bandeau sur toute la largeur.
+- Sur le téléphone : pupitre « deux pouces », une manette par pouce qui occupe toute sa zone — côte à côte en portrait, une à chaque bord en paysage (voir `plan-pupitre-deux-pouces.md`, qui remplace depuis le 2026-10-06 les manettes agrandies et le bandeau du PC mis à l'échelle).
 
 ## Architecture
 
