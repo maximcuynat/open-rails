@@ -2663,11 +2663,11 @@ select.cb-step-select {
 /* The boards of the real signs: the limit in force white on black, its announcement black on white */
 .console-limit {
   display: inline-block;
-  min-width: 30px;
+  min-width: 34px;
   padding: 0 5px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
-  line-height: 17px;
+  line-height: 20px;
   text-align: center;
   vertical-align: middle;
   color: #fff;
@@ -2716,9 +2716,10 @@ select.cb-step-select {
 .console-stage .curve-discomfort { color: #fb923c; fill: #fb923c; }
 .console-stage .curve-danger { color: var(--hud-red); fill: var(--hud-red); }
 
+/* In the upper part of the canvas: the derailed train, which the camera keeps in the middle, stays in sight */
 .console-stage-alert {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
 }
 
@@ -2728,7 +2729,7 @@ select.cb-step-select {
   align-items: center;
   gap: 8px;
   max-width: min(420px, 92%);
-  margin-bottom: 12vh;
+  margin-top: 14vh;
   padding: 16px 22px;
   text-align: center;
   background: var(--hud);

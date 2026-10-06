@@ -444,7 +444,7 @@ export function cabView(cab: ConsoleCabSignal): CabView {
           : cab.kind === 'sight'
             ? 'Marche à vue'
             : cab.flashing
-              ? 'Voie libre, annonce à suivre'
+              ? 'Annonce à suivre'
               : 'Voie libre'
   return {
     tone: cab.kind,
@@ -468,9 +468,16 @@ export function signalPassedLabel(braked: boolean): string {
   return braked ? 'Signal fermé franchi : freinage d’urgence' : 'Signal fermé franchi'
 }
 
-/** « Survitesse : freinage d’urgence »: same words as the message shown when it happens */
-export function overspeedLabel(braked: boolean): string {
-  return braked ? 'Survitesse : freinage d’urgence' : 'Survitesse'
+/**
+ * The same two events as the note of the signalling block, which is one short line: the emergency
+ * brake shows on the brake itself, the note only names what set it off
+ */
+export function signalPassedNote(braked: boolean): string {
+  return braked ? 'Signal fermé franchi · urgence' : 'Signal fermé franchi'
+}
+
+export function overspeedNote(braked: boolean): string {
+  return braked ? 'Survitesse · urgence' : 'Survitesse'
 }
 
 /** What the consoles show of the signalling */
@@ -487,6 +494,11 @@ export interface SignalsView {
   notes: SignalNote[]
   /** A closed signal is nearer than the stopping distance and its margin */
   brakeAlert: boolean
+  /**
+   * How loud the block is: `alert` while the driver has to brake now (it flashes), `fault` after a
+   * closed signal passed or an overspeed (red, steady), else `calm`
+   */
+  urgency: 'calm' | 'fault' | 'alert'
 }
 
 export function signalsView(signals: ConsoleSignals): SignalsView {
@@ -498,8 +510,8 @@ export function signalsView(signals: ConsoleSignals): SignalsView {
     const metres = signals.closedDistance ?? next?.distance ?? null
     notes.push({ tone: 'alert', text: metres === null ? 'Freinez : signal fermé' : `Freinez : signal fermé à ${stoppingDistanceLabel(metres)}` })
   }
-  if (signals.passed) notes.push({ tone: 'alert', text: signalPassedLabel(signals.passed.braked) })
-  if (signals.overspeed) notes.push({ tone: 'alert', text: overspeedLabel(signals.overspeed.braked) })
+  if (signals.passed) notes.push({ tone: 'alert', text: signalPassedNote(signals.passed.braked) })
+  if (signals.overspeed) notes.push({ tone: 'alert', text: overspeedNote(signals.overspeed.braked) })
   if (signals.onSight) notes.push({ tone: 'warning', text: `Marche à vue — ${signals.onSightSpeed} km/h` })
   if (signals.waiting) notes.push({ tone: 'warning', text: 'Attente de l’itinéraire' })
   if (signals.closedDistance !== null && !signals.brakeAlert) {
@@ -512,6 +524,7 @@ export function signalsView(signals: ConsoleSignals): SignalsView {
     empty: 'Aucun signal en vue',
     notes,
     brakeAlert: signals.brakeAlert,
+    urgency: signals.brakeAlert ? 'alert' : signals.passed || signals.overspeed ? 'fault' : 'calm',
   }
 }
 
