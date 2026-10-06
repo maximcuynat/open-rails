@@ -18,8 +18,10 @@ import { speedSigns, type SpeedSign } from '@domain/models/speedSigns'
 import type { LineSettings } from '@domain/models/speedLimits'
 import { speedZonesRevision } from '@domain/models/speedZones'
 import { signalHeading, signalWorldPosition } from '@domain/services/signalLayout'
-import { drawDiagnosticMarker } from './diagnosticMarker'
+import { diagnosticMarkerRadius, drawDiagnosticMarker, type DiagnosticLabelBox } from './diagnosticMarker'
 import { trackPositionBand, type TrackPiece } from './levelPieces'
+import { trackLod } from './lod'
+import { themeInk } from './themeInk'
 
 // ─────────────────── Signals on the canvas ───────────────────
 //
@@ -31,7 +33,9 @@ import { trackPositionBand, type TrackPiece } from './levelPieces'
 // - Pro level, seen from above: a dark target with one lamp (sémaphore) or two (carré), and its
 //   plate « F » / « Nf » once the zoom is close; a marker board of a cab-signalled line is a small
 //   blue square with a yellow triangle and no lamp. The announcement and the reminder of points to
-//   take at 30 or 60 km/h are two yellow lamps, with the speed on a small tag once the zoom is close.
+//   take at 30 or 60 km/h are two yellow lamps, as on the real target: side by side for the
+//   announcement, one beyond the other for the reminder; they flash for 60, and the speed is on a
+//   small tag once the zoom is close.
 // - Both levels: a one-way path signal has a short red bar across the track at its foot.
 //
 // The entries of the signalling report and the distant speed signs of the pro level come with
@@ -44,6 +48,8 @@ const REFERENCE_GAUGE = 1.435
 
 export const SIGNAL_LAMP_COLORS: Record<SignalColor, string> = { green: '#22c55e', yellow: '#facc15', red: '#ef4444' }
 const LAMP_OFF = '#475569'
+/** A flashing lamp between two flashes: still there, dimmed */
+const LAMP_DIM_ALPHA = 0.28
 const SIGNAL_BODY = '#111827'
 const SIGNAL_EDGE = '#f8fafc'
 const SIGNAL_SELECTED = '#2563eb'
@@ -53,10 +59,13 @@ const MARKER_YELLOW = '#facc15'
 const SPEED_SIGN_BG = '#ffffff'
 const SPEED_SIGN_INK = '#111827'
 
-/** Colours of the blocks, taken in turn in the order of the signals */
-export const BLOCK_COLORS = ['#0ea5e9', '#f97316', '#a855f7', '#14b8a6', '#ec4899', '#84cc16', '#6366f1', '#eab308'] as const
-/** Colours of the track held for each train, taken in turn in the order the trains appear */
-export const RESERVATION_COLORS = ['#22d3ee', '#fb7185', '#a3e635', '#c084fc', '#fdba74'] as const
+/**
+ * Colours of the blocks, taken in turn in the order of the signals. Cool hues only: green, yellow
+ * and red belong to the lamps, amber to the speed zones and the warnings.
+ */
+export const BLOCK_COLORS = ['#0ea5e9', '#8b5cf6', '#14b8a6', '#6366f1', '#38bdf8', '#a78bfa'] as const
+/** Colours of the track held for each train, taken in turn in the order the trains appear: cool hues too */
+export const RESERVATION_COLORS = ['#22d3ee', '#c084fc', '#60a5fa', '#2dd4bf', '#818cf8'] as const
 export const BLOCK_ALPHA = 0.55
 export const RESERVATION_ALPHA = 0.8
 
@@ -74,7 +83,7 @@ export function signalSizes(scale: number, gauge: number = REFERENCE_GAUGE): Sig
   const g = (gauge > 0 ? gauge : REFERENCE_GAUGE) * scale
   return {
     offset: Math.max(13, Math.min(26, 2.4 * g)),
-    lamp: Math.max(3, Math.min(6, 0.45 * g)),
+    lamp: Math.max(3.5, Math.min(6, 0.45 * g)),
     plate: g >= 9,
   }
 }
@@ -109,6 +118,10 @@ export interface SignalGlyph {
   oneWay?: true
   /** Only there when lit (pro level): the speed of the announcement or of the reminder its two yellow lamps show */
   speed?: SlowdownSpeed
+  /** Only there when true: the two lamps stand one beyond the other, away from the track (the reminder) */
+  stacked?: true
+  /** Only there when true: the two yellow lamps flash (points to take at 60 km/h) */
+  flashing?: true
 }
 
 /**
@@ -121,9 +134,12 @@ export function signalGlyph(signal: Signal, state: SignalState, level: Signallin
   if (signal.oneWay && signal.role === 'protection') glyph.oneWay = true
   const speed = aspect.reminder ?? aspect.slowdown
   if (speed) {
-    // Two yellow lamps, whatever the target: seen from above the announcement and the reminder look alike
+    // Two yellow lamps, whatever the target: side by side for the announcement, one beyond the
+    // other for the reminder, as they are on the real target
     glyph.lamps = ['yellow', 'yellow']
     glyph.speed = speed
+    if (aspect.reminder) glyph.stacked = true
+    if (speed === 60) glyph.flashing = true
   }
   return glyph
 }
@@ -148,7 +164,20 @@ export interface SignalDrawStyle {
   arrow?: boolean
   /** Struck through: the signal cannot stand there */
   crossed?: boolean
+  /** Colour of the mast: the ink of the theme. Absent: dark, as on a light sheet */
+  ink?: string
+  /** False between two flashes of a flashing glyph: its lamps are dimmed. Absent: lit */
+  flashOn?: boolean
 }
+
+/** Flashing lamps are lit this long, then out as long (ms): about 1 Hz, cadence not sourced */
+export const SIGNAL_FLASH_HALF_PERIOD = 500
+
+/** Whether a flashing lamp is lit at a time (ms) */
+export function signalFlashOn(now: number): boolean {
+  return Math.floor(now / SIGNAL_FLASH_HALF_PERIOD) % 2 === 0
+}
+
 
 /**
  * One signal. `at` is its place on the axis of the track and `heading` the direction of travel it
@@ -166,11 +195,43 @@ export function drawSignal(
   const cx = at.x + left.x * sizes.offset
   const cy = at.y + left.y * sizes.offset
   const r = sizes.lamp
+  const two = glyph.shape !== 'marker' && glyph.lamps.length > 1
+  // Two lamps stand across the mast, or one beyond the other away from the track (`stacked`)
+  const axis = glyph.stacked ? left : heading
+  const spread = two ? r + 0.5 : 0
+  // The stacked pair starts where a single lamp would be and grows outwards
+  const shift = glyph.stacked ? spread : 0
+  const hx = cx + left.x * shift
+  const hy = cy + left.y * shift
+  /** How far the head reaches beyond its middle, away from the track */
+  const reach = r + 2 + (glyph.stacked ? 2 * spread : 0)
+  const dimmed = glyph.flashing === true && style.flashOn === false
   const lamp = (x: number, y: number, color: SignalColor | null): void => {
+    const alpha = ctx.globalAlpha
+    if (color && dimmed) ctx.globalAlpha = alpha * LAMP_DIM_ALPHA
     ctx.fillStyle = color ? SIGNAL_LAMP_COLORS[color] : LAMP_OFF
     ctx.beginPath()
     ctx.arc(x, y, r, 0, Math.PI * 2)
     ctx.fill()
+    ctx.globalAlpha = alpha
+  }
+  /** A small tag beyond the head, away from the track: the plate, the speed */
+  const tag = (distance: number, text: string, background: string): void => {
+    const px = cx + left.x * distance
+    const py = cy + left.y * distance
+    ctx.font = '700 9px Archivo, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    const width = ctx.measureText(text).width + 6
+    ctx.fillStyle = background
+    ctx.strokeStyle = SIGNAL_BODY
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.rect(px - width / 2, py - 6, width, 12)
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = SIGNAL_BODY
+    ctx.fillText(text, px, py + 0.5)
   }
 
   ctx.save()
@@ -178,7 +239,7 @@ export function drawSignal(
 
   if (glyph.oneWay) {
     // One-way: a short bar across the track at the foot of the signal
-    const half = Math.max(5, sizes.offset * 0.42)
+    const half = Math.max(6, sizes.offset * 0.5)
     ctx.strokeStyle = SIGNAL_DANGER
     ctx.lineWidth = 2.5
     ctx.lineCap = 'butt'
@@ -189,7 +250,7 @@ export function drawSignal(
   }
 
   // Mast, from the track to the head
-  ctx.strokeStyle = SIGNAL_BODY
+  ctx.strokeStyle = style.ink ?? SIGNAL_BODY
   ctx.lineWidth = 1.5
   ctx.lineCap = 'round'
   ctx.beginPath()
@@ -213,29 +274,40 @@ export function drawSignal(
     ctx.stroke()
   }
 
-  ctx.fillStyle = glyph.shape === 'marker' ? MARKER_BLUE : SIGNAL_BODY
-  ctx.strokeStyle = SIGNAL_EDGE
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  if (glyph.shape === 'block') {
-    ctx.arc(cx, cy, r + 2, 0, Math.PI * 2)
-  } else if (glyph.shape === 'path') {
-    const d = r + 4
-    ctx.moveTo(cx, cy - d)
-    ctx.lineTo(cx + d, cy)
-    ctx.lineTo(cx, cy + d)
-    ctx.lineTo(cx - d, cy)
-    ctx.closePath()
-  } else if (glyph.shape === 'marker') {
-    const h = r + 2
-    ctx.rect(cx - h, cy - h, h * 2, h * 2)
+  if (two) {
+    // Target of a French signal seen from above, as long as its two lamps: a thick line with round
+    // ends, its light edge first
+    ctx.lineCap = 'round'
+    for (const [color, width] of [[SIGNAL_EDGE, 2 * (r + 2) + 2], [SIGNAL_BODY, 2 * (r + 2)]] as const) {
+      ctx.strokeStyle = color
+      ctx.lineWidth = width
+      ctx.beginPath()
+      ctx.moveTo(hx - axis.x * spread, hy - axis.y * spread)
+      ctx.lineTo(hx + axis.x * spread, hy + axis.y * spread)
+      ctx.stroke()
+    }
   } else {
-    // Target of a French signal seen from above: as long as its lamps, across the mast
-    const half = glyph.lamps.length > 1 ? 2 * r + 2.5 : r + 2
-    ctx.roundRect(cx - half, cy - (r + 2), half * 2, (r + 2) * 2, r + 2)
+    ctx.fillStyle = glyph.shape === 'marker' ? MARKER_BLUE : SIGNAL_BODY
+    ctx.strokeStyle = SIGNAL_EDGE
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    if (glyph.shape === 'path') {
+      const d = r + 4
+      ctx.moveTo(cx, cy - d)
+      ctx.lineTo(cx + d, cy)
+      ctx.lineTo(cx, cy + d)
+      ctx.lineTo(cx - d, cy)
+      ctx.closePath()
+    } else if (glyph.shape === 'marker') {
+      const h = r + 2
+      ctx.rect(cx - h, cy - h, h * 2, h * 2)
+    } else {
+      // One lamp: a round head, at the standard level as for a sémaphore
+      ctx.arc(cx, cy, r + 2, 0, Math.PI * 2)
+    }
+    ctx.fill()
+    ctx.stroke()
   }
-  ctx.fill()
-  ctx.stroke()
 
   if (glyph.shape === 'marker') {
     // Yellow triangle, its point towards the track
@@ -247,58 +319,22 @@ export function drawSignal(
     ctx.lineTo(cx + left.x * h * 0.6 - heading.x * h * 0.8, cy + left.y * h * 0.6 - heading.y * h * 0.8)
     ctx.closePath()
     ctx.fill()
-  } else if (glyph.lamps.length > 1) {
-    lamp(cx - r - 0.5, cy, glyph.lamps[0])
-    lamp(cx + r + 0.5, cy, glyph.lamps[1])
+  } else if (two) {
+    lamp(hx - axis.x * spread, hy - axis.y * spread, glyph.lamps[0])
+    lamp(hx + axis.x * spread, hy + axis.y * spread, glyph.lamps[1])
   } else {
     lamp(cx, cy, glyph.lamps[0] ?? null)
   }
 
-  if (glyph.plate && sizes.plate) {
-    // Plate beyond the head, away from the track
-    const px = cx + left.x * (r + 11)
-    const py = cy + left.y * (r + 11)
-    ctx.font = '700 8px Archivo, system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    const width = ctx.measureText(glyph.plate).width + 6
-    ctx.fillStyle = SIGNAL_EDGE
-    ctx.strokeStyle = SIGNAL_BODY
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.rect(px - width / 2, py - 5.5, width, 11)
-    ctx.fill()
-    ctx.stroke()
-    ctx.fillStyle = SIGNAL_BODY
-    ctx.fillText(glyph.plate, px, py + 0.5)
-  }
-
-  if (glyph.speed && sizes.plate) {
-    // The speed its two yellow lamps ask for, beyond the plate
-    const reach = r + (glyph.plate ? 24 : 11)
-    const px = cx + left.x * reach
-    const py = cy + left.y * reach
-    const text = String(glyph.speed)
-    ctx.font = '700 8px Archivo, system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    const width = ctx.measureText(text).width + 6
-    ctx.fillStyle = SIGNAL_LAMP_COLORS.yellow
-    ctx.strokeStyle = SIGNAL_BODY
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.rect(px - width / 2, py - 5.5, width, 11)
-    ctx.fill()
-    ctx.stroke()
-    ctx.fillStyle = SIGNAL_BODY
-    ctx.fillText(text, px, py + 0.5)
-  }
+  // Plate beyond the head, away from the track, then the speed its two yellow lamps ask for
+  if (glyph.plate && sizes.plate) tag(reach + 9, glyph.plate, SIGNAL_EDGE)
+  if (glyph.speed && sizes.plate) tag(reach + (glyph.plate ? 23 : 9), String(glyph.speed), SIGNAL_LAMP_COLORS.yellow)
 
   if (style.ring) {
     ctx.strokeStyle = style.ring
     ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.arc(cx, cy, 2 * r + 6, 0, Math.PI * 2)
+    ctx.arc(hx, hy, 2 * r + 6 + (glyph.stacked ? spread : 0), 0, Math.PI * 2)
     ctx.stroke()
   }
 
@@ -384,6 +420,14 @@ function reportOf(net: Network, layout: SignalLayout, level: SignallingLevel, li
   return layout.report
 }
 
+/**
+ * What the marker of a report entry says on the canvas: the name of the defect, without its
+ * figures — « Canton trop court ». The whole message is in the panel of the signal.
+ */
+export function reportLabel(entry: Pick<SignalReportEntry, 'message'>): string {
+  return entry.message.split(' : ')[0]
+}
+
 // ─────────────────── Stretches of track beside the axis ───────────────────
 
 /**
@@ -454,13 +498,13 @@ export function drawBlockStripe(
 // ─────────────────── Speed signs (pro level) ───────────────────
 
 /** One distant speed sign: white with black figures, a square, or a diamond for a large drop. */
-export function drawSpeedSign(ctx: CanvasRenderingContext2D, at: Point, heading: Point, sign: Pick<SpeedSign, 'speed' | 'diamond'>, sizes: SignalSizes): void {
+export function drawSpeedSign(ctx: CanvasRenderingContext2D, at: Point, heading: Point, sign: Pick<SpeedSign, 'speed' | 'diamond'>, sizes: SignalSizes, ink: string = SPEED_SIGN_INK): void {
   const left = leftOf(heading)
   const cx = at.x + left.x * (sizes.offset + 4)
   const cy = at.y + left.y * (sizes.offset + 4)
-  const half = 8
+  const half = 9
   ctx.save()
-  ctx.strokeStyle = SPEED_SIGN_INK
+  ctx.strokeStyle = ink
   ctx.lineWidth = 1.5
   ctx.beginPath()
   ctx.moveTo(at.x, at.y)
@@ -468,6 +512,7 @@ export function drawSpeedSign(ctx: CanvasRenderingContext2D, at: Point, heading:
   ctx.stroke()
 
   ctx.fillStyle = SPEED_SIGN_BG
+  ctx.strokeStyle = SPEED_SIGN_INK
   ctx.lineWidth = 1
   ctx.beginPath()
   if (sign.diamond) {
@@ -484,7 +529,7 @@ export function drawSpeedSign(ctx: CanvasRenderingContext2D, at: Point, heading:
   ctx.stroke()
 
   ctx.fillStyle = SPEED_SIGN_INK
-  ctx.font = '700 8px Archivo, system-ui, sans-serif'
+  ctx.font = '700 9px Archivo, system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(String(Math.round(sign.speed)), cx, cy + 0.5)
@@ -510,6 +555,8 @@ export interface SignalRenderOptions {
   report?: boolean
   /** Line settings: the report and the distant speed signs depend on them */
   line?: LineSettings
+  /** Driving: false between two flashes of the flashing lamps (`signalFlashOn`). Absent: lit */
+  flashOn?: boolean
 }
 
 /** The stretches of `spans` that lie on the pieces of rail `ranges` holds, each kept in the direction it is walked */
@@ -602,10 +649,12 @@ export function renderSignalling(
   trackKey: object,
   options: SignalRenderOptions,
 ): void {
-  const signs = options.level === 'pro' ? speedSigns(net, options.line) : []
-  if (net.signals.size === 0 && signs.length === 0) return
   const gauge = options.gauge ?? REFERENCE_GAUGE
+  // In the schematic the boards of the zones are gone: the signs that announce them go with them
+  const signs = options.level === 'pro' && trackLod(cam.scale, gauge) !== 'schematic' ? speedSigns(net, options.line) : []
+  if (net.signals.size === 0 && signs.length === 0) return
   const sizes = signalSizes(cam.scale, gauge)
+  const ink = themeInk(ctx)
   const margin = 60
   const toScreen = (p: Point): Point | null => {
     const x = (p.x - cam.x) * cam.scale + vw / 2
@@ -626,6 +675,8 @@ export function renderSignalling(
         alpha: placed.tunnel ? 0.4 : undefined,
         ring: id === options.dangerId ? SIGNAL_DANGER : selected ? SIGNAL_SELECTED : null,
         arrow: selected,
+        ink,
+        flashOn: options.flashOn,
       })
     }
   }
@@ -635,13 +686,32 @@ export function renderSignalling(
     const tangent = tangentOnSegment(net, sign.segId, sign.t)
     const at = pos && toScreen(pos)
     if (!at || !tangent) continue
-    drawSpeedSign(ctx, at, sign.forward ? tangent : { x: -tangent.x, y: -tangent.y }, sign, sizes)
+    drawSpeedSign(ctx, at, sign.forward ? tangent : { x: -tangent.x, y: -tangent.y }, sign, sizes, ink)
   }
 
   if (options.report && net.signals.size > 0 && options.line) {
-    for (const { pos, entry } of reportOf(net, signalLayout(net, trackKey), options.level, options.line)) {
+    const layout = signalLayout(net, trackKey)
+    const headings = new Map<SignalId, Point>()
+    for (const placed of layout.signals) headings.set(placed.signal.id, placed.heading)
+    // A label never covers the head of its signal nor another label: it goes on the other side of
+    // the track, and the ones that would overlap wait for a closer zoom
+    const taken: DiagnosticLabelBox[] = []
+    const marks: { at: Point; entry: SignalReportEntry }[] = []
+    const radius = diagnosticMarkerRadius(cam.scale)
+    for (const { pos, entry } of reportOf(net, layout, options.level, options.line)) {
       const at = toScreen(pos)
-      if (at) drawDiagnosticMarker(ctx, at.x, at.y, cam.scale, 'warning', entry.message)
+      if (!at) continue
+      marks.push({ at, entry })
+      // Nor the diamond of another marker
+      taken.push({ x: at.x - radius, y: at.y - radius, w: 2 * radius, h: 2 * radius })
+    }
+    for (const { at, entry } of marks) {
+      const heading = headings.get(entry.signalId)
+      const head = heading ? leftOf(heading) : null
+      drawDiagnosticMarker(ctx, at.x, at.y, cam.scale, 'warning', reportLabel(entry), {
+        away: head ? { x: -head.x, y: -head.y } : undefined,
+        taken,
+      })
     }
   }
 }

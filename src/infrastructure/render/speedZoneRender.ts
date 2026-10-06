@@ -10,6 +10,7 @@ import type { TrackPiece } from './levelPieces'
 import { trackLod, type TrackLod } from './lod'
 import { placeBadges, speedZoneBandShown, speedZoneBoardsShown, type BadgeBox } from './lodOverlays'
 import { textWidth } from './textWidth'
+import { themeInk } from './themeInk'
 
 // ─────────────────── Speed zones on the canvas ───────────────────
 //
@@ -264,6 +265,7 @@ export function renderSpeedZoneMarkers(
   ctx.textBaseline = 'middle'
 
   const lod = trackLod(cam.scale, options.gauge)
+  const ink = themeInk(ctx)
   const boards: Board[] = []
   const board = (end: ZoneEnd, text: string, outline: string | null, length: number): void => {
     const at = toScreen(end.pos)
@@ -296,7 +298,7 @@ export function renderSpeedZoneMarkers(
   // A board never covers another one: the zone being worked on first, then the longest zones
   for (const { at, cx, cy, x, y, w, h, text, outline } of placeBadges(boards)) {
     // Post from the track to the board
-    ctx.strokeStyle = outline ?? BOARD_BG
+    ctx.strokeStyle = outline ?? ink
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.moveTo(at.x, at.y)

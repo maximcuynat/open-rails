@@ -424,7 +424,7 @@ function signalToolBar(store: EditorStore, spec: { role: 'spacing' | 'protection
     const count = row.length * (store.signalToolBothWays ? 2 : 1)
     items.push(
       count > 0
-        ? { kind: 'value', id: 'signal-row', caption: 'Série', text: `${count} signaux`, tone: 'accent' }
+        ? { kind: 'value', id: 'signal-row', caption: 'Série', text: count === 1 ? '1 signal' : `${count} signaux`, tone: 'accent' }
         : { kind: 'value', id: 'signal-row', caption: 'Série', text: 'aucun chemin', tone: 'danger' },
     )
   } else {

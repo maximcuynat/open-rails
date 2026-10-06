@@ -81,6 +81,7 @@ import { showToast } from '../common/Toast'
 import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
 import { positionOnSegment } from '@domain/models/locomotive'
 import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
+import { signalFlashOn } from '@infrastructure/render/signalRender'
 import { renderSignalToolPreview } from './signalToolPreview'
 import { commitSignalGesture } from '../common/signalActions'
 import { hitShownNode } from './nodePicking'
@@ -381,6 +382,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         gauge: store.gauge,
         line: store.lineSettings,
         state: store.isPlayMode ? store.signalling : null,
+        // The canvas is redrawn at every frame while driving: the flashing lamps follow the clock
+        flashOn: store.isPlayMode ? signalFlashOn(performance.now()) : undefined,
         selectedId: store.selectedSignal?.id ?? null,
         dangerId: store.tool === 'signal' && store.signalToolSubMode === 'delete' ? store.hoveredSignalId : null,
         showBlocks: store.signalBlocksVisible,
