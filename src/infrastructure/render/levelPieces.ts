@@ -1,5 +1,5 @@
 import type { Network, NodeId, Point, Segment } from '@domain/models/types'
-import { bezierDerivative1, bezierPoint } from '@domain/geometry/curve'
+import { derivativeOnShape, pointOnShape, segmentEnds } from '@domain/geometry/segmentGeometry'
 import { LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt } from '@domain/models/network'
 
 // ─────────────────── Drawing bands of a track with heights ───────────────────
@@ -120,14 +120,10 @@ export interface DeckEnd {
 }
 
 function deckEndAt(net: Network, seg: Segment, t: number, intoDeck: 1 | -1): DeckEnd | null {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return null
-  const curved = seg.kind === 'curve' && !!seg.via
-  const pos = curved
-    ? bezierPoint(t, a.pos, seg.via!, b.pos)
-    : { x: a.pos.x + (b.pos.x - a.pos.x) * t, y: a.pos.y + (b.pos.y - a.pos.y) * t }
-  const d = curved ? bezierDerivative1(t, a.pos, seg.via!, b.pos) : { x: b.pos.x - a.pos.x, y: b.pos.y - a.pos.y }
+  const ends = segmentEnds(net, seg)
+  if (!ends) return null
+  const pos = pointOnShape(ends, t)
+  const d = derivativeOnShape(ends, t)
   const len = Math.hypot(d.x, d.y)
   const tangent = len > 1e-4 ? { x: (d.x / len) * intoDeck, y: (d.y / len) * intoDeck } : { x: intoDeck, y: 0 }
   return { pos, tangent, normal: { x: -tangent.y, y: tangent.x } }
