@@ -190,13 +190,18 @@ par translation (la caméra suit le train), sauvegarde en IndexedDB, annulation 
   `stretchLength` (`signals.ts`), `parameterAt` (`speedSigns.ts`), et tout ce qui appelle `curveLength`.
 - Mesure : reculer un bogie de 5 m sur une courbe, 60 µs → 14 µs. Aucun test existant n'a bougé.
 
-### Lot A — reste (branches « droite ou courbe » encore dupliquées)
-- [ ] Tangente d'extrémité : `segmentTangentAt`, `getOutgoingTangent`, `getNodeSegmentEndVector`, `meetSmoothly`, `performTrackCut`.
-- [ ] Paramètre le plus proche d'un point : `projectOnSegment`, `hitSegment`, `segmentHeightNear`, les deux coupes, `reconcile.ts`, `getTrackTangentAt`, `checkCurveJoins`, survol dans `Canvas.tsx`.
-- [ ] Polyligne d'un rail et boîte englobante : `railPolyline`, `crossing.ts`, `reconcile.ts`, `networkDerived.ts`, `MiniMap.tsx`, `isSegmentInBounds`, `exportSvg.ts`.
-- [ ] « Pièces entre t0 et t1 » pour le rendu : `subdivideCurve` / `subdivideStraight` et leurs copies (`speedZoneRender.ts`, `cantRender.ts`, `lodTracks.ts`, `levelPieces.ts`).
-- [ ] Rayon et sens à t : `getTrackCurvatureAt`, `railGeometry`.
-- [ ] `getStepPointsAlongSegment`, `signalRowPlaces`, `evalSegment`, pastilles et flèches à t = 0,5.
+- Deuxième étape (2026-10-06) — passent aussi par le module :
+  - tangente d'extrémité : `segmentTangentAt`, `getOutgoingTangent`, `getNodeSegmentEndVector`, `meetSmoothly` (`leaveVectorOnShape`, `leaveDirectionOnShape`) ;
+  - point le plus proche et distance : `projectOnSegment`, `segmentHeightNear`, `hitSegment` (`closestParamOnShape`, `distanceToShape`) ;
+  - polyligne et boîte : `railPolyline`, `detectCrossings`, `findSegmentCrossings`, `sectionPolyline`, la minimap, `isSegmentInBounds`, l'export SVG (`shapePolyline`, `shapeChordCount`, `shapeBounds`, `segmentBounds`) ;
+  - pièces de dessin entre t0 et t1 (`shapePieces`, une liste — un seul élément pour les deux formes actuelles) : `subdivideCurve` / `subdivideStraight`, `pieceGeometry`, `renderLineTracks`, `renderDetailRails`, `renderSectionStripes`, `deckEndAt`, l'export SVG.
+  - Sortie vérifiée identique appel canvas par appel canvas sur 30 scènes (dont Marseille) ; banc de rendu inchangé au bruit près ; `detectCrossings` sur une gare 3 à 6 fois plus rapide (formes et boîtes calculées une fois par rail).
+  - `segmentEnds` rend toujours `{ a, b, via }` (`via: undefined` pour une droite) : une seule forme d'objet, sinon les boucles de dessin perdaient 8 à 15 %.
+
+### Lot A — reste
+- [ ] `spanGeometry` (`speedZoneRender.ts`) et `traceOuterRails` (`cantRender.ts`) : les router change le dernier chiffre de leurs sorties ; à faire en l'acceptant.
+- [ ] Aimantation de l'éditeur, chacune avec son propre échantillonnage : `getTrackTangentAt`, `checkCurveJoins`, survol dans `Canvas.tsx`, `getStepPointsAlongSegment`, `signalRowPlaces`, pastilles et flèches à t = 0,5.
+- Reportés au lot B, parce qu'il s'agit d'une logique par forme et non d'un rebranchement : les deux coupes (`splitSegment`, `splitSegmentAtNode`), le rayon en un point (`getTrackCurvatureAt`, `railGeometry` : deux définitions aujourd'hui), le test nœud-sur-rail et `evalSegment` de la réconciliation.
 
 ## Sources des recherches
 - Open Rails / MSTS, tronçons droite ou arc : https://raw.githubusercontent.com/openrails/openrails/master/Source/Orts.Formats.Msts/TrackSectionsFile.cs

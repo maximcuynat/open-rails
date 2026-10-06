@@ -10,6 +10,7 @@
  * This module must not import `train.ts` (which imports the physics, which imports this one).
  */
 
+import { leaveVectorOnShape, segmentEnds } from '../geometry/segmentGeometry'
 import { networkCheckToken } from './networkWatch'
 import type { Junction, Network, NodeId, Segment, SegmentId, TrackSpan } from './types'
 import type { LineSettings, LineType, UpcomingSpeedLimit } from './speedLimits'
@@ -227,16 +228,15 @@ function railGeometry(net: Network, seg: Segment): { radius: number; hand: 1 | -
 
 /** Do the two curved rails meeting at `nodeId` run on with no kink there? */
 function meetSmoothly(net: Network, a: Segment, b: Segment, nodeId: NodeId): boolean {
-  const node = net.nodes.get(nodeId)
-  if (!node || !a.via || !b.via) return false
-  const ax = a.via.x - node.pos.x
-  const ay = a.via.y - node.pos.y
-  const bx = b.via.x - node.pos.x
-  const by = b.via.y - node.pos.y
-  const la = Math.hypot(ax, ay)
-  const lb = Math.hypot(bx, by)
+  const endsA = segmentEnds(net, a)
+  const endsB = segmentEnds(net, b)
+  if (!endsA?.via || !endsB?.via) return false
+  const va = leaveVectorOnShape(endsA, a.from === nodeId)
+  const vb = leaveVectorOnShape(endsB, b.from === nodeId)
+  const la = Math.hypot(va.x, va.y)
+  const lb = Math.hypot(vb.x, vb.y)
   if (la < 1e-9 || lb < 1e-9) return false
-  return -(ax * bx + ay * by) / (la * lb) >= Math.cos((SAME_CURVE_MAX_KINK_DEG * Math.PI) / 180)
+  return -(va.x * vb.x + va.y * vb.y) / (la * lb) >= Math.cos((SAME_CURVE_MAX_KINK_DEG * Math.PI) / 180)
 }
 
 /** The only other rail at a node that joins exactly two, else null */

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { bezierPoint } from '@domain/geometry/curve'
+import { segmentEnds, shapePolyline } from '@domain/geometry/segmentGeometry'
 import type { EditorStore } from '@application/state/editorStore'
 
 const MINI_W = 160
@@ -67,21 +67,13 @@ export function MiniMap({ store, viewportW = 800, viewportH = 600 }: MiniMapProp
       ctx.lineWidth = 1
       ctx.globalAlpha = 0.7
       for (const seg of net.segments.values()) {
-        const a = net.nodes.get(seg.from)
-        const b = net.nodes.get(seg.to)
-        if (!a || !b) continue
+        const ends = segmentEnds(net, seg)
+        if (!ends) continue
+        // Discretize lightly
+        const pts = shapePolyline(ends, 8)
         ctx.beginPath()
-        ctx.moveTo(w2mX(a.pos.x), w2mY(a.pos.y))
-        if (seg.kind === 'curve' && seg.via) {
-          // Discretize lightly
-          for (let i = 1; i <= 8; i++) {
-            const t = i / 8
-            const pt = bezierPoint(t, a.pos, seg.via, b.pos)
-            ctx.lineTo(w2mX(pt.x), w2mY(pt.y))
-          }
-        } else {
-          ctx.lineTo(w2mX(b.pos.x), w2mY(b.pos.y))
-        }
+        ctx.moveTo(w2mX(ends.a.x), w2mY(ends.a.y))
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(w2mX(pts[i].x), w2mY(pts[i].y))
         ctx.stroke()
       }
 
