@@ -1,4 +1,5 @@
 import type { Network, NodeId, Point, RailNode, Segment, SegmentId } from './types'
+import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { closestCurveParam, curveLength, distToCurve, splitCurveIntoArcPieces, type CurvePiece } from '../geometry/curve'
 import { generateId, resetIdCounter } from './ids'
 import { remapSignals } from './signals'
@@ -578,10 +579,7 @@ export function segmentGradient(net: Network, seg: Segment, levelHeight: number)
 
 /** Length of a rail on the plan (world metres), the run its slope is measured over. 0 when an end is missing. */
 export function segmentRunLength(net: Network, seg: Segment): number {
-  const a = net.nodes.get(seg.from)
-  const b = net.nodes.get(seg.to)
-  if (!a || !b) return 0
-  return seg.kind === 'curve' && seg.via ? curveLength(a.pos, seg.via, b.pos) : Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
+  return segmentShapeLength(net, seg)
 }
 
 /**

@@ -9,6 +9,7 @@
  * Only the drops a zone brings are announced: a curve that lowers the limit by itself gets no sign.
  */
 
+import { segmentEnds, shapeParamAtDistance } from '../geometry/segmentGeometry'
 import type { Network, NodeId, Segment, SegmentId, SpeedZone, SpeedZoneId } from './types'
 import type { LineSettings } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
@@ -64,15 +65,11 @@ export function announcementDistance(fromSpeed: number, toSpeed: number): number
 /** Parameter of the place `distance` m from `t` on a rail, towards `endT` */
 function parameterAt(net: Network, seg: Segment, t: number, endT: number, distance: number, available: number): number {
   if (!(available > 0)) return endT
-  if (seg.kind === 'straight' || !seg.via) return t + ((endT - t) * distance) / available
-  let lo = t
-  let hi = endT
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2
-    if (segmentPartialLength(net, seg.id, t, mid) < distance) lo = mid
-    else hi = mid
-  }
-  return (lo + hi) / 2
+  const ends = segmentEnds(net, seg)
+  if (!ends) return endT
+  const at = shapeParamAtDistance(ends, t, endT >= t ? distance : -distance)
+  // Never past the end of the stretch
+  return endT >= t ? Math.min(at, endT) : Math.max(at, endT)
 }
 
 interface Upstream {

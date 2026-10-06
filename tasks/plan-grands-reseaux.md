@@ -143,7 +143,7 @@ par translation (la caméra suit le train), sauvegarde en IndexedDB, annulation 
 ## Suivi
 
 - [ ] Lot P — pilotage épuré (première partie faite le 2026-10-06, voir ci-dessous)
-- [ ] Lot A — une seule géométrie de rail
+- [ ] Lot A — une seule géométrie de rail (première étape faite le 2026-10-06, voir plus bas)
 - [ ] Lot B — rail long
 - [ ] Lot C — import et simplification
 - [ ] Lot D — selon mesures
@@ -175,6 +175,28 @@ par translation (la caméra suit le train), sauvegarde en IndexedDB, annulation 
 - [ ] `getTrainSetVisuals` en cache par position du train.
 - [ ] Entrée « pilotage » dans `render.bench.ts` et mesure navigateur en conduite sur un grand réseau.
 - [ ] Le survol de la souris en pilotage appelle encore `notify()` à chaque mouvement.
+
+### Lot A — fait
+- `src/domain/geometry/segmentGeometry.ts` : la forme d'un rail en un seul endroit (`segmentEnds`,
+  `pointOnShape`, `tangentOnShape`, `shapeLengthBetween`, `shapeParamAtDistance`,
+  `segmentShapeLength`, `segmentShapeLengthBetween`).
+- Longueur d'une courbe par intégration de la vitesse (`curveLengthBetween`, Gauss-Legendre) au
+  lieu de sommes de 16, 32 ou 64 cordes : une seule définition, exacte au micromètre sur une
+  courbe de voie. Position à une distance par Newton (`curveParamAtDistance`) au lieu d'une
+  dichotomie de 32 pas × 32 cordes.
+- Passent maintenant par ce module : `positionOnSegment`, `tangentOnSegment`,
+  `segmentPartialLength`, les deux `moveWithinSegment*` (`locomotive.ts`), `segmentLength`
+  (`pathfinding.ts`), `segmentRunLength` (`network.ts`), la longueur des sections (`sections.ts`),
+  `stretchLength` (`signals.ts`), `parameterAt` (`speedSigns.ts`), et tout ce qui appelle `curveLength`.
+- Mesure : reculer un bogie de 5 m sur une courbe, 60 µs → 14 µs. Aucun test existant n'a bougé.
+
+### Lot A — reste (branches « droite ou courbe » encore dupliquées)
+- [ ] Tangente d'extrémité : `segmentTangentAt`, `getOutgoingTangent`, `getNodeSegmentEndVector`, `meetSmoothly`, `performTrackCut`.
+- [ ] Paramètre le plus proche d'un point : `projectOnSegment`, `hitSegment`, `segmentHeightNear`, les deux coupes, `reconcile.ts`, `getTrackTangentAt`, `checkCurveJoins`, survol dans `Canvas.tsx`.
+- [ ] Polyligne d'un rail et boîte englobante : `railPolyline`, `crossing.ts`, `reconcile.ts`, `networkDerived.ts`, `MiniMap.tsx`, `isSegmentInBounds`, `exportSvg.ts`.
+- [ ] « Pièces entre t0 et t1 » pour le rendu : `subdivideCurve` / `subdivideStraight` et leurs copies (`speedZoneRender.ts`, `cantRender.ts`, `lodTracks.ts`, `levelPieces.ts`).
+- [ ] Rayon et sens à t : `getTrackCurvatureAt`, `railGeometry`.
+- [ ] `getStepPointsAlongSegment`, `signalRowPlaces`, `evalSegment`, pastilles et flèches à t = 0,5.
 
 ## Sources des recherches
 - Open Rails / MSTS, tronçons droite ou arc : https://raw.githubusercontent.com/openrails/openrails/master/Source/Orts.Formats.Msts/TrackSectionsFile.cs
