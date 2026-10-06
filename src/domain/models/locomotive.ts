@@ -1,8 +1,8 @@
 import type { Network, NodeId, Point, Segment, SegmentId, Junction, TrackSpan } from './types'
 import { generateId, isCloserOrAbove, segmentHeightAt } from './network'
-import { bezierPoint, curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
+import { curveRadiusAt, bezierDerivative1, bezierDerivative2 } from '../geometry/curve'
 import { segmentLength } from '../services/pathfinding'
-import { pointOnShape, segmentEnds, segmentShapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
+import { closestParamOnShape, curvatureOnShape, pointOnShape, segmentEnds, segmentShapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
 import { doubleSlipSideOf, doubleSlipView, findJunctionAtNode, openPassage, turnoutView, type TurnoutBranch } from './junction'
 import { openExit, entriesOf, junctionRails } from './routing'
 
@@ -1069,49 +1069,10 @@ export function steerJunction(net: Network, loco: Locomotive, steerDirection: 'l
 
 /** Closest point of one segment to a world position: its parameter `t` and the point itself. */
 export function projectOnSegment(net: Network, seg: Segment, worldPos: Point): { t: number; point: Point } | null {
-  const from = net.nodes.get(seg.from)
-  const to = net.nodes.get(seg.to)
-  if (!from || !to) return null
-
-  let t: number
-  let p: Point
-  if (seg.kind === 'straight' || !seg.via) {
-    // Exact orthogonal projection on the straight rail
-    const dx = to.pos.x - from.pos.x
-    const dy = to.pos.y - from.pos.y
-    const len2 = dx * dx + dy * dy
-    t = len2 === 0 ? 0 : ((worldPos.x - from.pos.x) * dx + (worldPos.y - from.pos.y) * dy) / len2
-    t = Math.max(0, Math.min(1, t))
-    p = { x: from.pos.x + dx * t, y: from.pos.y + dy * t }
-  } else {
-    // Curve: coarse sampling, then refine around the best sample
-    const via = seg.via
-    const distAt = (u: number) => {
-      const q = bezierPoint(u, from.pos, via, to.pos)
-      return Math.hypot(q.x - worldPos.x, q.y - worldPos.y)
-    }
-    const N = 32
-    t = 0
-    let best = Infinity
-    for (let i = 0; i <= N; i++) {
-      const d = distAt(i / N)
-      if (d < best) {
-        best = d
-        t = i / N
-      }
-    }
-    let lo = Math.max(0, t - 1 / N)
-    let hi = Math.min(1, t + 1 / N)
-    for (let iter = 0; iter < 24; iter++) {
-      const m1 = lo + (hi - lo) / 3
-      const m2 = hi - (hi - lo) / 3
-      if (distAt(m1) < distAt(m2)) hi = m2
-      else lo = m1
-    }
-    t = (lo + hi) / 2
-    p = bezierPoint(t, from.pos, via, to.pos)
-  }
-  return { t, point: p }
+  const ends = segmentEnds(net, seg)
+  if (!ends) return null
+  const t = closestParamOnShape(ends, worldPos)
+  return { t, point: pointOnShape(ends, t) }
 }
 
 export function snapToNearestTrack(
@@ -1294,6 +1255,21 @@ export interface TrackCurvature {
 /** Compute curvature radius and outward (centrifugal) normal at a given track position */
 export function getTrackCurvatureAt(net: Network, pos: TrackPosition): TrackCurvature {
   const seg = net.segments.get(pos.segId)
+  if (seg?.kind === 'path') {
+    // On a long rail the curvature is that of the arc under the bogie
+    const ends = segmentEnds(net, seg)
+    const curvature = ends ? curvatureOnShape(ends, pos.t) : 0
+    if (!ends || Math.abs(curvature) < 1 / 50000) return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
+    const tangent = tangentOnShape(ends, pos.t)
+    // The centre lies to the side the heading turns to; the centrifugal push points away from it
+    const towardsCentre = curvature > 0 ? { x: -tangent.y, y: tangent.x } : { x: tangent.y, y: -tangent.x }
+    const turnsToIncreasingHeading = pos.forward ? curvature > 0 : curvature < 0
+    return {
+      radius: 1 / Math.abs(curvature),
+      side: turnsToIncreasingHeading ? 'right' : 'left',
+      outwardNormal: { x: -towardsCentre.x, y: -towardsCentre.y },
+    }
+  }
   if (!seg || seg.kind === 'straight' || !seg.via) {
     return { radius: Infinity, side: 'straight', outwardNormal: { x: 0, y: 0 } }
   }

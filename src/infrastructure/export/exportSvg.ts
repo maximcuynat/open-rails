@@ -1,5 +1,6 @@
 import { turnoutView } from '@domain/models/junction'
 import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
+import { segmentEnds, shapeBounds, shapePieces } from '@domain/geometry/segmentGeometry'
 import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
 import { segmentHeightNear } from '@domain/models/network'
@@ -18,8 +19,6 @@ import {
   DECK_PARAPET_WIDTH,
   TUNNEL_ALPHA,
   getNodeSegmentEnds,
-  subdivideCurve,
-  subdivideStraight,
   getConnectedEndPairs,
 } from '@infrastructure/render/renderer'
 import { deckAbutments, heightBand, nodeJointBand, segmentTrackPieces } from '@infrastructure/render/levelPieces'
@@ -84,12 +83,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails', a
     maxY = Math.max(maxY, n.pos.y)
   }
   for (const s of net.segments.values()) {
-    if (s.kind === 'curve' && s.via) {
-      minX = Math.min(minX, s.via.x)
-      minY = Math.min(minY, s.via.y)
-      maxX = Math.max(maxX, s.via.x)
-      maxY = Math.max(maxY, s.via.y)
-    }
+    const ends = segmentEnds(net, s)
+    if (!ends) continue
+    const box = shapeBounds(ends)
+    minX = Math.min(minX, box.minX)
+    minY = Math.min(minY, box.minY)
+    maxX = Math.max(maxX, box.maxX)
+    maxY = Math.max(maxY, box.maxY)
   }
 
   const pad = BALLAST_WIDTH + 20
@@ -171,15 +171,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails', a
   // 2. Generate Ballast, Sleepers, and Rails for each piece of rail (the whole rail unless it is
   // a ramp that crosses a half level)
   const trackPieces = [...net.segments.values()].flatMap((seg) => segmentTrackPieces(net, seg))
-  for (const piece of trackPieces) {
-    const seg = piece.seg
-    const nodeA = net.nodes.get(seg.from)
-    const nodeB = net.nodes.get(seg.to)
-    if (!nodeA || !nodeB) continue
-    // Geometry of the piece: `subdivide…` hands back the rail itself when the piece is all of it
-    const line: { a: Point; b: Point; via?: Point } = seg.kind === 'curve' && seg.via
-      ? (({ p0, via, p2 }) => ({ a: p0, b: p2, via }))(subdivideCurve(nodeA.pos, seg.via, nodeB.pos, piece.t0, piece.t1))
-      : subdivideStraight(nodeA.pos, nodeB.pos, piece.t0, piece.t1)
+  // Geometry of each piece, as the lines and curves it is drawn from: `shapePieces` hands back the
+  // rail itself when the piece is all of it. `first` marks what is drawn once per piece of rail.
+  const drawnPieces = trackPieces.flatMap((piece) => {
+    const ends = segmentEnds(net, piece.seg)
+    return ends ? shapePieces(ends, piece.t0, piece.t1).map((line, index) => ({ piece, line, first: index === 0 })) : []
+  })
+  for (const { piece, line, first } of drawnPieces) {
 
     const level = piece.band
     outputLevel = level
@@ -198,7 +196,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails', a
       // Abutment where the deck starts: closing line and two wing walls
       const halfDeck = DECK_WIDTH / 2
       const wing = halfDeck * 0.6
-      for (const { pos, tangent, normal } of deckAbutments(net, piece)) {
+      for (const { pos, tangent, normal } of first ? deckAbutments(net, piece) : []) {
         const corner = (side: 1 | -1): Point => ({
           x: pos.x + normal.x * halfDeck * side,
           y: pos.y + normal.y * halfDeck * side,

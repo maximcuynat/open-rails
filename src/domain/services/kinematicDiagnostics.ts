@@ -1,5 +1,6 @@
 import type { Network, NodeId, SegmentId, Point, Segment } from '../models/types'
-import { segmentTangentAt, MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
+import { leaveDirectionOnShape, segmentEnds } from '../geometry/segmentGeometry'
+import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import { placementThresholds } from '../geometry/scale'
 import { segmentEndLevels, segmentGradient } from '../models/network'
 
@@ -29,39 +30,9 @@ export interface KinematicIssue {
  * Normalized outgoing direction vector leaving `nodeId` along `seg`.
  */
 export function getOutgoingTangent(net: Network, seg: Segment, nodeId: NodeId): Point | null {
-  const tan = segmentTangentAt(net, seg, nodeId)
-  if (!tan) return null
-  // segmentTangentAt returns the tangent leaving `nodeId` if nodeId === seg.from,
-  // or end tangent if nodeId === seg.to.
-  // Note: For straight lines, segmentTangentAt returns (to - from).
-  // If nodeId === seg.to, it's still (to - from), so leaving `to` going away from the segment would be reversed!
-  // Let's verify: at nodeId, what is the vector directed INTO the segment (towards the other node)?
-  const otherId = seg.from === nodeId ? seg.to : seg.from
-  const otherNode = net.nodes.get(otherId)
-  const thisNode = net.nodes.get(nodeId)
-  if (!thisNode || !otherNode) return null
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const dx = otherNode.pos.x - thisNode.pos.x
-    const dy = otherNode.pos.y - thisNode.pos.y
-    const len = Math.hypot(dx, dy)
-    return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-  }
-
-  // For curve:
-  // At from: tangent towards via
-  // At to: tangent from to towards via (reversed end tangent)
-  if (nodeId === seg.from) {
-    const dx = seg.via.x - thisNode.pos.x
-    const dy = seg.via.y - thisNode.pos.y
-    const len = Math.hypot(dx, dy)
-    return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-  } else {
-    const dx = seg.via.x - thisNode.pos.x
-    const dy = seg.via.y - thisNode.pos.y
-    const len = Math.hypot(dx, dy)
-    return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-  }
+  if (nodeId !== seg.from && nodeId !== seg.to) return null
+  const ends = segmentEnds(net, seg)
+  return ends ? leaveDirectionOnShape(ends, nodeId === seg.from) : null
 }
 
 /**

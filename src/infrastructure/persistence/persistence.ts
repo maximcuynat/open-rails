@@ -1,4 +1,5 @@
 import type { Camera } from '@infrastructure/render/camera'
+import { segmentEnds } from '../../domain/geometry/segmentGeometry'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
 import { declareTurnout, findJunctionAtNode, invalidateJunctionIndex, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
@@ -12,7 +13,7 @@ import {
 } from '../../domain/models/signals'
 import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
-import type { Junction, JunctionKind, Network, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
+import type { Junction, JunctionKind, Network, PathPiece, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
 import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
@@ -43,6 +44,8 @@ export interface SerializedSegment {
   to: string
   kind: SegmentKind
   via?: { x: number; y: number }
+  /** Path of a long rail (`kind: 'path'`): `[x, y, heading, curvature, length]` per piece */
+  path?: number[][]
   /** Cant of a curved rail in mm; only written when it was set by hand */
   cant?: number
   /**
@@ -126,7 +129,7 @@ export interface SerializedGraphEdge {
 }
 
 export interface SerializedProject {
-  version: 1 | 2
+  version: 1 | 2 | 3
   name?: string
   nodes: SerializedNode[]
   segments: SerializedSegment[]
@@ -246,6 +249,7 @@ export function serializeNetwork(
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
       ...(isStoredCant(s) ? { cant: s.cant } : {}),
+      ...(s.kind === 'path' ? { path: storedPath(net, s) } : {}),
     })
   }
 
@@ -321,7 +325,8 @@ export function serializeNetwork(
   }
 
   return {
-    version: 2,
+    // 3 as soon as a long rail is in it: a build that does not know them must not open it as straight lines
+    version: segments.some((s) => s.kind === 'path') ? 3 : 2,
     name: projectName,
     nodes,
     segments,
@@ -451,6 +456,31 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
   normalizeTurnoutRoles(net, junction)
 }
 
+/** Newest project version this build reads */
+export const PROJECT_VERSION = 3
+
+/**
+ * The path of a long rail as it is saved: one `[x, y, heading, curvature, length]` per piece, where
+ * the rail lies now (it follows its nodes when they are moved).
+ */
+function storedPath(net: Network, seg: Segment): number[][] {
+  const pieces = segmentEnds(net, seg)?.path?.pieces ?? seg.path ?? []
+  return pieces.map((piece) => [piece.x, piece.y, piece.heading, piece.curvature, piece.length])
+}
+
+/** The pieces of a saved path, null when it does not hold together (the rail is then read as a straight line) */
+function readPath(saved: unknown): PathPiece[] | null {
+  if (!Array.isArray(saved) || saved.length === 0) return null
+  const pieces: PathPiece[] = []
+  for (const entry of saved) {
+    if (!Array.isArray(entry) || entry.length !== 5 || !entry.every((n) => typeof n === 'number' && Number.isFinite(n))) return null
+    const [x, y, heading, curvature, length] = entry as number[]
+    if (!(length > 0)) return null
+    pieces.push({ x, y, heading, curvature, length })
+  }
+  return pieces
+}
+
 /** A cant worth storing: set by hand on a curved rail, within `CANT_RANGE` */
 function isStoredCant(seg: { kind: SegmentKind; cant?: unknown }): seg is { kind: SegmentKind; cant: number } {
   return (
@@ -515,6 +545,10 @@ export function deserializeNetwork(data: SerializedProject): {
   boardHeight?: number
   trains: TrainSet[]
 } {
+  // A file from a newer build holds things this one would read wrong (a long rail as a straight line)
+  if (typeof data?.version === 'number' && data.version > PROJECT_VERSION) {
+    throw new Error(`Project version ${data.version} is newer than this build reads (${PROJECT_VERSION})`)
+  }
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
     return { network: net, trains: [] }
@@ -543,12 +577,14 @@ export function deserializeNetwork(data: SerializedProject): {
       // Segments must link existing nodes
       if (!net.nodes.has(s.from) || !net.nodes.has(s.to)) continue
 
-      const kind: SegmentKind = s.kind === 'curve' ? 'curve' : 'straight'
+      const path = s.kind === 'path' ? readPath(s.path) : null
+      const kind: SegmentKind = path ? 'path' : s.kind === 'curve' ? 'curve' : 'straight'
       const seg: Segment = {
         id: s.id,
         from: s.from,
         to: s.to,
         kind,
+        ...(path ? { path } : {}),
         via:
           kind === 'curve' &&
           s.via &&
