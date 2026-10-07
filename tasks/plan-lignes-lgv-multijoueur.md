@@ -53,10 +53,12 @@ Hypothèses prises faute de réponse (à confirmer) :
 
 ## Constats qui orientent le plan
 
-- **La France LGV entière est petite.** ~2 800 km de ligne, 5 600 km de voie. Géométrie douce,
-  donc rails longs après ajustement en arcs : estimation **10 000 à 20 000 rails** pour toute la
-  France, soit l'échelle du bench actuel (13 527). Le streaming par tuiles n'est **pas** justifié
-  en première version ; la granularité « une ligne = un fichier » suffit.
+- **La France LGV entière est petite.** ~2 800 km de ligne, 5 600 km de voie. Mesuré au Lot 0
+  sur l'échantillon de Pasilly : 4,9 rails par km de voie (205 m par rail), soit **~27 400 rails
+  et 7 600 signaux pour toute la France**, et **~3 200 rails pour Marseille–Lyon** (600 km de
+  voie). C'est le double de l'estimation initiale, mais toujours l'échelle du bench actuel
+  (13 527 à 122 000). Le streaming par tuiles n'est **pas** justifié en première version ; la
+  granularité « une ligne = un fichier » suffit.
 - **Aix est ambigu** : Aix-en-Provence TGV (LGV Méditerranée, à Vitrolles) et Aix-centre (ligne
   classique) sont deux gares à 15 km. La recherche doit afficher les deux et laisser choisir.
 - **Les terminus ne sont pas sur la LGV.** La LGV Méditerranée se raccorde au nord de Marseille
@@ -114,6 +116,11 @@ Hypothèses prises faute de réponse (à confirmer) :
 - **Projet verrouillé** : un projet venu du jeu de données refuse les outils de modification du
   réseau (dessin, aiguillages, suppression, déplacement) mais accepte trains, conduite,
   réglages d'affichage. Ni provenance par way, ni fusion, ni CRDT.
+- **Un projet verrouillé ne sauvegarde pas sa géométrie** (décision issue du Lot 0 : la France
+  LGV pèse 9,5 Mio de JSON, le quota `localStorage` est de 5 Mio). L'autosave et l'historique
+  d'annulation n'écrivent que la **recette** : identifiants des lignes, version du jeu de
+  données, trains, caméra, réglages. Au rechargement, l'appli retélécharge les lignes. Pas
+  d'IndexedDB, quelle que soit la taille du réseau.
 - **Multijoueur en étoile** :
   - le PC hôte (aiguilleur) simule, détient aiguillages, signaux et cantons ; il peut aussi
     conduire (solo ou en plus des pupitres) ;
@@ -139,12 +146,12 @@ Hypothèses prises faute de réponse (à confirmer) :
 ## Lots (chacun livrable et mesuré seul)
 
 ### Lot 0 — Mesure (avant tout)
-- [ ] 1. Construire un réseau de l'ordre de 15 000 rails en géométrie LGV (duplication d'un
+- [x] 1. Construire un réseau de l'ordre de 15 000 rails en géométrie LGV (duplication d'un
   échantillon `tasks/import-osm-echantillons/` ou import Overpass par fichier) ; `npm run bench`
   et `tools/perf/measure-canvas.cjs` en édition et en conduite ; chiffres notés ici.
-- [ ] 2. Mesurer la sauvegarde : taille JSON, échec de quota `localStorage`, durée de
+- [x] 2. Mesurer la sauvegarde : taille JSON, échec de quota `localStorage`, durée de
   `JSON.stringify`. Décider IndexedDB (Lot D grands réseaux) sur mesure, pas sur intuition.
-- [ ] 3. Mesurer la conversion `convertOsm` sur 300 km : si > 1 s, Web Worker pour l'import
+- [x] 3. Mesurer la conversion `convertOsm` sur 300 km : si > 1 s, Web Worker pour l'import
   libre (le jeu de données pré-calculé ne passe pas par là).
 
 ### Lot 1 — Repère global et gares
@@ -234,6 +241,57 @@ la base de la vue aiguilleur.
   signaux ?
 - Jusqu'où vont les raccordements inclus : seulement vers les terminus de l'exemple, ou toutes
   les gares de centre-ville atteintes par une LGV ?
+
+## Suivi
+
+### Lot 0 — fait le 2026-10-07
+
+Scripts : `tools/perf/measure-lgv.test.ts` (Node ; `PROFILE=1 LGV_KM=<km de voie>
+LGV_TARGET_RAILS=<rails> LGV_OUT=<projet.json> npx vitest run tools/perf/measure-lgv.test.ts
+--silent=false`) et `tools/perf/measure-project.cjs` (navigateur ; importe un fichier projet par
+le menu et mesure). Réseau de mesure : la réponse Overpass de Pasilly (`fixtures/lgv-pasilly.json`,
+54 km de voie, 263 rails) répétée côte à côte jusqu'à la longueur voulue puis convertie d'un bloc ;
+les copies ne sont pas raccordées entre elles.
+
+| Réseau | voie | rails | signaux | JSON | `convertOsm` | chargement | image JS fit / 1 / 8 px/m | navigateur fit / zoomé | autosave |
+|---|---|---|---|---|---|---|---|---|---|
+| Pasilly | 54 km | 263 | 73 | — | 0,2–0,3 s | — | — | — | — |
+| ≈ Marseille–Lyon | 600 km | 3 168 | 876 | 1,07 Mio | 1,7 s | 0,18 s | 2,1 / 1,6 / 2,7 ms | 24 / 17–21 ms | ok |
+| banc 15 800 rails | 3 240 km | 15 810 | — | 5,37 Mio | — | 1,43 s | 21 / 4,1 / 7,4 ms | — | à la limite |
+| France LGV | 5 600 km | 27 423 | 7 592 | 9,55 Mio | 24 s | 1,44 s | 35 / 4,7 / 13,5 ms | 52 / 19–34 ms | **échec** |
+| 2 × France | 11 200 km | 54 846 | — | 19,3 Mio | — | 2,84 s | 42 / 8,6 / 22,5 ms | — | — |
+
+Autres chiffres : `tickAllTrains` 0,1 ms par pas (un train à pleine puissance, 600 pas), à toute
+taille ; données dérivées à froid (sections) 344 / 547 / 1 384 ms pour 15 800 / 27 400 / 54 800
+rails ; premier `markDirty` 244 / 326 / 653 ms ; `pushHistorySnapshot` 22 / 39 / 64 ms ; import du
+fichier dans le navigateur (lecture + parse + chargement + première image) 0,47 s pour 600 km,
+1,77 s pour la France. Les temps « navigateur » viennent d'un Chromium headless qui rastérise en
+logiciel : plancher ~15 ms même pour une vue vide, script 1,5 à 3 ms par image ; la vue
+d'ensemble de la France fait 16 000 appels canvas.
+
+Décisions :
+
+1. **Pas de tuiles ni de streaming en v1.** Marseille–Lyon (~3 200 rails) ne coûte rien ; la
+   France entière tient en mémoire et se dessine (3 à 14 ms de script par image). Chargement à la
+   ligne (décision de conception) suffisant.
+2. **Pas d'IndexedDB** : un projet verrouillé ne sauvegarde que sa recette (voir Décisions de
+   conception). Marseille–Lyon seul (1,07 Mio) tiendrait de toute façon dans le quota.
+3. **Pas de Web Worker** pour l'import libre : 1,7 s pour 600 km de voie, quasi linéaire
+   (~3 à 4 ms par km de voie). La génération du jeu de données (24 s pour la France) est hors
+   ligne.
+4. **Rails longs (Lot B grands réseaux)** : bonus, pas prérequis. Un rail long par tronçon entre
+   aiguillages diviserait le nombre de rails par dix et la taille du JSON d'autant.
+
+Pistes à creuser (étape 16, pas bloquantes) :
+
+- L'image au niveau « détail » (8 px/m, 240 × 135 m à l'écran) **croît avec la taille du réseau**
+  (7,4 → 13,5 → 22,5 ms pour 15 800 → 27 400 → 54 800 rails) alors que ce qui est visible ne
+  change pas : quelque chose parcourt tout le réseau à ce niveau. Profil navigateur :
+  `renderNetwork`, `nodesAmongInBox`, `isPointInBounds`.
+- Le chargement (`deserializeNetwork`) coûte 1,4 s pour la France : acceptable à la ligne
+  (0,18 s pour 600 km), à revoir si la France entière devait se charger d'un coup.
+- La vue d'ensemble (niveau schématique) dessine 16 000 appels canvas pour la France : une
+  polyligne par section existe déjà, elle profitera des rails longs.
 
 ## Hors périmètre (cette version)
 
