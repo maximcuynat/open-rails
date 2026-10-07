@@ -2,7 +2,7 @@
 
 Nettoyé le 2026-10-05 : tout ce qui est implémenté et fusionné dans `developement` a été retiré (plans, étapes cochées et revues restent dans l'historique git de ce fichier). Ne restent que ce qui est encore à faire, à contrôler, à décider, et les défauts connus.
 
-Plans détaillés dans leurs propres fichiers : `plan-console-conduite.md` (pupitre sur téléphone), `plan-traversee-jonction.md`, `plan-inclinaison-visible.md`.
+Plans détaillés dans leurs propres fichiers : `plan-console-conduite.md` (pupitre sur téléphone), `plan-traversee-jonction.md`, `plan-inclinaison-visible.md`, `plan-lignes-lgv-multijoueur.md` (lignes LGV entre gares, salon à N pupitres, réflexion du 2026-10-07).
 
 ---
 
