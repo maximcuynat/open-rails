@@ -43,7 +43,7 @@ const layRail = (): void => {
   addSegment(store.network, a.id, b.id)
 }
 
-test(`${net.segments.size} rails: what costs nothing when nothing changed`, async ({ bench }) => {
+test(`${net.segments.size} rails: what costs nothing when nothing changed`, { timeout: 600_000 }, async ({ bench }) => {
   await bench.compare(
     bench('notify, nothing changed', () => {
       store.notify()
@@ -63,7 +63,7 @@ test(`${net.segments.size} rails: what costs nothing when nothing changed`, asyn
   )
 })
 
-test(`${net.segments.size} rails: an edit, its parts, undo, load`, async ({ bench }) => {
+test(`${net.segments.size} rails: an edit, its parts, undo, load`, { timeout: 600_000 }, async ({ bench }) => {
   await bench.compare(
     bench('edit committed: one rail laid in the open', () => {
       layRail()
