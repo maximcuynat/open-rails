@@ -32,6 +32,7 @@ import { removeSpeedZone, setSpeedZoneSpeed } from '@domain/models/speedZones'
 import * as speedLimits from '@domain/models/speedLimits'
 import { addSpeedZoneBetween } from '@domain/services/speedZoneLayout'
 import { snapToNearestTrack } from '@domain/models/locomotive'
+import { networkChanged } from '@domain/models/networkWatch'
 
 /** One canvas call, with the drawing state it was made in and where its path started */
 interface Op {
@@ -427,6 +428,7 @@ describe('track levels — trains', () => {
 
     // An explicit `level: 0` on the nodes changes nothing either
     for (const node of net.nodes.values()) node.level = 0
+    networkChanged()
     expect(drawLayered(net, [train]).ops).toEqual(plain.ops)
   })
 })
@@ -720,6 +722,7 @@ describe('speed zones on the canvas', () => {
     const { net, ground } = tracksWithZone(0)
     draw(net)
     net.nodes.get(ground.to)!.pos.x = 300
+    networkChanged()
     // The zone covers the same share of the rail: 30 % → 70 % of 0 → 300
     const boards = draw(net).filter(isBoardText)
     expect(boards[0].args[1]).toBeCloseTo(screenX(90))
@@ -834,6 +837,13 @@ describe('speed zones on the canvas', () => {
     const { net } = tracksWithZone(0)
     const ops = draw(net, { hideConstructionNodes: true, hideSectionBadges: true })
     expect(ops.filter(isBandStroke)).toHaveLength(1)
+    expect(ops.filter(isBoardText)).toHaveLength(2)
+  })
+
+  it('plain driving view: the boards stay, the band goes', () => {
+    const { net } = tracksWithZone(0)
+    const ops = draw(net, { hideConstructionNodes: true, hideSectionBadges: true, hideSpeedZoneBands: true })
+    expect(ops.filter(isBandStroke)).toHaveLength(0)
     expect(ops.filter(isBoardText)).toHaveLength(2)
   })
 

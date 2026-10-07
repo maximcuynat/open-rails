@@ -5,10 +5,12 @@
  * (which rails a device can join, not the position it is in) and on the signals: all of it is
  * worked out once and kept until one of them changes, see `signalTopology`. The route from a
  * signal follows the points as they are set and is kept until one of the devices it meets is thrown.
+ * It stops short of points set against it: see `SignalRoute.blockedAt`.
  *
  * This module must not import `train.ts` nor `trainDynamics.ts`.
  */
 
+import { networkCheckToken } from './networkWatch'
 import type { JunctionId, Network, NodeId, SegmentId, Signal, SignalId, TrackSpan } from './types'
 import { segmentArcLength, segmentPartialLength } from './locomotive'
 import { exitsOf, leaveDirection } from './routing'
@@ -28,6 +30,8 @@ class TableSnapshot {
   private strs: string[] = []
   private nums: number[] = []
   revision = 0
+  /** `networkCheckToken` of the last comparison */
+  checkedAt: number | undefined = undefined
 
   update(net: Network): number {
     const strs = this.strs
@@ -72,6 +76,10 @@ function routeTablesRevision(net: Network): number {
     snapshot = new TableSnapshot()
     tableSnapshots.set(net, snapshot)
   }
+  // A network being driven on: compared once, then trusted until it is said to have changed
+  const token = networkCheckToken(net)
+  if (token !== undefined && snapshot.checkedAt === token) return snapshot.revision
+  snapshot.checkedAt = token
   return snapshot.update(net)
 }
 
@@ -134,8 +142,14 @@ export interface SignalRoute {
   nodes: NodeId[]
   /** The next signal of the same direction on the route, null when it ends before any */
   next: SignalId | null
-  /** True when the route stops at an end of track, or at points set against it */
+  /** True when the route stops at an end of track: a buffer stop, an open end, a one-way signal met from behind */
   endsOnTrackEnd: boolean
+  /**
+   * The points the route stops on because they are set against it, null otherwise: the track goes
+   * on beyond them, in another position of the device. Such a route leads nowhere — it is not a
+   * route to an end of track, and those points are not part of it (they are not in `nodes`).
+   */
+  blockedAt: NodeId | null
   /** Length of the route, m */
   length: number
   /**
@@ -246,6 +260,16 @@ export function routeExitOf(
   if (nodeId === null) return null
   if (isPlainNode(net, topology, nodeId)) return continuationsOf(net, topology, segId, ascending)[0] ?? null
   return nextRail(net, nodeId, segId, direction)
+}
+
+/**
+ * True when the track stops, for a train reaching the end of rail `segId` run `ascending` or not,
+ * only because the device there is set against it: no rail leads on as the points are, one would in
+ * another position. Trailing points set for the other branch, a double slip whose near points are
+ * set for the other rail. False at a genuine end of track.
+ */
+export function isSetAgainst(net: Network, topology: SignalTopology, segId: SegmentId, ascending: boolean, direction: 1 | -1 = 1): boolean {
+  return routeExitOf(net, topology, segId, ascending, direction) === null && continuationsOf(net, topology, segId, ascending).length > 0
 }
 
 /** The nearest signal of direction `ascending` met on a rail run from `t`, null when there is none */
@@ -495,6 +519,7 @@ function walkSignalRoute(net: Network, topology: SignalTopology, signal: Signal)
     nodes: [],
     next: null,
     endsOnTrackEnd: false,
+    blockedAt: null,
     length: 0,
     beyond: [],
     met: [],
@@ -531,16 +556,21 @@ function walkSignalRoute(net: Network, topology: SignalTopology, signal: Signal)
     route.spans.push({ segId, t0: t, t1: exitT })
     route.length += i === 0 ? segmentPartialLength(net, segId, t, exitT) : railLengthIn(net, topology, segId)
     const nodeId = ascending ? seg.to : seg.from
-    if (isSwitchNode(net, nodeId)) route.nodes.push(nodeId)
     const junctionId = topology.junctionAt.get(nodeId)
     const junction = junctionId ? net.junctions.get(junctionId) : undefined
     if (junction) route.met.push({ junctionId: junction.id, active: junction.active })
     const exitId = routeExitOf(net, topology, segId, ascending)
     const exit = exitId ? net.segments.get(exitId) : undefined
     if (!exit) {
-      route.endsOnTrackEnd = true
+      // Points set against the route are not an end of track, and the route does not take them
+      if (isSetAgainst(net, topology, segId, ascending)) route.blockedAt = nodeId
+      else {
+        if (isSwitchNode(net, nodeId)) route.nodes.push(nodeId)
+        route.endsOnTrackEnd = true
+      }
       break
     }
+    if (isSwitchNode(net, nodeId)) route.nodes.push(nodeId)
     if (junction && (junction.kind === 'turnout' || junction.kind === 'three_way')) {
       const passage = junction.passages.findIndex((p) => (p.a === segId && p.b === exit.id) || (p.a === exit.id && p.b === segId))
       if (passage > 0) route.diverging.push({ junctionId: junction.id, a: segId, b: exit.id })

@@ -10,6 +10,9 @@
  * This module must not import `train.ts` (which imports the physics, which imports this one).
  */
 
+import { pathChecksum, pathTightestCurve } from '../geometry/railPath'
+import { leaveVectorOnShape, segmentEnds } from '../geometry/segmentGeometry'
+import { networkCheckToken } from './networkWatch'
 import type { Junction, Network, NodeId, Segment, SegmentId, TrackSpan } from './types'
 import type { LineSettings, LineType, UpcomingSpeedLimit } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
@@ -44,9 +47,11 @@ class TrackSnapshot {
   private nums = new Float64Array(0)
   private strs: string[] = []
   revision = 0
+  /** `networkCheckToken` of the last comparison */
+  checkedAt: number | undefined = undefined
 
   update(net: Network): number {
-    const wanted = net.nodes.size * 2 + net.segments.size * 3
+    const wanted = net.nodes.size * 2 + net.segments.size * 4
     let changed = false
     if (this.nums.length !== wanted) {
       this.nums = new Float64Array(wanted)
@@ -75,7 +80,10 @@ class TrackSnapshot {
       if (nums[ni] !== vx) { nums[ni] = vx; changed = true }
       if (nums[ni + 1] !== vy) { nums[ni + 1] = vy; changed = true }
       if (nums[ni + 2] !== cant) { nums[ni + 2] = cant; changed = true }
-      ni += 3
+      // A long rail is known by its path
+      const path = seg.kind === 'path' && seg.path ? pathChecksum(seg.path) : 0
+      if (nums[ni + 3] !== path) { nums[ni + 3] = path; changed = true }
+      ni += 4
     }
     if (strs.length !== si) {
       strs.length = si
@@ -99,6 +107,10 @@ export function trackGeometryRevision(net: Network): number {
     snapshot = new TrackSnapshot()
     snapshots.set(net, snapshot)
   }
+  // A network being driven on: compared once, then trusted until it is said to have changed
+  const token = networkCheckToken(net)
+  if (token !== undefined && snapshot.checkedAt === token) return snapshot.revision
+  snapshot.checkedAt = token
   return snapshot.update(net)
 }
 
@@ -196,6 +208,13 @@ function resolveLine(line: LineSettings): ResolvedLine {
 
 /** Radius and hand of a curved rail, null when it is straight (or as good as) */
 function railGeometry(net: Network, seg: Segment): { radius: number; hand: 1 | -1 } | null {
+  if (seg.kind === 'path') {
+    // A long rail is taken at its tightest curve, all along: the speed and the cant of each of its
+    // curves in turn is still to come
+    const path = segmentEnds(net, seg)?.path
+    const tightest = path ? pathTightestCurve(path) : null
+    return tightest && tightest.radius <= MAX_CURVE_RADIUS ? tightest : null
+  }
   if (seg.kind !== 'curve' || !seg.via) return null
   const from = net.nodes.get(seg.from)
   const to = net.nodes.get(seg.to)
@@ -220,16 +239,15 @@ function railGeometry(net: Network, seg: Segment): { radius: number; hand: 1 | -
 
 /** Do the two curved rails meeting at `nodeId` run on with no kink there? */
 function meetSmoothly(net: Network, a: Segment, b: Segment, nodeId: NodeId): boolean {
-  const node = net.nodes.get(nodeId)
-  if (!node || !a.via || !b.via) return false
-  const ax = a.via.x - node.pos.x
-  const ay = a.via.y - node.pos.y
-  const bx = b.via.x - node.pos.x
-  const by = b.via.y - node.pos.y
-  const la = Math.hypot(ax, ay)
-  const lb = Math.hypot(bx, by)
+  const endsA = segmentEnds(net, a)
+  const endsB = segmentEnds(net, b)
+  if (!endsA?.via || !endsB?.via) return false
+  const va = leaveVectorOnShape(endsA, a.from === nodeId)
+  const vb = leaveVectorOnShape(endsB, b.from === nodeId)
+  const la = Math.hypot(va.x, va.y)
+  const lb = Math.hypot(vb.x, vb.y)
   if (la < 1e-9 || lb < 1e-9) return false
-  return -(ax * bx + ay * by) / (la * lb) >= Math.cos((SAME_CURVE_MAX_KINK_DEG * Math.PI) / 180)
+  return -(va.x * vb.x + va.y * vb.y) / (la * lb) >= Math.cos((SAME_CURVE_MAX_KINK_DEG * Math.PI) / 180)
 }
 
 /** The only other rail at a node that joins exactly two, else null */
@@ -727,7 +745,8 @@ interface AheadMemo {
   walked: number
   /** Route tables met on the way and the position each one was in */
   junctions: { junction: Junction; active: number }[]
-  found: UpcomingSpeedLimit | null
+  /** Every limit met that is lower than all those before it, nearest first: one of them is the one to brake for */
+  found: UpcomingSpeedLimit[]
 }
 
 interface RakeMemo {
@@ -856,7 +875,7 @@ function walkAhead(
     ascending: start.ascending,
     walked: reach,
     junctions: [],
-    found: null,
+    found: [],
   }
   let segId = start.segId
   let t = start.t
@@ -866,35 +885,36 @@ function walkAhead(
   const end = start.overhang + reach
   /** Speed of the points the route has just left on their diverging route: it starts where this rail does */
   let pointsSpeed = Infinity
+  /** Lowest limit met so far: a higher one further on asks for no braking of its own */
+  let lowest = limit
 
   for (let i = 0; i < MAX_LOOK_AHEAD_RAILS && travelled <= end; i++) {
     const seg = net.segments.get(segId)
     if (!seg) break
     const exitT = ascending ? 1 : 0
-    let nearest = Infinity
-    let speed = Infinity
-    const meet = (distance: number, lower: number): void => {
-      if (distance < nearest - 1e-6) {
-        nearest = distance
-        speed = lower
-      } else if (distance <= nearest + 1e-6) {
-        speed = Math.min(speed, lower)
-      }
-    }
+    /** Lower limits that start on this rail, and how far along the route */
+    const met: UpcomingSpeedLimit[] = []
     // The rail the rake stands on is already part of the limit it runs under
     const curveLimit = i > 0 ? profile.rails.get(segId)?.maxSpeed ?? Infinity : Infinity
-    if (curveLimit < limit) meet(travelled, curveLimit)
-    if (pointsSpeed < limit) meet(travelled, pointsSpeed)
+    if (curveLimit < lowest) met.push({ speed: curveLimit, distance: travelled })
+    if (pointsSpeed < lowest) met.push({ speed: pointsSpeed, distance: travelled })
     for (const stretch of speedZonesOnRail(net, segId)) {
-      if (stretch.zone.speed >= limit) continue
+      if (stretch.zone.speed >= lowest) continue
       // Where the route enters the stretch, if it still lies ahead on this rail
       if (ascending ? stretch.hi <= t + TRACK_T_EPSILON : stretch.lo >= t - TRACK_T_EPSILON) continue
       const enter = ascending ? Math.max(stretch.lo, t) : Math.min(stretch.hi, t)
-      meet(travelled + (enter === t ? 0 : segmentPartialLength(net, segId, t, enter)), stretch.zone.speed)
+      met.push({ speed: stretch.zone.speed, distance: travelled + (enter === t ? 0 : segmentPartialLength(net, segId, t, enter)) })
     }
-    if (nearest <= end) {
-      memo.found = { speed, distance: Math.max(0, nearest - start.overhang) }
-      return memo
+    met.sort((a, b) => a.distance - b.distance)
+    for (const one of met) {
+      if (one.distance > end) break
+      if (one.speed >= lowest) continue
+      lowest = one.speed
+      const distance = Math.max(0, one.distance - start.overhang)
+      const last = memo.found[memo.found.length - 1]
+      // Limits that start at the same place are one: the lowest of them
+      if (last && distance <= last.distance + 1e-6) last.speed = one.speed
+      else memo.found.push({ speed: one.speed, distance })
     }
 
     travelled += i === 0 ? segmentPartialLength(net, segId, t, exitT) : railLength(net, profile, segId)
@@ -912,14 +932,57 @@ function walkAhead(
   return memo
 }
 
+/** How a rake is running, for the limit it has to brake for first */
+export interface RakeRunning {
+  /** km/h */
+  speed: number
+  /** Distance it stops in from that speed, m */
+  stoppingDistance: number
+}
+
+/** A rake at rest brakes for nothing: the limit announced to it is the nearest */
+const AT_REST: RakeRunning = { speed: 0, stoppingDistance: 0 }
+
 /**
- * The next speed limit lower than `limit` (km/h, the one the rake runs under) along the route
- * ahead of it — points as they are set, the way the rake is moving, tail first in reverse — and
- * its distance from the leading end of the rake. Null when there is none within `reach` metres.
+ * Distance (m) a rake needs to come down to `to` km/h: the share of its stopping distance that the
+ * speed to lose takes at a steady deceleration, with the margin the look-ahead takes on it.
+ */
+function brakingDistance(running: RakeRunning, to: number): number {
+  if (!(running.speed > to)) return 0
+  const stopping = Math.min(running.stoppingDistance, MAX_LOOK_AHEAD / LOOK_AHEAD_STOPPING_FACTOR)
+  return LOOK_AHEAD_STOPPING_FACTOR * stopping * (1 - (to * to) / (running.speed * running.speed))
+}
+
+/**
+ * The limit of `found` — less `moved` metres run since — the rake has to start braking for first,
+ * among those within `reach`: a low limit just behind a mild one comes before it.
+ */
+function brakedForFirst(found: UpcomingSpeedLimit[], moved: number, reach: number, running: RakeRunning): UpcomingSpeedLimit | null {
+  let first: UpcomingSpeedLimit | null = null
+  let margin = Infinity
+  for (const one of found) {
+    const distance = one.distance - moved
+    if (distance > reach) break
+    const left = distance - brakingDistance(running, one.speed)
+    if (left < margin) {
+      margin = left
+      first = { speed: one.speed, distance: Math.max(0, distance) }
+    }
+  }
+  return first
+}
+
+/**
+ * The speed limit lower than `limit` (km/h, the one the rake runs under) that constrains the rake
+ * first along the route ahead of it — points as they are set, the way the rake is moving, tail
+ * first in reverse — and its distance from the leading end of the rake. Null when there is none
+ * within `reach` metres. It is the one whose braking has to start the earliest for a rake
+ * `running` as given, which is not always the nearest: a zone at 60 km/h right behind a curve at
+ * 150 is the one to brake for. For a rake at rest (the default), the nearest.
  *
  * The route is walked once and kept: as long as the leading bogie stays on the same rail, the
  * points met are as they were, the limit under the rake is the same and the track has not changed,
- * the answer is the kept one, the distance run since taken off.
+ * the answer is read from the kept one, the distance run since taken off.
  */
 export function limitAhead(
   net: Network,
@@ -928,8 +991,9 @@ export function limitAhead(
   reach: number = MIN_LOOK_AHEAD,
   line: LineSettings = DEFAULT_LINE_SETTINGS,
   options: RakeLimitOptions = {},
+  running: RakeRunning = AT_REST,
 ): UpcomingSpeedLimit | null {
-  return limitAheadIn(net, trackProfile(net, line), rake, limit, reach, options.turnouts === true)
+  return limitAheadIn(net, trackProfile(net, line), rake, limit, reach, options.turnouts === true, running)
 }
 
 function limitAheadIn(
@@ -939,6 +1003,7 @@ function limitAheadIn(
   limit: number,
   reach: number,
   turnouts: boolean,
+  running: RakeRunning,
 ): UpcomingSpeedLimit | null {
   const start = routeStart(rake)
   if (!start) return null
@@ -956,31 +1021,25 @@ function limitAheadIn(
     kept.junctions.every((met) => met.junction.active === met.active)
   ) {
     const moved = start.t === kept.t ? 0 : segmentPartialLength(net, start.segId, kept.t, start.t)
-    if (kept.found) {
-      const distance = kept.found.distance - moved
-      if (distance <= reach) return { speed: kept.found.speed, distance: Math.max(0, distance) }
-      return null
-    }
-    if (kept.walked - moved >= reach) return null
+    if (kept.walked - moved >= reach) return brakedForFirst(kept.found, moved, reach, running)
   }
   const walked = walkAhead(net, profile, rake, limit, reach * LOOK_AHEAD_MARGIN, turnouts)
   memo.ahead = walked
-  if (!walked?.found || walked.found.distance > reach) return null
-  return { ...walked.found }
+  return walked ? brakedForFirst(walked.found, 0, reach, running) : null
 }
 
 /** What the track says to a rake where it stands, for the driving console */
 export interface RakeSpeedState {
   /** Limit the rake runs under, km/h (see `rakeSpeedLimit`) */
   limit: number
-  /** Next lower limit ahead (see `limitAhead`) */
+  /** Lower limit ahead the rake has to brake for first (see `limitAhead`) */
   next: UpcomingSpeedLimit | null
   /** Largest cant deficiency under a bogie, mm (see `rakeCantDeficiency`) */
   cantDeficiency: number
 }
 
 /**
- * Limit under a rake running at `speed` km/h, next lower limit within `lookAheadReach` of its
+ * Limit under a rake running at `speed` km/h, lower limit to brake for first within `lookAheadReach` of its
  * stopping distance and cant deficiency, read in one go: the network is compared with its last
  * known state once, where calling the three functions would do it three times.
  */
@@ -997,7 +1056,7 @@ export function rakeSpeedState(
   const limit = rakeSpeedLimitIn(net, profile, rake, options)
   return {
     limit,
-    next: limitAheadIn(net, profile, rake, limit, lookAheadReach(stoppingDistance), options.turnouts === true),
+    next: limitAheadIn(net, profile, rake, limit, lookAheadReach(stoppingDistance), options.turnouts === true, { speed, stoppingDistance }),
     cantDeficiency: cantDeficiencyIn(profile, rake.vehicles, speed),
   }
 }

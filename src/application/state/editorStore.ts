@@ -1,4 +1,7 @@
 import { useSyncExternalStore } from 'react'
+import { mergeIntoLongRails } from '@domain/services/longRails'
+import { fitPath } from '@domain/geometry/arcFit'
+import { networkChanged, networkCheckToken, touchNetwork } from '@domain/models/networkWatch'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
@@ -6,7 +9,7 @@ import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossi
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
 import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctionAtNode, findJunctionBySegment, autoDetectJunctions, doubleSlipSideToward, throwDoubleSlipSide, type DoubleSlipSide } from '@domain/models/junction'
-import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
 import {
@@ -51,6 +54,7 @@ import {
   clearNetworkStorage,
   deserializeNetwork,
   serializeNetwork,
+  type ProjectOrigin,
   type SerializedProject,
   type SignalDisplaySettings,
 } from '@infrastructure/persistence/persistence'
@@ -66,9 +70,10 @@ import { isConsolePreference, type ConsolePreference } from '@application/consol
 import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
 import type { Junction, JunctionId, Network, Point, Selection, Segment, SpeedZone } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
-import { networkDerived } from '@infrastructure/render/networkDerived'
+import { networkDerived, sectionMetaChanged } from '@infrastructure/render/networkDerived'
 import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
 import type { GradientLimits } from '@domain/services/kinematicDiagnostics'
+import type { OsmSource } from '@domain/import/osmTypes'
 import type { Locomotive } from '@domain/models/locomotive'
 import {
   createLocomotive,
@@ -326,6 +331,10 @@ export class EditorStore {
   onOverspeed: ((train: TrainSet, overspeed: CabOverspeed) => void) | null = null
   levelHeight: number = 6 // height of one track level in world meters (6 m at 1:1, scaled down for model scales)
   maxGradient: number = 35 // steepest slope allowed, in ‰ (a ramp above it is reported)
+  /** Levels without relief: they only say which track passes over which, every slope is zero (see `gradientLimits`) */
+  flatLevels: boolean = false
+  /** Where the network was imported from (OpenStreetMap), null for a project drawn by hand */
+  osmSource: OsmSource | null = null
   lineSpeed: number = DEFAULT_LINE_SETTINGS.lineSpeed // ceiling speed of the line, km/h
   lineType: LineType = DEFAULT_LINE_SETTINGS.lineType // conventional or high-speed line: rules for cant
   /** Signalling level of the project: the same signals read as block / path signals or as French signals */
@@ -357,6 +366,55 @@ export class EditorStore {
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
+  /** A phone holds the driving desk (set by the remote session): this screen then only watches */
+  remoteDeskConnected = false
+  /** Train the camera follows while spectating; null = the train the phone drives */
+  spectatedTrainId: string | null = null
+
+  /** True while a phone drives and this screen watches: no console here, no driving from this keyboard */
+  get isSpectating(): boolean {
+    return this.isPlayMode && this.remoteDeskConnected
+  }
+
+  /** The train the camera follows in driving mode: the spectated one while spectating, else the driven one */
+  get cameraTrain(): TrainSet | null {
+    if (this.isSpectating && this.spectatedTrainId) {
+      const spectated = this.trains.find((t) => t.id === this.spectatedTrainId)
+      if (spectated) return spectated
+    }
+    return this.selectedTrain
+  }
+
+  /** Called by the remote session when a phone takes or leaves the desk */
+  setRemoteDeskConnected = (connected: boolean): void => {
+    if (this.remoteDeskConnected === connected) return
+    this.remoteDeskConnected = connected
+    this.spectatedTrainId = null
+    this.notify()
+  }
+
+  /** While spectating: follow this train with the camera (null = the train the phone drives) */
+  spectateTrain = (trainId: string | null): void => {
+    this.spectatedTrainId = trainId !== null && this.trains.some((t) => t.id === trainId) ? trainId : null
+    this.followLocomotiveCamera = true
+    this.centreCameraOnTrain(this.cameraTrain)
+    this.notify()
+  }
+
+  /** While spectating: stop following any train, the view moves freely */
+  setSpectatorFreeView = (): void => {
+    this.followLocomotiveCamera = false
+    this.notify()
+  }
+
+  private centreCameraOnTrain(train: TrainSet | null): void {
+    const lead = train?.vehicles[0]
+    const pos = lead ? positionOnSegment(this.network, lead.front.segId, lead.front.t) : null
+    if (pos) {
+      this.camera.x = pos.x
+      this.camera.y = pos.y
+    }
+  }
   showTrainDebug = false // Debug skeleton mode: see attachment points, pivots and accordions without body
   trainDebugOptions: TrainDebugOptions = {
     vectors: true,
@@ -640,17 +698,26 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
-      this.gradientLimits,
+      this.gradientSettings,
       this.lineSettings,
       this.signallingSettings,
+      undefined,
+      this.projectOrigin,
     )
     // Truncate any forward redo history if we are in the middle of history
     if (this.historyIndex < this.history.length - 1) {
       this.history = this.history.slice(0, this.historyIndex + 1)
     }
     this.history.push(snapshot)
-    if (this.history.length > this.maxHistory) {
-      this.history.shift()
+    // A step taken from a track that needs no mending is put back without looking for any
+    const tolerance = this.getPlacementThresholds().reconcileTolerance
+    if (isNetworkReconciled(this.network, tolerance)) reconciledSteps.set(snapshot, tolerance)
+    // As many steps as the memory allows: fewer on a very large network, never less than one undo
+    const weight = (step: SerializedProject): number => step.nodes.length + step.segments.length
+    let total = 0
+    for (const step of this.history) total += weight(step)
+    while (this.history.length > 2 && (this.history.length > this.maxHistory || total > HISTORY_BUDGET)) {
+      total -= weight(this.history.shift()!)
     }
     this.historyIndex = this.history.length - 1
     this.pendingEdit = 'none'
@@ -664,7 +731,7 @@ export class EditorStore {
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
-        const res = deserializeNetwork(snapshot)
+        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot))
         this.network = res.network
         this.restoreTrains(res.trains)
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
@@ -677,6 +744,7 @@ export class EditorStore {
           this.parallelOffset = res.trackSpacing
         }
         this.restoreGradientSettings(res)
+        this.osmSource = res.osmSource ?? null
         this.restoreLineSettings(res)
         this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
@@ -698,7 +766,7 @@ export class EditorStore {
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
-        const res = deserializeNetwork(snapshot)
+        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot))
         this.network = res.network
         this.restoreTrains(res.trains)
         if (res.sectionMeta) this.sectionMeta = res.sectionMeta
@@ -711,6 +779,7 @@ export class EditorStore {
           this.parallelOffset = res.trackSpacing
         }
         this.restoreGradientSettings(res)
+        this.osmSource = res.osmSource ?? null
         this.restoreLineSettings(res)
         this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
@@ -765,6 +834,7 @@ export class EditorStore {
         }
       }
     }
+    sectionMetaChanged(this.sectionMeta)
     this.markDirty()
     this.notify()
   }
@@ -864,6 +934,7 @@ export class EditorStore {
       this.parallelOffset = saved.trackSpacing
     }
     this.restoreGradientSettings(saved)
+    this.osmSource = saved.osmSource ?? null
     this.restoreLineSettings(saved)
     this.restoreSignallingSettings(saved)
     this.restoreSignalDisplay(saved)
@@ -906,6 +977,8 @@ export class EditorStore {
       this.parallelOffset = res.trackSpacing
     }
     this.restoreGradientSettings(res)
+    // The provenance belongs to the loaded file, like the section names
+    this.osmSource = res.osmSource ?? null
     this.restoreLineSettings(res)
     this.restoreSignallingSettings(res)
     this.restoreSignalDisplay(res)
@@ -949,19 +1022,48 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
-      this.gradientLimits,
+      this.gradientSettings,
       this.lineSettings,
       this.signallingSettings,
       this.signalDisplaySettings,
+      this.projectOrigin,
     )
   }
 
+  /** The write of the project to localStorage that is waiting, if any */
+  private saveTimer: ReturnType<typeof setTimeout> | null = null
+  /** True when the last write to localStorage failed: the project is larger than the browser keeps */
+  autosaveFailed = false
+  /** Nodes and rails of the project when that write failed: a project that large is not written again */
+  private autosaveFailedSize = 0
+
   /**
-   * Immediately save layout state to localStorage.
+   * Save the project to localStorage. In the browser the write waits AUTOSAVE_DELAY_MS, so that
+   * a run of edits is written once: on a large network, writing the whole project costs more than
+   * the edit itself. Leaving the page writes at once (`flushPersistedState`). Without a window
+   * (the tests) it is written straight away.
    */
   savePersistedState = (): void => {
+    if (typeof window === 'undefined') {
+      this.flushPersistedState()
+      return
+    }
+    if (this.saveTimer !== null) return
+    this.saveTimer = setTimeout(() => this.flushPersistedState(), AUTOSAVE_DELAY_MS)
+  }
+
+  /** Write the project to localStorage now, whether or not a write was waiting */
+  flushPersistedState = (): void => {
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    // Putting a project the browser has no room for into text again at every edit is time spent
+    // for nothing: it is tried again once the project is smaller
+    const size = this.network.nodes.size + this.network.segments.size
+    if (this.autosaveFailed && size >= this.autosaveFailedSize) return
     const sections = networkDerived(this.network, this.sectionMeta).sections
-    saveNetworkToStorage(
+    const saved = saveNetworkToStorage(
       this.network,
       this.projectName,
       this.camera,
@@ -978,11 +1080,19 @@ export class EditorStore {
       this.boardWidth,
       this.boardHeight,
       this.trains,
-      this.gradientLimits,
+      this.gradientSettings,
       this.lineSettings,
       this.signallingSettings,
       this.signalDisplaySettings,
+      this.projectOrigin,
     )
+    if (!saved) this.autosaveFailedSize = size
+    if (saved === this.autosaveFailed) {
+      // The top bar says whether the project is kept by the browser
+      this.autosaveFailed = !saved
+      this.version++
+      this.listeners.forEach((l) => l())
+    }
   }
 
   /**
@@ -994,6 +1104,8 @@ export class EditorStore {
     this.restoreTrains([])
     this.restoreSignallingSettings({})
     this.restoreSignalDisplay({})
+    this.flatLevels = false
+    this.osmSource = null
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.tool = 'pan'
@@ -1003,6 +1115,11 @@ export class EditorStore {
     this.camera.y = 0
     this.camera.scale = 3
     this.dirty = false
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    this.autosaveFailed = false
     clearNetworkStorage()
     resetIdCounter(0)
     this.history = []
@@ -1024,13 +1141,25 @@ export class EditorStore {
 
   getVersion = (): number => this.version
 
+  /** The network `notify` last checked the route tables, zones and signals of, and its revision then */
+  private syncedNetwork: Network | null = null
+  private syncedToken: number | undefined = undefined
+
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
-    autoDetectJunctions(this.network)
-    // The domain moves the zones itself when a rail is replaced; this only drops what would be
-    // left on a rail taken out of the graph by other means
-    cleanSpeedZones(this.network)
-    cleanSignals(this.network)
+    this.drivenDynamics = null
+    // The route tables, zones and signals only need checking against a network that changed
+    // since they last were (see `networkWatch`)
+    const token = networkCheckToken(this.network)
+    if (token === undefined || token !== this.syncedToken || this.network !== this.syncedNetwork) {
+      autoDetectJunctions(this.network)
+      // The domain moves the zones itself when a rail is replaced; this only drops what would be
+      // left on a rail taken out of the graph by other means
+      cleanSpeedZones(this.network)
+      cleanSignals(this.network)
+      this.syncedNetwork = this.network
+      this.syncedToken = networkCheckToken(this.network)
+    }
     this.syncTrainsWithNetwork()
     this.version++
     this.listeners.forEach((l) => l())
@@ -1044,6 +1173,45 @@ export class EditorStore {
    */
   notifyView = (): void => {
     this.listeners.forEach((l) => l())
+  }
+
+  /** When the panels were last rendered again from the simulation loop, ms */
+  private lastFrameRender = 0
+
+  /**
+   * Tell the subscribers that the trains moved, from the simulation loop. The canvas draws every
+   * frame a train moved (`moved`); the panels (driving console, toolbar) are only rendered again every
+   * `DRIVING_PANEL_PERIOD_MS`, which is as fast as their figures can be read. The network is not
+   * checked: a train that runs does not change it, and whatever does — points thrown, a command of
+   * the driver — calls `notify` itself.
+   */
+  notifyFrame = (moved = true): void => {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const panels = now - this.lastFrameRender >= DRIVING_PANEL_PERIOD_MS || now < this.lastFrameRender
+    if (panels) {
+      this.lastFrameRender = now
+      this.version++
+    }
+    // Every train at a stand: the picture is the one already on screen. It is drawn again with the
+    // panels only, for what still changes without a train moving (a signal clearing, a gauge).
+    if (moved || panels) this.listeners.forEach((l) => l())
+  }
+
+  /**
+   * Driving view kept to what a driver reads — rails, points, route, signals, speed boards, trains:
+   * the grid, the stripes of the sections, the bands of the speed zones, the marks of cant and
+   * slope and the scale bar are left out while driving. Ticked by default.
+   */
+  minimalDrivingView = true
+
+  /** True while the canvas draws the plain driving view */
+  get isPlainDrivingView(): boolean {
+    return this.isPlayMode && this.minimalDrivingView
+  }
+
+  toggleMinimalDrivingView = (): void => {
+    this.minimalDrivingView = !this.minimalDrivingView
+    this.notify()
   }
 
   setTool = (t: Tool): void => {
@@ -1507,6 +1675,9 @@ export class EditorStore {
 
   markDirty = (): void => {
     this.dirty = true
+    // An edit was committed: whatever is kept of the network is compared again, even if a change
+    // made in place forgot to say so (`touchNetwork`)
+    networkChanged()
     if (!this.isUndoingRedoing) this.settleSignals()
     this.savePersistedState()
     this.pushHistorySnapshot(true)
@@ -1587,6 +1758,7 @@ export class EditorStore {
         seg.via.y = initVia.y
       }
     }
+    if (this.draggedNodeInitialPositions.size > 0) touchNetwork(this.network)
     if (this.draggedNodeInitialPositions.size > 0) this.realignTrains()
     this.unpinTrains()
     this.gizmoHoverAxis = null
@@ -1712,6 +1884,7 @@ export class EditorStore {
         dissolvedSeg = dissolveNode(this.network, nid)
         if (dissolvedSeg && oldMeta) {
           this.sectionMeta[dissolvedSeg.id] = { ...oldMeta }
+          sectionMetaChanged(this.sectionMeta)
         }
       }
 
@@ -1926,9 +2099,31 @@ export class EditorStore {
     return true
   }
 
-  /** What slopes are measured against (see `analyzeKinematics`): the two slope settings of the project */
+  /**
+   * What slopes are measured against (see `analyzeKinematics`), for the diagnostics, the drawing,
+   * the panels and the driving physics alike. With levels without relief a level has no height:
+   * every slope is zero, so nothing is reported, marked or felt by a train.
+   */
   get gradientLimits(): GradientLimits {
+    return { levelHeight: this.flatLevels ? 0 : this.levelHeight, maxGradient: this.maxGradient }
+  }
+
+  /** The slope settings as the project stores them, whether the levels have relief or not */
+  private get gradientSettings(): GradientLimits {
     return { levelHeight: this.levelHeight, maxGradient: this.maxGradient }
+  }
+
+  /** What an import leaves in the project, saved with it */
+  private get projectOrigin(): ProjectOrigin {
+    return { flatLevels: this.flatLevels, osmSource: this.osmSource }
+  }
+
+  /** Levels with or without relief. One undo step when it changed. */
+  setFlatLevels = (value: boolean): void => {
+    if (value === this.flatLevels) return
+    this.flatLevels = value
+    this.markDirty()
+    this.notify()
   }
 
   /**
@@ -1951,10 +2146,11 @@ export class EditorStore {
   }
 
   /** Slope settings read from a project; one saved without them gets those of its scale */
-  private restoreGradientSettings(saved: { levelHeight?: number; maxGradient?: number }): void {
+  private restoreGradientSettings(saved: { levelHeight?: number; maxGradient?: number; flatLevels?: boolean }): void {
     const preset = SCALE_PRESETS[this.scalePreset] ?? SCALE_PRESETS['1:1']
     this.levelHeight = saved.levelHeight ?? preset.defaultLevelHeight
     this.maxGradient = saved.maxGradient ?? preset.defaultMaxGradient
+    this.flatLevels = saved.flatLevels ?? false
   }
 
   /** Line settings read from a project; one saved without them is on the default line */
@@ -1981,6 +2177,27 @@ export class EditorStore {
       this.notify()
     }
     return res
+  }
+
+  /**
+   * Replace every run of small rails between two junctions by long rails (see `mergeIntoLongRails`):
+   * far fewer rails and nodes for the same track, within a few decimetres of it. One undo step.
+   * Refused while driving. Returns the number of rails before and after, null when refused.
+   */
+  simplifyToLongRails = (): { before: number; after: number } | null => {
+    if (this.isPlayMode) return null
+    this.selection = { nodes: new Set(), segments: new Set() }
+    const result = mergeIntoLongRails(this.network, {
+      fit: fitPath,
+      // 30 cm at full size, and the same share of the gauge on a model scale
+      tolerance: LONG_RAIL_TOLERANCE * (this.gauge / STANDARD_TRACK_GAUGE),
+      cutStraightsOver: LONG_RAIL_CUT_STRAIGHTS * (this.gauge / STANDARD_TRACK_GAUGE),
+    })
+    if (result.merged > 0) {
+      this.markDirty()
+      this.notify()
+    }
+    return { before: result.before, after: result.after }
   }
 
   cycleCurveProfile = (dir: 1 | -1): void => {
@@ -2939,7 +3156,7 @@ export class EditorStore {
 
   /** What the track gives the driving physics beyond its plan geometry */
   get drivingEnvironment(): DrivingEnvironment {
-    const env: DrivingEnvironment = { levelHeight: this.levelHeight, line: this.lineSettings }
+    const env: DrivingEnvironment = { levelHeight: this.gradientLimits.levelHeight, line: this.lineSettings }
     // The pro level weighs on the speed limit of a train; the standard level changes nothing
     if (this.signallingLevel === 'pro') {
       env.signalling = { level: 'pro', speedCapOf: (train) => signalSpeedCap(this.signalling, train.id, 'pro') }
@@ -3050,8 +3267,15 @@ export class EditorStore {
   /** Forces, pressures and stopping distance of the selected train, as the physics sees them now */
   get selectedTrainDynamics(): TrainDynamics | null {
     const train = this.selectedTrain
-    return train ? trainDynamics(this.network, train, this.drivingEnvironment) : null
+    if (!train) return null
+    // The simulation step has just worked them out for this very state of the train: the stopping
+    // distance alone is a whole braking run integrated, not to be done twice per frame
+    if (this.drivenDynamics?.train === train) return this.drivenDynamics.dynamics
+    return trainDynamics(this.network, train, this.drivingEnvironment)
   }
+
+  /** Dynamics of the driven train as of the last simulation step; dropped by any notification */
+  private drivenDynamics: { train: TrainSet; dynamics: TrainDynamics } | null = null
 
   /** Put the selected train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
   setSelectedTrainNotch = (notch: number): void => {
@@ -3775,11 +3999,14 @@ export class EditorStore {
    */
   tickAllTrains = (dt: number): void => {
     if (!this.isPlayMode || dt <= 0) return
+    this.drivenDynamics = null
     const occupancy: TrainOccupancyCache = new Map()
     const env = this.drivingEnvironment
     for (const train of this.trains) {
       // Nobody holds the brake handle of a train that is not driven
       if (train.id !== this.selectedTrainId && train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
+      // Nor its traction handle: a train left under power coasts, it does not keep pulling by itself
+      if (train.id !== this.selectedTrainId && train.notch > 0) setNotch(train, 0)
       // Stopping against an obstacle, holding at rest and rolling back are the domain's business
       tickTrainSet(this.network, train, dt, this.trains, occupancy, env)
       this.reportImpact(train)
@@ -3811,20 +4038,32 @@ export class EditorStore {
     if (this.selectedTrain) {
       this.locomotiveCurrentSpeed = this.selectedTrain.currentSpeed
     }
-    // Sync camera to selected train's lead vehicle
-    if (this.followLocomotiveCamera && this.selectedTrain) {
-      const lead = this.selectedTrain.vehicles[0]
-      if (lead) {
-        const pos = positionOnSegment(this.network, lead.front.segId, lead.front.t)
-        if (pos) {
-          this.camera.x = pos.x
-          this.camera.y = pos.y
-        }
-      }
-    }
-    this.notify()
+    // Sync camera to the lead vehicle of the followed train (the driven one, or the spectated one)
+    if (this.followLocomotiveCamera) this.centreCameraOnTrain(this.cameraTrain)
+    // Kept for the console, which shows the same figures: worked out now if the step did not need them
+    const driven = this.selectedTrain
+    this.drivenDynamics = driven ? { train: driven, dynamics: dynamicsOfDriven(driven) } : null
+    this.notifyFrame(this.trains.some((train) => train.currentSpeed !== 0))
   }
 }
+
+/** How far (m, at standard gauge) a long rail may lie from the small rails it replaces */
+const LONG_RAIL_TOLERANCE = 0.3
+/** A long rail is cut in the middle of the straights this long (m, at standard gauge) between two of its curves */
+const LONG_RAIL_CUT_STRAIGHTS = 100
+const STANDARD_TRACK_GAUGE = 1.435
+
+/** While trains run, the panels are rendered again at most this often, ms (the phone desk is sent its state at the same pace) */
+export const DRIVING_PANEL_PERIOD_MS = 100
+
+/** The steps of the undo history taken from a reconciled track, with the tolerance it was reconciled at */
+const reconciledSteps = new WeakMap<SerializedProject, number>()
+
+/** How long the write of the project to localStorage waits after an edit, ms: the edits made meanwhile are written with it */
+const AUTOSAVE_DELAY_MS = 400
+
+/** Nodes and rails the undo history keeps in all, over all its steps (50 steps of a network of 40 000) */
+const HISTORY_BUDGET = 2_000_000
 
 /** Hook: subscribe a React component to store version changes. */
 export function useEditorVersion(store: EditorStore): number {

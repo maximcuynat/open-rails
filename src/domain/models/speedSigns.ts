@@ -9,6 +9,7 @@
  * Only the drops a zone brings are announced: a curve that lowers the limit by itself gets no sign.
  */
 
+import { segmentEnds, shapeParamAtDistance } from '../geometry/segmentGeometry'
 import type { Network, NodeId, Segment, SegmentId, SpeedZone, SpeedZoneId } from './types'
 import type { LineSettings } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
@@ -16,6 +17,7 @@ import { segmentPartialLength } from './locomotive'
 import { exitsOf } from './routing'
 import { speedZonesRevision } from './speedZones'
 import { speedLimitAt, trackGeometryRevision } from './trackSpeed'
+import { networkCheckToken } from './networkWatch'
 
 /** A distant speed sign (« TIV à distance »): black figures on white, read by trains running one way */
 export interface SpeedSign {
@@ -64,15 +66,11 @@ export function announcementDistance(fromSpeed: number, toSpeed: number): number
 /** Parameter of the place `distance` m from `t` on a rail, towards `endT` */
 function parameterAt(net: Network, seg: Segment, t: number, endT: number, distance: number, available: number): number {
   if (!(available > 0)) return endT
-  if (seg.kind === 'straight' || !seg.via) return t + ((endT - t) * distance) / available
-  let lo = t
-  let hi = endT
-  for (let i = 0; i < 40; i++) {
-    const mid = (lo + hi) / 2
-    if (segmentPartialLength(net, seg.id, t, mid) < distance) lo = mid
-    else hi = mid
-  }
-  return (lo + hi) / 2
+  const ends = segmentEnds(net, seg)
+  if (!ends) return endT
+  const at = shapeParamAtDistance(ends, t, endT >= t ? distance : -distance)
+  // Never past the end of the stretch
+  return endT >= t ? Math.min(at, endT) : Math.max(at, endT)
 }
 
 interface Upstream {
@@ -151,15 +149,22 @@ function buildSigns(net: Network, line: LineSettings): SpeedSign[] {
   return signs
 }
 
+const tableKeys = new WeakMap<Network, { token: number; key: string }>()
+
 /** What the way up the track through the points is read from: the pairs of rails each table joins */
 function routeTablesKey(net: Network): string {
   if (net.junctions.size === 0) return ''
+  // The same revision: the tables are what they were
+  const token = networkCheckToken(net)
+  const known = tableKeys.get(net)
+  if (token !== undefined && known && known.token === token) return known.key
   let key = ''
   for (const junction of net.junctions.values()) {
     key += `${junction.id}@${junction.nodeId}:`
     for (const passage of junction.passages) key += `${passage.a}-${passage.b},`
     key += ';'
   }
+  if (token !== undefined) tableKeys.set(net, { token, key })
   return key
 }
 

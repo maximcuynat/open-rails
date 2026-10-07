@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished } from 'vitest'
 import { addCurveChain, addNode, addSegment, createNetwork, resetIdCounter } from './network'
 import { tangentArcPieces } from '../geometry/curve'
 import { snapToNearestTrack } from './locomotive'
@@ -22,6 +22,7 @@ import { advanceTrainSet, createVehicle, makeTrainSet, trainOccupancy, type Trai
 import { BRAKE_PIPE_RELEASED, trainDynamics } from './trainDynamics'
 import { declareTurnout, setJunctionBranch } from './junction'
 import { performTrackCut } from '../geometry/constructionTemplates'
+import { networkChanged, verifyNetworkRevisions } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -178,9 +179,11 @@ describe('cant and speed of a curved rail', () => {
     const layout = new Layout().straight(500).arc(500, 60).straight(500)
     const curve = layout.pieces[1][1]
     curve.cant = 80
+    networkChanged()
     expect(curveCant(layout.net, curve, CLASSIC_160)).toMatchObject({ cant: 80, automatic: false, maxSpeed: 100 })
     expect(curveCant(layout.net, layout.pieces[1][0], CLASSIC_160)).toMatchObject({ cant: 160, automatic: true, maxSpeed: 115 })
     delete curve.cant
+    networkChanged()
     expect(curveCant(layout.net, curve, CLASSIC_160)).toMatchObject({ cant: 160, automatic: true, maxSpeed: 115 })
   })
 
@@ -200,6 +203,7 @@ describe('cant and speed of a curved rail', () => {
     const net = layout.net
     const curve = layout.pieces[1][0]
     curve.cant = 120
+    networkChanged()
     const middle = { x: 500 + 1000 * Math.sin(Math.PI / 24), y: 1000 * (1 - Math.cos(Math.PI / 24)) }
     expect(snapToNearestTrack(net, middle, 1)!.segId).toBe(curve.id)
     expect(performTrackCut(net, middle)).toBe(true)
@@ -427,6 +431,57 @@ describe('limit ahead', () => {
     setJunctionBranch(junction, 'straight')
     expect(limitAhead(net, train, 160, 3000, CLASSIC_160)).toBeNull()
   })
+
+  it('a mild limit does not hide the low one right behind it: the one to brake for first is announced', () => {
+    // 30 m at 150 km/h, then 60 km/h: what a short curve ahead of a station makes
+    const layout = new Layout().straight(6000, 12)
+    const net = layout.net
+    const env = { levelHeight: 6, line: CLASSIC_160 }
+    const train = rakeOn(net, layout.pieces[0][0].id, 0.5)
+    const head = headX(net, train)
+    addSpeedZoneBetween(net, at(net, head + 1000), at(net, head + 1030), 150)
+    addSpeedZoneBetween(net, at(net, head + 1030), at(net, head + 1600), 60)
+
+    // At rest there is nothing to brake for: the nearest
+    expect(trainDynamics(net, train, env).nextSpeedLimit).toEqual({ speed: 150, distance: expect.closeTo(1000, 3) })
+    // Under 60 km/h neither asks for anything yet
+    expect(trainDynamics(net, running(train, 55), env).nextSpeedLimit).toEqual({ speed: 150, distance: expect.closeTo(1000, 3) })
+    // At 160 km/h the 60 is what the driver has to brake for, and the distance is its own
+    const fast = trainDynamics(net, running(train, 160), env)
+    expect(fast.stoppingDistance).toBeGreaterThan(30)
+    expect(fast.nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(1030, 3) })
+    // …all the way to it
+    expect(advanceTrainSet(net, train, 900)).toBe(true)
+    expect(trainDynamics(net, train, env).nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(130, 3) })
+    // Head in the 150: only the 60 is left
+    expect(advanceTrainSet(net, train, 110)).toBe(true)
+    const inside = trainDynamics(net, running(train, 150), env)
+    expect(inside.speedLimit).toBeCloseTo(150 / 3.6, 9)
+    expect(inside.nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(20, 3) })
+  })
+
+  it('a low limit far behind a mild one waits its turn, and a higher one behind a lower is never announced', () => {
+    const layout = new Layout().straight(12000, 12)
+    const net = layout.net
+    const env = { levelHeight: 6, line: LGV_300 }
+    const train = running(rakeOn(net, layout.pieces[0][0].id, 0.5), 300)
+    const head = headX(net, train)
+    addSpeedZoneBetween(net, at(net, head + 500), at(net, head + 5300), 270)
+    addSpeedZoneBetween(net, at(net, head + 5300), at(net, head + 5600), 60)
+    addSpeedZoneBetween(net, at(net, head + 5600), at(net, head + 6000), 160)
+    const dynamics = trainDynamics(net, train, env)
+    // Both are within reach, and the 270 comes long before the braking for the 60 has to start
+    expect(dynamics.stoppingDistance * 1.5).toBeGreaterThan(5300)
+    expect(dynamics.stoppingDistance * 1.5).toBeLessThan(6000)
+    expect(dynamics.nextSpeedLimit).toEqual({ speed: 270, distance: expect.closeTo(500, 3) })
+    // A train that needs half as much again to stop has to brake for the 60 already
+    const heavy = { speed: 300, stoppingDistance: dynamics.stoppingDistance * 1.5 }
+    expect(limitAhead(net, { ...train }, 300, 6000, LGV_300, {}, heavy)).toEqual({ speed: 60, distance: expect.closeTo(5300, 3) })
+    // Running under the 270, the 60 is the only lower limit left: the 160 behind it is not one to brake for
+    expect(advanceTrainSet(net, train, 1000)).toBe(true)
+    expect(trainDynamics(net, running(train, 270), env).nextSpeedLimit).toEqual({ speed: 60, distance: expect.closeTo(4300, 3) })
+    expect(limitAhead(net, train, 60, 6000, LGV_300)).toBeNull()
+  })
 })
 
 describe('what is kept from one frame to the next', () => {
@@ -444,12 +499,14 @@ describe('what is kept from one frame to the next', () => {
     // A node of the curve is moved: the radius is read again
     const revision = trackGeometryRevision(net)
     curve.via = { x: curve.via!.x, y: curve.via!.y + 5 }
+    networkChanged()
     expect(trackGeometryRevision(net)).toBe(revision + 1)
     expect(curveCant(net, curve, CLASSIC_160)!.radius).not.toBeCloseTo(1000, 0)
     expect(builds()).toBe(before + 1)
 
     // A cant set by hand
     curve.cant = 60
+    networkChanged()
     expect(curveCant(net, curve, CLASSIC_160)).toMatchObject({ cant: 60, automatic: false })
     expect(builds()).toBe(before + 2)
 
@@ -533,6 +590,9 @@ describe('what is kept from one frame to the next', () => {
   })
 
   it('costs little: a frame on a network of 4 000 rails', () => {
+    // Timed as the editor runs: without the check of the revisions the tests add
+    verifyNetworkRevisions(false)
+    onTestFinished(() => verifyNetworkRevisions(true))
     const layout = new Layout()
     for (let i = 0; i < 400; i++) layout.straight(900, 3).arc(1500, i % 2 === 0 ? 30 : -30).straight(300, 5)
     const net = layout.net
@@ -546,9 +606,11 @@ describe('what is kept from one frame to the next', () => {
     }
     const build = time(() => {
       layout.pieces[1][0].cant = layout.pieces[1][0].cant === 100 ? 105 : 100
+      networkChanged()
       trackProfile(net, LGV_300)
     }, 20)
     delete layout.pieces[1][0].cant
+    networkChanged()
     const unchanged = time(() => trackProfile(net, LGV_300), 500)
     const standing = time(() => trainDynamics(net, train, env), 200)
     const moving = time(() => {

@@ -26,6 +26,15 @@ export const BADGE_MIN_LENGTH_PX = 45
 export const SPEED_BOARDS_MIN_LENGTH_PX = 40
 
 /**
+ * A badge stands in a crowd when more than `BADGE_CROWD_LIMIT` other badges would be written
+ * within this reach of it (px): about two badges on either side, five tracks up and down at the closest
+ * zoom that draws every badge
+ */
+export const BADGE_CROWD_REACH_X_PX = 240
+export const BADGE_CROWD_REACH_Y_PX = 100
+export const BADGE_CROWD_LIMIT = 2
+
+/**
  * Shortest section, in pixels on screen, that gets a badge at this zoom (the selected section and
  * the ones the user named are not held to it)
  */
@@ -61,6 +70,22 @@ export function sectionArrowSegments<T>(lod: TrackLod, segmentIds: readonly T[])
   if (lod === 'detail' || lod === 'rails') return segmentIds
   if (lod === 'schematic' || segmentIds.length === 0) return []
   return [segmentIds[Math.floor(segmentIds.length / 2)]]
+}
+
+/** Up to this many plain joints in view, each is drawn at its full size */
+export const PLAIN_JOINTS_FULL_SIZE_UP_TO = 150
+/** However many there are, the dot of a joint keeps this share of its size */
+export const PLAIN_JOINT_MIN_SCALE = 0.5
+
+/**
+ * Size of the dot of a plain joint, as a share of the full one, when `count` of them are in view.
+ * Beyond `PLAIN_JOINTS_FULL_SIZE_UP_TO` the dots shrink so that together they cover no more of the
+ * screen than that many would: a yard of several hundred joints still reads as tracks. The dot
+ * stays where it is and can be grabbed all the same.
+ */
+export function plainJointScale(count: number): number {
+  if (count <= PLAIN_JOINTS_FULL_SIZE_UP_TO) return 1
+  return Math.max(PLAIN_JOINT_MIN_SCALE, Math.sqrt(PLAIN_JOINTS_FULL_SIZE_UP_TO / count))
 }
 
 /** Screen rectangle of a badge (top-left corner) and what ranks it against the others */
@@ -122,9 +147,33 @@ export function speedZoneBandShown(lod: TrackLod, zone: { highlighted: boolean }
   return lod !== 'schematic' || zone.highlighted
 }
 
+/**
+ * Whether the band of a zone in a crowd — one of the limited tracks of a yard — is drawn. Only
+ * for the tool that works on zones (`working`): on a yard the bands of every track would hide the
+ * rails. It then lies between its own rails, so it needs the tiers that draw the two rails; once
+ * a track is a single line the band would be hidden by it, or merge with the one of the next track.
+ */
+export function speedZoneCrowdBandShown(lod: TrackLod, working: boolean): boolean {
+  return working && (lod === 'detail' || lod === 'rails')
+}
+
 /** Whether diagnostic markers that pile up on screen are merged: as soon as a track is a single line */
 export function diagnosticsClustered(lod: TrackLod): boolean {
   return lod === 'line' || lod === 'schematic'
+}
+
+/** Closer than this many half-widths of their diamond, two markers of the signalling report cover each other */
+export const REPORT_MARKER_OVERLAP = 1.6
+
+/**
+ * Distance (px) under which two markers of the signalling report are merged into one that shows
+ * how many it stands for. The signals of a yard stand in a row, one per track, and so do their
+ * markers: the ones that would cover each other are merged at every zoom, and all the ones that
+ * pile up once a track is a single line, like the other diagnostics. `markerRadius`: half the
+ * width of the diamond.
+ */
+export function reportClusterRadius(lod: TrackLod, markerRadius: number): number {
+  return diagnosticsClustered(lod) ? DIAGNOSTIC_CLUSTER_RADIUS_PX : REPORT_MARKER_OVERLAP * markerRadius
 }
 
 export type MarkerSeverity = 'warning' | 'error'

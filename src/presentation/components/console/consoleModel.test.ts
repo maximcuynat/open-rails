@@ -435,6 +435,7 @@ describe('signals', () => {
       empty: 'Aucun signal en vue',
       notes: [],
       brakeAlert: false,
+      urgency: 'calm',
     })
     expect(signalsView(signals({ next: signal({ color: 'yellow', label: 'Attention' }) })).next).toMatchObject({
       lamps: [{ color: 'yellow', on: true }],
@@ -482,11 +483,24 @@ describe('signals', () => {
     expect(view.notes).toEqual([{ tone: 'warning', text: 'Attente de l’itinéraire' }])
   })
 
+  it('says how loud the block is: flashing to brake now, steady red after a fault, calm otherwise', () => {
+    expect(signalsView(signals({})).urgency).toBe('calm')
+    expect(signalsView(signals({ onSight: true, waiting: true, closedDistance: 900 })).urgency).toBe('calm')
+    expect(signalsView(signals({ passed: { braked: true } })).urgency).toBe('fault')
+    expect(signalsView(signals({ overspeed: { braked: false } })).urgency).toBe('fault')
+    expect(signalsView(signals({ brakeAlert: true, passed: { braked: true } })).urgency).toBe('alert')
+  })
+
+  it('keeps every note short enough for its one line', () => {
+    const view = signalsView(signals({ brakeAlert: true, closedDistance: 12_300, passed: { braked: true }, overspeed: { braked: true }, onSight: true, waiting: true }))
+    for (const note of view.notes) expect(note.text.length).toBeLessThanOrEqual(32)
+  })
+
   it('orders the notes, the most pressing first', () => {
     const view = signalsView(signals({ brakeAlert: true, closedDistance: 900, passed: { braked: true }, onSight: true, waiting: true }))
     expect(view.notes.map((note) => note.text)).toEqual([
       'Freinez : signal fermé à 900 m',
-      'Signal fermé franchi : freinage d’urgence',
+      'Signal fermé franchi · urgence',
       'Marche à vue — 30 km/h',
       'Attente de l’itinéraire',
     ])
@@ -580,7 +594,7 @@ describe('signals', () => {
     })
 
     it('tells an overspeed caught by the cab, with or without the emergency brake', () => {
-      expect(signalsView(signals({ overspeed: { braked: true } })).notes).toEqual([{ tone: 'alert', text: 'Survitesse : freinage d’urgence' }])
+      expect(signalsView(signals({ overspeed: { braked: true } })).notes).toEqual([{ tone: 'alert', text: 'Survitesse · urgence' }])
       expect(signalsView(signals({ overspeed: { braked: false } })).notes).toEqual([{ tone: 'alert', text: 'Survitesse' }])
     })
   })
@@ -591,7 +605,7 @@ describe('signals', () => {
 
     it('writes three figures in the colours of what they ask', () => {
       expect(cabView(cab('line', 300))).toEqual({ tone: 'line', figures: '300', flashing: false, label: 'Voie libre', distance: '1,2 km' })
-      expect(cabView(cab('line', 300, true))).toMatchObject({ tone: 'line', flashing: true, label: 'Voie libre, annonce à suivre' })
+      expect(cabView(cab('line', 300, true))).toMatchObject({ tone: 'line', flashing: true, label: 'Annonce à suivre' })
       expect(cabView(cab('announce', 270))).toMatchObject({ tone: 'announce', figures: '270', label: 'Annonce 270' })
       expect(cabView(cab('execute', 160))).toMatchObject({ tone: 'execute', figures: '160', label: 'Exécution 160' })
       expect(cabView(cab('stop', 0))).toMatchObject({ tone: 'stop', figures: '000', label: 'Arrêt au repère' })

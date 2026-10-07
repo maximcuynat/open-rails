@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { addArcCurve, addNode, addSegment, createNetwork, resetIdCounter } from '../../domain/models/network'
 import type { Network, Segment } from '../../domain/models/types'
 import { deserializeNetwork, serializeNetwork, type SerializedProject } from './persistence'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -70,7 +71,9 @@ describe('line settings and cant in a saved project', () => {
   it('a cant set by hand is saved on its rail only, and comes back', () => {
     const { net, straight, curve } = track()
     curve[0].cant = 120
+    networkChanged()
     straight.cant = 50 // never on a straight rail
+    networkChanged()
     const saved = save(net)
     expect(saved.segments.find((s) => s.id === curve[0].id)!.cant).toBe(120)
     expect('cant' in saved.segments.find((s) => s.id === curve[1].id)!).toBe(false)
@@ -85,6 +88,7 @@ describe('line settings and cant in a saved project', () => {
   it('a cant of 0 is a cant set by hand: it is kept', () => {
     const { net, curve } = track()
     curve[1].cant = 0
+    networkChanged()
     const loaded = deserializeNetwork(save(net)).network
     expect(loaded.segments.get(curve[1].id)!.cant).toBe(0)
   })

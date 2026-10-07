@@ -1,0 +1,5054 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-10-06T07:27:36Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 784889132,
+  "lat": 44.8334146,
+  "lon": 5.5973338,
+  "tags": {
+    "railway": "signal",
+    "railway:signal:direction": "forward",
+    "railway:signal:position": "left",
+    "railway:signal:speed_limit": "FR:R",
+    "railway:signal:speed_limit:form": "sign"
+  }
+},
+{
+  "type": "node",
+  "id": 784889199,
+  "lat": 44.8417988,
+  "lon": 5.6114444,
+  "tags": {
+    "railway": "signal",
+    "railway:signal:direction": "forward",
+    "railway:signal:position": "left",
+    "railway:signal:speed_limit_distant": "FR:TIV-D",
+    "railway:signal:speed_limit_distant:form": "sign",
+    "railway:signal:speed_limit_distant:speed": "40"
+  }
+},
+{
+  "type": "node",
+  "id": 784889221,
+  "lat": 44.8375975,
+  "lon": 5.6035572,
+  "tags": {
+    "railway": "signal",
+    "railway:signal:direction": "forward",
+    "railway:signal:position": "left",
+    "railway:signal:speed_limit": "FR:Z",
+    "railway:signal:speed_limit:form": "sign"
+  }
+},
+{
+  "type": "node",
+  "id": 914353544,
+  "lat": 44.8265428,
+  "lon": 5.6093798,
+  "tags": {
+    "railway": "switch",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "node",
+  "id": 914353563,
+  "lat": 44.8199584,
+  "lon": 5.6242300,
+  "tags": {
+    "railway": "signal",
+    "railway:signal:direction": "backward",
+    "railway:signal:distant": "FR:A",
+    "railway:signal:distant:form": "light",
+    "railway:signal:position": "right"
+  }
+},
+{
+  "type": "node",
+  "id": 914353569,
+  "lat": 44.8265573,
+  "lon": 5.6108134,
+  "tags": {
+    "railway": "switch",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "node",
+  "id": 1340040194,
+  "lat": 44.8271631,
+  "lon": 5.6050121,
+  "tags": {
+    "name": "Clelles-Mens",
+    "operator": "SNCF Gares & Connexions",
+    "operator:wikidata": "Q3098278",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre ; mise à jour : 2011",
+    "train": "yes",
+    "uic_ref": "8774762"
+  }
+},
+{
+  "type": "node",
+  "id": 2082596556,
+  "lat": 44.8265987,
+  "lon": 5.6087272,
+  "tags": {
+    "railway": "switch",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "node",
+  "id": 2082596559,
+  "lat": 44.8271518,
+  "lon": 5.6053965,
+  "tags": {
+    "railway": "buffer_stop"
+  }
+},
+{
+  "type": "node",
+  "id": 2082596560,
+  "lat": 44.8269611,
+  "lon": 5.6063433,
+  "tags": {
+    "railway": "switch",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "node",
+  "id": 2082596566,
+  "lat": 44.8270380,
+  "lon": 5.6055938,
+  "tags": {
+    "railway": "switch",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "node",
+  "id": 2399156148,
+  "lat": 44.8271339,
+  "lon": 5.6049951,
+  "tags": {
+    "name": "Clelles-Mens",
+    "operator": "SNCF Gares & Connexions",
+    "operator:wikidata": "Q3098278",
+    "public_transport": "stop_position",
+    "railway": "stop",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre ; mise à jour : 2011",
+    "train": "yes",
+    "uic_ref": "8774762"
+  }
+},
+{
+  "type": "node",
+  "id": 2399156298,
+  "lat": 44.8275932,
+  "lon": 5.6034099,
+  "tags": {
+    "railway": "switch",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "node",
+  "id": 4482997216,
+  "lat": 44.8271261,
+  "lon": 5.6050234,
+  "tags": {
+    "crossing:barrier": "no",
+    "crossing:bell": "no",
+    "crossing:light": "no",
+    "railway": "crossing"
+  }
+},
+{
+  "type": "node",
+  "id": 4482997217,
+  "lat": 44.8271579,
+  "lon": 5.6050368,
+  "tags": {
+    "crossing:barrier": "no",
+    "crossing:bell": "no",
+    "crossing:light": "no",
+    "railway": "crossing"
+  }
+},
+{
+  "type": "node",
+  "id": 6284610612,
+  "lat": 44.8272536,
+  "lon": 5.6050216,
+  "tags": {
+    "ele": "831",
+    "name": "Clelles-Mens",
+    "network": "TER Auvergne-Rhône-Alpes",
+    "network:wikidata": "Q41585492",
+    "official_name": "Clelles - Mens",
+    "operator": "SNCF Gares & Connexions",
+    "operator:wikidata": "Q3098278",
+    "operator:wikipedia": "fr:SNCF Gares & Connexions",
+    "public_transport": "station",
+    "railway": "station",
+    "railway:ref": "CMS",
+    "ref:FR:sncf:resarail": "FRHWG",
+    "train": "yes",
+    "uic_ref": "8774762",
+    "wheelchair": "yes",
+    "wikidata": "Q2395629"
+  }
+},
+{
+  "type": "node",
+  "id": 12296232922,
+  "lat": 44.8273013,
+  "lon": 5.6050010,
+  "tags": {
+    "door": "yes",
+    "entrance": "yes",
+    "level": "0",
+    "railway": "train_station_entrance",
+    "wheelchair": "limited"
+  }
+},
+{
+  "type": "node",
+  "id": 12296286369,
+  "lat": 44.8271759,
+  "lon": 5.6051218,
+  "tags": {
+    "entrance": "yes",
+    "level": "0",
+    "railway": "train_station_entrance",
+    "wheelchair": "yes",
+    "width": "2,70"
+  }
+},
+{
+  "type": "node",
+  "id": 14022384027,
+  "lat": 44.8276226,
+  "lon": 5.6033253,
+  "tags": {
+    "railway": "signal"
+  }
+},
+{
+  "type": "node",
+  "id": 14022384028,
+  "lat": 44.8368870,
+  "lon": 5.6017178,
+  "tags": {
+    "railway": "signal",
+    "railway:signal:direction": "forward",
+    "railway:signal:distant": "FR:A",
+    "railway:signal:distant:form": "light",
+    "railway:signal:position": "left"
+  }
+},
+{
+  "type": "way",
+  "id": 62484776,
+  "nodes": [
+    914353597,
+    1883906047,
+    914353586,
+    780053388,
+    914353585,
+    914353611
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "-1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "tunnel": "yes",
+    "tunnel:name": "Tunnel de Clelles",
+    "usage": "branch",
+    "wikidata": "Q65922877"
+  }
+},
+{
+  "type": "way",
+  "id": 63230444,
+  "nodes": [
+    784889236,
+    784889050,
+    784889170,
+    784889251,
+    784889079
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 63230446,
+  "nodes": [
+    975898453,
+    975898412,
+    975898424,
+    975898436,
+    975898447,
+    975898434,
+    975898445,
+    975898455,
+    975898414,
+    975898428,
+    975898419,
+    10766321798,
+    975898433,
+    785181418,
+    10766321799,
+    785181259,
+    785181362,
+    785181434,
+    785181285,
+    785181378,
+    785181471,
+    785181304,
+    785181396,
+    785181530,
+    785181374,
+    785181448,
+    785181302,
+    785181391,
+    785181525,
+    10766321800,
+    785181541,
+    785181538,
+    785181351,
+    785181424,
+    785181266,
+    10766321801,
+    10766321802,
+    1911292686,
+    1911292674,
+    914353550,
+    914353595,
+    1911292659,
+    1911292658,
+    914353530,
+    1911292654,
+    914353552,
+    1911292652,
+    1911292650,
+    785181427,
+    1911292645,
+    785181348,
+    785181294,
+    785181307,
+    785181397,
+    785181409,
+    785181545,
+    10766321803,
+    785181406,
+    914353583,
+    914353599,
+    1911292619,
+    914353540,
+    914353575,
+    1911292605,
+    914353566,
+    1911292587,
+    914353578,
+    1911292574,
+    914353556,
+    10766321804,
+    10766345505,
+    784889173,
+    784889254,
+    784889082,
+    784889199,
+    784889271,
+    784889137,
+    784889153
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 63230448,
+  "nodes": [
+    784889153,
+    784889061,
+    784889267,
+    784889185,
+    784889236
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "-1",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "tunnel": "yes",
+    "tunnel:name": "Tunnel de Chauplanon",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 83825311,
+  "nodes": [
+    975896917,
+    975898435,
+    975898422,
+    975898411,
+    975898451,
+    975898429,
+    975898440,
+    1973518183,
+    975898454,
+    975898413,
+    975898426,
+    975898437,
+    975898449,
+    975898461,
+    975898415,
+    975898439,
+    975898438,
+    975898427
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 83825312,
+  "nodes": [
+    975898427,
+    975898453
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 84036377,
+  "nodes": [
+    914353611,
+    14022384027,
+    2399156298
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 84036591,
+  "nodes": [
+    914353569,
+    9804770329,
+    9804770330,
+    9804770331,
+    977657572,
+    914355026,
+    977657592,
+    914355023,
+    9804770328,
+    977657593,
+    914355028,
+    977657580,
+    9804770327,
+    914353615,
+    9804770326,
+    977657573,
+    977657587,
+    9804770325,
+    977657581,
+    9804770324,
+    914355024,
+    977657575,
+    977657570,
+    9804770323,
+    914353572,
+    977657594,
+    9804770320,
+    977657596,
+    9804770319,
+    977657584,
+    9804770321,
+    914353581,
+    977657588,
+    977657590,
+    9804770322,
+    977657583,
+    977657595,
+    977657589,
+    914353526,
+    3656733295
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "extrapolation;cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 119211452,
+  "nodes": [
+    977657582,
+    10766345519,
+    10766345518,
+    914353597
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 119214614,
+  "nodes": [
+    977678813,
+    977678802,
+    977678769,
+    914353601,
+    977678765,
+    977678742,
+    977678846,
+    977678797,
+    914353532,
+    977678809,
+    1911070916
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 119214618,
+  "nodes": [
+    977678710,
+    977678813
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 119894495,
+  "nodes": [
+    1345592425,
+    977657598
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "E",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,EVIT,187.374,187.989",
+    "source": "BDOrtho IGN",
+    "start_date": "1878"
+  }
+},
+{
+  "type": "way",
+  "id": 119894496,
+  "nodes": [
+    977657598,
+    9804770336,
+    914353577,
+    914353569
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "E",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,EVIT,187.374,187.989",
+    "source": "BDOrtho IGN",
+    "start_date": "1878"
+  }
+},
+{
+  "type": "way",
+  "id": 180661715,
+  "nodes": [
+    1911070916,
+    977678781,
+    1911070911,
+    977678759,
+    1911070890,
+    914353562,
+    1911070880,
+    977678753,
+    1911070875
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "name:viaduct": "Viaduc de Merdary",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 180680624,
+  "nodes": [
+    784889079,
+    10766345506,
+    784889184,
+    10766345507,
+    784889263
+  ],
+  "tags": {
+    "bridge": "viaduct",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "name:viaduct": "Viaduc de Chalabaud",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 180680625,
+  "nodes": [
+    784889263,
+    1911292412,
+    784889211,
+    784889277,
+    1911292409,
+    784889228,
+    784889241,
+    784889072,
+    784889193,
+    784889257,
+    784889129,
+    784889203,
+    784889045,
+    10766345508,
+    784889139,
+    784889221
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "70",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 198073335,
+  "nodes": [
+    2082596559,
+    9804770368,
+    2082596560,
+    2082596557,
+    2082596561,
+    9804770354,
+    2082596562,
+    9804770353,
+    9804770346,
+    2082596556
+  ],
+  "tags": {
+    "gauge": "1435",
+    "railway": "rail",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:tvm": "no",
+    "service": "siding"
+  }
+},
+{
+  "type": "way",
+  "id": 198073336,
+  "nodes": [
+    2082596566,
+    9804770366,
+    9804770365,
+    9804770367,
+    2082596560,
+    9804770360,
+    2082596564,
+    9804770359,
+    9804770356,
+    9804770355,
+    2082596563,
+    2082596555,
+    9804770345,
+    9804770344,
+    9804770343,
+    2082596556,
+    9804770348,
+    9804770347,
+    914353544
+  ],
+  "tags": {
+    "gauge": "1435",
+    "railway": "rail",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:tvm": "no",
+    "service": "siding",
+    "source": "BDOrtho IGN"
+  }
+},
+{
+  "type": "way",
+  "id": 231549372,
+  "nodes": [
+    2399156299,
+    2399156279,
+    12108325968,
+    2399156274,
+    4482997218,
+    2399156269
+  ],
+  "tags": {
+    "bench": "yes",
+    "bin": "yes",
+    "name": "Clelles-Mens",
+    "official_name": "Clelles-Mens",
+    "operator": "SNCF",
+    "railway": "platform_edge",
+    "ref": "A",
+    "shelter": "yes",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre;mise à jour : 2011",
+    "tactile_paving": "no",
+    "uic_ref": "8774762"
+  }
+},
+{
+  "type": "way",
+  "id": 231549373,
+  "nodes": [
+    2399156245,
+    2399156249,
+    2986729319,
+    2399156272,
+    2399156277,
+    2399156289,
+    2399156296
+  ],
+  "tags": {
+    "bench": "yes",
+    "bin": "yes",
+    "name": "Clelles-Mens",
+    "official_name": "Clelles-Mens",
+    "operator": "SNCF",
+    "railway": "platform_edge",
+    "ref": "B",
+    "shelter": "yes",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre;mise à jour : 2011",
+    "surface": "asphalt",
+    "tactile_paving": "no",
+    "uic_ref": "8774762"
+  }
+},
+{
+  "type": "way",
+  "id": 231549376,
+  "nodes": [
+    4482997216,
+    2399156253,
+    2399156247,
+    9804770357,
+    2399156243,
+    2399156241,
+    9804770351,
+    9804770341,
+    2399156239,
+    9804770342,
+    2399156235,
+    2399156228,
+    9804770339,
+    9804770338,
+    2399156231
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 231549377,
+  "nodes": [
+    4482997217,
+    977657591,
+    2082596566,
+    914353554,
+    9804770358,
+    914353523,
+    977657579,
+    9804770352,
+    9804770340,
+    914353594,
+    9804770349,
+    977657577,
+    9804770350,
+    914353544,
+    9804770337,
+    1345592425
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "E",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,EVIT,187.374,187.989",
+    "source": "BDOrtho IGN",
+    "start_date": "1878"
+  }
+},
+{
+  "type": "way",
+  "id": 231549383,
+  "nodes": [
+    2399156231,
+    2399156233
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 231549387,
+  "nodes": [
+    2399156233,
+    2399156237,
+    914353569
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 231549392,
+  "nodes": [
+    784889232,
+    784889063,
+    784889190,
+    10766345510,
+    784889274,
+    10766345509,
+    784889076,
+    784889196,
+    784889040,
+    784889151
+  ],
+  "tags": {
+    "bridge": "viaduct",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "name:viaduct": "Viaduc des Riperts",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 231549395,
+  "nodes": [
+    784889151,
+    784889209,
+    784889048,
+    784889166,
+    784889248,
+    784889055,
+    784889181,
+    784889261,
+    10766345511,
+    784889132
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 361160472,
+  "nodes": [
+    3656733295,
+    977657597
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "extrapolation;cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 361160473,
+  "nodes": [
+    977657597,
+    977657576,
+    977657578,
+    914355027,
+    977657571,
+    914353596,
+    914353561,
+    977662889,
+    914353612,
+    1438408937,
+    977683954,
+    1438408936,
+    1910112308,
+    914353548,
+    1910112302,
+    977683957,
+    1910112296,
+    914353563,
+    1910112284,
+    977683955,
+    977659951,
+    914353573,
+    977659963,
+    914353542,
+    977659965,
+    977659957,
+    914353579,
+    977659947,
+    977659953,
+    977659946,
+    914353570,
+    977659961,
+    977659949,
+    914353584,
+    977659955,
+    914353582,
+    977659964,
+    914353576,
+    977659959,
+    914353520,
+    977678710
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "extrapolation;cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 426887217,
+  "nodes": [
+    1911070875,
+    977678835,
+    977678841,
+    914353568,
+    10766345520,
+    10766345521,
+    914353613,
+    977678722,
+    977678696,
+    977678775,
+    914353571,
+    10766345522,
+    977678750,
+    977678767,
+    10766345523,
+    914353553,
+    977678800,
+    914353580,
+    10766345524,
+    10766345525,
+    977678842,
+    977678785,
+    10766345526,
+    914353549,
+    977678811,
+    977678838,
+    977678738,
+    10766345528,
+    914353620,
+    10766345527,
+    977678735,
+    977678778,
+    977678756,
+    914353598,
+    914353565,
+    977678772,
+    977678830,
+    914353537,
+    977678719,
+    977678825,
+    977678805,
+    914353555,
+    977678746,
+    977678715,
+    10766345529,
+    780053413,
+    780053187,
+    780053447,
+    780053225,
+    780053067,
+    780053260,
+    780053113,
+    780053310,
+    780053166,
+    780053344,
+    780053209,
+    780053395
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 540107546,
+  "nodes": [
+    780053245,
+    780053432,
+    780053293,
+    780053460,
+    780053084,
+    780053265,
+    780053121,
+    780053317,
+    780053173,
+    780053349,
+    780053215,
+    780053401,
+    780053250,
+    780053439,
+    780053298,
+    780053466,
+    780053332,
+    780053101,
+    780053366,
+    780053137,
+    780053302,
+    780053469,
+    780053335,
+    780053104,
+    780053370,
+    780053143,
+    780053421,
+    780053196,
+    780053452,
+    780053230,
+    780053087,
+    780053280,
+    780053123,
+    780053320,
+    780053175,
+    780053351,
+    1908404337,
+    780053392,
+    1908404302,
+    780053163,
+    780053426,
+    780053202,
+    780053457,
+    780053237,
+    1908404261,
+    780053091,
+    780053286,
+    780053127,
+    780053326,
+    780053180,
+    1908404218,
+    780053358,
+    780053218,
+    780053403,
+    780053255,
+    780053442,
+    780053463,
+    780053247,
+    780053097,
+    780053296,
+    780053133,
+    780053330,
+    780053183,
+    780053362,
+    780053221,
+    780053410,
+    780053258,
+    780053443,
+    780053307,
+    780053061,
+    780053341,
+    780053110,
+    780053139,
+    780053334,
+    780053191,
+    780053368
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 668054830,
+  "nodes": [
+    784889221,
+    784889053,
+    784889178,
+    14022384028,
+    784889232
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 696344513,
+  "nodes": [
+    780053395,
+    780053245
+  ],
+  "tags": {
+    "bridge": "yes",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 1157674959,
+  "nodes": [
+    784889132,
+    10766345512,
+    784889066,
+    10766345513,
+    784889052,
+    10766345514,
+    784889214,
+    10766345515,
+    784889244,
+    10766345516,
+    784889163,
+    784889046,
+    784889206,
+    10766345517,
+    914353618,
+    977657582
+  ],
+  "tags": {
+    "bridge": "yes",
+    "bridge:name": "Viaduc de l'Orbanne",
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "layer": "1",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "1",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch",
+    "wikidata": "Q65923005"
+  }
+},
+{
+  "type": "way",
+  "id": 1158177939,
+  "nodes": [
+    2399156298,
+    9804770362,
+    9804770363,
+    2399156292,
+    2399156285,
+    2399156276,
+    2399156148,
+    4482997216
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "55",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "U",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,UNIQUE,133.682,232.968",
+    "source": "cadastre-dgi-fr source : Direction Générale des Impôts - Cadastre. Mise à jour : 2010",
+    "start_date": "1878",
+    "usage": "branch"
+  }
+},
+{
+  "type": "way",
+  "id": 1158177941,
+  "nodes": [
+    2399156298,
+    9804770361,
+    977657585,
+    9804770364,
+    2399156287,
+    914353535,
+    1340040194,
+    4482997217
+  ],
+  "tags": {
+    "description": "Ligne des Alpes",
+    "electrified": "no",
+    "gauge": "1435",
+    "importance": "regional",
+    "loading_gauge": "PPI",
+    "maxspeed": "40",
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "operator": "SNCF Réseau",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "railway:bidirectional": "regular",
+    "railway:etcs": "no",
+    "railway:kvb": "no",
+    "railway:preferred_direction": "both",
+    "railway:radio": "analogue",
+    "railway:track_class": "C4",
+    "railway:track_ref": "E",
+    "railway:traffic_mode": "passenger",
+    "railway:tvm": "no",
+    "ref": "905000",
+    "ref:FR:SNCF_Reseau": "905000,1,EVIT,187.374,187.989",
+    "source": "BDOrtho IGN",
+    "start_date": "1878"
+  }
+},
+{
+  "type": "way",
+  "id": 1307498307,
+  "nodes": [
+    2399156269,
+    12108325969,
+    12296286369,
+    12108325970,
+    12296274178,
+    12108325971,
+    12108325972,
+    12108325973,
+    2399156299,
+    2399156279,
+    12108325968,
+    2399156274,
+    4482997218,
+    2399156269
+  ],
+  "tags": {
+    "area": "yes",
+    "bench": "yes",
+    "bin": "yes",
+    "departures_board": "yes",
+    "height": "0,33",
+    "level": "0",
+    "lit": "yes",
+    "name": "Voie A",
+    "public_transport": "platform",
+    "railway": "platform",
+    "ref": "A",
+    "shelter": "yes",
+    "smoothness": "bad",
+    "surface": "asphalt",
+    "tactile_paving": "no",
+    "train": "yes",
+    "wheelchair": "yes"
+  }
+},
+{
+  "type": "way",
+  "id": 1307498308,
+  "nodes": [
+    2399156245,
+    2399156249,
+    12921383306,
+    2399156272,
+    2399156277,
+    2399156289,
+    12108325976,
+    12108325977,
+    12108325978,
+    2332765520,
+    2332765513,
+    2332765487,
+    2332765475,
+    2332765503,
+    2332765497,
+    13373078481,
+    3302909497,
+    13373078483,
+    13373078484,
+    13373078485,
+    12108325980,
+    2399156245
+  ],
+  "tags": {
+    "area": "yes",
+    "bench": "yes",
+    "bin": "yes",
+    "covered": "no",
+    "departures_board": "no",
+    "height": "0,33",
+    "indoor": "no",
+    "level": "0",
+    "lit": "yes",
+    "name": "Voie B",
+    "public_transport": "platform",
+    "railway": "platform",
+    "ref": "B",
+    "smoothness": "intermediate",
+    "surface": "asphalt",
+    "tactile_paving": "no",
+    "train": "yes",
+    "wheelchair": "limited"
+  }
+},
+{
+  "type": "node",
+  "id": 780053061,
+  "lat": 44.7895311,
+  "lon": 5.6305106
+},
+{
+  "type": "node",
+  "id": 780053110,
+  "lat": 44.7892512,
+  "lon": 5.6302381
+},
+{
+  "type": "node",
+  "id": 780053139,
+  "lat": 44.7891081,
+  "lon": 5.6300616
+},
+{
+  "type": "node",
+  "id": 780053191,
+  "lat": 44.7888759,
+  "lon": 5.6297220
+},
+{
+  "type": "node",
+  "id": 780053221,
+  "lat": 44.7903902,
+  "lon": 5.6308993
+},
+{
+  "type": "node",
+  "id": 780053258,
+  "lat": 44.7900996,
+  "lon": 5.6308187
+},
+{
+  "type": "node",
+  "id": 780053307,
+  "lat": 44.7897086,
+  "lon": 5.6306387
+},
+{
+  "type": "node",
+  "id": 780053334,
+  "lat": 44.7890113,
+  "lon": 5.6299302
+},
+{
+  "type": "node",
+  "id": 780053341,
+  "lat": 44.7894274,
+  "lon": 5.6304197
+},
+{
+  "type": "node",
+  "id": 780053362,
+  "lat": 44.7905514,
+  "lon": 5.6309108
+},
+{
+  "type": "node",
+  "id": 780053368,
+  "lat": 44.7887872,
+  "lon": 5.6295690
+},
+{
+  "type": "node",
+  "id": 780053410,
+  "lat": 44.7902435,
+  "lon": 5.6308691
+},
+{
+  "type": "node",
+  "id": 780053443,
+  "lat": 44.7898967,
+  "lon": 5.6307396
+},
+{
+  "type": "node",
+  "id": 780053388,
+  "lat": 44.8295423,
+  "lon": 5.5985852
+},
+{
+  "type": "node",
+  "id": 914353585,
+  "lat": 44.8283458,
+  "lon": 5.6015356
+},
+{
+  "type": "node",
+  "id": 914353611,
+  "lat": 44.8276560,
+  "lon": 5.6032117
+},
+{
+  "type": "node",
+  "id": 14022384027,
+  "lat": 44.8276226,
+  "lon": 5.6033253
+},
+{
+  "type": "node",
+  "id": 914353523,
+  "lat": 44.8267219,
+  "lon": 5.6074818
+},
+{
+  "type": "node",
+  "id": 914353535,
+  "lat": 44.8272443,
+  "lon": 5.6046727
+},
+{
+  "type": "node",
+  "id": 914353544,
+  "lat": 44.8265428,
+  "lon": 5.6093798
+},
+{
+  "type": "node",
+  "id": 914353554,
+  "lat": 44.8269354,
+  "lon": 5.6061549
+},
+{
+  "type": "node",
+  "id": 914353594,
+  "lat": 44.8265962,
+  "lon": 5.6084183
+},
+{
+  "type": "node",
+  "id": 977657577,
+  "lat": 44.8265687,
+  "lon": 5.6087770
+},
+{
+  "type": "node",
+  "id": 977657579,
+  "lat": 44.8266840,
+  "lon": 5.6077266
+},
+{
+  "type": "node",
+  "id": 977657585,
+  "lat": 44.8274721,
+  "lon": 5.6038252
+},
+{
+  "type": "node",
+  "id": 977657591,
+  "lat": 44.8270698,
+  "lon": 5.6054220
+},
+{
+  "type": "node",
+  "id": 1340040194,
+  "lat": 44.8271631,
+  "lon": 5.6050121
+},
+{
+  "type": "node",
+  "id": 2082596555,
+  "lat": 44.8267062,
+  "lon": 5.6081511
+},
+{
+  "type": "node",
+  "id": 2082596556,
+  "lat": 44.8265987,
+  "lon": 5.6087272
+},
+{
+  "type": "node",
+  "id": 2082596557,
+  "lat": 44.8268774,
+  "lon": 5.6068342
+},
+{
+  "type": "node",
+  "id": 2082596559,
+  "lat": 44.8271518,
+  "lon": 5.6053965
+},
+{
+  "type": "node",
+  "id": 2082596560,
+  "lat": 44.8269611,
+  "lon": 5.6063433
+},
+{
+  "type": "node",
+  "id": 2082596561,
+  "lat": 44.8268398,
+  "lon": 5.6070789
+},
+{
+  "type": "node",
+  "id": 2082596562,
+  "lat": 44.8266972,
+  "lon": 5.6080023
+},
+{
+  "type": "node",
+  "id": 2082596563,
+  "lat": 44.8268141,
+  "lon": 5.6075135
+},
+{
+  "type": "node",
+  "id": 2082596564,
+  "lat": 44.8269255,
+  "lon": 5.6067524
+},
+{
+  "type": "node",
+  "id": 2082596566,
+  "lat": 44.8270380,
+  "lon": 5.6055938
+},
+{
+  "type": "node",
+  "id": 2332765475,
+  "lat": 44.8270017,
+  "lon": 5.6052588
+},
+{
+  "type": "node",
+  "id": 2332765487,
+  "lat": 44.8270144,
+  "lon": 5.6052073
+},
+{
+  "type": "node",
+  "id": 2332765497,
+  "lat": 44.8270214,
+  "lon": 5.6053133
+},
+{
+  "type": "node",
+  "id": 2332765503,
+  "lat": 44.8270316,
+  "lon": 5.6052735
+},
+{
+  "type": "node",
+  "id": 2332765513,
+  "lat": 44.8270418,
+  "lon": 5.6052208
+},
+{
+  "type": "node",
+  "id": 2332765520,
+  "lat": 44.8270482,
+  "lon": 5.6051871
+},
+{
+  "type": "node",
+  "id": 2399156148,
+  "lat": 44.8271339,
+  "lon": 5.6049951
+},
+{
+  "type": "node",
+  "id": 2399156228,
+  "lat": 44.8265165,
+  "lon": 5.6090924
+},
+{
+  "type": "node",
+  "id": 2399156235,
+  "lat": 44.8265283,
+  "lon": 5.6088734
+},
+{
+  "type": "node",
+  "id": 2399156239,
+  "lat": 44.8265650,
+  "lon": 5.6084026
+},
+{
+  "type": "node",
+  "id": 2399156241,
+  "lat": 44.8266539,
+  "lon": 5.6077141
+},
+{
+  "type": "node",
+  "id": 2399156243,
+  "lat": 44.8266905,
+  "lon": 5.6074689
+},
+{
+  "type": "node",
+  "id": 2399156245,
+  "lat": 44.8267489,
+  "lon": 5.6070048
+},
+{
+  "type": "node",
+  "id": 2399156247,
+  "lat": 44.8269045,
+  "lon": 5.6061296
+},
+{
+  "type": "node",
+  "id": 2399156249,
+  "lat": 44.8269610,
+  "lon": 5.6057242
+},
+{
+  "type": "node",
+  "id": 2399156253,
+  "lat": 44.8270393,
+  "lon": 5.6054110
+},
+{
+  "type": "node",
+  "id": 2399156269,
+  "lat": 44.8270682,
+  "lon": 5.6055064
+},
+{
+  "type": "node",
+  "id": 2399156272,
+  "lat": 44.8271090,
+  "lon": 5.6050162
+},
+{
+  "type": "node",
+  "id": 2399156274,
+  "lat": 44.8271722,
+  "lon": 5.6050428
+},
+{
+  "type": "node",
+  "id": 2399156276,
+  "lat": 44.8272104,
+  "lon": 5.6046745
+},
+{
+  "type": "node",
+  "id": 2399156277,
+  "lat": 44.8272316,
+  "lon": 5.6045319
+},
+{
+  "type": "node",
+  "id": 2399156279,
+  "lat": 44.8272921,
+  "lon": 5.6045436
+},
+{
+  "type": "node",
+  "id": 2399156285,
+  "lat": 44.8272826,
+  "lon": 5.6043922
+},
+{
+  "type": "node",
+  "id": 2399156287,
+  "lat": 44.8273158,
+  "lon": 5.6044055
+},
+{
+  "type": "node",
+  "id": 2399156289,
+  "lat": 44.8273089,
+  "lon": 5.6042445
+},
+{
+  "type": "node",
+  "id": 2399156292,
+  "lat": 44.8273841,
+  "lon": 5.6040327
+},
+{
+  "type": "node",
+  "id": 2399156296,
+  "lat": 44.8275289,
+  "lon": 5.6035248
+},
+{
+  "type": "node",
+  "id": 2399156298,
+  "lat": 44.8275932,
+  "lon": 5.6034099
+},
+{
+  "type": "node",
+  "id": 2399156299,
+  "lat": 44.8274012,
+  "lon": 5.6041385
+},
+{
+  "type": "node",
+  "id": 2986729319,
+  "lat": 44.8270349,
+  "lon": 5.6053530
+},
+{
+  "type": "node",
+  "id": 3302909497,
+  "lat": 44.8269364,
+  "lon": 5.6057140
+},
+{
+  "type": "node",
+  "id": 4482997216,
+  "lat": 44.8271261,
+  "lon": 5.6050234
+},
+{
+  "type": "node",
+  "id": 4482997217,
+  "lat": 44.8271579,
+  "lon": 5.6050368
+},
+{
+  "type": "node",
+  "id": 4482997218,
+  "lat": 44.8271556,
+  "lon": 5.6051170
+},
+{
+  "type": "node",
+  "id": 9804770337,
+  "lat": 44.8265403,
+  "lon": 5.6096457
+},
+{
+  "type": "node",
+  "id": 9804770338,
+  "lat": 44.8265084,
+  "lon": 5.6096504
+},
+{
+  "type": "node",
+  "id": 9804770339,
+  "lat": 44.8265075,
+  "lon": 5.6093868
+},
+{
+  "type": "node",
+  "id": 9804770340,
+  "lat": 44.8266192,
+  "lon": 5.6082033
+},
+{
+  "type": "node",
+  "id": 9804770341,
+  "lat": 44.8265888,
+  "lon": 5.6081872
+},
+{
+  "type": "node",
+  "id": 9804770342,
+  "lat": 44.8265479,
+  "lon": 5.6085788
+},
+{
+  "type": "node",
+  "id": 9804770343,
+  "lat": 44.8266206,
+  "lon": 5.6085882
+},
+{
+  "type": "node",
+  "id": 9804770344,
+  "lat": 44.8266382,
+  "lon": 5.6084937
+},
+{
+  "type": "node",
+  "id": 9804770345,
+  "lat": 44.8266758,
+  "lon": 5.6083200
+},
+{
+  "type": "node",
+  "id": 9804770346,
+  "lat": 44.8266259,
+  "lon": 5.6084823
+},
+{
+  "type": "node",
+  "id": 9804770347,
+  "lat": 44.8265612,
+  "lon": 5.6090549
+},
+{
+  "type": "node",
+  "id": 9804770348,
+  "lat": 44.8265774,
+  "lon": 5.6088866
+},
+{
+  "type": "node",
+  "id": 9804770349,
+  "lat": 44.8265802,
+  "lon": 5.6085929
+},
+{
+  "type": "node",
+  "id": 9804770350,
+  "lat": 44.8265522,
+  "lon": 5.6090724
+},
+{
+  "type": "node",
+  "id": 9804770351,
+  "lat": 44.8266130,
+  "lon": 5.6079780
+},
+{
+  "type": "node",
+  "id": 9804770352,
+  "lat": 44.8266544,
+  "lon": 5.6079338
+},
+{
+  "type": "node",
+  "id": 9804770353,
+  "lat": 44.8266577,
+  "lon": 5.6082536
+},
+{
+  "type": "node",
+  "id": 9804770354,
+  "lat": 44.8267557,
+  "lon": 5.6076119
+},
+{
+  "type": "node",
+  "id": 9804770355,
+  "lat": 44.8268599,
+  "lon": 5.6072364
+},
+{
+  "type": "node",
+  "id": 9804770356,
+  "lat": 44.8268927,
+  "lon": 5.6070205
+},
+{
+  "type": "node",
+  "id": 9804770357,
+  "lat": 44.8267976,
+  "lon": 5.6068046
+},
+{
+  "type": "node",
+  "id": 9804770358,
+  "lat": 44.8268289,
+  "lon": 5.6068180
+},
+{
+  "type": "node",
+  "id": 9804770359,
+  "lat": 44.8269107,
+  "lon": 5.6068763
+},
+{
+  "type": "node",
+  "id": 9804770360,
+  "lat": 44.8269393,
+  "lon": 5.6066128
+},
+{
+  "type": "node",
+  "id": 9804770361,
+  "lat": 44.8275385,
+  "lon": 5.6035926
+},
+{
+  "type": "node",
+  "id": 9804770362,
+  "lat": 44.8275086,
+  "lon": 5.6036409
+},
+{
+  "type": "node",
+  "id": 9804770363,
+  "lat": 44.8274344,
+  "lon": 5.6038649
+},
+{
+  "type": "node",
+  "id": 9804770364,
+  "lat": 44.8274115,
+  "lon": 5.6040566
+},
+{
+  "type": "node",
+  "id": 9804770365,
+  "lat": 44.8269978,
+  "lon": 5.6059000
+},
+{
+  "type": "node",
+  "id": 9804770366,
+  "lat": 44.8270125,
+  "lon": 5.6057786
+},
+{
+  "type": "node",
+  "id": 9804770367,
+  "lat": 44.8269845,
+  "lon": 5.6060730
+},
+{
+  "type": "node",
+  "id": 9804770368,
+  "lat": 44.8270106,
+  "lon": 5.6060790
+},
+{
+  "type": "node",
+  "id": 12108325968,
+  "lat": 44.8272820,
+  "lon": 5.6045790
+},
+{
+  "type": "node",
+  "id": 12108325969,
+  "lat": 44.8270872,
+  "lon": 5.6055144
+},
+{
+  "type": "node",
+  "id": 12108325970,
+  "lat": 44.8271873,
+  "lon": 5.6051072
+},
+{
+  "type": "node",
+  "id": 12108325971,
+  "lat": 44.8272360,
+  "lon": 5.6049020
+},
+{
+  "type": "node",
+  "id": 12108325972,
+  "lat": 44.8273097,
+  "lon": 5.6045707
+},
+{
+  "type": "node",
+  "id": 12108325973,
+  "lat": 44.8274268,
+  "lon": 5.6041457
+},
+{
+  "type": "node",
+  "id": 12108325976,
+  "lat": 44.8272849,
+  "lon": 5.6042374
+},
+{
+  "type": "node",
+  "id": 12108325977,
+  "lat": 44.8272090,
+  "lon": 5.6045222
+},
+{
+  "type": "node",
+  "id": 12108325978,
+  "lat": 44.8270867,
+  "lon": 5.6050059
+},
+{
+  "type": "node",
+  "id": 12108325980,
+  "lat": 44.8267265,
+  "lon": 5.6069988
+},
+{
+  "type": "node",
+  "id": 12296274178,
+  "lat": 44.8272224,
+  "lon": 5.6049592
+},
+{
+  "type": "node",
+  "id": 12296286369,
+  "lat": 44.8271759,
+  "lon": 5.6051218
+},
+{
+  "type": "node",
+  "id": 12921383306,
+  "lat": 44.8270349,
+  "lon": 5.6053530
+},
+{
+  "type": "node",
+  "id": 13373078481,
+  "lat": 44.8269789,
+  "lon": 5.6055137
+},
+{
+  "type": "node",
+  "id": 13373078483,
+  "lat": 44.8269048,
+  "lon": 5.6059077
+},
+{
+  "type": "node",
+  "id": 13373078484,
+  "lat": 44.8268663,
+  "lon": 5.6061428
+},
+{
+  "type": "node",
+  "id": 13373078485,
+  "lat": 44.8268232,
+  "lon": 5.6064071
+},
+{
+  "type": "node",
+  "id": 784889046,
+  "lat": 44.8319638,
+  "lon": 5.5963811
+},
+{
+  "type": "node",
+  "id": 784889163,
+  "lat": 44.8321837,
+  "lon": 5.5964188
+},
+{
+  "type": "node",
+  "id": 784889206,
+  "lat": 44.8317437,
+  "lon": 5.5963821
+},
+{
+  "type": "node",
+  "id": 784889214,
+  "lat": 44.8327062,
+  "lon": 5.5966364
+},
+{
+  "type": "node",
+  "id": 784889244,
+  "lat": 44.8324664,
+  "lon": 5.5965092
+},
+{
+  "type": "node",
+  "id": 914353597,
+  "lat": 44.8308289,
+  "lon": 5.5967301
+},
+{
+  "type": "node",
+  "id": 914353618,
+  "lat": 44.8312799,
+  "lon": 5.5964787
+},
+{
+  "type": "node",
+  "id": 977657582,
+  "lat": 44.8311077,
+  "lon": 5.5965509
+},
+{
+  "type": "node",
+  "id": 10766345514,
+  "lat": 44.8328238,
+  "lon": 5.5967128
+},
+{
+  "type": "node",
+  "id": 10766345515,
+  "lat": 44.8325894,
+  "lon": 5.5965686
+},
+{
+  "type": "node",
+  "id": 10766345516,
+  "lat": 44.8323288,
+  "lon": 5.5964559
+},
+{
+  "type": "node",
+  "id": 10766345517,
+  "lat": 44.8314861,
+  "lon": 5.5964237
+},
+{
+  "type": "node",
+  "id": 10766345518,
+  "lat": 44.8308965,
+  "lon": 5.5966651
+},
+{
+  "type": "node",
+  "id": 10766345519,
+  "lat": 44.8309659,
+  "lon": 5.5966263
+},
+{
+  "type": "node",
+  "id": 784889040,
+  "lat": 44.8360727,
+  "lon": 5.6003986
+},
+{
+  "type": "node",
+  "id": 784889048,
+  "lat": 44.8356745,
+  "lon": 5.6000235
+},
+{
+  "type": "node",
+  "id": 784889052,
+  "lat": 44.8329222,
+  "lon": 5.5967877
+},
+{
+  "type": "node",
+  "id": 784889055,
+  "lat": 44.8349829,
+  "lon": 5.5993337
+},
+{
+  "type": "node",
+  "id": 784889066,
+  "lat": 44.8331465,
+  "lon": 5.5969976
+},
+{
+  "type": "node",
+  "id": 784889076,
+  "lat": 44.8364150,
+  "lon": 5.6008026
+},
+{
+  "type": "node",
+  "id": 784889132,
+  "lat": 44.8334146,
+  "lon": 5.5973338
+},
+{
+  "type": "node",
+  "id": 784889151,
+  "lat": 44.8358386,
+  "lon": 5.6001797
+},
+{
+  "type": "node",
+  "id": 784889166,
+  "lat": 44.8355018,
+  "lon": 5.5998671
+},
+{
+  "type": "node",
+  "id": 784889181,
+  "lat": 44.8346896,
+  "lon": 5.5990103
+},
+{
+  "type": "node",
+  "id": 784889196,
+  "lat": 44.8362886,
+  "lon": 5.6006407
+},
+{
+  "type": "node",
+  "id": 784889209,
+  "lat": 44.8357438,
+  "lon": 5.6000976
+},
+{
+  "type": "node",
+  "id": 784889248,
+  "lat": 44.8352921,
+  "lon": 5.5996603
+},
+{
+  "type": "node",
+  "id": 784889261,
+  "lat": 44.8343906,
+  "lon": 5.5986381
+},
+{
+  "type": "node",
+  "id": 914353586,
+  "lat": 44.8300256,
+  "lon": 5.5977015
+},
+{
+  "type": "node",
+  "id": 1883906047,
+  "lat": 44.8304621,
+  "lon": 5.5971305
+},
+{
+  "type": "node",
+  "id": 10766345511,
+  "lat": 44.8339104,
+  "lon": 5.5980049
+},
+{
+  "type": "node",
+  "id": 10766345512,
+  "lat": 44.8332770,
+  "lon": 5.5971500
+},
+{
+  "type": "node",
+  "id": 10766345513,
+  "lat": 44.8330454,
+  "lon": 5.5968951
+},
+{
+  "type": "node",
+  "id": 784889053,
+  "lat": 44.8374562,
+  "lon": 5.6031738
+},
+{
+  "type": "node",
+  "id": 784889063,
+  "lat": 44.8367320,
+  "lon": 5.6013619
+},
+{
+  "type": "node",
+  "id": 784889178,
+  "lat": 44.8370827,
+  "lon": 5.6022135
+},
+{
+  "type": "node",
+  "id": 784889190,
+  "lat": 44.8366593,
+  "lon": 5.6012155
+},
+{
+  "type": "node",
+  "id": 784889232,
+  "lat": 44.8368317,
+  "lon": 5.6015850
+},
+{
+  "type": "node",
+  "id": 784889274,
+  "lat": 44.8365453,
+  "lon": 5.6010153
+},
+{
+  "type": "node",
+  "id": 10766345509,
+  "lat": 44.8364839,
+  "lon": 5.6009091
+},
+{
+  "type": "node",
+  "id": 10766345510,
+  "lat": 44.8366013,
+  "lon": 5.6011076
+},
+{
+  "type": "node",
+  "id": 14022384028,
+  "lat": 44.8368870,
+  "lon": 5.6017178
+},
+{
+  "type": "node",
+  "id": 784889045,
+  "lat": 44.8378547,
+  "lon": 5.6043020
+},
+{
+  "type": "node",
+  "id": 784889050,
+  "lat": 44.8406608,
+  "lon": 5.6097119
+},
+{
+  "type": "node",
+  "id": 784889072,
+  "lat": 44.8382139,
+  "lon": 5.6066070
+},
+{
+  "type": "node",
+  "id": 784889079,
+  "lat": 44.8403504,
+  "lon": 5.6094022
+},
+{
+  "type": "node",
+  "id": 784889129,
+  "lat": 44.8379630,
+  "lon": 5.6048380
+},
+{
+  "type": "node",
+  "id": 784889139,
+  "lat": 44.8377468,
+  "lon": 5.6039628
+},
+{
+  "type": "node",
+  "id": 784889170,
+  "lat": 44.8405196,
+  "lon": 5.6095632
+},
+{
+  "type": "node",
+  "id": 784889184,
+  "lat": 44.8400183,
+  "lon": 5.6091497
+},
+{
+  "type": "node",
+  "id": 784889193,
+  "lat": 44.8381311,
+  "lon": 5.6060335
+},
+{
+  "type": "node",
+  "id": 784889203,
+  "lat": 44.8379189,
+  "lon": 5.6045980
+},
+{
+  "type": "node",
+  "id": 784889211,
+  "lat": 44.8390118,
+  "lon": 5.6083587
+},
+{
+  "type": "node",
+  "id": 784889221,
+  "lat": 44.8375975,
+  "lon": 5.6035572
+},
+{
+  "type": "node",
+  "id": 784889228,
+  "lat": 44.8384644,
+  "lon": 5.6075244
+},
+{
+  "type": "node",
+  "id": 784889236,
+  "lat": 44.8407636,
+  "lon": 5.6098333
+},
+{
+  "type": "node",
+  "id": 784889241,
+  "lat": 44.8383023,
+  "lon": 5.6070429
+},
+{
+  "type": "node",
+  "id": 784889251,
+  "lat": 44.8404372,
+  "lon": 5.6094809
+},
+{
+  "type": "node",
+  "id": 784889257,
+  "lat": 44.8380023,
+  "lon": 5.6051201
+},
+{
+  "type": "node",
+  "id": 784889263,
+  "lat": 44.8395064,
+  "lon": 5.6087973
+},
+{
+  "type": "node",
+  "id": 784889277,
+  "lat": 44.8387974,
+  "lon": 5.6081081
+},
+{
+  "type": "node",
+  "id": 1911292409,
+  "lat": 44.8386325,
+  "lon": 5.6078245
+},
+{
+  "type": "node",
+  "id": 1911292412,
+  "lat": 44.8392591,
+  "lon": 5.6085895
+},
+{
+  "type": "node",
+  "id": 10766345506,
+  "lat": 44.8401946,
+  "lon": 5.6092755
+},
+{
+  "type": "node",
+  "id": 10766345507,
+  "lat": 44.8397553,
+  "lon": 5.6089698
+},
+{
+  "type": "node",
+  "id": 10766345508,
+  "lat": 44.8378039,
+  "lon": 5.6041270
+},
+{
+  "type": "node",
+  "id": 780053091,
+  "lat": 44.7947243,
+  "lon": 5.6318418
+},
+{
+  "type": "node",
+  "id": 780053097,
+  "lat": 44.7918436,
+  "lon": 5.6307497
+},
+{
+  "type": "node",
+  "id": 780053127,
+  "lat": 44.7940797,
+  "lon": 5.6313368
+},
+{
+  "type": "node",
+  "id": 780053133,
+  "lat": 44.7912335,
+  "lon": 5.6308446
+},
+{
+  "type": "node",
+  "id": 780053163,
+  "lat": 44.7960952,
+  "lon": 5.6327929
+},
+{
+  "type": "node",
+  "id": 780053180,
+  "lat": 44.7936840,
+  "lon": 5.6310936
+},
+{
+  "type": "node",
+  "id": 780053183,
+  "lat": 44.7907169,
+  "lon": 5.6309137
+},
+{
+  "type": "node",
+  "id": 780053202,
+  "lat": 44.7957086,
+  "lon": 5.6325839
+},
+{
+  "type": "node",
+  "id": 780053218,
+  "lat": 44.7931098,
+  "lon": 5.6308648
+},
+{
+  "type": "node",
+  "id": 780053237,
+  "lat": 44.7954572,
+  "lon": 5.6324125
+},
+{
+  "type": "node",
+  "id": 780053247,
+  "lat": 44.7920234,
+  "lon": 5.6307382
+},
+{
+  "type": "node",
+  "id": 780053255,
+  "lat": 44.7926652,
+  "lon": 5.6307698
+},
+{
+  "type": "node",
+  "id": 780053286,
+  "lat": 44.7944509,
+  "lon": 5.6316202
+},
+{
+  "type": "node",
+  "id": 780053296,
+  "lat": 44.7914810,
+  "lon": 5.6308015
+},
+{
+  "type": "node",
+  "id": 780053326,
+  "lat": 44.7938394,
+  "lon": 5.6311785
+},
+{
+  "type": "node",
+  "id": 780053330,
+  "lat": 44.7908881,
+  "lon": 5.6309080
+},
+{
+  "type": "node",
+  "id": 780053351,
+  "lat": 44.7969882,
+  "lon": 5.6330871
+},
+{
+  "type": "node",
+  "id": 780053358,
+  "lat": 44.7933070,
+  "lon": 5.6309310
+},
+{
+  "type": "node",
+  "id": 780053392,
+  "lat": 44.7964122,
+  "lon": 5.6329296
+},
+{
+  "type": "node",
+  "id": 780053403,
+  "lat": 44.7928681,
+  "lon": 5.6308015
+},
+{
+  "type": "node",
+  "id": 780053426,
+  "lat": 44.7958933,
+  "lon": 5.6326900
+},
+{
+  "type": "node",
+  "id": 780053442,
+  "lat": 44.7924954,
+  "lon": 5.6307468
+},
+{
+  "type": "node",
+  "id": 780053457,
+  "lat": 44.7955829,
+  "lon": 5.6324999
+},
+{
+  "type": "node",
+  "id": 780053463,
+  "lat": 44.7922925,
+  "lon": 5.6307310
+},
+{
+  "type": "node",
+  "id": 1908404218,
+  "lat": 44.7934940,
+  "lon": 5.6310044
+},
+{
+  "type": "node",
+  "id": 1908404261,
+  "lat": 44.7952754,
+  "lon": 5.6322744
+},
+{
+  "type": "node",
+  "id": 1908404302,
+  "lat": 44.7962597,
+  "lon": 5.6328665
+},
+{
+  "type": "node",
+  "id": 1908404337,
+  "lat": 44.7967527,
+  "lon": 5.6330275
+},
+{
+  "type": "node",
+  "id": 780053067,
+  "lat": 44.8030975,
+  "lon": 5.6305431
+},
+{
+  "type": "node",
+  "id": 780053084,
+  "lat": 44.8022706,
+  "lon": 5.6338588
+},
+{
+  "type": "node",
+  "id": 780053087,
+  "lat": 44.7980502,
+  "lon": 5.6334614
+},
+{
+  "type": "node",
+  "id": 780053101,
+  "lat": 44.8001264,
+  "lon": 5.6349712
+},
+{
+  "type": "node",
+  "id": 780053104,
+  "lat": 44.7994019,
+  "lon": 5.6346311
+},
+{
+  "type": "node",
+  "id": 780053113,
+  "lat": 44.8030165,
+  "lon": 5.6308182
+},
+{
+  "type": "node",
+  "id": 780053121,
+  "lat": 44.8020375,
+  "lon": 5.6342021
+},
+{
+  "type": "node",
+  "id": 780053123,
+  "lat": 44.7978046,
+  "lon": 5.6333218
+},
+{
+  "type": "node",
+  "id": 780053137,
+  "lat": 44.7998711,
+  "lon": 5.6348860
+},
+{
+  "type": "node",
+  "id": 780053143,
+  "lat": 44.7988860,
+  "lon": 5.6341655
+},
+{
+  "type": "node",
+  "id": 780053166,
+  "lat": 44.8029196,
+  "lon": 5.6312396
+},
+{
+  "type": "node",
+  "id": 780053173,
+  "lat": 44.8017606,
+  "lon": 5.6344971
+},
+{
+  "type": "node",
+  "id": 780053175,
+  "lat": 44.7973960,
+  "lon": 5.6331794
+},
+{
+  "type": "node",
+  "id": 780053187,
+  "lat": 44.8033846,
+  "lon": 5.6299376
+},
+{
+  "type": "node",
+  "id": 780053196,
+  "lat": 44.7984703,
+  "lon": 5.6337643
+},
+{
+  "type": "node",
+  "id": 780053209,
+  "lat": 44.8027845,
+  "lon": 5.6323514
+},
+{
+  "type": "node",
+  "id": 780053215,
+  "lat": 44.8013534,
+  "lon": 5.6347830
+},
+{
+  "type": "node",
+  "id": 780053225,
+  "lat": 44.8031808,
+  "lon": 5.6303238
+},
+{
+  "type": "node",
+  "id": 780053230,
+  "lat": 44.7981402,
+  "lon": 5.6335128
+},
+{
+  "type": "node",
+  "id": 780053245,
+  "lat": 44.8027322,
+  "lon": 5.6326612
+},
+{
+  "type": "node",
+  "id": 780053250,
+  "lat": 44.8008582,
+  "lon": 5.6349717
+},
+{
+  "type": "node",
+  "id": 780053260,
+  "lat": 44.8030442,
+  "lon": 5.6307130
+},
+{
+  "type": "node",
+  "id": 780053265,
+  "lat": 44.8021612,
+  "lon": 5.6340358
+},
+{
+  "type": "node",
+  "id": 780053280,
+  "lat": 44.7979441,
+  "lon": 5.6334050
+},
+{
+  "type": "node",
+  "id": 780053293,
+  "lat": 44.8025761,
+  "lon": 5.6332258
+},
+{
+  "type": "node",
+  "id": 780053298,
+  "lat": 44.8006735,
+  "lon": 5.6350040
+},
+{
+  "type": "node",
+  "id": 780053302,
+  "lat": 44.7997461,
+  "lon": 5.6348363
+},
+{
+  "type": "node",
+  "id": 780053310,
+  "lat": 44.8029767,
+  "lon": 5.6309786
+},
+{
+  "type": "node",
+  "id": 780053317,
+  "lat": 44.8019043,
+  "lon": 5.6343577
+},
+{
+  "type": "node",
+  "id": 780053320,
+  "lat": 44.7976039,
+  "lon": 5.6332396
+},
+{
+  "type": "node",
+  "id": 780053332,
+  "lat": 44.8003566,
+  "lon": 5.6350059
+},
+{
+  "type": "node",
+  "id": 780053335,
+  "lat": 44.7995256,
+  "lon": 5.6347159
+},
+{
+  "type": "node",
+  "id": 780053344,
+  "lat": 44.8028720,
+  "lon": 5.6316084
+},
+{
+  "type": "node",
+  "id": 780053349,
+  "lat": 44.8015487,
+  "lon": 5.6346635
+},
+{
+  "type": "node",
+  "id": 780053366,
+  "lat": 44.8000046,
+  "lon": 5.6349388
+},
+{
+  "type": "node",
+  "id": 780053370,
+  "lat": 44.7992362,
+  "lon": 5.6345029
+},
+{
+  "type": "node",
+  "id": 780053395,
+  "lat": 44.8027455,
+  "lon": 5.6325968
+},
+{
+  "type": "node",
+  "id": 780053401,
+  "lat": 44.8010605,
+  "lon": 5.6349099
+},
+{
+  "type": "node",
+  "id": 780053413,
+  "lat": 44.8034930,
+  "lon": 5.6297500
+},
+{
+  "type": "node",
+  "id": 780053421,
+  "lat": 44.7986439,
+  "lon": 5.6339287
+},
+{
+  "type": "node",
+  "id": 780053432,
+  "lat": 44.8026684,
+  "lon": 5.6329321
+},
+{
+  "type": "node",
+  "id": 780053439,
+  "lat": 44.8007565,
+  "lon": 5.6349974
+},
+{
+  "type": "node",
+  "id": 780053447,
+  "lat": 44.8032918,
+  "lon": 5.6301007
+},
+{
+  "type": "node",
+  "id": 780053452,
+  "lat": 44.7983053,
+  "lon": 5.6336219
+},
+{
+  "type": "node",
+  "id": 780053460,
+  "lat": 44.8024381,
+  "lon": 5.6335637
+},
+{
+  "type": "node",
+  "id": 780053466,
+  "lat": 44.8005397,
+  "lon": 5.6350122
+},
+{
+  "type": "node",
+  "id": 780053469,
+  "lat": 44.7996375,
+  "lon": 5.6347784
+},
+{
+  "type": "node",
+  "id": 10766345529,
+  "lat": 44.8035973,
+  "lon": 5.6296054
+},
+{
+  "type": "node",
+  "id": 914353537,
+  "lat": 44.8044107,
+  "lon": 5.6289316
+},
+{
+  "type": "node",
+  "id": 914353549,
+  "lat": 44.8080151,
+  "lon": 5.6275859
+},
+{
+  "type": "node",
+  "id": 914353553,
+  "lat": 44.8096314,
+  "lon": 5.6283368
+},
+{
+  "type": "node",
+  "id": 914353555,
+  "lat": 44.8039521,
+  "lon": 5.6292388
+},
+{
+  "type": "node",
+  "id": 914353565,
+  "lat": 44.8056528,
+  "lon": 5.6282734
+},
+{
+  "type": "node",
+  "id": 914353571,
+  "lat": 44.8101985,
+  "lon": 5.6284501
+},
+{
+  "type": "node",
+  "id": 914353580,
+  "lat": 44.8091340,
+  "lon": 5.6281208
+},
+{
+  "type": "node",
+  "id": 914353598,
+  "lat": 44.8066046,
+  "lon": 5.6277595
+},
+{
+  "type": "node",
+  "id": 914353620,
+  "lat": 44.8074000,
+  "lon": 5.6275296
+},
+{
+  "type": "node",
+  "id": 977678715,
+  "lat": 44.8037165,
+  "lon": 5.6294634
+},
+{
+  "type": "node",
+  "id": 977678719,
+  "lat": 44.8042960,
+  "lon": 5.6289983
+},
+{
+  "type": "node",
+  "id": 977678735,
+  "lat": 44.8071974,
+  "lon": 5.6275552
+},
+{
+  "type": "node",
+  "id": 977678738,
+  "lat": 44.8075976,
+  "lon": 5.6275265
+},
+{
+  "type": "node",
+  "id": 977678746,
+  "lat": 44.8038345,
+  "lon": 5.6293420
+},
+{
+  "type": "node",
+  "id": 977678750,
+  "lat": 44.8099497,
+  "lon": 5.6284190
+},
+{
+  "type": "node",
+  "id": 977678756,
+  "lat": 44.8067876,
+  "lon": 5.6276810
+},
+{
+  "type": "node",
+  "id": 977678767,
+  "lat": 44.8098051,
+  "lon": 5.6283863
+},
+{
+  "type": "node",
+  "id": 977678772,
+  "lat": 44.8053590,
+  "lon": 5.6284293
+},
+{
+  "type": "node",
+  "id": 977678778,
+  "lat": 44.8069956,
+  "lon": 5.6276078
+},
+{
+  "type": "node",
+  "id": 977678785,
+  "lat": 44.8083550,
+  "lon": 5.6277021
+},
+{
+  "type": "node",
+  "id": 977678800,
+  "lat": 44.8094210,
+  "lon": 5.6282562
+},
+{
+  "type": "node",
+  "id": 977678805,
+  "lat": 44.8040655,
+  "lon": 5.6291490
+},
+{
+  "type": "node",
+  "id": 977678811,
+  "lat": 44.8078662,
+  "lon": 5.6275583
+},
+{
+  "type": "node",
+  "id": 977678825,
+  "lat": 44.8041886,
+  "lon": 5.6290606
+},
+{
+  "type": "node",
+  "id": 977678830,
+  "lat": 44.8050655,
+  "lon": 5.6285870
+},
+{
+  "type": "node",
+  "id": 977678838,
+  "lat": 44.8077225,
+  "lon": 5.6275322
+},
+{
+  "type": "node",
+  "id": 977678842,
+  "lat": 44.8085521,
+  "lon": 5.6277998
+},
+{
+  "type": "node",
+  "id": 10766345522,
+  "lat": 44.8100841,
+  "lon": 5.6284393
+},
+{
+  "type": "node",
+  "id": 10766345523,
+  "lat": 44.8097387,
+  "lon": 5.6283715
+},
+{
+  "type": "node",
+  "id": 10766345524,
+  "lat": 44.8090227,
+  "lon": 5.6280591
+},
+{
+  "type": "node",
+  "id": 10766345525,
+  "lat": 44.8088515,
+  "lon": 5.6279645
+},
+{
+  "type": "node",
+  "id": 10766345526,
+  "lat": 44.8081650,
+  "lon": 5.6276219
+},
+{
+  "type": "node",
+  "id": 10766345527,
+  "lat": 44.8073044,
+  "lon": 5.6275387
+},
+{
+  "type": "node",
+  "id": 10766345528,
+  "lat": 44.8075209,
+  "lon": 5.6275240
+},
+{
+  "type": "node",
+  "id": 914353520,
+  "lat": 44.8150992,
+  "lon": 5.6290166
+},
+{
+  "type": "node",
+  "id": 914353532,
+  "lat": 44.8134215,
+  "lon": 5.6285529
+},
+{
+  "type": "node",
+  "id": 914353562,
+  "lat": 44.8125878,
+  "lon": 5.6281122
+},
+{
+  "type": "node",
+  "id": 914353568,
+  "lat": 44.8118545,
+  "lon": 5.6281014
+},
+{
+  "type": "node",
+  "id": 914353576,
+  "lat": 44.8157412,
+  "lon": 5.6287085
+},
+{
+  "type": "node",
+  "id": 914353582,
+  "lat": 44.8161617,
+  "lon": 5.6283169
+},
+{
+  "type": "node",
+  "id": 914353584,
+  "lat": 44.8164717,
+  "lon": 5.6278599
+},
+{
+  "type": "node",
+  "id": 914353601,
+  "lat": 44.8142372,
+  "lon": 5.6289963
+},
+{
+  "type": "node",
+  "id": 914353613,
+  "lat": 44.8110184,
+  "lon": 5.6283432
+},
+{
+  "type": "node",
+  "id": 977659949,
+  "lat": 44.8166412,
+  "lon": 5.6275165
+},
+{
+  "type": "node",
+  "id": 977659955,
+  "lat": 44.8163266,
+  "lon": 5.6280915
+},
+{
+  "type": "node",
+  "id": 977659959,
+  "lat": 44.8154410,
+  "lon": 5.6288872
+},
+{
+  "type": "node",
+  "id": 977659961,
+  "lat": 44.8167372,
+  "lon": 5.6272442
+},
+{
+  "type": "node",
+  "id": 977659964,
+  "lat": 44.8159557,
+  "lon": 5.6285368
+},
+{
+  "type": "node",
+  "id": 977678696,
+  "lat": 44.8106117,
+  "lon": 5.6284376
+},
+{
+  "type": "node",
+  "id": 977678710,
+  "lat": 44.8148778,
+  "lon": 5.6290508
+},
+{
+  "type": "node",
+  "id": 977678722,
+  "lat": 44.8108118,
+  "lon": 5.6283991
+},
+{
+  "type": "node",
+  "id": 977678742,
+  "lat": 44.8139673,
+  "lon": 5.6288928
+},
+{
+  "type": "node",
+  "id": 977678753,
+  "lat": 44.8123360,
+  "lon": 5.6280689
+},
+{
+  "type": "node",
+  "id": 977678759,
+  "lat": 44.8128336,
+  "lon": 5.6282024
+},
+{
+  "type": "node",
+  "id": 977678765,
+  "lat": 44.8141135,
+  "lon": 5.6289670
+},
+{
+  "type": "node",
+  "id": 977678769,
+  "lat": 44.8143945,
+  "lon": 5.6290367
+},
+{
+  "type": "node",
+  "id": 977678775,
+  "lat": 44.8104056,
+  "lon": 5.6284532
+},
+{
+  "type": "node",
+  "id": 977678781,
+  "lat": 44.8130542,
+  "lon": 5.6283092
+},
+{
+  "type": "node",
+  "id": 977678797,
+  "lat": 44.8136859,
+  "lon": 5.6287329
+},
+{
+  "type": "node",
+  "id": 977678802,
+  "lat": 44.8145767,
+  "lon": 5.6290637
+},
+{
+  "type": "node",
+  "id": 977678809,
+  "lat": 44.8132779,
+  "lon": 5.6284560
+},
+{
+  "type": "node",
+  "id": 977678813,
+  "lat": 44.8148099,
+  "lon": 5.6290567
+},
+{
+  "type": "node",
+  "id": 977678835,
+  "lat": 44.8120876,
+  "lon": 5.6280654
+},
+{
+  "type": "node",
+  "id": 977678841,
+  "lat": 44.8119740,
+  "lon": 5.6280754
+},
+{
+  "type": "node",
+  "id": 977678846,
+  "lat": 44.8138414,
+  "lon": 5.6288299
+},
+{
+  "type": "node",
+  "id": 1911070875,
+  "lat": 44.8121866,
+  "lon": 5.6280609
+},
+{
+  "type": "node",
+  "id": 1911070880,
+  "lat": 44.8124894,
+  "lon": 5.6280887
+},
+{
+  "type": "node",
+  "id": 1911070890,
+  "lat": 44.8127268,
+  "lon": 5.6281551
+},
+{
+  "type": "node",
+  "id": 1911070911,
+  "lat": 44.8129291,
+  "lon": 5.6282439
+},
+{
+  "type": "node",
+  "id": 1911070916,
+  "lat": 44.8131910,
+  "lon": 5.6283989
+},
+{
+  "type": "node",
+  "id": 10766345520,
+  "lat": 44.8117167,
+  "lon": 5.6281328
+},
+{
+  "type": "node",
+  "id": 10766345521,
+  "lat": 44.8114346,
+  "lon": 5.6282146
+},
+{
+  "type": "node",
+  "id": 914353526,
+  "lat": 44.8230391,
+  "lon": 5.6169362
+},
+{
+  "type": "node",
+  "id": 914353561,
+  "lat": 44.8221231,
+  "lon": 5.6211485
+},
+{
+  "type": "node",
+  "id": 914353596,
+  "lat": 44.8225300,
+  "lon": 5.6190047
+},
+{
+  "type": "node",
+  "id": 914353612,
+  "lat": 44.8218429,
+  "lon": 5.6222579
+},
+{
+  "type": "node",
+  "id": 914355027,
+  "lat": 44.8227728,
+  "lon": 5.6177802
+},
+{
+  "type": "node",
+  "id": 977657571,
+  "lat": 44.8227211,
+  "lon": 5.6180095
+},
+{
+  "type": "node",
+  "id": 977657576,
+  "lat": 44.8229014,
+  "lon": 5.6173272
+},
+{
+  "type": "node",
+  "id": 977657578,
+  "lat": 44.8228315,
+  "lon": 5.6175514
+},
+{
+  "type": "node",
+  "id": 977657583,
+  "lat": 44.8232846,
+  "lon": 5.6164589
+},
+{
+  "type": "node",
+  "id": 977657589,
+  "lat": 44.8230979,
+  "lon": 5.6168055
+},
+{
+  "type": "node",
+  "id": 977657595,
+  "lat": 44.8231864,
+  "lon": 5.6166302
+},
+{
+  "type": "node",
+  "id": 977657597,
+  "lat": 44.8229597,
+  "lon": 5.6171358
+},
+{
+  "type": "node",
+  "id": 977662889,
+  "lat": 44.8220644,
+  "lon": 5.6214513
+},
+{
+  "type": "node",
+  "id": 1438408937,
+  "lat": 44.8216417,
+  "lon": 5.6227039
+},
+{
+  "type": "node",
+  "id": 3656733295,
+  "lat": 44.8229755,
+  "lon": 5.6170917
+},
+{
+  "type": "node",
+  "id": 914353569,
+  "lat": 44.8265573,
+  "lon": 5.6108134
+},
+{
+  "type": "node",
+  "id": 914353572,
+  "lat": 44.8247245,
+  "lon": 5.6151289
+},
+{
+  "type": "node",
+  "id": 914353577,
+  "lat": 44.8265489,
+  "lon": 5.6105444
+},
+{
+  "type": "node",
+  "id": 914353581,
+  "lat": 44.8236241,
+  "lon": 5.6159949
+},
+{
+  "type": "node",
+  "id": 914353615,
+  "lat": 44.8260838,
+  "lon": 5.6136798
+},
+{
+  "type": "node",
+  "id": 914355023,
+  "lat": 44.8264663,
+  "lon": 5.6125911
+},
+{
+  "type": "node",
+  "id": 914355024,
+  "lat": 44.8254007,
+  "lon": 5.6146144
+},
+{
+  "type": "node",
+  "id": 914355026,
+  "lat": 44.8265552,
+  "lon": 5.6120329
+},
+{
+  "type": "node",
+  "id": 914355028,
+  "lat": 44.8263097,
+  "lon": 5.6131528
+},
+{
+  "type": "node",
+  "id": 977657570,
+  "lat": 44.8251154,
+  "lon": 5.6148518
+},
+{
+  "type": "node",
+  "id": 977657572,
+  "lat": 44.8265764,
+  "lon": 5.6117869
+},
+{
+  "type": "node",
+  "id": 977657573,
+  "lat": 44.8259179,
+  "lon": 5.6139809
+},
+{
+  "type": "node",
+  "id": 977657575,
+  "lat": 44.8252594,
+  "lon": 5.6147387
+},
+{
+  "type": "node",
+  "id": 977657580,
+  "lat": 44.8262346,
+  "lon": 5.6133563
+},
+{
+  "type": "node",
+  "id": 977657581,
+  "lat": 44.8256347,
+  "lon": 5.6143737
+},
+{
+  "type": "node",
+  "id": 977657584,
+  "lat": 44.8238145,
+  "lon": 5.6158000
+},
+{
+  "type": "node",
+  "id": 977657587,
+  "lat": 44.8258318,
+  "lon": 5.6141062
+},
+{
+  "type": "node",
+  "id": 977657588,
+  "lat": 44.8235395,
+  "lon": 5.6160919
+},
+{
+  "type": "node",
+  "id": 977657590,
+  "lat": 44.8234538,
+  "lon": 5.6162069
+},
+{
+  "type": "node",
+  "id": 977657592,
+  "lat": 44.8265196,
+  "lon": 5.6123058
+},
+{
+  "type": "node",
+  "id": 977657593,
+  "lat": 44.8263631,
+  "lon": 5.6129925
+},
+{
+  "type": "node",
+  "id": 977657594,
+  "lat": 44.8243063,
+  "lon": 5.6154162
+},
+{
+  "type": "node",
+  "id": 977657596,
+  "lat": 44.8240202,
+  "lon": 5.6156218
+},
+{
+  "type": "node",
+  "id": 977657598,
+  "lat": 44.8265469,
+  "lon": 5.6101265
+},
+{
+  "type": "node",
+  "id": 1345592425,
+  "lat": 44.8265441,
+  "lon": 5.6098938
+},
+{
+  "type": "node",
+  "id": 2399156231,
+  "lat": 44.8265108,
+  "lon": 5.6098931
+},
+{
+  "type": "node",
+  "id": 2399156233,
+  "lat": 44.8265179,
+  "lon": 5.6101251
+},
+{
+  "type": "node",
+  "id": 2399156237,
+  "lat": 44.8265417,
+  "lon": 5.6105402
+},
+{
+  "type": "node",
+  "id": 9804770319,
+  "lat": 44.8239292,
+  "lon": 5.6156961
+},
+{
+  "type": "node",
+  "id": 9804770320,
+  "lat": 44.8241456,
+  "lon": 5.6155305
+},
+{
+  "type": "node",
+  "id": 9804770321,
+  "lat": 44.8237176,
+  "lon": 5.6158952
+},
+{
+  "type": "node",
+  "id": 9804770322,
+  "lat": 44.8233661,
+  "lon": 5.6163324
+},
+{
+  "type": "node",
+  "id": 9804770323,
+  "lat": 44.8248495,
+  "lon": 5.6150396
+},
+{
+  "type": "node",
+  "id": 9804770324,
+  "lat": 44.8255130,
+  "lon": 5.6145059
+},
+{
+  "type": "node",
+  "id": 9804770325,
+  "lat": 44.8257327,
+  "lon": 5.6142524
+},
+{
+  "type": "node",
+  "id": 9804770326,
+  "lat": 44.8260057,
+  "lon": 5.6138326
+},
+{
+  "type": "node",
+  "id": 9804770327,
+  "lat": 44.8261636,
+  "lon": 5.6135242
+},
+{
+  "type": "node",
+  "id": 9804770328,
+  "lat": 44.8264166,
+  "lon": 5.6127986
+},
+{
+  "type": "node",
+  "id": 9804770329,
+  "lat": 44.8265717,
+  "lon": 5.6111075
+},
+{
+  "type": "node",
+  "id": 9804770330,
+  "lat": 44.8265783,
+  "lon": 5.6113556
+},
+{
+  "type": "node",
+  "id": 9804770331,
+  "lat": 44.8265821,
+  "lon": 5.6115554
+},
+{
+  "type": "node",
+  "id": 9804770336,
+  "lat": 44.8265493,
+  "lon": 5.6103639
+},
+{
+  "type": "node",
+  "id": 914353542,
+  "lat": 44.8181622,
+  "lon": 5.6246194
+},
+{
+  "type": "node",
+  "id": 914353548,
+  "lat": 44.8209155,
+  "lon": 5.6236782
+},
+{
+  "type": "node",
+  "id": 914353563,
+  "lat": 44.8199584,
+  "lon": 5.6242300
+},
+{
+  "type": "node",
+  "id": 914353570,
+  "lat": 44.8170246,
+  "lon": 5.6262311
+},
+{
+  "type": "node",
+  "id": 914353573,
+  "lat": 44.8187690,
+  "lon": 5.6243796
+},
+{
+  "type": "node",
+  "id": 914353579,
+  "lat": 44.8175505,
+  "lon": 5.6252082
+},
+{
+  "type": "node",
+  "id": 977659946,
+  "lat": 44.8171183,
+  "lon": 5.6259732
+},
+{
+  "type": "node",
+  "id": 977659947,
+  "lat": 44.8173923,
+  "lon": 5.6254398
+},
+{
+  "type": "node",
+  "id": 977659951,
+  "lat": 44.8191180,
+  "lon": 5.6243356
+},
+{
+  "type": "node",
+  "id": 977659953,
+  "lat": 44.8172390,
+  "lon": 5.6257073
+},
+{
+  "type": "node",
+  "id": 977659957,
+  "lat": 44.8176957,
+  "lon": 5.6250255
+},
+{
+  "type": "node",
+  "id": 977659963,
+  "lat": 44.8184613,
+  "lon": 5.6244574
+},
+{
+  "type": "node",
+  "id": 977659965,
+  "lat": 44.8178996,
+  "lon": 5.6248363
+},
+{
+  "type": "node",
+  "id": 977683954,
+  "lat": 44.8214004,
+  "lon": 5.6231221
+},
+{
+  "type": "node",
+  "id": 977683955,
+  "lat": 44.8195633,
+  "lon": 5.6242980
+},
+{
+  "type": "node",
+  "id": 977683957,
+  "lat": 44.8204572,
+  "lon": 5.6240305
+},
+{
+  "type": "node",
+  "id": 1438408936,
+  "lat": 44.8212466,
+  "lon": 5.6233243
+},
+{
+  "type": "node",
+  "id": 1910112284,
+  "lat": 44.8197835,
+  "lon": 5.6242670
+},
+{
+  "type": "node",
+  "id": 1910112296,
+  "lat": 44.8202141,
+  "lon": 5.6241463
+},
+{
+  "type": "node",
+  "id": 1910112302,
+  "lat": 44.8207084,
+  "lon": 5.6238527
+},
+{
+  "type": "node",
+  "id": 1910112308,
+  "lat": 44.8211047,
+  "lon": 5.6234955
+},
+{
+  "type": "node",
+  "id": 784889061,
+  "lat": 44.8412653,
+  "lon": 5.6104998
+},
+{
+  "type": "node",
+  "id": 784889082,
+  "lat": 44.8418920,
+  "lon": 5.6116383
+},
+{
+  "type": "node",
+  "id": 784889137,
+  "lat": 44.8415843,
+  "lon": 5.6110200
+},
+{
+  "type": "node",
+  "id": 784889153,
+  "lat": 44.8414415,
+  "lon": 5.6107874
+},
+{
+  "type": "node",
+  "id": 784889173,
+  "lat": 44.8424405,
+  "lon": 5.6128491
+},
+{
+  "type": "node",
+  "id": 784889185,
+  "lat": 44.8409096,
+  "lon": 5.6099926
+},
+{
+  "type": "node",
+  "id": 784889199,
+  "lat": 44.8417988,
+  "lon": 5.6114444
+},
+{
+  "type": "node",
+  "id": 784889254,
+  "lat": 44.8420367,
+  "lon": 5.6119597
+},
+{
+  "type": "node",
+  "id": 784889267,
+  "lat": 44.8410659,
+  "lon": 5.6102087
+},
+{
+  "type": "node",
+  "id": 784889271,
+  "lat": 44.8416776,
+  "lon": 5.6112066
+},
+{
+  "type": "node",
+  "id": 914353556,
+  "lat": 44.8428306,
+  "lon": 5.6136118
+},
+{
+  "type": "node",
+  "id": 10766321804,
+  "lat": 44.8426822,
+  "lon": 5.6133686
+},
+{
+  "type": "node",
+  "id": 10766345505,
+  "lat": 44.8425795,
+  "lon": 5.6131487
+},
+{
+  "type": "node",
+  "id": 975896917,
+  "lat": 44.8619828,
+  "lon": 5.6003960
+},
+{
+  "type": "node",
+  "id": 975898411,
+  "lat": 44.8611009,
+  "lon": 5.6025588
+},
+{
+  "type": "node",
+  "id": 975898422,
+  "lat": 44.8614786,
+  "lon": 5.6016275
+},
+{
+  "type": "node",
+  "id": 975898435,
+  "lat": 44.8617694,
+  "lon": 5.6009231
+},
+{
+  "type": "node",
+  "id": 975898412,
+  "lat": 44.8569240,
+  "lon": 5.6091464
+},
+{
+  "type": "node",
+  "id": 975898413,
+  "lat": 44.8599546,
+  "lon": 5.6051849
+},
+{
+  "type": "node",
+  "id": 975898415,
+  "lat": 44.8582373,
+  "lon": 5.6078761
+},
+{
+  "type": "node",
+  "id": 975898424,
+  "lat": 44.8567465,
+  "lon": 5.6093806
+},
+{
+  "type": "node",
+  "id": 975898426,
+  "lat": 44.8595463,
+  "lon": 5.6059070
+},
+{
+  "type": "node",
+  "id": 975898427,
+  "lat": 44.8572324,
+  "lon": 5.6088032
+},
+{
+  "type": "node",
+  "id": 975898429,
+  "lat": 44.8605143,
+  "lon": 5.6040138
+},
+{
+  "type": "node",
+  "id": 975898436,
+  "lat": 44.8565755,
+  "lon": 5.6096377
+},
+{
+  "type": "node",
+  "id": 975898437,
+  "lat": 44.8591396,
+  "lon": 5.6066079
+},
+{
+  "type": "node",
+  "id": 975898438,
+  "lat": 44.8575278,
+  "lon": 5.6085368
+},
+{
+  "type": "node",
+  "id": 975898439,
+  "lat": 44.8578053,
+  "lon": 5.6082740
+},
+{
+  "type": "node",
+  "id": 975898440,
+  "lat": 44.8603626,
+  "lon": 5.6043854
+},
+{
+  "type": "node",
+  "id": 975898449,
+  "lat": 44.8587784,
+  "lon": 5.6072135
+},
+{
+  "type": "node",
+  "id": 975898451,
+  "lat": 44.8607899,
+  "lon": 5.6033291
+},
+{
+  "type": "node",
+  "id": 975898453,
+  "lat": 44.8570847,
+  "lon": 5.6089609
+},
+{
+  "type": "node",
+  "id": 975898454,
+  "lat": 44.8601735,
+  "lon": 5.6047628
+},
+{
+  "type": "node",
+  "id": 975898461,
+  "lat": 44.8585733,
+  "lon": 5.6075007
+},
+{
+  "type": "node",
+  "id": 1973518183,
+  "lat": 44.8602785,
+  "lon": 5.6045532
+},
+{
+  "type": "node",
+  "id": 785181294,
+  "lat": 44.8472276,
+  "lon": 5.6147568
+},
+{
+  "type": "node",
+  "id": 785181307,
+  "lat": 44.8469781,
+  "lon": 5.6146565
+},
+{
+  "type": "node",
+  "id": 785181348,
+  "lat": 44.8478591,
+  "lon": 5.6150362
+},
+{
+  "type": "node",
+  "id": 785181397,
+  "lat": 44.8467251,
+  "lon": 5.6145941
+},
+{
+  "type": "node",
+  "id": 785181406,
+  "lat": 44.8458495,
+  "lon": 5.6146433
+},
+{
+  "type": "node",
+  "id": 785181409,
+  "lat": 44.8464818,
+  "lon": 5.6145686
+},
+{
+  "type": "node",
+  "id": 785181427,
+  "lat": 44.8482423,
+  "lon": 5.6151384
+},
+{
+  "type": "node",
+  "id": 785181545,
+  "lat": 44.8462591,
+  "lon": 5.6145702
+},
+{
+  "type": "node",
+  "id": 914353530,
+  "lat": 44.8490540,
+  "lon": 5.6150615
+},
+{
+  "type": "node",
+  "id": 914353540,
+  "lat": 44.8445200,
+  "lon": 5.6148231
+},
+{
+  "type": "node",
+  "id": 914353552,
+  "lat": 44.8487121,
+  "lon": 5.6151441
+},
+{
+  "type": "node",
+  "id": 914353566,
+  "lat": 44.8438811,
+  "lon": 5.6146039
+},
+{
+  "type": "node",
+  "id": 914353575,
+  "lat": 44.8442588,
+  "lon": 5.6147625
+},
+{
+  "type": "node",
+  "id": 914353578,
+  "lat": 44.8433812,
+  "lon": 5.6142428
+},
+{
+  "type": "node",
+  "id": 914353583,
+  "lat": 44.8452388,
+  "lon": 5.6147918
+},
+{
+  "type": "node",
+  "id": 914353599,
+  "lat": 44.8449084,
+  "lon": 5.6148407
+},
+{
+  "type": "node",
+  "id": 1911292574,
+  "lat": 44.8430479,
+  "lon": 5.6139013
+},
+{
+  "type": "node",
+  "id": 1911292587,
+  "lat": 44.8435313,
+  "lon": 5.6143731
+},
+{
+  "type": "node",
+  "id": 1911292605,
+  "lat": 44.8440653,
+  "lon": 5.6146902
+},
+{
+  "type": "node",
+  "id": 1911292619,
+  "lat": 44.8446928,
+  "lon": 5.6148347
+},
+{
+  "type": "node",
+  "id": 1911292645,
+  "lat": 44.8480501,
+  "lon": 5.6150952
+},
+{
+  "type": "node",
+  "id": 1911292650,
+  "lat": 44.8484056,
+  "lon": 5.6151538
+},
+{
+  "type": "node",
+  "id": 1911292652,
+  "lat": 44.8485775,
+  "lon": 5.6151546
+},
+{
+  "type": "node",
+  "id": 1911292654,
+  "lat": 44.8488721,
+  "lon": 5.6151155
+},
+{
+  "type": "node",
+  "id": 1911292658,
+  "lat": 44.8492148,
+  "lon": 5.6149933
+},
+{
+  "type": "node",
+  "id": 1911292659,
+  "lat": 44.8494206,
+  "lon": 5.6148764
+},
+{
+  "type": "node",
+  "id": 10766321803,
+  "lat": 44.8461035,
+  "lon": 5.6145877
+},
+{
+  "type": "node",
+  "id": 785181259,
+  "lat": 44.8537546,
+  "lon": 5.6128273
+},
+{
+  "type": "node",
+  "id": 785181266,
+  "lat": 44.8506269,
+  "lon": 5.6134575
+},
+{
+  "type": "node",
+  "id": 785181285,
+  "lat": 44.8533038,
+  "lon": 5.6128803
+},
+{
+  "type": "node",
+  "id": 785181302,
+  "lat": 44.8518091,
+  "lon": 5.6127329
+},
+{
+  "type": "node",
+  "id": 785181304,
+  "lat": 44.8528043,
+  "lon": 5.6128214
+},
+{
+  "type": "node",
+  "id": 785181351,
+  "lat": 44.8508694,
+  "lon": 5.6132038
+},
+{
+  "type": "node",
+  "id": 785181362,
+  "lat": 44.8535909,
+  "lon": 5.6128604
+},
+{
+  "type": "node",
+  "id": 785181374,
+  "lat": 44.8520921,
+  "lon": 5.6126990
+},
+{
+  "type": "node",
+  "id": 785181378,
+  "lat": 44.8531185,
+  "lon": 5.6128680
+},
+{
+  "type": "node",
+  "id": 785181391,
+  "lat": 44.8515849,
+  "lon": 5.6127804
+},
+{
+  "type": "node",
+  "id": 785181396,
+  "lat": 44.8524666,
+  "lon": 5.6127432
+},
+{
+  "type": "node",
+  "id": 785181418,
+  "lat": 44.8541317,
+  "lon": 5.6127020
+},
+{
+  "type": "node",
+  "id": 785181424,
+  "lat": 44.8507328,
+  "lon": 5.6133376
+},
+{
+  "type": "node",
+  "id": 785181434,
+  "lat": 44.8534923,
+  "lon": 5.6128712
+},
+{
+  "type": "node",
+  "id": 785181448,
+  "lat": 44.8519250,
+  "lon": 5.6127107
+},
+{
+  "type": "node",
+  "id": 785181471,
+  "lat": 44.8529395,
+  "lon": 5.6128435
+},
+{
+  "type": "node",
+  "id": 785181525,
+  "lat": 44.8514328,
+  "lon": 5.6128388
+},
+{
+  "type": "node",
+  "id": 785181530,
+  "lat": 44.8522630,
+  "lon": 5.6127099
+},
+{
+  "type": "node",
+  "id": 785181538,
+  "lat": 44.8510136,
+  "lon": 5.6130875
+},
+{
+  "type": "node",
+  "id": 785181541,
+  "lat": 44.8512079,
+  "lon": 5.6129599
+},
+{
+  "type": "node",
+  "id": 914353550,
+  "lat": 44.8497185,
+  "lon": 5.6146403
+},
+{
+  "type": "node",
+  "id": 914353595,
+  "lat": 44.8495844,
+  "lon": 5.6147628
+},
+{
+  "type": "node",
+  "id": 975898414,
+  "lat": 44.8551825,
+  "lon": 5.6118255
+},
+{
+  "type": "node",
+  "id": 975898419,
+  "lat": 44.8547318,
+  "lon": 5.6123121
+},
+{
+  "type": "node",
+  "id": 975898428,
+  "lat": 44.8549490,
+  "lon": 5.6121087
+},
+{
+  "type": "node",
+  "id": 975898433,
+  "lat": 44.8544205,
+  "lon": 5.6125459
+},
+{
+  "type": "node",
+  "id": 975898434,
+  "lat": 44.8560302,
+  "lon": 5.6105062
+},
+{
+  "type": "node",
+  "id": 975898445,
+  "lat": 44.8557311,
+  "lon": 5.6109785
+},
+{
+  "type": "node",
+  "id": 975898455,
+  "lat": 44.8554055,
+  "lon": 5.6114916
+},
+{
+  "type": "node",
+  "id": 1911292674,
+  "lat": 44.8498737,
+  "lon": 5.6144844
+},
+{
+  "type": "node",
+  "id": 1911292686,
+  "lat": 44.8500379,
+  "lon": 5.6142848
+},
+{
+  "type": "node",
+  "id": 10766321798,
+  "lat": 44.8546053,
+  "lon": 5.6124151
+},
+{
+  "type": "node",
+  "id": 10766321799,
+  "lat": 44.8539360,
+  "lon": 5.6127745
+},
+{
+  "type": "node",
+  "id": 10766321800,
+  "lat": 44.8513415,
+  "lon": 5.6128831
+},
+{
+  "type": "node",
+  "id": 10766321801,
+  "lat": 44.8504782,
+  "lon": 5.6136502
+},
+{
+  "type": "node",
+  "id": 10766321802,
+  "lat": 44.8503327,
+  "lon": 5.6138648
+},
+{
+  "type": "node",
+  "id": 975898447,
+  "lat": 44.8562986,
+  "lon": 5.6100749
+},
+{
+  "type": "relation",
+  "id": 2990554,
+  "tags": {
+    "name": "Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)",
+    "name:oc": "Linha de Lion-Perrache a Marselha-Sant-Carles (via Grenòble)",
+    "operator": "SNCF Réseau",
+    "operator:wikidata": "Q21605526",
+    "ref": "905 000",
+    "route": "railway",
+    "source:name:oc": "ieo-bdtopoc",
+    "type": "route",
+    "wikidata": "Q3239666",
+    "wikipedia": "fr:Ligne de Lyon-Perrache à Marseille-Saint-Charles (via Grenoble)"
+  }
+},
+{
+  "type": "relation",
+  "id": 2999179,
+  "tags": {
+    "alt_name": "Ligne Grenoble - Veynes",
+    "name": "Ligne des Alpes",
+    "route": "railway",
+    "type": "route",
+    "wikidata": "Q3240085",
+    "wikipedia": "fr:Ligne des Alpes"
+  }
+}
+
+  ]
+}

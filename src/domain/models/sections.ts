@@ -1,5 +1,5 @@
 import type { Network, NodeId, SegmentId, Segment, Point } from './types'
-import { curveLength } from '../geometry/curve'
+import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { segmentTangentAt } from '../geometry/tangent'
 import { findJunctionAtNode } from './junction'
 
@@ -104,15 +104,7 @@ export function computeTrackSections(
   const visitedSegments = new Set<SegmentId>()
 
   // Helper to compute length of a segment
-  const getSegLength = (seg: Segment): number => {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) return 0
-    if (seg.kind === 'curve' && seg.via) {
-      return curveLength(a.pos, seg.via, b.pos)
-    }
-    return Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
-  }
+  const getSegLength = (seg: Segment): number => segmentShapeLength(net, seg)
 
   /**
    * Find the through-route continuation of prevSegId across currNode, if one exists.
@@ -176,7 +168,7 @@ export function computeTrackSections(
   for (const [segId, startSeg] of net.segments) {
     if (visitedSegments.has(segId)) continue
 
-    const sectionSegIds: SegmentId[] = [segId]
+    let sectionSegIds: SegmentId[] = [segId]
     visitedSegments.add(segId)
 
     // Expand forwards from startSeg.to
@@ -195,7 +187,9 @@ export function computeTrackSections(
       prevSegId = nextSegId
     }
 
-    // Expand backwards from startSeg.from
+    // Expand backwards from startSeg.from: gathered nearest first, then put in front in one go
+    // (a section can be thousands of rails long)
+    const before: SegmentId[] = []
     currNode = startSeg.from
     prevSegId = segId
     while (true) {
@@ -205,11 +199,12 @@ export function computeTrackSections(
       const nextSeg = net.segments.get(nextSegId)
       if (!nextSeg) break
 
-      sectionSegIds.unshift(nextSegId)
+      before.push(nextSegId)
       visitedSegments.add(nextSegId)
       currNode = nextSeg.from === currNode ? nextSeg.to : nextSeg.from
       prevSegId = nextSegId
     }
+    if (before.length > 0) sectionSegIds = before.reverse().concat(sectionSegIds)
 
     // Reconstruct contiguous ordered sequence of nodes from one tip to the other
     const orderedNodes: NodeId[] = []
@@ -295,11 +290,20 @@ export function computeTrackSections(
   const matchedMeta = new Map<RawSection, SectionMetadata>()
   const claimedNames = new Set<string>()
 
-  // Collect all known compound keys in customMeta
-  const compoundKeys = new Set<string>()
+  // Known compound keys of customMeta, by each of the rails they name, and every name it holds.
+  // customMeta has an entry per rail: it is read in place, without a list of its keys or entries.
+  const compoundKeysOfRail = new Map<string, string[]>()
+  const metaNames = new Set<string>()
   if (customMeta) {
-    for (const key of Object.keys(customMeta)) {
-      if (key.includes('-')) compoundKeys.add(key)
+    for (const key in customMeta) {
+      const name = customMeta[key]?.name
+      if (name) metaNames.add(name)
+      if (!key.includes('-')) continue
+      for (const sid of key.split('-')) {
+        const keys = compoundKeysOfRail.get(sid)
+        if (keys) keys.push(key)
+        else compoundKeysOfRail.set(sid, [key])
+      }
     }
   }
 
@@ -315,8 +319,8 @@ export function computeTrackSections(
 
     // If this is a single segment, check if it was actually part of a multi-segment section
     if (!rawSec.sortedSegKey.includes('-')) {
-      const wasPartOfCompound = Array.from(compoundKeys).some(
-        (ck) => ck.split('-').includes(rawSec.sortedSegKey) && customMeta[ck]?.name === meta.name
+      const wasPartOfCompound = (compoundKeysOfRail.get(rawSec.sortedSegKey) ?? []).some(
+        (ck) => customMeta[ck]?.name === meta.name
       )
       if (wasPartOfCompound) {
         // This is a fragment from a split/bifurcation, delegate to Pass 2
@@ -338,7 +342,8 @@ export function computeTrackSections(
   }
   const priorRecordsByName = new Map<string, PriorRecord>()
   if (customMeta) {
-    for (const [key, meta] of Object.entries(customMeta)) {
+    for (const key in customMeta) {
+      const meta = customMeta[key]
       if (!meta || !meta.name) continue
       if (claimedNames.has(meta.name)) continue // already claimed by exact intact match
 
@@ -356,19 +361,33 @@ export function computeTrackSections(
     }
   }
 
+  // Raw sections by each rail they descend from, to find those a prior record overlaps without
+  // looking at all of them
+  const sectionsOfAncestor = new Map<SegmentId, number[]>()
+  if (priorRecordsByName.size > 0) {
+    rawSections.forEach((rawSec, index) => {
+      for (const anc of sectionAncestors.get(rawSec)!) {
+        const list = sectionsOfAncestor.get(anc)
+        if (list) list.push(index)
+        else sectionsOfAncestor.set(anc, [index])
+      }
+    })
+  }
+
   // Pass 2: Overlap and ancestor heritage (when a line is cut or bifurcated)
   // Each unclaimed prior section gets assigned to AT MOST ONE candidate raw section (the primary piece).
   for (const prior of priorRecordsByName.values()) {
     if (claimedNames.has(prior.name)) continue
 
-    const candidates = rawSections.filter((rawSec) => {
-      if (matchedMeta.has(rawSec)) return false
-      const ancSet = sectionAncestors.get(rawSec)!
-      for (const sid of prior.segmentIds) {
-        if (ancSet.has(sid)) return true
-      }
-      return false
-    })
+    // In the order of `rawSections`: the first of two equal candidates wins
+    const overlapping = new Set<number>()
+    for (const sid of prior.segmentIds) {
+      for (const index of sectionsOfAncestor.get(sid) ?? []) overlapping.add(index)
+    }
+    const candidates = [...overlapping]
+      .sort((a, b) => a - b)
+      .map((index) => rawSections[index])
+      .filter((rawSec) => !matchedMeta.has(rawSec))
 
     if (candidates.length > 0) {
       let bestCandidate = candidates[0]
@@ -393,11 +412,7 @@ export function computeTrackSections(
 
   // Pass 3: Stable fallback name allocation for new or unassigned sections
   const allUsedNames = new Set<string>(claimedNames)
-  if (customMeta) {
-    for (const m of Object.values(customMeta)) {
-      if (m?.name) allUsedNames.add(m.name)
-    }
-  }
+  for (const name of metaNames) allUsedNames.add(name)
 
   let letterIndex = 0
   const getNextAvailableName = (): string => {

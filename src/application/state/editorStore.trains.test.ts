@@ -6,6 +6,7 @@ import { COUPLING_GAP, setNotch, setReverser, vehicleFrontEndPos, vehicleRearEnd
 import { placeTurnout, activeBranchOf, turnoutView, splitSegment } from '@domain/models/junction'
 import { positionOnSegment } from '@domain/models/locomotive'
 import * as trainModel from '@domain/models/train'
+import { networkChanged } from '@domain/models/networkWatch'
 
 /**
  * Stand-in for the driving physics: every train simply runs at the speed it is given. These tests
@@ -683,6 +684,7 @@ describe('EditorStore trains on reshaped rails', () => {
     store.pinTrains()
     const seg = store.network.segments.get(segId)!
     store.network.nodes.get(seg[end])!.pos.x = x
+    networkChanged()
     // Positions are fractions of the segment: without a re-lay the train is carried and stretched
     expect(bogies(store)[0].x).not.toBeCloseTo(before[0].x, 3)
 
@@ -702,6 +704,7 @@ describe('EditorStore trains on reshaped rails', () => {
 
     store.pinTrains()
     store.network.nodes.get(seg.to)!.pos.x = 20
+    networkChanged()
     store.realignTrains()
     expect(fractions()).toEqual(before)
   })

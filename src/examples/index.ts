@@ -6,6 +6,7 @@ import premiersToursDeRoueUrl from './premiers-tours-de-roue.json?url'
 import rampeEtCourbeUrl from './rampe-et-courbe.json?url'
 import sautDeMoutonUrl from './saut-de-mouton.json?url'
 import terminusUrl from './terminus.json?url'
+import voieUniqueEvitementUrl from './voie-unique-evitement.json?url'
 
 /**
  * A ready-made network offered in File ▸ Examples. Its project file is a separate asset, fetched
@@ -63,6 +64,13 @@ export const EXAMPLES: readonly ExampleNetwork[] = [
     description:
       'Une gare en cul-de-sac à trois voies, avec sa bretelle d\'entrée, ses heurtoirs et ses signaux, limitée à 60 km/h : F5, Tab pour passer dans la cabine de l\'autre bout, puis repartez vers la ligne.',
     url: terminusUrl,
+  },
+  {
+    id: 'voie-unique-evitement',
+    label: 'Voie unique avec évitement',
+    description:
+      'Une voie unique, son évitement et ses six carrés, avec une rame de chaque côté : F5, entrez sur la voie directe et arrêtez-vous au carré de sortie ; cliquez l\'autre rame, tournez son aiguille (← ou →) pour la faire entrer sur l\'évitement, puis rendez à chacune son aiguille pour repartir.',
+    url: voieUniqueEvitementUrl,
   },
   {
     id: 'gare-de-passage',

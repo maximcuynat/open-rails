@@ -17,6 +17,8 @@ import {
   previewSignalBlocks,
   signalGlyph,
   signalHeadWorld,
+  reportLabel,
+  signalFlashOn,
   signalSizes,
   type SignalRenderOptions,
 } from '@infrastructure/render/signalRender'
@@ -305,7 +307,9 @@ describe('one-way signals and diverging routes on the canvas', () => {
 
   it('pro level: the announcement and the reminder are two yellow lamps, with the speed written once the zoom is close', () => {
     expect(signalGlyph(block, 'clear', 'pro', { slowdown: 30 })).toEqual({ shape: 'semaphore', lamps: ['yellow', 'yellow'], plate: 'F', speed: 30 })
-    expect(signalGlyph(path, 'clear', 'pro', { reminder: 60 })).toEqual({ shape: 'carre', lamps: ['yellow', 'yellow'], plate: 'Nf', speed: 60 })
+    // The reminder stacks its two lamps away from the track; 60 km/h flashes
+    expect(signalGlyph(path, 'clear', 'pro', { reminder: 60 })).toEqual({ shape: 'carre', lamps: ['yellow', 'yellow'], plate: 'Nf', speed: 60, stacked: true, flashing: true })
+    expect(signalGlyph(block, 'clear', 'pro', { slowdown: 60 })).toEqual({ shape: 'semaphore', lamps: ['yellow', 'yellow'], plate: 'F', speed: 60, flashing: true })
     expect(signalGlyph(path, 'caution', 'pro', { reminder: 30 })).toMatchObject({ lamps: ['yellow', 'yellow'], speed: 30 })
     // Closed, or at the standard level, or on a marker board: nothing of it
     expect(signalGlyph(path, 'stop', 'pro', { reminder: 30 })).toEqual({ shape: 'carre', lamps: ['red', 'red'], plate: 'Nf' })
@@ -322,6 +326,17 @@ describe('one-way signals and diverging routes on the canvas', () => {
     const { ctx, ops } = createRecordingContext()
     renderNetwork(ctx, createCamera(500, 0, 8), VW, VH, net, noSelection(), {}, { tool: 'select', signals: { level: 'pro', state } })
     expect(texts(ops)).toEqual(expect.arrayContaining(['Nf', '60']))
+    // The reminder: one lamp beyond the other, on the side of the head (above a track running east);
+    // the announcement: side by side along the track
+    const [near, beyond] = lamps(far)
+    expect(beyond.x).toBeCloseTo(near.x)
+    expect(Math.abs(beyond.y - near.y)).toBeGreaterThan(5)
+    expect(Math.max(near.y, beyond.y)).toBeLessThan(AXIS_Y)
+    state.signals.set(signal.id, { state: 'clear', cause: null, clearedFor: 't', slowdown: 30 })
+    const [first, second] = lamps(draw(net, { level: 'pro', state }))
+    expect(second.y).toBeCloseTo(first.y)
+    expect(Math.abs(second.x - first.x)).toBeGreaterThan(5)
+    state.signals.set(signal.id, { state: 'clear', cause: null, clearedFor: 't', reminder: 60 })
     // The standard level shows the same signal green, with no figure
     const standard = createRecordingContext()
     renderNetwork(standard.ctx, createCamera(500, 0, 8), VW, VH, net, noSelection(), {}, { tool: 'select', signals: { level: 'standard', state } })
@@ -458,7 +473,82 @@ describe('blocks and reservations on the canvas', () => {
   })
 })
 
+describe('flashing lamps on the canvas', () => {
+  it('flashes at about 1 Hz', () => {
+    expect([0, 499, 500, 999, 1000].map(signalFlashOn)).toEqual([true, true, false, false, true])
+  })
+
+  it('dims the two yellow lamps of 60 km/h between two flashes, and only them', () => {
+    const { net, seg } = straightTrack()
+    const signal = lay(net, seg.id, 0.5, true, 'protection')
+    const state = createSignallingState()
+    const alphas = (flashOn: boolean | undefined): number[] => {
+      const ops = draw(net, { level: 'pro', state, flashOn })
+      return ops.filter((op, i) => op.name === 'arc' && ops[i + 1]?.name === 'fill' && ops[i + 1].fillStyle === SIGNAL_LAMP_COLORS.yellow).map((op) => op.globalAlpha)
+    }
+    state.signals.set(signal.id, { state: 'clear', cause: null, clearedFor: 't', reminder: 60 })
+    expect(alphas(undefined)).toEqual([1, 1])
+    expect(alphas(true)).toEqual([1, 1])
+    expect(alphas(false).every((alpha) => alpha < 0.5)).toBe(true)
+    // 30 km/h is steady
+    state.signals.set(signal.id, { state: 'clear', cause: null, clearedFor: 't', reminder: 30 })
+    expect(alphas(false)).toEqual([1, 1])
+  })
+})
+
 describe('signalling report on the canvas', () => {
+  it('writes the label away from the head of the signal, and never over another label', () => {
+    const { net, seg } = straightTrack()
+    // Two signals 15 m apart: at this zoom their labels would lie on each other
+    lay(net, seg.id, 0.5, true)
+    lay(net, seg.id, 0.515, true)
+    const report = signalReport(net, { level: 'standard', line: DEFAULT_LINE_SETTINGS })
+    expect(report.length).toBeGreaterThan(1)
+    const { ctx, ops } = createRecordingContext()
+    // 4 px/m: the detailed drawing, the two markers 60 px apart — apart enough to stay two
+    renderNetwork(ctx, createCamera(500, 0, 4), VW, VH, net, noSelection(), {}, {
+      tool: 'select',
+      signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
+    })
+    // Every entry keeps its marker; one label only
+    expect(texts(ops).filter((text) => text === '!')).toHaveLength(report.length)
+    const labels = ops.filter((op) => op.name === 'fillText' && String(op.args[0]).startsWith('Canton'))
+    expect(labels).toHaveLength(1)
+    // The heads are above the track (trains running east): the label is below it
+    expect(labels[0].args[2] as number).toBeGreaterThan(VH / 2)
+  })
+
+  it('merges the markers that would cover each other into one that shows how many it stands for', () => {
+    const { net, seg } = straightTrack()
+    lay(net, seg.id, 0.5, true)
+    lay(net, seg.id, 0.52, true)
+    const report = signalReport(net, { level: 'standard', line: DEFAULT_LINE_SETTINGS })
+    expect(report).toHaveLength(2)
+    const marks = (scale: number): string[] => {
+      const { ctx, ops } = createRecordingContext()
+      renderNetwork(ctx, createCamera(500, 0, scale), VW, VH, net, noSelection(), {}, {
+        tool: 'select',
+        signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
+      })
+      return texts(ops).filter((text) => /^(!|\d+)$/.test(text))
+    }
+    // 1 px/m (a track is a single line): 20 px apart, one marker for the two
+    expect(marks(1)).toEqual(['2'])
+    // 0.5 px/m, the same; 4 px/m (detailed drawing, 80 px apart): one each
+    expect(marks(0.5)).toEqual(['2'])
+    expect(marks(4)).toEqual(['!', '!'])
+    // The two rails drawn, the diamonds on each other (0.4 px/m apart at 2.5 px/m would be 50 px: brought closer)
+    const close = straightTrack()
+    lay(close.net, close.seg.id, 0.5, true)
+    lay(close.net, close.seg.id, 0.504, true)
+    const { ctx, ops } = createRecordingContext()
+    renderNetwork(ctx, createCamera(500, 0, 2.5), VW, VH, close.net, noSelection(), {}, {
+      tool: 'select',
+      signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
+    })
+    expect(texts(ops).filter((text) => /^(!|\d+)$/.test(text))).toEqual(['2'])
+  })
+
   it('marks each entry of the report with its message, in the construction view only', () => {
     const { net, seg } = straightTrack()
     lay(net, seg.id, 0.5, true)
@@ -470,7 +560,9 @@ describe('signalling report on the canvas', () => {
       tool: 'select',
       signals: { level: 'standard', report: true, line: DEFAULT_LINE_SETTINGS },
     })
-    for (const entry of report) expect(texts(ops)).toContain(entry.message)
+    // The name of the defect, without its figures: the whole message is in the panel of the signal
+    for (const entry of report) expect(texts(ops)).toContain(reportLabel(entry))
+    expect(reportLabel({ message: 'Canton trop court : 950 m pour 1 411 m d’arrêt à 160 km/h' })).toBe('Canton trop court')
     expect(texts(ops).filter((text) => text === '!')).toHaveLength(report.length)
 
     const quiet = createRecordingContext()
@@ -520,6 +612,19 @@ describe('distant speed signs on the canvas', () => {
     expect(speedSigns).toHaveBeenCalledWith(net, DEFAULT_LINE_SETTINGS)
     expect(texts(pro)).toEqual(expect.arrayContaining(['60', '90']))
     expect(boards(pro)).toHaveLength(boards(standard).length + 2)
+  })
+
+  it('leaves the signs out of the schematic drawing, like the boards of the zones', () => {
+    const { net, seg } = straightTrack()
+    lay(net, seg.id, 0.5, true)
+    vi.mocked(speedSigns).mockReturnValue([sign(seg.id, { t: 0.25, speed: 60 })])
+    const at = (scale: number): string[] => {
+      const { ctx, ops } = createRecordingContext()
+      renderNetwork(ctx, createCamera(500, 0, scale), VW, VH, net, noSelection(), {}, { tool: 'select', signals: { level: 'pro', line: DEFAULT_LINE_SETTINGS } })
+      return texts(ops)
+    }
+    expect(at(0.5)).toContain('60')
+    expect(at(0.2)).not.toContain('60')
   })
 
   it('stands each sign on the left of the direction it addresses, black figures on white', () => {

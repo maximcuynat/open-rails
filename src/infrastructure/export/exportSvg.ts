@@ -1,9 +1,11 @@
 import { turnoutView } from '@domain/models/junction'
 import { bezierNormal, bezierPoint, curveLength, discretizeCurve } from '@domain/geometry/curve'
+import { segmentEnds, shapeBounds, shapePieces } from '@domain/geometry/segmentGeometry'
 import type { EditorStore } from '@application/state/editorStore'
 import type { Network, Point, Selection } from '@domain/models/types'
 import { segmentHeightNear } from '@domain/models/network'
 import type { Camera } from '@infrastructure/render/camera'
+import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL, type OsmSource } from '@domain/import/osmTypes'
 import { detectCrossings, lineLineIntersection } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import {
@@ -17,8 +19,6 @@ import {
   DECK_PARAPET_WIDTH,
   TUNNEL_ALPHA,
   getNodeSegmentEnds,
-  subdivideCurve,
-  subdivideStraight,
   getConnectedEndPairs,
 } from '@infrastructure/render/renderer'
 import { deckAbutments, heightBand, nodeJointBand, segmentTrackPieces } from '@infrastructure/render/levelPieces'
@@ -65,8 +65,11 @@ class LeveledElements {
  * the level it is really at, so that only its upper part is on a deck and only its lower part in a
  * tunnel.
  * A network that stays on the ground gives the same seven groups as ever.
+ *
+ * `attribution` is the mention a network made from open data must carry (OpenStreetMap, ODbL): it
+ * is written in the description of the file and in the bottom-left corner of the drawing.
  */
-export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): string {
+export function generateRealisticSVG(net: Network, projectName = 'Open Rails', attribution?: string): string {
   if (net.nodes.size === 0) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"></svg>`
   }
@@ -80,12 +83,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
     maxY = Math.max(maxY, n.pos.y)
   }
   for (const s of net.segments.values()) {
-    if (s.kind === 'curve' && s.via) {
-      minX = Math.min(minX, s.via.x)
-      minY = Math.min(minY, s.via.y)
-      maxX = Math.max(maxX, s.via.x)
-      maxY = Math.max(maxY, s.via.y)
-    }
+    const ends = segmentEnds(net, s)
+    if (!ends) continue
+    const box = shapeBounds(ends)
+    minX = Math.min(minX, box.minX)
+    minY = Math.min(minY, box.minY)
+    maxX = Math.max(maxX, box.maxX)
+    maxY = Math.max(maxY, box.maxY)
   }
 
   const pad = BALLAST_WIDTH + 20
@@ -167,15 +171,13 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
   // 2. Generate Ballast, Sleepers, and Rails for each piece of rail (the whole rail unless it is
   // a ramp that crosses a half level)
   const trackPieces = [...net.segments.values()].flatMap((seg) => segmentTrackPieces(net, seg))
-  for (const piece of trackPieces) {
-    const seg = piece.seg
-    const nodeA = net.nodes.get(seg.from)
-    const nodeB = net.nodes.get(seg.to)
-    if (!nodeA || !nodeB) continue
-    // Geometry of the piece: `subdivide…` hands back the rail itself when the piece is all of it
-    const line: { a: Point; b: Point; via?: Point } = seg.kind === 'curve' && seg.via
-      ? (({ p0, via, p2 }) => ({ a: p0, b: p2, via }))(subdivideCurve(nodeA.pos, seg.via, nodeB.pos, piece.t0, piece.t1))
-      : subdivideStraight(nodeA.pos, nodeB.pos, piece.t0, piece.t1)
+  // Geometry of each piece, as the lines and curves it is drawn from: `shapePieces` hands back the
+  // rail itself when the piece is all of it. `first` marks what is drawn once per piece of rail.
+  const drawnPieces = trackPieces.flatMap((piece) => {
+    const ends = segmentEnds(net, piece.seg)
+    return ends ? shapePieces(ends, piece.t0, piece.t1).map((line, index) => ({ piece, line, first: index === 0 })) : []
+  })
+  for (const { piece, line, first } of drawnPieces) {
 
     const level = piece.band
     outputLevel = level
@@ -194,7 +196,7 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
       // Abutment where the deck starts: closing line and two wing walls
       const halfDeck = DECK_WIDTH / 2
       const wing = halfDeck * 0.6
-      for (const { pos, tangent, normal } of deckAbutments(net, piece)) {
+      for (const { pos, tangent, normal } of first ? deckAbutments(net, piece) : []) {
         const corner = (side: 1 | -1): Point => ({
           x: pos.x + normal.x * halfDeck * side,
           y: pos.y + normal.y * halfDeck * side,
@@ -794,9 +796,17 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
         })
         .join('\n  ')
 
+  // The mention of the source stays readable whatever the size of the network
+  const mention = attribution ? escapeXml(attribution) : ''
+  const mentionSize = f(Math.max(1.5, Math.max(vbW, vbH) / 110))
+  const attributionDesc = mention ? `\n  <desc>${mention}</desc>` : ''
+  const attributionText = mention
+    ? `\n  <text id="attribution" x="${f(vbX + mentionSize)}" y="${f(vbY + vbH - mentionSize)}" font-family="sans-serif" font-size="${mentionSize}" fill="#526071">${mention}</text>`
+    : ''
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX} ${vbY} ${vbW} ${vbH}" width="${vbW}mm" height="${vbH}mm">
-  <title>${projectName}</title>
+  <title>${projectName}</title>${attributionDesc}
   <defs>
     <style>
       .ballast { fill: #dcd6cc; stroke: #c2b9aa; stroke-width: 0.8; stroke-linejoin: round; }
@@ -827,15 +837,25 @@ export function generateRealisticSVG(net: Network, projectName = 'Open Rails'): 
       .tunnel .rail, .tunnel .rail-head { stroke-dasharray: 3 2.5; }
     </style>
   </defs>
-  ${body}
+  ${body}${attributionText}
 </svg>`
 }
 
 /**
  * Trigger SVG download in the browser.
  */
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** The mention an exported drawing carries when the network comes from OpenStreetMap */
+export function osmSvgAttribution(source: OsmSource | null | undefined): string | undefined {
+  if (!source) return undefined
+  return `${OSM_ATTRIBUTION} (ODbL), données du ${source.dataDate.slice(0, 10)} — ${OSM_COPYRIGHT_URL}`
+}
+
 export function exportSVG(store: EditorStore): void {
-  const svg = generateRealisticSVG(store.network, store.projectName)
+  const svg = generateRealisticSVG(store.network, store.projectName, osmSvgAttribution(store.osmSource))
   download(svg, `${store.projectName.replace(/\s+/g, '-').toLowerCase()}.svg`, 'image/svg+xml')
 }
 

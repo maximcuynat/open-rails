@@ -80,49 +80,9 @@ export function deskScreen(
 
 export type DeskOrientation = 'portrait' | 'landscape'
 
-/** Levers under the thumbs when the phone is held upright, the band when it lies on its side */
+/** Two pads side by side when the phone is held upright, one at each edge when it lies on its side */
 export function deskOrientation(width: number, height: number): DeskOrientation {
   return width > height ? 'landscape' : 'portrait'
-}
-
-export interface StageDesign {
-  /** Width the layout is drawn for, CSS pixels at scale 1 */
-  width: number
-  /** Height under which the layout no longer fits at scale 1 */
-  minHeight: number
-  /** A tablet does not need instruments three times their size */
-  maxScale: number
-}
-
-/** The band of the PC with its margins (`BAND` and `CONSOLE_MARGIN` in `consoleLayout.ts`), without its row of tools */
-export const BAND_DESIGN: StageDesign = { width: 984, minHeight: 200, maxScale: 1.6 }
-export const PORTRAIT_DESIGN: StageDesign = { width: 390, minHeight: 540, maxScale: 1.8 }
-
-/** Height the signalling block adds to a desk, its gap included (`.console-signals`) */
-export const SIGNALS_HEIGHT = 62
-
-/**
- * The design a desk is laid out for: the band on its side, the levers upright, both taller on a
- * network that has signals — the signalling block then sits in the flow, above the band or under
- * the speed.
- */
-export function deskDesign(orientation: DeskOrientation, state: Pick<ConsoleState, 'signals'>): StageDesign {
-  const design = orientation === 'landscape' ? BAND_DESIGN : PORTRAIT_DESIGN
-  return state.signals ? { ...design, minHeight: design.minHeight + SIGNALS_HEIGHT } : design
-}
-
-export interface StageFit {
-  scale: number
-  /** Size of the stage before it is scaled: scaled, it covers the box exactly */
-  width: number
-  height: number
-}
-
-/** Scale at which a layout fills a box of `width` × `height`, and the size it is laid out at */
-export function fitStage(width: number, height: number, design: StageDesign): StageFit {
-  const fit = Math.min(width / design.width, height / design.minHeight, design.maxScale)
-  const scale = Number.isFinite(fit) && fit > 0 ? fit : 1
-  return { scale, width: width / scale, height: height / scale }
 }
 
 /** Vibration (ms, or a pattern) that answers a command under the finger; null for none */

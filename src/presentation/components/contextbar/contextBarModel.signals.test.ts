@@ -137,6 +137,10 @@ describe('context bar: signal tools', () => {
     expect(value(bar(store), 'signal-row')).toMatchObject({ text: '4 signaux', tone: 'accent' })
     store.setSignalToolBothWays(true)
     expect(value(bar(store), 'signal-row').text).toBe('8 signaux')
+    // A drag shorter than the spacing lays one signal, written in the singular
+    store.setSignalToolBothWays(false)
+    store.updateSignalGesture({ x: 900, y: -3 })
+    expect(value(bar(store), 'signal-row').text).toBe('1 signal')
   })
 
   it('marker board tool: one more button for its plate, F or Nf', () => {

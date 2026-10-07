@@ -47,6 +47,7 @@ import {
 import { addSpeedZoneBetween, speedZoneEnds, speedZoneLength } from '../services/speedZoneLayout'
 import { snapToNearestTrack } from './locomotive'
 import type { Network, Point, Segment, SpeedZone } from './types'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -490,6 +491,7 @@ describe('speed zones', () => {
     it('relative to its track when the track is moved: the zone goes with it', () => {
       const { net, nodes, zone } = trackWithZone()
       for (const node of nodes) node.pos = { x: node.pos.x + 30, y: node.pos.y + 50 }
+      networkChanged()
       expectZone(net, zone, { x: 280, y: 50 }, { x: 780, y: 50 }, 500)
     })
 

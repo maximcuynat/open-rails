@@ -81,6 +81,7 @@ import { showToast } from '../common/Toast'
 import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
 import { positionOnSegment } from '@domain/models/locomotive'
 import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
+import { signalFlashOn } from '@infrastructure/render/signalRender'
 import { renderSignalToolPreview } from './signalToolPreview'
 import { commitSignalGesture } from '../common/signalActions'
 import { hitShownNode } from './nodePicking'
@@ -335,7 +336,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     if (!ctx) return
     const cam = store.camera
     const rect = canvas.getBoundingClientRect()
-    if (store.showGrid) {
+    // Plain driving view: nothing but the track, its signs and the trains
+    const plainView = store.isPlainDrivingView
+    if (store.showGrid && !plainView) {
       const customSpacing = store.gridMode === 'fixed' ? store.gridSpacing : undefined
       renderGrid(ctx, cam, rect.width, rect.height, customSpacing)
     } else {
@@ -343,7 +346,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, rect.width, rect.height)
     }
-    if (store.boardEnabled && store.boardWidth > 0 && store.boardHeight > 0) {
+    if (store.boardEnabled && !plainView && store.boardWidth > 0 && store.boardHeight > 0) {
       renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
     }
 
@@ -360,11 +363,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     const networkOptions: RenderNetworkOptions = {
       tool: store.tool,
       gauge: store.gauge,
-      gradient: { levelHeight: store.levelHeight, maxGradient: store.maxGradient },
-      // Cant and slopes marked on the track: part of it, so they stay while driving
-      inclination: store.showInclination ? { line: store.lineSettings } : undefined,
+      gradient: store.gradientLimits,
+      // Cant and slopes marked on the track: part of it, so they stay while driving — but for the plain view
+      inclination: store.showInclination && !plainView ? { line: store.lineSettings } : undefined,
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
+      ...(plainView ? { hideSectionCenterline: true, hideSpeedZoneBands: true, plainRails: true } : {}),
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
       quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
       // Zones are only picked in the signalling mode; in its delete sub-mode the hovered one turns red
@@ -381,6 +385,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         gauge: store.gauge,
         line: store.lineSettings,
         state: store.isPlayMode ? store.signalling : null,
+        // The canvas is redrawn at every frame while driving: the flashing lamps follow the clock
+        flashOn: store.isPlayMode ? signalFlashOn(performance.now()) : undefined,
         selectedId: store.selectedSignal?.id ?? null,
         dangerId: store.tool === 'signal' && store.signalToolSubMode === 'delete' ? store.hoveredSignalId : null,
         showBlocks: store.signalBlocksVisible,
@@ -436,6 +442,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             band,
             // The bodies lean with the cant and the speed (full size only)
             lineSettings,
+            plainView,
           )
         }
       } else if (store.locomotive) {
@@ -935,8 +942,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // The scale bar keeps clear of the driving console and of the debug panel
-    const { scaleBar } = arrangeConsole(rect.width, rect.height, store.consolePreference, store.isPlayMode, store.showTrainDebug).placement
-    renderScaleBar(ctx, cam, rect.width, rect.height, scaleBar.right, scaleBar.bottom)
+    if (!plainView) {
+      const { scaleBar } = arrangeConsole(rect.width, rect.height, store.consolePreference, store.isPlayMode, store.showTrainDebug).placement
+      renderScaleBar(ctx, cam, rect.width, rect.height, scaleBar.right, scaleBar.bottom)
+    }
   }, [store])
 
   // Every tool asks for a redraw after each change, often several times for one event (`redraw`
@@ -1239,7 +1248,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         // While driving, a click never edits the trains: it only picks the train to drive
         if (store.isPlayMode) {
           const hitVehicle = store.findVehicleAt(world)
-          if (hitVehicle) store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
+          // A spectator only chooses the train to watch: the phone keeps the one it drives
+          if (hitVehicle && store.isSpectating) store.spectateTrain(hitVehicle.train.id)
+          else if (hitVehicle) store.selectTrainById(hitVehicle.train.id, hitVehicle.vehicleId)
           redraw()
           return
         }
@@ -2230,7 +2241,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
       if (!store.panning) {
-        if (
+        // A tool that follows the pointer: its preview is drawn again, and the contextual bar shows
+        // the live values of what is being laid
+        const followsPointer =
           store.tool === 'place' ||
           store.tool === 'curve' ||
           store.tool === 'turnout' ||
@@ -2240,7 +2253,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.signalPlacementMode !== null ||
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
-        ) {
+        if (followsPointer) {
           if (store.tool === 'locomotive') {
             if (store.trainToolSubMode === 'delete') {
               store.updateTrainDeleteHover(rawWorld)
@@ -2255,7 +2268,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.boxSelectEnd = rawWorld
           draw()
         }
-        store.notify()
+        // Otherwise the pointer only passes over the track (selection, view, driving): nothing a
+        // panel shows has changed, and the canvas was drawn again above where it had to be
+        if (followsPointer || store.draggingTrainItem) store.notify()
         return
       }
 

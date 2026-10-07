@@ -1,5 +1,6 @@
 import type { Camera } from '@infrastructure/render/camera'
 import { hitSegment } from '@domain/models/network'
+import { nodesWithin } from '@domain/geometry/networkFollower'
 import type { Point, Network, RailNode } from '@domain/models/types'
 import { getTangentForPlacement, getTrackTangentAt, MAX_TRANSITION_DEFLECTION_DEG } from '@domain/geometry/tangent'
 import { computeCurveToolGeometry, checkCurveJoins, MAX_FREEFORM_TURN_DEG, type CurveEndJoin } from '@domain/geometry/curveTool'
@@ -21,7 +22,7 @@ export function findNearestNode(net: Network, worldPos: Point, maxScreenPx: numb
   const maxDistWorld = Math.min(0.80, maxScreenPx / cam.scale)
   let best: RailNode | null = null
   let bestD = maxDistWorld
-  for (const node of net.nodes.values()) {
+  for (const node of nodesWithin(net, worldPos, maxDistWorld)) {
     const d = Math.hypot(worldPos.x - node.pos.x, worldPos.y - node.pos.y)
     if (d < bestD) {
       bestD = d

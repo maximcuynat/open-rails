@@ -5,6 +5,7 @@ import { addSignal, removeSignal } from './signals'
 import { signalBlock, signalBlockStats, signalBlocks, signalRoute, signalTopology } from './signalBlocks'
 import type { TrackSpan } from './types'
 import { chain, crossoverLayout, junctionAt, line, setPoints, signalAt } from './signalling.testkit'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -145,8 +146,10 @@ describe('blocks are kept', () => {
 
     // The track moves under the signals: the block is measured again
     nodes[3].pos.x += 100
+    networkChanged()
     expect(signalBlock(net, first.id)!.length).toBeCloseTo(1800, 6)
     nodes[3].pos.x -= 100
+    networkChanged()
 
     removeSignal(net, second.id)
     expect(signalBlock(net, second.id)).toBeNull()
@@ -193,16 +196,17 @@ describe('route from a signal', () => {
     expect(rails(diverging.spans)).toContain(branch.rails[0].id)
   })
 
-  it('ends on the end of the track, or on points set against it', () => {
+  it('ends on the end of the track, or stops short of points set against it', () => {
     const layout = crossoverLayout()
     const { net } = layout
-    expect(signalRoute(net, layout.sa.id)).toMatchObject({ next: null, endsOnTrackEnd: true })
+    expect(signalRoute(net, layout.sa.id)).toMatchObject({ next: null, endsOnTrackEnd: true, blockedAt: null })
     expect(signalRoute(net, layout.sa.id)!.length).toBeCloseTo(500, 6)
 
-    // Points on B set for the crossover: a train coming along B finds them against it
+    // Points on B set for the crossover: a train coming along B finds them against it. That is no
+    // end of track, and the points are not part of the route
     layout.route('diverging')
     const blocked = signalRoute(net, layout.pb.id)!
-    expect(blocked).toMatchObject({ next: null, endsOnTrackEnd: true })
+    expect(blocked).toMatchObject({ next: null, endsOnTrackEnd: false, blockedAt: layout.forkB.id, nodes: [] })
     expect(blocked.length).toBeCloseTo(500, 6)
     layout.route('straight')
     expect(signalRoute(net, layout.pb.id)!.next).toBe(layout.sb.id)

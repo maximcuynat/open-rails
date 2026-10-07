@@ -14,6 +14,7 @@ import {
 import { speedLimitAt } from './trackSpeed'
 import type { Network } from './types'
 import { chain, line } from './signalling.testkit'
+import { networkChanged } from '@domain/models/networkWatch'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -214,6 +215,7 @@ describe('distant speed signs', () => {
     // The track moved: the rail is longer, the signs stand elsewhere on it
     const before = speedSigns(net, LINE_160)
     nodes[1].pos = { x: 8000, y: 0 }
+    networkChanged()
     const moved = speedSigns(net, LINE_160)
     expect(moved).not.toBe(before)
     expect(moved.find((sign) => sign.forward)!.distance).toBeCloseTo(announcementDistance(160, 120), 6)

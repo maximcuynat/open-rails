@@ -40,7 +40,7 @@ export interface ConsoleTurnout {
 export interface ConsoleGuidance {
   /** Speed limit in force over the train, km/h */
   speedLimit: number
-  /** The next lower limit ahead and the distance to it; `null` when none is in sight */
+  /** The lower limit ahead the train has to brake for first and the distance to it; `null` when none is in sight */
   nextLimit: UpcomingSpeedLimit | null
   /** How the train takes the curve it is in */
   curve: CurveState

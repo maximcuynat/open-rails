@@ -1,4 +1,5 @@
 import type { Junction, Network, NodeId, Point, Segment, SegmentId } from './types'
+import { touchNetwork } from './networkWatch'
 import { segmentTangentAt, isTraversableDeflection, transitionDeflectionDeg } from '../geometry/tangent'
 
 /**
@@ -71,6 +72,24 @@ function buildJunctionIndex(net: Network): JunctionIndex {
  * on a node while another goes cannot be seen from there.
  */
 export function invalidateJunctionIndex(net: Network): void {
+  junctionIndexes.delete(net)
+  // A table moved to another node was changed in place: the network itself is told too
+  touchNetwork(net)
+}
+
+/**
+ * A table was put into `net.junctions`, under a new id or in place of the one it had: the index
+ * takes it in when that is all that happened since it was built, and is forgotten otherwise. Laying
+ * the tables of a large network one after the other then costs one index, not one per table.
+ */
+export function junctionAdded(net: Network, junction: Junction): void {
+  const index = junctionIndexes.get(net)
+  if (index && index.junctions === net.junctions && index.size === net.junctions.size - 1) {
+    // A new table comes last: the first table of a node wins, as when the index is built
+    if (!index.byNode.has(junction.nodeId)) index.byNode.set(junction.nodeId, junction)
+    index.size++
+    return
+  }
   junctionIndexes.delete(net)
 }
 

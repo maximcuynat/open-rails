@@ -141,7 +141,6 @@ Liste reprise telle quelle des revues de chantier ; seuls les défauts marqués 
 
 ## Signalisation
 
-- **Un signal de trajectoire s'ouvre vers une aiguille orientée contre son train** et la verrouille : sur une voie unique avec évitement, deux rames peuvent se bloquer selon leur ordre d'arrivée. Deux tests en échec attendu (`signalling.pointsAgainst.test.ts`, dernier test de `examples.test.ts`). L'exemple « Voie unique avec évitement » est généré mais retiré du menu en attendant
 - Voie unique sans signal de protection aux entrées : deux rames opposées peuvent se retrouver arrêtées face à face (blocage sans collision) ; le rapport de contrôle signale ces aiguilles
 - Rame en marche arrière à travers une aiguille prise en talon mal orientée : non testé
 - Ancienne `Locomotive` : ignorée par la signalisation

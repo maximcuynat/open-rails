@@ -3,13 +3,16 @@ import { isRailClosedAt } from '@domain/models/routing'
 import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
-import { bezierDerivative1, bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
+import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
+import { leaveVectorOnShape, pointOnShape, segmentEnds, segmentShapeLength, shapeBoundsMeet, shapePieces, tangentOnShape, type SegmentEnds } from '@domain/geometry/segmentGeometry'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
 import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
 import type { LineSettings } from '@domain/models/speedLimits'
 import { networkDerived } from './networkDerived'
+import { nodesAmongInBox, nodesInBox, railsInBox } from '@domain/geometry/networkFollower'
+import { networkCheckToken } from '@domain/models/networkWatch'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type SectionStripeStyle } from './lodTracks'
@@ -18,18 +21,23 @@ import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGrad
 import { trackProfile } from '@domain/models/trackSpeed'
 import { gaugeOnScreen, nodeMarkerShown, trackLod } from './lod'
 import {
+  BADGE_CROWD_LIMIT,
+  BADGE_CROWD_REACH_X_PX,
+  BADGE_CROWD_REACH_Y_PX,
   BADGE_FULL_FROM_PX,
   DIAGNOSTIC_CLUSTER_RADIUS_PX,
   DIAGNOSTIC_LABEL_FROM_PX,
   clusterMarkers,
   diagnosticsClustered,
   placeBadges,
+  plainJointScale,
   sectionArrowSegments,
   sectionBadgeMinLength,
   sectionBadgeWanted,
   type BadgeBox,
   type MarkerSeverity,
 } from './lodOverlays'
+import { LabelSpace, crowdedPoints, type ScreenBox } from './labelSpace'
 import { textWidth } from './textWidth'
 import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
@@ -351,23 +359,8 @@ export function isSegmentInBounds(
   via: Point | undefined,
   bounds: ViewportBounds,
 ): boolean {
-  let minX = a.x < b.x ? a.x : b.x
-  let maxX = a.x > b.x ? a.x : b.x
-  let minY = a.y < b.y ? a.y : b.y
-  let maxY = a.y > b.y ? a.y : b.y
-
-  if (via) {
-    if (via.x < minX) minX = via.x
-    if (via.x > maxX) maxX = via.x
-    if (via.y < minY) minY = via.y
-    if (via.y > maxY) maxY = via.y
-  }
-
   // If outside viewport on any axis, it is completely culled
-  if (maxX < bounds.minX || minX > bounds.maxX) return false
-  if (maxY < bounds.minY || minY > bounds.maxY) return false
-
-  return true
+  return shapeBoundsMeet({ a, b, via }, bounds)
 }
 
 /** True when the points at `nodeId` are set against this rail (see `isRailClosedAt`) */
@@ -398,15 +391,9 @@ export function subdivideCurve(
   if (t0 <= 0 && t1 >= 1) {
     return { p0, via, p2 }
   }
-  const subP0 = bezierPoint(t0, p0, via, p2)
-  const subP2 = bezierPoint(t1, p0, via, p2)
-  const d0 = bezierDerivative1(t0, p0, via, p2)
-  const dt = t1 - t0
-  const subVia = {
-    x: subP0.x + (dt / 2) * d0.x,
-    y: subP0.y + (dt / 2) * d0.y,
-  }
-  return { p0: subP0, via: subVia, p2: subP2 }
+  // A quadratic curve gives one piece, and it is a curve
+  const sub = shapePieces({ a: p0, b: p2, via }, t0, t1)[0]
+  return { p0: sub.a, via: sub.via!, p2: sub.b }
 }
 
 /**
@@ -421,11 +408,34 @@ export function subdivideStraight(
   if (t0 <= 0 && t1 >= 1) {
     return { a: p0, b: p2 }
   }
-  const dx = p2.x - p0.x
-  const dy = p2.y - p0.y
-  return {
-    a: { x: p0.x + t0 * dx, y: p0.y + t0 * dy },
-    b: { x: p0.x + t1 * dx, y: p0.y + t1 * dy },
+  // A straight rail gives one piece
+  const sub = shapePieces({ a: p0, b: p2 }, t0, t1)[0]
+  return { a: sub.a, b: sub.b }
+}
+
+const intervalsKept = new WeakMap<Network, { token: number; ofRail: Map<string, SegmentSubInterval[]> }>()
+
+/**
+ * `getSegmentRenderIntervals` for the rails of a frame: what is worked out for a rail is kept until
+ * the network changes (its revision, see `networkWatch`), points thrown included. The intervals
+ * returned are shared: not to be modified.
+ */
+export function segmentRenderIntervals(net: Network): (seg: Segment, a: Point, b: Point) => SegmentSubInterval[] {
+  const token = networkCheckToken(net)
+  if (token === undefined) return (seg, a, b) => getSegmentRenderIntervals(net, seg, a, b)
+  let kept = intervalsKept.get(net)
+  if (!kept || kept.token !== token) {
+    kept = { token, ofRail: new Map() }
+    intervalsKept.set(net, kept)
+  }
+  const ofRail = kept.ofRail
+  return (seg, a, b) => {
+    let intervals = ofRail.get(seg.id)
+    if (!intervals) {
+      intervals = getSegmentRenderIntervals(net, seg, a, b)
+      ofRail.set(seg.id, intervals)
+    }
+    return intervals
   }
 }
 
@@ -448,9 +458,11 @@ export function getSegmentRenderIntervals(
     return [{ t0: 0, t1: 1, isTurnout: false }]
   }
 
-  const len = seg.kind === 'curve' && seg.via
-    ? curveLength(a, seg.via, b)
-    : Math.hypot(b.x - a.x, b.y - a.y)
+  const len = seg.kind === 'path'
+    ? segmentShapeLength(net, seg)
+    : seg.kind === 'curve' && seg.via
+      ? curveLength(a, seg.via, b)
+      : Math.hypot(b.x - a.x, b.y - a.y)
 
   if (len <= 0.1) {
     return [{ t0: 0, t1: 1, isTurnout: true }]
@@ -494,6 +506,13 @@ export interface RenderNetworkOptions {
   hideConstructionNodes?: boolean
   hideSectionCenterline?: boolean
   onlyRenamedSectionBadges?: boolean
+  /** No band under the rails of the speed zones; their boards stay (plain driving view) */
+  hideSpeedZoneBands?: boolean
+  /**
+   * Never the detailed drawing of the rails, however close the view: the two rails as plain
+   * strokes, without their head nor their joints (plain driving view)
+   */
+  plainRails?: boolean
   /** No section badge at all, selected section included (driving view) */
   hideSectionBadges?: boolean
   /**
@@ -568,27 +587,32 @@ export function vehicleLevel(
   return Math.max(trackPositionLevel(net, vehicle.front), trackPositionLevel(net, vehicle.rear))
 }
 
+/** The rails in view (`isSegmentInBounds`), in the order of the network, found on its grid */
 function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
-  const visible: Segment[] = []
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)
-    const b = net.nodes.get(seg.to)
-    if (!a || !b) continue
-    if (isSegmentInBounds(a.pos, b.pos, seg.via, bounds)) visible.push(seg)
+  return railsInBox(net, bounds)
+}
+
+/** Whether any node of the network is off the ground, kept until the network changes */
+const leveled = new WeakMap<Network, { token: number; any: boolean }>()
+
+function hasLevels(net: Network): boolean {
+  const token = networkCheckToken(net)
+  const known = leveled.get(net)
+  if (token !== undefined && known && known.token === token) return known.any
+  let any = false
+  for (const node of net.nodes.values()) {
+    if (node.level) {
+      any = true
+      break
+    }
   }
-  return visible
+  if (token !== undefined) leveled.set(net, { token, any })
+  return any
 }
 
 /** Levels of the rails in view, lowest first. A network without bridge or tunnel gives `[0]`. */
 export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: number): number[] {
-  let hasLevels = false
-  for (const node of net.nodes.values()) {
-    if (node.level) {
-      hasLevels = true
-      break
-    }
-  }
-  if (!hasLevels) return [0]
+  if (!hasLevels(net)) return [0]
   const levels = new Set<number>()
   for (const seg of segmentsInBounds(net, getViewportBounds(cam, vw, vh, 80))) {
     for (const piece of segmentLevelPieces(net, seg)) levels.add(piece.band)
@@ -596,16 +620,13 @@ export function visibleTrackLevels(net: Network, cam: Camera, vw: number, vh: nu
   return [...levels].sort((x, y) => x - y)
 }
 
-/** Geometry of a piece of rail: the whole rail, or the part of it between `t0` and `t1` */
-function pieceGeometry(net: Network, piece: TrackPiece): { a: Point; b: Point; via?: Point } | null {
-  const from = net.nodes.get(piece.seg.from)
-  const to = net.nodes.get(piece.seg.to)
-  if (!from || !to) return null
-  if (piece.seg.kind === 'curve' && piece.seg.via) {
-    const sub = subdivideCurve(from.pos, piece.seg.via, to.pos, piece.t0, piece.t1)
-    return { a: sub.p0, b: sub.p2, via: sub.via }
-  }
-  return subdivideStraight(from.pos, to.pos, piece.t0, piece.t1)
+/**
+ * Geometry of a piece of rail — the whole rail, or the part of it between `t0` and `t1` — as the
+ * lines and curves it is drawn from; none when one of its nodes is missing
+ */
+function pieceGeometry(net: Network, piece: TrackPiece): SegmentEnds[] {
+  const ends = segmentEnds(net, piece.seg)
+  return ends ? shapePieces(ends, piece.t0, piece.t1) : []
 }
 
 function traceCenterline(
@@ -665,25 +686,25 @@ export function renderBridgeDecks(
   ctx.strokeStyle = edge
   ctx.lineWidth = deckPx
   for (const piece of pieces) {
-    const e = pieceGeometry(net, piece)
-    if (!e) continue
-    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
-    ctx.stroke()
+    for (const e of pieceGeometry(net, piece)) {
+      traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
+      ctx.stroke()
+    }
   }
 
   // Deck: the background colour (opaque, it hides the lower rails), lightly tinted with the ink
   // so that it reads as a slab in the light theme as in the dark one.
   ctx.lineWidth = Math.max(1, deckPx - 2 * parapetPx)
   for (const piece of pieces) {
-    const e = pieceGeometry(net, piece)
-    if (!e) continue
-    traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
-    ctx.strokeStyle = paper
-    ctx.globalAlpha = 1
-    ctx.stroke()
-    ctx.strokeStyle = ink
-    ctx.globalAlpha = 0.08
-    ctx.stroke()
+    for (const e of pieceGeometry(net, piece)) {
+      traceCenterline(ctx, cam, vw, vh, e.a, e.b, e.via)
+      ctx.strokeStyle = paper
+      ctx.globalAlpha = 1
+      ctx.stroke()
+      ctx.strokeStyle = ink
+      ctx.globalAlpha = 0.08
+      ctx.stroke()
+    }
   }
   ctx.globalAlpha = 1
 
@@ -774,7 +795,8 @@ export function renderNetwork(
   const onlyRenamedSectionBadges = options?.onlyRenamedSectionBadges ?? isPan
 
   // Level of detail of this frame: the rails are drawn with the constant `GAUGE`, so it reads that one
-  const lod = trackLod(cam.scale, GAUGE)
+  const tier = trackLod(cam.scale, GAUGE)
+  const lod = options?.plainRails && tier === 'detail' ? 'rails' : tier
 
   // View-frustum culling: filter to only segments within or intersecting the viewport
   const bounds = getViewportBounds(cam, vw, vh, 80)
@@ -827,7 +849,7 @@ export function renderNetwork(
     if (!showsTrackObjects) return
     const alpha = level < 0 ? TUNNEL_ALPHA : 1
     // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
-    renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod)
+    if (!options?.hideSpeedZoneBands) renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod, derived)
     // Blocks and track held for the trains: stripes beside the rails of this level
     renderSignalStripes(ctx, cam, vw, vh, net, derived, pieces, alpha, options?.signals)
   }
@@ -893,6 +915,8 @@ export function renderNetwork(
       // The two rails of every track in a handful of strokes, then the stripe of the sections
       const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
       for (const group of levelGroups) {
+        // The two rails can be told apart: so can a bridge, which gets its deck as in the detailed drawing
+        renderBridgeDecks(ctx, cam, vw, vh, net, group.pieces, group.level, GAUGE)
         drawTrackUnderlays(group.pieces, group.level)
         drawCantMarks(group.pieces, group.level)
         renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true)
@@ -908,6 +932,74 @@ export function renderNetwork(
   // Pixels between the two rails: what the thresholds of the overlays are measured against
   const gaugePx = gaugeOnScreen(cam.scale, GAUGE)
 
+  // What is written over the tracks shares the room of the screen (`LabelSpace`): the markers that
+  // are always drawn take theirs first — diagnostics, signals —, then the labels ask for it, most
+  // important first: labels of the diagnostics and of the report, speed boards, section badges,
+  // slopes. A label that would cover something is left for a closer look; its marker stays.
+  const space = new LabelSpace()
+
+  // KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents):
+  // one marker per issue, with its label when there is room for it. Once the rails are no longer
+  // drawn in detail, the markers that would pile up are merged into one that shows how many it
+  // stands for. Placed here, drawn last (8), over the nodes they stand on.
+  const diagnosticMarkers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string; labelBox?: ScreenBox }[] = []
+  const diagnosticRadius = Math.max(8, Math.min(13, 1.6 * cam.scale))
+  if (!hideConstructionNodes) {
+    const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
+    for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
+      if (options?.quietNodeIds?.has(issue.nodeId)) continue
+      const node = net.nodes.get(issue.nodeId)
+      if (!node || !isPointInBounds(node.pos, bounds)) continue
+      markers.push({
+        x: (node.pos.x - cam.x) * cam.scale + vw / 2,
+        y: (node.pos.y - cam.y) * cam.scale + vh / 2,
+        severity: issue.severity,
+        mark: '!',
+        label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
+      })
+    }
+    const merged = !diagnosticsClustered(lod)
+      ? markers
+      : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
+        ...c, mark: c.count > 1 ? String(c.count) : '!',
+      }))
+    // Every diamond first, then the labels: a label never covers a diamond
+    for (const marker of merged) {
+      const r = diagnosticRadius
+      space.reserve({ x: marker.x - r, y: marker.y - r, w: 2 * r, h: 2 * r })
+    }
+    if (merged.some((marker) => marker.label !== undefined)) {
+      ctx.save()
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      for (const marker of merged) {
+        if (marker.label === undefined) {
+          diagnosticMarkers.push(marker)
+          continue
+        }
+        const tw = textWidth(ctx, marker.label)
+        const labelBox = { x: marker.x - tw / 2 - 5, y: marker.y - diagnosticRadius - 17, w: tw + 10, h: 15 }
+        diagnosticMarkers.push({ ...marker, labelBox: space.claim(labelBox) ? labelBox : undefined })
+      }
+      ctx.restore()
+    } else {
+      diagnosticMarkers.push(...merged)
+    }
+  }
+
+  // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
+  // with the bands at far zoom.
+  if (showsTrackObjects) {
+    // Signals stand beside the track, above the rails; hidden with the boards at far zoom. They
+    // come first: a signal is always drawn, a board gives way to it.
+    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, { ...options.signals, space })
+    renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
+      highlight: options?.speedZones,
+      gauge: GAUGE,
+      showOverlaps: !hideConstructionNodes,
+      space,
+    })
+  }
+
   /** Screen rectangles the slope labels must keep clear of: section badges, then diagnostic markers */
   const takenBoxes: BadgeBox[] = []
   {
@@ -922,8 +1014,13 @@ export function renderNetwork(
     const badges: (BadgeBox & { sec: TrackSection; text: string; cx: number; cy: number })[] = []
     ctx.save()
     ctx.font = '600 10px Archivo, system-ui, sans-serif'
-    for (const sec of options?.hideSectionBadges ? [] : trackSections) {
-      if (sec.segmentIds.length === 0) continue
+    // Where each badge stands is kept with the sections: most are out of view and set aside on that alone
+    const anchors = options?.hideSectionBadges ? null : derived.sectionBadgeAnchors()
+    for (let i = 0; anchors && i < trackSections.length; i++) {
+      const midPt = { x: anchors[2 * i], y: anchors[2 * i + 1] }
+      // (a badge without a place — NaN — is in no view)
+      if (!isPointInBounds(midPt, bounds)) continue
+      const sec = trackSections[i]
       const isSecSelected = selectedSections.has(sec)
       const renamed = isRenamedSection(sec)
 
@@ -939,20 +1036,6 @@ export function renderNetwork(
         const secScreenLen = sec.totalLength * cam.scale
         if (!isSecSelected && !renamed && secScreenLen < sectionBadgeMinLength(lod, gaugePx)) continue
       }
-
-      const midSegIdx = Math.floor(sec.segmentIds.length / 2)
-      const midSegId = sec.segmentIds[midSegIdx]
-      const midSeg = net.segments.get(midSegId)
-      if (!midSeg) continue
-      const a = net.nodes.get(midSeg.from)
-      const b = net.nodes.get(midSeg.to)
-      if (!a || !b) continue
-
-      const midPt = midSeg.kind === 'curve' && midSeg.via
-        ? bezierPoint(0.5, a.pos, midSeg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
-
-      if (!isPointInBounds(midPt, bounds)) continue
 
       const sx = (midPt.x - cam.x) * cam.scale + vw / 2
       const sy = (midPt.y - cam.y) * cam.scale + vh / 2
@@ -986,7 +1069,19 @@ export function renderNetwork(
     }
     ctx.restore()
 
-    const placedBadges = placeBadges(badges)
+    // A badge the user did not ask for — neither picked nor named by him — is left out in a crowd
+    // of them: on a yard the tracks are read first, and a closer look spreads the badges apart.
+    // The others never cover one another, nor what is already written on the frame.
+    const inCrowd = crowdedPoints(badges.map((b) => ({ x: b.cx, y: b.cy })), BADGE_CROWD_REACH_X_PX, BADGE_CROWD_REACH_Y_PX, BADGE_CROWD_LIMIT)
+    const wanted = badges.filter((b, i) => b.selected || b.renamed || !inCrowd[i])
+    const noOverlap = placeBadges(wanted)
+    for (const b of noOverlap) if (b.selected) space.reserve(b)
+    const fits = new Set(
+      noOverlap.filter((b) => !b.selected)
+        .sort((p, q) => Number(q.renamed) - Number(p.renamed) || q.length - p.length)
+        .filter((b) => space.claim(b)),
+    )
+    const placedBadges = noOverlap.filter((b) => b.selected || fits.has(b))
     for (const badge of placedBadges) {
       const { sec, text, cx: sx, cy: badgeY, w: bgW, h: bgH, selected: isSecSelected } = badge
       ctx.save()
@@ -1015,23 +1110,11 @@ export function renderNetwork(
     for (const b of placedBadges) takenBoxes.push({ x: b.x, y: b.y, w: b.w, h: b.h, selected: true, renamed: false, length: b.length })
   }
 
-  // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
-  // with the bands at far zoom.
-  if (showsTrackObjects) {
-    renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
-      highlight: options?.speedZones,
-      gauge: GAUGE,
-      showOverlaps: !hideConstructionNodes,
-    })
-    // Signals stand beside the track, above the rails; hidden with the boards at far zoom
-    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, options.signals)
-  }
 
   // 4. END OF TRACK / FIN DE VOIE: a buffer stop, which is where trains stop. Part of the track,
   // so it stays in driving mode. (The no-entry sign is kept for direction conflicts, see 7.)
   // Detail and rails tiers only: further out it is smaller than the stroke of the rail it ends.
-  for (const node of lod === 'detail' || lod === 'rails' ? net.nodes.values() : []) {
-    if (!isPointInBounds(node.pos, bounds)) continue
+  for (const node of lod === 'detail' || lod === 'rails' ? nodesInBox(net, bounds) : []) {
     if ((net.adjacency.get(node.id) ?? []).length === 1) {
       renderBufferStop(ctx, cam, node, net, vw, vh, options?.gauge ?? GAUGE)
     }
@@ -1043,8 +1126,10 @@ export function renderNetwork(
     // under the markers that stand out (selection, end of track, crossing)
     const shown: { sx: number; sy: number; selected: boolean; connectionCount: number }[] = []
     const plain: number[] = []
-    for (const node of net.nodes.values()) {
-      if (!isPointInBounds(node.pos, bounds)) continue
+    // Away from the two detailed tiers only the selected nodes show and, in the line tier, the ends
+    // of track (`nodeMarkerShown`): those are looked up instead of every node in view
+    const few = lod === 'schematic' ? selection.nodes : lod === 'line' ? new Set([...selection.nodes, ...derived.deadEnds()]) : null
+    for (const node of (few && nodesAmongInBox(net, few, bounds)) ?? nodesInBox(net, bounds)) {
       const selected = selection.nodes.has(node.id)
       const connectionCount = (net.adjacency.get(node.id) ?? []).length
       if (!nodeMarkerShown(lod, { selected, degree: connectionCount })) continue
@@ -1053,6 +1138,8 @@ export function renderNetwork(
       if (!selected && connectionCount !== 0 && connectionCount !== 1 && connectionCount !== 4) plain.push(sx, sy)
       else shown.push({ sx, sy, selected, connectionCount })
     }
+    // Fewer pixels each when the view holds a great many of them (a yard): the tracks come first
+    const jointSize = plainJointScale(plain.length / 2)
     if (plain.length > 0) {
       // Intermediate joint or junction: neat white dot
       const discs = (radius: number): void => {
@@ -1064,9 +1151,9 @@ export function renderNetwork(
         ctx.fill()
       }
       ctx.fillStyle = '#334155'
-      discs(4)
+      discs(4 * jointSize)
       ctx.fillStyle = '#ffffff'
-      discs(2.5)
+      discs(2.5 * jointSize)
     }
     for (const { sx, sy, selected, connectionCount } of shown) {
 
@@ -1109,7 +1196,7 @@ export function renderNetwork(
         ctx.restore()
       } else if (connectionCount === 4) {
         // Diamond crossing intersection node (zone de cisaillement / conflit logique)
-        const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale))
+        const dSize = Math.max(3.5, Math.min(6, 1.2 * cam.scale)) * jointSize
         ctx.save()
         ctx.fillStyle = '#0f172a'
         ctx.strokeStyle = '#38bdf8'
@@ -1152,9 +1239,12 @@ export function renderNetwork(
       const dirSign = (isForward ? 1 : -1) * (alongForward ? 1 : -1)
 
       // Center point of segment
-      const mid = seg.kind === 'curve' && seg.via
-        ? bezierPoint(0.5, a.pos, seg.via, b.pos)
-        : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
+      const longShape = seg.kind === 'path' ? segmentEnds(net, seg) : null
+      const mid = longShape
+        ? pointOnShape(longShape, 0.5)
+        : seg.kind === 'curve' && seg.via
+          ? bezierPoint(0.5, a.pos, seg.via, b.pos)
+          : { x: (a.pos.x + b.pos.x) / 2, y: (a.pos.y + b.pos.y) / 2 }
 
       if (!isPointInBounds(mid, bounds)) continue
 
@@ -1163,6 +1253,10 @@ export function renderNetwork(
       let ty = b.pos.y - a.pos.y
       if (seg.kind === 'curve' && seg.via) {
         const tVec = bezierTangent(0.5, a.pos, seg.via, b.pos)
+        tx = tVec.x
+        ty = tVec.y
+      } else if (longShape) {
+        const tVec = tangentOnShape(longShape, 0.5)
         tx = tVec.x
         ty = tVec.y
       }
@@ -1248,85 +1342,61 @@ export function renderNetwork(
     }
   }
 
-  // 8. KINEMATIC DIAGNOSTICS (Angles de transition cassés, déraillements, aiguillages incohérents)
-  if (!hideConstructionNodes) {
-    // One marker per issue, with its label when there is room for it. Once the rails are no
-    // longer drawn in detail, the markers that would pile up are merged into one that shows how
-    // many it stands for.
-    const markers: { x: number; y: number; severity: MarkerSeverity; mark: string; label?: string }[] = []
-    for (const issue of derived.kinematicIssues(options?.gauge, options?.gradient)) {
-      if (options?.quietNodeIds?.has(issue.nodeId)) continue
-      const node = net.nodes.get(issue.nodeId)
-      if (!node || !isPointInBounds(node.pos, bounds)) continue
-      markers.push({
-        x: (node.pos.x - cam.x) * cam.scale + vw / 2,
-        y: (node.pos.y - cam.y) * cam.scale + vh / 2,
-        severity: issue.severity,
-        mark: '!',
-        label: gaugePx >= DIAGNOSTIC_LABEL_FROM_PX ? diagnosticLabel(issue) : undefined,
-      })
-    }
-    const drawn = !diagnosticsClustered(lod)
-      ? markers
-      : clusterMarkers(markers, DIAGNOSTIC_CLUSTER_RADIUS_PX).map((c) => ({
-        ...c, mark: c.count > 1 ? String(c.count) : '!',
-      }))
-    for (const marker of drawn) {
-      const { x: sx, y: sy, label } = marker
+  // 8. KINEMATIC DIAGNOSTICS: the markers placed above, drawn over the nodes
+  for (const marker of diagnosticMarkers) {
+    const { x: sx, y: sy, label, labelBox } = marker
 
-      ctx.save()
-      const isErr = marker.severity === 'error'
-      const badgeColor = isErr ? '#ef4444' : '#f59e0b'
-      const signR = Math.max(8, Math.min(13, 1.6 * cam.scale))
-      // The diamond with its halo
-      takenBoxes.push({ x: sx - signR - 4, y: sy - signR - 4, w: 2 * (signR + 4), h: 2 * (signR + 4), selected: true, renamed: false, length: 0 })
+    ctx.save()
+    const isErr = marker.severity === 'error'
+    const badgeColor = isErr ? '#ef4444' : '#f59e0b'
+    const signR = diagnosticRadius
+    // The diamond with its halo
+    takenBoxes.push({ x: sx - signR - 4, y: sy - signR - 4, w: 2 * (signR + 4), h: 2 * (signR + 4), selected: true, renamed: false, length: 0 })
 
-      // Pulse halo
-      ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
-      ctx.beginPath()
-      ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
-      ctx.fill()
+    // Pulse halo
+    ctx.fillStyle = isErr ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'
+    ctx.beginPath()
+    ctx.arc(sx, sy, signR + 4, 0, Math.PI * 2)
+    ctx.fill()
 
-      // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+    // Diamond badge (shape of a warning diamond / losange de danger ferroviaire)
+    ctx.fillStyle = badgeColor
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(sx, sy - signR)
+    ctx.lineTo(sx + signR, sy)
+    ctx.lineTo(sx, sy + signR)
+    ctx.lineTo(sx - signR, sy)
+    ctx.closePath()
+    ctx.fill()
+    ctx.stroke()
+
+    // Exclamation point or angle
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '900 11px Archivo, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(marker.mark, sx, sy)
+
+    // Label badge above if zoom is reasonable and nothing stands there
+    if (label !== undefined && labelBox) {
+      ctx.font = '600 10px Archivo, system-ui, sans-serif'
+      const ty = sy - signR - 10
+      takenBoxes.push({ ...labelBox, selected: true, renamed: false, length: 0 })
+
       ctx.fillStyle = badgeColor
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.5
       ctx.beginPath()
-      ctx.moveTo(sx, sy - signR)
-      ctx.lineTo(sx + signR, sy)
-      ctx.lineTo(sx, sy + signR)
-      ctx.lineTo(sx - signR, sy)
-      ctx.closePath()
+      ctx.roundRect(labelBox.x, labelBox.y, labelBox.w, labelBox.h, 3)
       ctx.fill()
-      ctx.stroke()
 
-      // Exclamation point or angle
       ctx.fillStyle = '#ffffff'
-      ctx.font = '900 11px Archivo, system-ui, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(marker.mark, sx, sy)
-
-      // Label badge above if zoom is reasonable
-      if (label !== undefined) {
-        ctx.font = '600 10px Archivo, system-ui, sans-serif'
-        const tw = textWidth(ctx, label)
-        const ty = sy - signR - 10
-        takenBoxes.push({ x: sx - tw / 2 - 5, y: ty - 7, w: tw + 10, h: 15, selected: true, renamed: false, length: 0 })
-
-        ctx.fillStyle = badgeColor
-        ctx.beginPath()
-        ctx.roundRect(sx - tw / 2 - 5, ty - 7, tw + 10, 15, 3)
-        ctx.fill()
-
-        ctx.fillStyle = '#ffffff'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(label, sx, ty)
-      }
-
-      ctx.restore()
+      ctx.fillText(label, sx, ty)
     }
+
+    ctx.restore()
   }
 
   // 9. SLOPE of each ramp (« 35 ‰ »), in the detailed and the line drawing. A label gives way to
@@ -1339,7 +1409,7 @@ export function renderNetwork(
     ctx.restore()
     if (labels.length > 0) {
       const kept = new Set<BadgeBox>(placeBadges<BadgeBox>([...takenBoxes, ...labels]))
-      drawGradientLabels(ctx, labels.filter((label) => kept.has(label)), gradientColors)
+      drawGradientLabels(ctx, labels.filter((label) => kept.has(label) && space.claim(label)), gradientColors)
     }
   }
 }
@@ -1937,41 +2007,15 @@ export function getNodeSegmentEndVector(
   seg: Segment,
   nodeId: NodeId,
 ): { tangent: Point; normal: Point } {
-  const nodeA = net.nodes.get(seg.from)
-  const nodeB = net.nodes.get(seg.to)
-  if (!nodeA || !nodeB) {
+  const ends = segmentEnds(net, seg)
+  if (!ends) {
     return { tangent: { x: 1, y: 0 }, normal: { x: 0, y: 1 } }
   }
-
-  let tx = 0
-  let ty = 0
-
-  if (seg.kind === 'curve' && seg.via) {
-    if (seg.from === nodeId) {
-      // Outgoing at t = 0 (direction from nodeA towards nodeB along curve)
-      const tan = bezierTangent(0, nodeA.pos, seg.via, nodeB.pos)
-      tx = tan.x
-      ty = tan.y
-    } else {
-      // Outgoing at t = 1 (direction away from nodeB back into curve towards nodeA)
-      const tan = bezierTangent(1, nodeA.pos, seg.via, nodeB.pos)
-      tx = -tan.x
-      ty = -tan.y
-    }
-  } else {
-    // Straight segment
-    if (seg.from === nodeId) {
-      tx = nodeB.pos.x - nodeA.pos.x
-      ty = nodeB.pos.y - nodeA.pos.y
-    } else {
-      tx = nodeA.pos.x - nodeB.pos.x
-      ty = nodeA.pos.y - nodeB.pos.y
-    }
-  }
-
-  const len = Math.hypot(tx, ty)
-  const ux = len > 0.0001 ? tx / len : 1
-  const uy = len > 0.0001 ? ty / len : 0
+  // Into the rail from the node: towards its other end, along the curve when it is one
+  const leave = leaveVectorOnShape(ends, seg.from === nodeId)
+  const len = Math.hypot(leave.x, leave.y)
+  const ux = len > 0.0001 ? leave.x / len : 1
+  const uy = len > 0.0001 ? leave.y / len : 0
   const nx = -uy
   const ny = ux
 
@@ -2158,11 +2202,9 @@ export function renderBallastJoints(
   bounds?: ViewportBounds,
 ): void {
   const dummySel: Selection = { nodes: new Set(), segments: new Set() }
-  for (const node of net.nodes.values()) {
+  for (const node of bounds ? nodesInBox(net, bounds) : net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length < 2) continue
-
-    if (bounds && !isPointInBounds(node.pos, bounds)) continue
 
     const nx_scr = (node.pos.x - cam.x) * cam.scale + vw / 2
     const ny_scr = (node.pos.y - cam.y) * cam.scale + vh / 2
@@ -2223,11 +2265,9 @@ export function renderRailJoints(
   type JointPair = ReturnType<typeof getConnectedEndPairs>[number]
   const groups: JointPair[][] = [[], [], [], []]
 
-  for (const node of net.nodes.values()) {
+  for (const node of bounds ? nodesInBox(net, bounds) : net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length < 2) continue
-
-    if (bounds && !isPointInBounds(node.pos, bounds)) continue
 
     const nx_scr = (node.pos.x - cam.x) * s + vw / 2
     const ny_scr = (node.pos.y - cam.y) * s + vh / 2
@@ -2310,11 +2350,9 @@ export function renderFishplates(
 
   const hg = GAUGE / 2
 
-  for (const node of net.nodes.values()) {
+  for (const node of bounds ? nodesInBox(net, bounds) : net.nodes.values()) {
     const adj = net.adjacency.get(node.id) ?? []
     if (adj.length !== 2) continue
-
-    if (bounds && !isPointInBounds(node.pos, bounds)) continue
 
     const nx_scr = (node.pos.x - cam.x) * s + vw / 2
     const ny_scr = (node.pos.y - cam.y) * s + vh / 2
@@ -4716,13 +4754,16 @@ export function renderTrainSet(
   deleteVehicleId?: string | null,
   band?: LevelBand,
   line?: LineSettings,
+  /** Plain driving view: bodies only, never the bogies nor the gangways, however close the view */
+  plain = false,
 ): void {
   // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
   // beyond the train (stopping distance, vectors), so it is never skipped.
   const bounds = getViewportBounds(cam, vw, vh)
   if (!isDebugSkeleton && !vehiclesInBounds(net, train.vehicles, bounds)) return
   const inView = (points: Point[]): boolean => pointsInBounds(points, bounds)
-  const lod = trackLod(cam.scale, GAUGE)
+  const tier = trackLod(cam.scale, GAUGE)
+  const lod = plain && tier === 'detail' ? 'rails' : tier
 
   // The lean of the bodies only shows close up: further out it is under a pixel, and not asked for
   const visuals = getTrainSetVisuals(net, train, lod === 'detail' ? line : undefined)

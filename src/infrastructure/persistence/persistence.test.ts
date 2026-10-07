@@ -444,6 +444,71 @@ describe('gradient settings', () => {
   })
 })
 
+describe('what an import leaves in a project', () => {
+  beforeEach(() => resetMemoryStorage())
+
+  const source = { lat: 45.7603, lon: 4.8594, dataDate: '2026-10-05T22:00:00Z', importedAt: '2026-10-06T09:30:00Z' }
+  const save = (origin?: Parameters<typeof serializeNetwork>[20]) =>
+    serializeNetwork(createNetwork(), 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, origin)
+
+  it('round-trip levels without relief and the provenance', () => {
+    const data = JSON.parse(JSON.stringify(save({ flatLevels: true, osmSource: source })))
+    expect(data.flatLevels).toBe(true)
+    expect(data.osmSource).toEqual(source)
+    const restored = deserializeNetwork(data)
+    expect(restored.flatLevels).toBe(true)
+    expect(restored.osmSource).toEqual(source)
+  })
+
+  it('are absent from a project drawn by hand, and read as undefined', () => {
+    for (const data of [save(), save({ flatLevels: false, osmSource: null })]) {
+      const written = JSON.parse(JSON.stringify(data))
+      expect('flatLevels' in written).toBe(false)
+      expect('osmSource' in written).toBe(false)
+      const restored = deserializeNetwork(written)
+      expect(restored.flatLevels).toBeUndefined()
+      expect(restored.osmSource).toBeUndefined()
+    }
+  })
+
+  it('a saved project does not share the provenance with the editor', () => {
+    const live = { ...source }
+    const data = save({ osmSource: live })
+    live.lat = 0
+    expect(data.osmSource).toEqual(source)
+  })
+
+  it('unusable values in a file are dropped', () => {
+    for (const bad of [1, 'true', null, {}]) {
+      expect(deserializeNetwork({ ...save(), flatLevels: bad } as never).flatLevels).toBeUndefined()
+    }
+    const broken = [
+      null, 'Lyon', 12, [],
+      { ...source, lat: '45.76' },
+      { ...source, lon: NaN },
+      { ...source, lat: Infinity },
+      { ...source, dataDate: 20261005 },
+      { ...source, importedAt: undefined },
+      { lat: 45, lon: 4 },
+    ]
+    for (const bad of broken) {
+      expect(deserializeNetwork({ ...save(), osmSource: bad } as never).osmSource).toBeUndefined()
+    }
+    // Only the known fields are kept
+    expect(deserializeNetwork({ ...save(), osmSource: { ...source, extra: 'x' } } as never).osmSource).toEqual(source)
+  })
+
+  it('go through the storage', () => {
+    saveNetworkToStorage(createNetwork(), 'P', undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      { flatLevels: true, osmSource: source })
+    const loaded = loadNetworkFromStorage()!
+    expect(loaded.flatLevels).toBe(true)
+    expect(loaded.osmSource).toEqual(source)
+  })
+})
+
 describe('track levels', () => {
   beforeEach(() => resetIdCounter(0))
 

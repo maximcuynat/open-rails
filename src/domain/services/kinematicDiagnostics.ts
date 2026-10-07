@@ -1,6 +1,8 @@
 import type { Network, NodeId, SegmentId, Point, Segment } from '../models/types'
-import { segmentTangentAt, MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
+import { leaveDirectionOnShape, segmentEnds } from '../geometry/segmentGeometry'
+import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import { placementThresholds } from '../geometry/scale'
+import { touchingLater } from '../geometry/spatialGrid'
 import { segmentEndLevels, segmentGradient } from '../models/network'
 
 export type KinematicIssueKind =
@@ -29,39 +31,9 @@ export interface KinematicIssue {
  * Normalized outgoing direction vector leaving `nodeId` along `seg`.
  */
 export function getOutgoingTangent(net: Network, seg: Segment, nodeId: NodeId): Point | null {
-  const tan = segmentTangentAt(net, seg, nodeId)
-  if (!tan) return null
-  // segmentTangentAt returns the tangent leaving `nodeId` if nodeId === seg.from,
-  // or end tangent if nodeId === seg.to.
-  // Note: For straight lines, segmentTangentAt returns (to - from).
-  // If nodeId === seg.to, it's still (to - from), so leaving `to` going away from the segment would be reversed!
-  // Let's verify: at nodeId, what is the vector directed INTO the segment (towards the other node)?
-  const otherId = seg.from === nodeId ? seg.to : seg.from
-  const otherNode = net.nodes.get(otherId)
-  const thisNode = net.nodes.get(nodeId)
-  if (!thisNode || !otherNode) return null
-
-  if (seg.kind === 'straight' || !seg.via) {
-    const dx = otherNode.pos.x - thisNode.pos.x
-    const dy = otherNode.pos.y - thisNode.pos.y
-    const len = Math.hypot(dx, dy)
-    return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-  }
-
-  // For curve:
-  // At from: tangent towards via
-  // At to: tangent from to towards via (reversed end tangent)
-  if (nodeId === seg.from) {
-    const dx = seg.via.x - thisNode.pos.x
-    const dy = seg.via.y - thisNode.pos.y
-    const len = Math.hypot(dx, dy)
-    return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-  } else {
-    const dx = seg.via.x - thisNode.pos.x
-    const dy = seg.via.y - thisNode.pos.y
-    const len = Math.hypot(dx, dy)
-    return len > 0 ? { x: dx / len, y: dy / len } : { x: 1, y: 0 }
-  }
+  if (nodeId !== seg.from && nodeId !== seg.to) return null
+  const ends = segmentEnds(net, seg)
+  return ends ? leaveDirectionOnShape(ends, nodeId === seg.from) : null
 }
 
 /**
@@ -104,8 +76,11 @@ function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
     ends.push({ nodeId: node.id, pos: node.pos, segId: seg.id, ahead: { x: -into.x, y: -into.y } })
   }
 
+  // Only the ends within the heal tolerance of each other can face across a gap: they are found
+  // on a grid, in the order a look at every pair would meet them
+  const near = touchingLater(ends.map((end) => ({ minX: end.pos.x, maxX: end.pos.x, minY: end.pos.y, maxY: end.pos.y })), healTolerance)
   for (let i = 0; i < ends.length; i++) {
-    for (let j = i + 1; j < ends.length; j++) {
+    for (const j of near(i)) {
       const a = ends[i]
       const b = ends[j]
       if (a.segId === b.segId) continue
@@ -157,7 +132,10 @@ function detectSteepGradients(net: Network, limits: GradientLimits): KinematicIs
   return issues
 }
 
-/** What a slope is measured against: the height of one level (world metres) and the steepest slope allowed (‰) */
+/**
+ * What a slope is measured against: the height of one level (world metres) and the steepest slope allowed (‰).
+ * A height of 0 is a project whose levels have no relief: every slope is zero, nothing is steep.
+ */
 export interface GradientLimits {
   levelHeight: number
   maxGradient: number

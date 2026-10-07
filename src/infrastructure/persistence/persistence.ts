@@ -1,6 +1,8 @@
 import type { Camera } from '@infrastructure/render/camera'
+import { segmentEnds } from '../../domain/geometry/segmentGeometry'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
-import { declareTurnout, findJunctionAtNode, invalidateJunctionIndex, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
+import { touchNetwork } from '../../domain/models/networkWatch'
+import { declareTurnout, findJunctionAtNode, junctionAdded, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
 import {
   DEFAULT_SIGNALLING_SETTINGS,
@@ -10,9 +12,9 @@ import {
   type SignallingLevel,
   type SignallingSettings,
 } from '../../domain/models/signals'
-import { reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
+import { adoptReconciledNetwork, reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
-import type { Junction, JunctionKind, Network, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
+import type { Junction, JunctionKind, Network, PathPiece, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
 import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
@@ -20,6 +22,7 @@ import { deserializeTrains, serializeTrains } from '../../domain/models/train'
 import type { SerializedTrain, TrainSet } from '../../domain/models/train'
 import { DEFAULT_LINE_SETTINGS, LINE_SPEED_RANGE, type LineSettings, type LineType } from '../../domain/models/speedLimits'
 import { CANT_RANGE } from '../../domain/models/cant'
+import type { OsmSource } from '../../domain/import/osmTypes'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -42,6 +45,8 @@ export interface SerializedSegment {
   to: string
   kind: SegmentKind
   via?: { x: number; y: number }
+  /** Path of a long rail (`kind: 'path'`): `[x, y, heading, curvature, length]` per piece */
+  path?: number[][]
   /** Cant of a curved rail in mm; only written when it was set by hand */
   cant?: number
   /**
@@ -125,7 +130,7 @@ export interface SerializedGraphEdge {
 }
 
 export interface SerializedProject {
-  version: 1 | 2
+  version: 1 | 2 | 3
   name?: string
   nodes: SerializedNode[]
   segments: SerializedSegment[]
@@ -144,6 +149,10 @@ export interface SerializedProject {
   levelHeight?: number
   /** Steepest slope allowed, in ‰ (absent from files saved before ramps: default of the scale) */
   maxGradient?: number
+  /** Levels without relief: they only stack the tracks, every slope is zero. Only written when on */
+  flatLevels?: boolean
+  /** Where the network was imported from (OpenStreetMap); absent from a project drawn by hand */
+  osmSource?: OsmSource
   /** Ceiling speed of the line, km/h; only written when it is not the default one */
   lineSpeed?: number
   /** Conventional or high-speed line; only written when it is not the default one */
@@ -189,6 +198,12 @@ function copySectionMeta(meta: Record<string, any>): Record<string, any> {
   return Object.fromEntries(Object.entries(meta).map(([id, value]) => [id, { ...value }]))
 }
 
+/** What an import leaves in a project beyond its track: levels without relief, and where the data comes from */
+export interface ProjectOrigin {
+  flatLevels?: boolean
+  osmSource?: OsmSource | null
+}
+
 /**
  * Serialize a railway network into a pure JSON-friendly data structure.
  * What the network holds itself (rails, route tables, speed zones, signals) is read from `net`.
@@ -214,6 +229,7 @@ export function serializeNetwork(
   line?: Partial<LineSettings>,
   signalling?: Partial<SignallingSettings>,
   signalDisplay?: SignalDisplaySettings,
+  origin?: ProjectOrigin,
 ): SerializedProject {
   const nodes: SerializedNode[] = []
   for (const n of net.nodes.values()) {
@@ -234,6 +250,7 @@ export function serializeNetwork(
       kind: s.kind,
       via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
       ...(isStoredCant(s) ? { cant: s.cant } : {}),
+      ...(s.kind === 'path' ? { path: storedPath(net, s) } : {}),
     })
   }
 
@@ -309,7 +326,8 @@ export function serializeNetwork(
   }
 
   return {
-    version: 2,
+    // 3 as soon as a long rail is in it: a build that does not know them must not open it as straight lines
+    version: segments.some((s) => s.kind === 'path') ? 3 : 2,
     name: projectName,
     nodes,
     segments,
@@ -331,6 +349,9 @@ export function serializeNetwork(
     trackSpacing,
     levelHeight: gradient?.levelHeight,
     maxGradient: gradient?.maxGradient,
+    // A project drawn by hand carries neither: it is written back as it was
+    flatLevels: origin?.flatLevels ? true : undefined,
+    osmSource: origin?.osmSource ? { ...origin.osmSource } : undefined,
     // A project on the default line carries neither: a file saved before lines existed is written back as it was
     lineSpeed: line?.lineSpeed !== DEFAULT_LINE_SETTINGS.lineSpeed ? line?.lineSpeed : undefined,
     lineType: line?.lineType !== DEFAULT_LINE_SETTINGS.lineType ? line?.lineType : undefined,
@@ -412,7 +433,7 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
     }
     if (typeof j.frogNumber === 'number') junction.frogNumber = j.frogNumber
     net.junctions.set(junction.id, junction)
-    invalidateJunctionIndex(net)
+    junctionAdded(net, junction)
     return
   }
 
@@ -434,6 +455,31 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
     id: j.id,
   })
   normalizeTurnoutRoles(net, junction)
+}
+
+/** Newest project version this build reads */
+export const PROJECT_VERSION = 3
+
+/**
+ * The path of a long rail as it is saved: one `[x, y, heading, curvature, length]` per piece, where
+ * the rail lies now (it follows its nodes when they are moved).
+ */
+function storedPath(net: Network, seg: Segment): number[][] {
+  const pieces = segmentEnds(net, seg)?.path?.pieces ?? seg.path ?? []
+  return pieces.map((piece) => [piece.x, piece.y, piece.heading, piece.curvature, piece.length])
+}
+
+/** The pieces of a saved path, null when it does not hold together (the rail is then read as a straight line) */
+function readPath(saved: unknown): PathPiece[] | null {
+  if (!Array.isArray(saved) || saved.length === 0) return null
+  const pieces: PathPiece[] = []
+  for (const entry of saved) {
+    if (!Array.isArray(entry) || entry.length !== 5 || !entry.every((n) => typeof n === 'number' && Number.isFinite(n))) return null
+    const [x, y, heading, curvature, length] = entry as number[]
+    if (!(length > 0)) return null
+    pieces.push({ x, y, heading, curvature, length })
+  }
+  return pieces
 }
 
 /** A cant worth storing: set by hand on a curved rail, within `CANT_RANGE` */
@@ -459,11 +505,23 @@ function positiveNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+/** The provenance read from a file: kept only when every field is usable */
+function storedOsmSource(value: unknown): OsmSource | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const { lat, lon, dataDate, importedAt } = value as Record<string, unknown>
+  if (typeof lat !== 'number' || !Number.isFinite(lat) || typeof lon !== 'number' || !Number.isFinite(lon)) return undefined
+  if (typeof dataDate !== 'string' || typeof importedAt !== 'string') return undefined
+  return { lat, lon, dataDate, importedAt }
+}
+
 /**
  * Reconstruct a full in-memory Network structure from serialized data,
  * rebuilding adjacency, resolving junctions, and synchronizing ID counters.
+ *
+ * `reconciledAt`: the tolerance at which the network the data was taken from is known to have been
+ * reconciled (`isNetworkReconciled`). Only for data that never left the memory of the editor.
  */
-export function deserializeNetwork(data: SerializedProject): {
+export function deserializeNetwork(data: SerializedProject, reconciledAt?: number): {
   network: Network
   projectName?: string
   camera?: SerializedCamera
@@ -476,6 +534,8 @@ export function deserializeNetwork(data: SerializedProject): {
   trackSpacing?: number
   levelHeight?: number
   maxGradient?: number
+  flatLevels?: boolean
+  osmSource?: OsmSource
   lineSpeed?: number
   lineType?: LineType
   signallingLevel?: SignallingLevel
@@ -489,6 +549,10 @@ export function deserializeNetwork(data: SerializedProject): {
   boardHeight?: number
   trains: TrainSet[]
 } {
+  // A file from a newer build holds things this one would read wrong (a long rail as a straight line)
+  if (typeof data?.version === 'number' && data.version > PROJECT_VERSION) {
+    throw new Error(`Project version ${data.version} is newer than this build reads (${PROJECT_VERSION})`)
+  }
   const net = createNetwork()
   if (!data || typeof data !== 'object') {
     return { network: net, trains: [] }
@@ -517,12 +581,14 @@ export function deserializeNetwork(data: SerializedProject): {
       // Segments must link existing nodes
       if (!net.nodes.has(s.from) || !net.nodes.has(s.to)) continue
 
-      const kind: SegmentKind = s.kind === 'curve' ? 'curve' : 'straight'
+      const path = s.kind === 'path' ? readPath(s.path) : null
+      const kind: SegmentKind = path ? 'path' : s.kind === 'curve' ? 'curve' : 'straight'
       const seg: Segment = {
         id: s.id,
         from: s.from,
         to: s.to,
         kind,
+        ...(path ? { path } : {}),
         via:
           kind === 'curve' &&
           s.via &&
@@ -581,22 +647,28 @@ export function deserializeNetwork(data: SerializedProject): {
   // A signal on a rail that is not in the file, or out of 0…1, is dropped
   cleanSignals(net)
 
-  // 5. Reconcile intersections; it ends by bringing the tables in line with the track
-  reconcileNetworkIntersections(
-    net,
-    placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance,
-  )
+  // 5. Reconcile intersections; it ends by bringing the tables in line with the track. A project
+  // known to have been reconciled at that very tolerance when it was written (`reconciledAt`: a
+  // step of the undo history) is taken as it is: looking at every rail again would find nothing.
+  const tolerance = placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance
+  if (reconciledAt === tolerance) adoptReconciledNetwork(net, tolerance)
+  else reconcileNetworkIntersections(net, tolerance)
 
   cleanSpeedZones(net)
   cleanSignals(net)
   syncIdCounter(net)
+  // Heights, cants and frog numbers were written onto the nodes, rails and tables in place
+  touchNetwork(net)
 
   // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
   const trains = deserializeTrains(net, data.trains)
   if (trains.length > 0) {
     const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys(), ...net.signals.keys()]
     for (const train of trains) ids.push(train.id, ...train.vehicles.map((v) => v.id))
-    resetIdCounter(Math.max(0, ...ids.map((id) => Number(id.match(/_(\d+)$/)?.[1] ?? 0))))
+    // One id at a time: a large network has more ids than a call takes arguments
+    let highest = 0
+    for (const id of ids) highest = Math.max(highest, Number(id.match(/_(\d+)$/)?.[1] ?? 0))
+    resetIdCounter(highest)
   }
 
   let camera: SerializedCamera | undefined
@@ -623,6 +695,8 @@ export function deserializeNetwork(data: SerializedProject): {
     trackSpacing: typeof data.trackSpacing === 'number' ? data.trackSpacing : undefined,
     levelHeight: positiveNumber(data.levelHeight),
     maxGradient: positiveNumber(data.maxGradient),
+    flatLevels: data.flatLevels === true ? true : undefined,
+    osmSource: storedOsmSource(data.osmSource),
     lineSpeed: storedLineSpeed(data.lineSpeed),
     lineType: data.lineType === 'classic' || data.lineType === 'highSpeed' ? data.lineType : undefined,
     signallingLevel: isSignallingLevel(data.signallingLevel) ? data.signallingLevel : undefined,
@@ -700,6 +774,7 @@ export function saveNetworkToStorage(
   line?: Partial<LineSettings>,
   signalling?: Partial<SignallingSettings>,
   signalDisplay?: SignalDisplaySettings,
+  origin?: ProjectOrigin,
 ): boolean {
   try {
     const storage = getStorage()
@@ -725,6 +800,7 @@ export function saveNetworkToStorage(
       line,
       signalling,
       signalDisplay,
+      origin,
     )
     storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
     return true
@@ -750,6 +826,8 @@ export function loadNetworkFromStorage(): {
   trackSpacing?: number
   levelHeight?: number
   maxGradient?: number
+  flatLevels?: boolean
+  osmSource?: OsmSource
   lineSpeed?: number
   lineType?: LineType
   signallingLevel?: SignallingLevel

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { MenuBar, type MenuDef } from './Menu'
 import { AboutModal, REPO_URL, RELEASE_NOTES_URL } from './AboutModal'
 import { ShortcutsModal } from './ShortcutsModal'
@@ -11,6 +11,9 @@ import { Modal } from '../common/Modal'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
 import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
+
+// The import window brings the whole conversion with it: loaded when it is first opened
+const OsmImportModal = lazy(() => import('./OsmImportModal').then((module) => ({ default: module.OsmImportModal })))
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -33,6 +36,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false)
   const [showAboutModal, setShowAboutModal] = useState(false)
   const [showRemoteModal, setShowRemoteModal] = useState(false)
+  const [showOsmImport, setShowOsmImport] = useState(false)
 
   const commitName = () => {
     setEditingName(false)
@@ -54,6 +58,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
+        { id: 'import-osm', label: 'Importer depuis OpenStreetMap…' },
         {
           id: 'examples',
           label: 'Exemples',
@@ -94,6 +99,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
           case 'import-json':
             importJSON(store)
             break
+          case 'import-osm':
+            setShowOsmImport(true)
+            break
           case 'export-json':
             exportJSON(store)
             showToast('Export JSON téléchargé', 'success')
@@ -122,6 +130,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A' },
         { id: 'clear', label: 'Tout désélectionner', separatorAfter: true },
         { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R' },
+        { id: 'long-rails', label: 'Simplifier en rails longs', disabled: store.isPlayMode || store.network.segments.size === 0 },
       ],
       onSelect: (id) => {
         switch (id) {
@@ -149,6 +158,17 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             store.reconcileTopology()
             showToast('Topologie et aiguillages réconciliés', 'info')
             break
+          case 'long-rails': {
+            const result = store.simplifyToLongRails()
+            if (!result) break
+            showToast(
+              result.after < result.before
+                ? `Réseau simplifié : ${result.before} rails → ${result.after}`
+                : 'Aucune enfilade de rails à simplifier',
+              result.after < result.before ? 'success' : 'info',
+            )
+            break
+          }
         }
       },
     },
@@ -165,6 +185,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'toggle-signal-blocks', label: 'Cantons', checked: store.signalBlocksVisible },
         { id: 'toggle-signal-reservations', label: 'Réservations (en conduite)', checked: store.showSignalReservations },
         { id: 'toggle-inclination', label: 'Dévers et pentes', checked: store.showInclination },
+        { id: 'toggle-driving-view', label: 'Vue de conduite épurée', checked: store.minimalDrivingView },
         { id: 'toggle-inspector', label: 'Inspecteur', checked: store.isSidePanelOpen, shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
         {
           id: 'theme',
@@ -218,6 +239,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'toggle-inclination':
             store.toggleInclination()
+            break
+          case 'toggle-driving-view':
+            store.toggleMinimalDrivingView()
             break
           case 'toggle-inspector':
             store.toggleSidePanel()
@@ -326,8 +350,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
               {store.projectName}
               {store.dirty && (
                 <span
-                  className="tb-dirty"
-                  title="Modifications non exportées dans un fichier (enregistrées automatiquement dans ce navigateur)"
+                  className={store.autosaveFailed ? 'tb-dirty tb-dirty-unsaved' : 'tb-dirty'}
+                  title={
+                    store.autosaveFailed
+                      ? "Modifications non exportées dans un fichier, et que ce navigateur n'a pas pu enregistrer (projet trop volumineux) : exportez le projet par Fichier ▸ Exporter"
+                      : 'Modifications non exportées dans un fichier (enregistrées automatiquement dans ce navigateur)'
+                  }
                 />
               )}
             </button>
@@ -400,7 +428,13 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         <p>{pendingExample?.description}</p>
         <p>L'exemple remplace le plan actuel : toutes les voies non exportées seront effacées.</p>
       </Modal>
-      <AboutModal isOpen={showAboutModal} onClose={() => setShowAboutModal(false)} />
+      {/* Mounted on opening: each import starts from a blank window */}
+      {showOsmImport && (
+        <Suspense fallback={null}>
+          <OsmImportModal store={store} onClose={() => setShowOsmImport(false)} />
+        </Suspense>
+      )}
+      <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} onClose={() => setShowAboutModal(false)} />
       <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
       <SettingsModal

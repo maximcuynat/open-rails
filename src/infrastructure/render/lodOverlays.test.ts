@@ -22,6 +22,12 @@ import {
   sectionBadgeMinLength,
   speedZoneBandShown,
   speedZoneBoardsShown,
+  speedZoneCrowdBandShown,
+  plainJointScale,
+  reportClusterRadius,
+  PLAIN_JOINTS_FULL_SIZE_UP_TO,
+  PLAIN_JOINT_MIN_SCALE,
+  REPORT_MARKER_OVERLAP,
   type BadgeBox,
 } from './lodOverlays'
 
@@ -208,6 +214,44 @@ describe('speed zones per tier', () => {
     expect(diagnosticsClustered('rails')).toBe(false)
     expect(diagnosticsClustered('line')).toBe(true)
     expect(diagnosticsClustered('schematic')).toBe(true)
+  })
+
+  it('the band of a zone in a crowd: for the tool that works on zones, where the two rails are drawn', () => {
+    for (const lod of ['detail', 'rails', 'line', 'schematic'] as const) {
+      expect(speedZoneCrowdBandShown(lod, false)).toBe(false)
+    }
+    expect(speedZoneCrowdBandShown('detail', true)).toBe(true)
+    expect(speedZoneCrowdBandShown('rails', true)).toBe(true)
+    expect(speedZoneCrowdBandShown('line', true)).toBe(false)
+    expect(speedZoneCrowdBandShown('schematic', true)).toBe(false)
+  })
+
+  it('markers of the signalling report: merged where their diamonds would cover each other, and like the others from the line drawing', () => {
+    expect(reportClusterRadius('detail', 8)).toBe(REPORT_MARKER_OVERLAP * 8)
+    expect(reportClusterRadius('rails', 10)).toBe(REPORT_MARKER_OVERLAP * 10)
+    // Two diamonds side by side that only touch (two half-widths apart) stay two
+    expect(reportClusterRadius('detail', 8)).toBeLessThan(2 * 8)
+    expect(reportClusterRadius('line', 8)).toBe(DIAGNOSTIC_CLUSTER_RADIUS_PX)
+    expect(reportClusterRadius('schematic', 8)).toBe(DIAGNOSTIC_CLUSTER_RADIUS_PX)
+  })
+})
+
+describe('plainJointScale', () => {
+  it('full size up to the count a view holds at ease', () => {
+    expect(plainJointScale(0)).toBe(1)
+    expect(plainJointScale(PLAIN_JOINTS_FULL_SIZE_UP_TO)).toBe(1)
+  })
+
+  it('beyond, the dots shrink so that together they cover no more of the screen', () => {
+    const four = plainJointScale(4 * PLAIN_JOINTS_FULL_SIZE_UP_TO)
+    expect(four).toBeCloseTo(0.5)
+    // Area of all the dots: count × scale², the same as at the limit
+    const count = 2 * PLAIN_JOINTS_FULL_SIZE_UP_TO
+    expect(count * plainJointScale(count) ** 2).toBeCloseTo(PLAIN_JOINTS_FULL_SIZE_UP_TO)
+  })
+
+  it('never under the smallest size, however many there are', () => {
+    expect(plainJointScale(100000)).toBe(PLAIN_JOINT_MIN_SCALE)
   })
 })
 
@@ -490,10 +534,13 @@ describe('renderNetwork overlays per tier', () => {
       expect(networkDerived(gaps(2, 500), {}).kinematicIssues()).toHaveLength(4)
     })
 
-    it('detail: one marker per issue, with its label', () => {
+    it('detail: one marker per issue; the label the two ends of a gap share is written once', () => {
       const ctx = draw(gaps(1, 500), DETAIL)
       expect(marks(ctx)).toEqual(['!', '!'])
-      expect(labels(ctx)).toHaveLength(2)
+      // The two markers are half a pixel apart: the second label would lie on the first
+      expect(labels(ctx)).toHaveLength(1)
+      // Two gaps far apart: each has its label
+      expect(labels(draw(gaps(2, 100), DETAIL, { cy: 50 }))).toHaveLength(2)
     })
 
     it('line: the two ends of a gap, 0.2 px apart, are one marker that keeps the label they share', () => {

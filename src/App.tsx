@@ -12,6 +12,7 @@ import { DrivingDock } from '@presentation/components/hud/DrivingDock'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
 import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
+import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@domain/import/osmTypes'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
@@ -44,7 +45,8 @@ export default function App() {
   // Persist state when reloading or navigating away
   useEffect(() => {
     const handleUnload = () => {
-      store.savePersistedState()
+      // At once: the write that waits for the edits to pause would come too late
+      store.flushPersistedState()
     }
     window.addEventListener('beforeunload', handleUnload)
     window.addEventListener('pagehide', handleUnload)
@@ -85,7 +87,7 @@ export default function App() {
   }, [store.theme])
 
   // Which driving console fits the canvas area, and what it pushes aside (mini-map, debug panel)
-  const arrangement = arrangeConsole(vp.w, vp.h, store.consolePreference, store.isPlayMode, store.showTrainDebug)
+  const arrangement = arrangeConsole(vp.w, vp.h, store.consolePreference, store.isPlayMode && !store.isSpectating, store.showTrainDebug)
   const canvasAreaStyle = {
     '--console-scale': arrangement.scale,
     '--minimap-lift': `${arrangement.placement.minimapLift}px`,
@@ -102,7 +104,18 @@ export default function App() {
           <ToolBar store={store} />
           <CanvasOverlay store={store} />
           <SidePanel store={store} />
-          {store.showMinimap && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
+          {store.showMinimap && !store.isPlainDrivingView && <MiniMap store={store} viewportW={vp.w} viewportH={vp.h} />}
+          {/* The mention the ODbL asks for, as long as the network shown comes from OpenStreetMap */}
+          {store.osmSource && (
+            <a
+              className={`osm-attribution${store.showMinimap && !store.isPlainDrivingView ? ' above-minimap' : ''}`}
+              href={OSM_COPYRIGHT_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {OSM_ATTRIBUTION}
+            </a>
+          )}
           <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>

@@ -38,6 +38,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
   )
   const [levelHeightVal, setLevelHeightVal] = useState<string>(unitField(store.levelHeight, store.unit))
   const [maxGradientVal, setMaxGradientVal] = useState<string>(store.maxGradient.toString())
+  const [flatLevels, setFlatLevels] = useState<boolean>(store.flatLevels)
   const [lineType, setLineType] = useState<LineType>(store.lineSettings.lineType)
   const [lineSpeedVal, setLineSpeedVal] = useState<string>(store.lineSettings.lineSpeed.toString())
   const [signallingLevel, setSignallingLevel] = useState<SignallingLevel>(store.signallingLevel)
@@ -61,6 +62,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setSpacingVal(toUnitValue(store.trackSpacing, store.unit).toString())
       setLevelHeightVal(unitField(store.levelHeight, store.unit))
       setMaxGradientVal(store.maxGradient.toString())
+      setFlatLevels(store.flatLevels)
       setLineType(store.lineSettings.lineType)
       setLineSpeedVal(store.lineSettings.lineSpeed.toString())
       setSignallingLevel(store.signallingLevel)
@@ -71,7 +73,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
       setBoardHeightVal(toUnitValue(store.boardHeight, store.unit).toString())
       setDraftKeys(store.keybindings)
     }
-  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.levelHeight, store.maxGradient, store.lineSettings.lineType, store.lineSettings.lineSpeed, store.signallingLevel, store.signalStopEnforced, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
+  }, [isOpen, store.scalePreset, store.unit, store.gauge, store.trackSpacing, store.levelHeight, store.maxGradient, store.flatLevels, store.lineSettings.lineType, store.lineSettings.lineSpeed, store.signallingLevel, store.signalStopEnforced, store.showDimensions, store.boardEnabled, store.boardWidth, store.boardHeight, store.keybindings])
 
   // When changing scale preset in the modal
   const handleScaleChange = (presetId: ScalePresetId) => {
@@ -149,6 +151,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
 
     // After the scale: choosing a preset puts back its own slope settings
     store.setGradientSettings({ levelHeight: parsedLevelHeight, maxGradient: parsedMaxGradient })
+    store.setFlatLevels(flatLevels)
 
     if (parsedLineSpeed !== store.lineSettings.lineSpeed || lineType !== store.lineSettings.lineType) {
       store.setLineSettings({ lineSpeed: parsedLineSpeed, lineType })
@@ -289,6 +292,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
                   min="0"
                   className="settings-input"
                   value={levelHeightVal}
+                  disabled={flatLevels}
                   onChange={(e) => setLevelHeightVal(e.target.value)}
                 />
                 <span className="settings-input-unit">{selectedUnit}</span>
@@ -306,12 +310,26 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
                   min="1"
                   className="settings-input"
                   value={maxGradientVal}
+                  disabled={flatLevels}
                   onChange={(e) => setMaxGradientVal(e.target.value)}
                 />
                 <span className="settings-input-unit">‰</span>
               </div>
             </div>
           </div>
+          <label className="settings-checkbox-row" style={{ marginTop: '0.6rem' }}>
+            <input
+              type="checkbox"
+              checked={flatLevels}
+              onChange={(e) => setFlatLevels(e.target.checked)}
+            />
+            <span className="settings-checkbox-text">
+              Niveaux sans relief
+            </span>
+          </label>
+          <span className="settings-hint" style={{ display: 'block', marginTop: '0.35rem' }}>
+            Les niveaux indiquent seulement quelle voie passe au-dessus de l’autre : les pentes sont ignorées
+          </span>
         </div>
 
         {/* Line: the speed every rail without a speed zone runs at, and the rules its curves follow */}

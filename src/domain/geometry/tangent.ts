@@ -1,14 +1,7 @@
 import type { Point, Network, Segment, NodeId, RailNode, SegmentId } from '../models/types'
 import { bezierPoint, bezierDerivative1 } from './curve'
-
-/** Outgoing tangent direction (normalized) at the end of a straight segment. */
-function straightTangent(from: Point, to: Point): Point {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const len = Math.hypot(dx, dy)
-  if (len === 0) return { x: 1, y: 0 }
-  return { x: dx / len, y: dy / len }
-}
+import { segmentEnds, tangentOnShape } from './segmentGeometry'
+import { nodesWithin, railsWithin } from './networkFollower'
 
 /** Tangent at the START (t=0) of a quadratic Bezier: direction (via - start). */
 export function bezierStartTangent(start: Point, via: Point): Point {
@@ -63,23 +56,11 @@ export function segmentTangentAt(
   seg: Segment,
   nodeId: NodeId,
 ): Point | null {
-  const fromNode = net.nodes.get(seg.from)
-  const toNode = net.nodes.get(seg.to)
-  if (!fromNode || !toNode) return null
-
-  if (nodeId === seg.from) {
-    // Leaving from the "from" end — direction is towards "to"
-    if (seg.kind === 'curve' && seg.via) {
-      return bezierStartTangent(fromNode.pos, seg.via)
-    }
-    return straightTangent(fromNode.pos, toNode.pos)
-  } else if (nodeId === seg.to) {
-    // Leaving from the "to" end — direction is the end tangent of the curve/straight
-    if (seg.kind === 'curve' && seg.via) {
-      return bezierEndTangent(seg.via, toNode.pos)
-    }
-    return straightTangent(fromNode.pos, toNode.pos)
-  }
+  const ends = segmentEnds(net, seg)
+  if (!ends) return null
+  // Direction of travel from `seg.from` to `seg.to`, read at the end asked for
+  if (nodeId === seg.from) return tangentOnShape(ends, 0)
+  if (nodeId === seg.to) return tangentOnShape(ends, 1)
   return null
 }
 
@@ -316,7 +297,7 @@ export function getTrackTangentAt(
   // Priority 1: near an existing node (excluding excludeNodeId) that has connected segments
   let bestNode: RailNode | null = null
   let bestDist = tol
-  for (const node of net.nodes.values()) {
+  for (const node of nodesWithin(net, point, tol)) {
     if (excludeNodeId && node.id === excludeNodeId) continue
     const adj = net.adjacency.get(node.id)
     if (!adj || adj.length === 0) continue
@@ -346,7 +327,8 @@ export function getTrackTangentAt(
   let bestSeg: { id: SegmentId; seg: any } | null = null
   let bestSegDist = tol
 
-  for (const [id, seg] of net.segments.entries()) {
+  for (const seg of railsWithin(net, point, tol)) {
+    const id = seg.id
     if (excludeNodeId && (seg.from === excludeNodeId || seg.to === excludeNodeId)) {
       continue
     }
