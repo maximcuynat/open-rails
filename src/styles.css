@@ -3905,3 +3905,52 @@ select.cb-step-select {
 .sp-locked-note {
   margin: 10px 14px 0;
 }
+
+/* « Ligne entre gares… » */
+.dataset-stops {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dataset-stop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #d0d4dc);
+  border-radius: 8px;
+}
+.dataset-stop-index {
+  min-width: 1.4em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+.dataset-stop-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dataset-stop-lines {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.dataset-stop-actions {
+  display: flex;
+  gap: 4px;
+}
+.dataset-stop-actions .modal-btn {
+  padding: 2px 8px;
+  min-width: 0;
+}
+.dataset-attribution {
+  font-size: 12px;
+}
+.about-attribution {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+}

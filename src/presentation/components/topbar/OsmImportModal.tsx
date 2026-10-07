@@ -19,7 +19,6 @@ import {
   surveyFigures,
   usesAutomaticSignals,
   usesRealSignals,
-  type Figure,
   type OsmIssueGroup,
 } from '@application/import/osmReport'
 import { convertOsm, surveyOsm } from '@domain/import/osmImport'
@@ -54,6 +53,7 @@ import {
 import { readOverpassFile } from '@infrastructure/osm/overpassFile'
 import { searchPlaces, type PlaceResult } from '@infrastructure/osm/placeSearch'
 import { SIGNALLING_LEVEL_CHOICES } from '../settings/signallingSettingsModel'
+import { Figures } from '../common/Figures'
 
 /** Speeds offered for the service tracks, km/h: always picked in a list, by tens */
 const SERVICE_SPEEDS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
@@ -120,19 +120,6 @@ function nextPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => setTimeout(resolve, 0))
   })
-}
-
-function Figures({ figures, wide }: { figures: Figure[]; wide?: boolean }) {
-  return (
-    <dl className={`osm-figures${wide ? ' is-wide' : ''}`}>
-      {figures.map((figure) => (
-        <div className="osm-figure" key={figure.label}>
-          <dd>{figure.value}</dd>
-          <dt>{figure.label}</dt>
-        </div>
-      ))}
-    </dl>
-  )
 }
 
 function Option({ checked, disabled, onChange, children }: { checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {

@@ -14,6 +14,8 @@ import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
 
 // The import window brings the whole conversion with it: loaded when it is first opened
 const OsmImportModal = lazy(() => import('./OsmImportModal').then((module) => ({ default: module.OsmImportModal })))
+// The dataset window likewise: its search and route logic come with it
+const LineBetweenStationsModal = lazy(() => import('./LineBetweenStationsModal').then((module) => ({ default: module.LineBetweenStationsModal })))
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -37,6 +39,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showAboutModal, setShowAboutModal] = useState(false)
   const [showRemoteModal, setShowRemoteModal] = useState(false)
   const [showOsmImport, setShowOsmImport] = useState(false)
+  const [showLineBetween, setShowLineBetween] = useState(false)
 
   const commitName = () => {
     setEditingName(false)
@@ -59,6 +62,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
         { id: 'import-osm', label: 'Importer depuis OpenStreetMap…' },
+        { id: 'line-between-stations', label: 'Ligne entre gares…' },
         {
           id: 'examples',
           label: 'Exemples',
@@ -101,6 +105,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'import-osm':
             setShowOsmImport(true)
+            break
+          case 'line-between-stations':
+            setShowLineBetween(true)
             break
           case 'export-json':
             exportJSON(store)
@@ -434,7 +441,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
           <OsmImportModal store={store} onClose={() => setShowOsmImport(false)} />
         </Suspense>
       )}
-      <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} onClose={() => setShowAboutModal(false)} />
+      {showLineBetween && (
+        <Suspense fallback={null}>
+          <LineBetweenStationsModal store={store} onClose={() => setShowLineBetween(false)} />
+        </Suspense>
+      )}
+      <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} dataset={store.isNetworkLocked} onClose={() => setShowAboutModal(false)} />
       <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
       <SettingsModal
