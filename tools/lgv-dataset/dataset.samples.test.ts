@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { deserializeNetwork, type SerializedProject } from '@infrastructure/persistence/persistence'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
-import type { DatasetIndex } from './datasetIndex'
+import { readDatasetIndex, type DatasetIndex } from '@domain/dataset/datasetIndex'
 
 // The dataset as it is published under `public/data/lgv/`: skipped when it has not been generated
 // (a fresh checkout without the data still passes `npm test`).
@@ -15,7 +15,7 @@ const present = existsSync(INDEX)
 const read = <T>(name: string): T => JSON.parse(readFileSync(`${DIR}${name}`, 'utf8')) as T
 
 describe.runIf(present)('the published « LGV France » dataset', () => {
-  const index = present ? read<DatasetIndex>('index.json') : (null as unknown as DatasetIndex)
+  const index = present ? readDatasetIndex(read<unknown>('index.json')) : (null as unknown as DatasetIndex)
 
   it('names its lines, each with a file that loads as the index says', () => {
     expect(index.version).toBe(1)

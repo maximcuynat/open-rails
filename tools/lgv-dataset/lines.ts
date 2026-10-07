@@ -2,6 +2,7 @@ import type { OsmImportResult, OverpassResponse } from '@domain/import/osmTypes'
 import { segmentShapeLength } from '@domain/geometry/segmentGeometry'
 import { findSectionChains } from '@domain/models/sections'
 import type { Network, SegmentId } from '@domain/models/types'
+import type { LineId } from '@domain/dataset/datasetIndex'
 import type { DatasetManifest } from './manifest'
 
 // Which line each rail belongs to. A way names its line through the relations it is a member of
@@ -14,7 +15,7 @@ import type { DatasetManifest } from './manifest'
 // of its length; a section no way of which says anything takes the line of a neighbouring
 // section, and what is left is « autres ».
 
-export type LineId = string
+export type { LineId }
 
 export interface LineInfo {
   id: LineId

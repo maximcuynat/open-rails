@@ -4,64 +4,11 @@ import type { Network, Point } from '@domain/models/types'
 import { segmentShapeLength } from '@domain/geometry/segmentGeometry'
 import { LAMBERT93_ORIGIN } from '@domain/import/osmProjection'
 import type { SerializedProject } from '@infrastructure/persistence/persistence'
-import type { LineAssignment, LineId } from './lines'
+import { DATASET_ATTRIBUTION, type DatasetIndex, type IndexConnection, type IndexLine, type IndexStation, type LineId } from '@domain/dataset/datasetIndex'
+import type { LineAssignment } from './lines'
 
-// The index of the dataset: what the application reads first, before any geometry. Light enough
-// to be fetched on every start: the lines (one file each), where lines meet, and the stations.
-
-export interface DatasetIndex {
-  version: 1
-  /** `timestamp_osm_base` of the data */
-  dataDate: string
-  generatedAt: string
-  attribution: string[]
-  frame: 'lambert93'
-  /** World (0, 0) */
-  origin: { lat: number; lon: number }
-  lines: IndexLine[]
-  /** Nodes where rails of two lines or more meet: the way from one line to another */
-  connections: IndexConnection[]
-  stations: IndexStation[]
-}
-
-export interface IndexLine {
-  id: LineId
-  name: string
-  ref?: string
-  highSpeed: boolean
-  file: string
-  bytes: number
-  rails: number
-  lengthKm: number
-  bbox: { minX: number; minY: number; maxX: number; maxY: number }
-  /** Ids of the stations with a platform on this line */
-  stations: string[]
-}
-
-export interface IndexConnection {
-  nodeId: string
-  x: number
-  y: number
-  lines: LineId[]
-}
-
-export interface IndexStation {
-  id: string
-  name: string
-  uic?: string
-  code?: string
-  x: number
-  y: number
-  /** From the SNCF registry when the station matched it: the projection has no inverse */
-  lat?: number
-  lon?: number
-  lines: LineId[]
-}
-
-export const DATASET_ATTRIBUTION = [
-  'Voies, gares et signaux : © les contributeurs d’OpenStreetMap, licence ODbL 1.0 — https://www.openstreetmap.org/copyright',
-  'Noms et codes des gares : SNCF Gares & Connexions, « Gares de voyageurs », licence ODbL 1.0 — https://ressources.data.sncf.com/explore/dataset/gares-de-voyageurs/',
-]
+// Builds the index of the dataset (its types live in `@domain/dataset/datasetIndex`, which the
+// application reads): the lines (one file each), where lines meet, and the stations.
 
 export function buildIndex(
   net: Network,
