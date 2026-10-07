@@ -12,7 +12,9 @@
 
 import { pathChecksum, pathTightestCurve } from '../geometry/railPath'
 import { leaveVectorOnShape, segmentEnds } from '../geometry/segmentGeometry'
-import { networkCheckToken } from './networkWatch'
+import { networkCheckToken, verifyingNetworkRevisions } from './networkWatch'
+import { dirtyNodesOf, networkChangesSince, type NetworkChanges, type NetworkFollower } from '../geometry/networkFollower'
+import { railMeasures, type RailMeasures } from '../geometry/railMeasures'
 import type { Junction, Network, NodeId, Segment, SegmentId, TrackSpan } from './types'
 import type { LineSettings, LineType, UpcomingSpeedLimit } from './speedLimits'
 import { DEFAULT_LINE_SETTINGS } from './speedLimits'
@@ -188,7 +190,12 @@ interface ResolvedLine {
 /** Everything read from the track that the speed limits and the cant need */
 export interface TrackProfile {
   line: ResolvedLine
-  /** The curved rails, by id. Empty off the real scale: cant and curve speeds are a 1:1 matter */
+  /**
+   * The curved rails, by id. Empty off the real scale: cant and curve speeds are a 1:1 matter.
+   * A new profile is given whenever the track or the zones changed; `rails` and `ramps` are the
+   * same objects as long as nothing of the curves, cants and ramps moved — whoever keeps something
+   * worked out from them alone can keep it by them.
+   */
   rails: ReadonlyMap<SegmentId, RailCurve>
   curves: readonly TrackCurve[]
   /** Cant ramps lying on each rail (curved or straight) */
@@ -260,10 +267,15 @@ function soleNeighbour(net: Network, nodeId: NodeId, segId: SegmentId): Segment 
 
 type DraftRail = Omit<RailCurve, 'cant' | 'automatic' | 'maxSpeed' | 'appliedSpeed'> & Partial<RailCurve>
 
-/** Group the curved rails into curves: runs through nodes joining two rails, same hand, like radius, no kink. */
-function recogniseCurves(net: Network, rails: Map<SegmentId, DraftRail>): TrackCurve[] {
-  const curves: TrackCurve[] = []
+/**
+ * Group the curved rails into curves: runs through nodes joining two rails, same hand, like radius,
+ * no kink. `order`: the rails to recognise from, in the order of the network; `pool`: the only
+ * rails a curve may run onto — null when one would run beyond them.
+ */
+function recogniseCurves(net: Network, rails: Map<SegmentId, DraftRail>, order: Iterable<SegmentId>, pool?: ReadonlySet<SegmentId>): { curve: TrackCurve; startSegId: SegmentId }[] | null {
+  const curves: { curve: TrackCurve; startSegId: SegmentId }[] = []
   const taken = new Set<SegmentId>()
+  let strayed = false
 
   /** Rails that carry the curve on beyond `nodeId`, reached on `seg` with the curve turning to `hand` */
   const extend = (seg: Segment, nodeId: NodeId, hand: number): { segId: SegmentId; entersAtFrom: boolean; exit: NodeId }[] => {
@@ -279,6 +291,11 @@ function recogniseCurves(net: Network, rails: Map<SegmentId, DraftRail>): TrackC
       const radius = rails.get(current.id)!.radius
       if (Math.abs(geo.radius - radius) > SAME_CURVE_RADIUS_TOLERANCE * Math.max(geo.radius, radius)) break
       if (!meetSmoothly(net, current, next, node)) break
+      // A rail the curve would run onto that is not among those read again: it belongs to a curve kept as it was
+      if (pool && !pool.has(next.id)) {
+        strayed = true
+        break
+      }
       taken.add(next.id)
       node = entersAtFrom ? next.to : next.from
       run.push({ segId: next.id, entersAtFrom, exit: node })
@@ -287,8 +304,9 @@ function recogniseCurves(net: Network, rails: Map<SegmentId, DraftRail>): TrackC
     return run
   }
 
-  for (const [segId, geo] of rails) {
-    if (taken.has(segId)) continue
+  for (const segId of order) {
+    const geo = rails.get(segId)
+    if (!geo || taken.has(segId)) continue
     const seg = net.segments.get(segId)!
     taken.add(segId)
     const after = extend(seg, seg.to, geo.hand)
@@ -305,12 +323,9 @@ function recogniseCurves(net: Network, rails: Map<SegmentId, DraftRail>): TrackC
       endNode: after.length > 0 ? after[after.length - 1].exit : seg.to,
       length: 0,
     }
-    for (const rail of curve.rails) {
-      const draft = rails.get(rail.segId)!
-      draft.curve = curves.length
-      curve.length += draft.length
-    }
-    curves.push(curve)
+    for (const rail of curve.rails) curve.length += rails.get(rail.segId)!.length
+    curves.push({ curve, startSegId: segId })
+    if (strayed) return null
   }
   return curves
 }
@@ -338,24 +353,160 @@ function appliedSpeedOnRail(net: Network, segId: SegmentId, lineSpeed: number): 
   return speed
 }
 
-function buildProfile(net: Network, line: ResolvedLine): TrackProfile {
-  const drafts = new Map<SegmentId, DraftRail>()
-  const ramps = new Map<SegmentId, CantRamp[]>()
-  const lengths = new Map<SegmentId, number>()
-  if (!line.realScale) return { line, rails: new Map(), curves: [], ramps, lengths }
+/** A curve as the tracker keeps it: what it was read through, and what it laid */
+interface CurveRecord {
+  curve: TrackCurve
+  /** Place of the curve in `TrackProfile.curves` */
+  index: number
+  /** The rail the curve was recognised from: the first of its rails in the order of the network */
+  startSegId: SegmentId
+  /** The nodes whose rails the curve and its ramps were read through: a change at one of them is a change of the curve */
+  touched: Set<NodeId>
+  /** The ramps the curve laid, in the order it laid them */
+  ramps: { segId: SegmentId; ramp: CantRamp }[]
+  /** The straight rails under its ramps and their lengths, in the order they were walked */
+  straights: [SegmentId, number][]
+}
 
-  for (const seg of net.segments.values()) {
-    const geo = railGeometry(net, seg)
-    if (!geo) continue
-    const length = segmentArcLength(net, seg.id)
-    lengths.set(seg.id, length)
-    drafts.set(seg.id, { segId: seg.id, radius: geo.radius, hand: geo.hand, length, curve: -1 })
+/** What changed in the track that the curves are read from: nodes moved, rails changed or gone — not the tables */
+function trackChanged(changes: NetworkChanges): boolean {
+  return changes.structure || changes.movedNodes.length > 0 || changes.changedRails.length > 0 || changes.removedRails.length > 0 || changes.reorderedRails.length > 0
+}
+
+/**
+ * The profile of a network, kept from one edit to the next and worked out again only where the
+ * track changed. A curve is read from its rails and from the nodes they meet at (which rails are
+ * there, how they meet), its ramps from the straight rails beyond its ends up to half a ramp away:
+ * every node read through is noted, and a change at one of them (`dirtyNodesOf`) dissolves the
+ * curve, which is recognised again from its rails with the rails that changed — in the order of
+ * the network, as `recogniseCurves` recognises every curve. A zone changed sets the speed applied
+ * on each curved rail again; the curves whose speed moved are laid again too.
+ */
+class ProfileTracker {
+  cursor: number | undefined = undefined
+  zones = NaN
+  lineKey = ''
+  profile: TrackProfile | null = null
+  /** The curved rails, with their cant and speeds */
+  private readonly drafts = new Map<SegmentId, DraftRail>()
+  /** `TrackProfile.lengths`, kept from one profile to the next: a rail that changed is measured again when asked for */
+  private lengths = new Map<SegmentId, number>()
+  private records: CurveRecord[] = []
+  private readonly recordOfRail = new Map<SegmentId, CurveRecord>()
+  private readonly recordsAtNode = new Map<NodeId, Set<CurveRecord>>()
+
+  /** The profile brought up to date: everything again when `changes` is null */
+  build(net: Network, line: ResolvedLine, changes: NetworkChanges | null, index: NetworkFollower, zonesChanged: boolean): TrackProfile {
+    const measures = railMeasures(net)
+    if (!line.realScale) {
+      this.clear()
+      return (this.profile = { line, rails: new Map(), curves: [], ramps: new Map(), lengths: new Map() })
+    }
+    const affected = new Set<CurveRecord>()
+    const pool = new Set<SegmentId>()
+    if (!changes) {
+      this.clear()
+      for (const seg of net.segments.values()) {
+        const draft = this.draftOf(net, seg, measures, line)
+        if (draft) {
+          this.drafts.set(seg.id, draft)
+          pool.add(seg.id)
+        }
+      }
+    } else {
+      for (const id of dirtyNodesOf(changes, index)) {
+        for (const record of this.recordsAtNode.get(id) ?? []) affected.add(record)
+      }
+      for (const sid of changes.removedRails) {
+        this.drafts.delete(sid)
+        this.lengths.delete(sid)
+      }
+      for (const sid of changes.changedRails) {
+        this.lengths.delete(sid)
+        const seg = net.segments.get(sid)
+        const draft = seg && this.draftOf(net, seg, measures, line)
+        if (draft) {
+          this.drafts.set(sid, draft)
+          pool.add(sid)
+        } else {
+          this.drafts.delete(sid)
+        }
+      }
+      if (zonesChanged) {
+        for (const draft of this.drafts.values()) {
+          const speed = appliedSpeedOnRail(net, draft.segId, line.lineSpeed)
+          if (speed === draft.appliedSpeed) continue
+          draft.appliedSpeed = speed
+          const record = this.recordOfRail.get(draft.segId)
+          if (record) affected.add(record)
+        }
+      }
+      for (const record of affected) {
+        this.forget(record)
+        for (const rail of record.curve.rails) if (this.drafts.has(rail.segId)) pool.add(rail.segId)
+      }
+      if (affected.size > 0) this.records = this.records.filter((record) => !affected.has(record))
+    }
+
+    // Nothing of the profile moved (an edit away from every curve and ramp): the same curves, cants
+    // and ramps under a new profile — whoever keeps something by the profile reads the track again
+    if (changes && this.profile && pool.size === 0 && affected.size === 0 && changes.reorderedRails.length === 0) return (this.profile = { ...this.profile })
+
+    // The curves among the rails to read again, in the order of the network
+    const order = [...pool].sort((a, b) => index.rails.get(a)!.ord - index.rails.get(b)!.ord)
+    const made = recogniseCurves(net, this.drafts, order, changes ? pool : undefined)
+    if (!made) {
+      if (verifyingNetworkRevisions()) throw new Error('A curve recognised again ran onto a rail that did not change')
+      return this.build(net, line, null, index, zonesChanged)
+    }
+    for (const { curve, startSegId } of made) {
+      for (const rail of curve.rails) {
+        const draft = this.drafts.get(rail.segId)!
+        this.settleCant(net, draft, curve, line)
+      }
+      const record = this.layRamps(net, curve, startSegId, measures)
+      this.records.push(record)
+      for (const rail of curve.rails) this.recordOfRail.set(rail.segId, record)
+      for (const id of record.touched) {
+        const at = this.recordsAtNode.get(id)
+        if (at) at.add(record)
+        else this.recordsAtNode.set(id, new Set([record]))
+      }
+    }
+    this.records.sort((a, b) => index.rails.get(a.startSegId)!.ord - index.rails.get(b.startSegId)!.ord)
+
+    const profile = this.assemble(line, index, pool)
+    if (verifyingNetworkRevisions() && changes) this.verify(net, line, profile, index)
+    return (this.profile = profile)
   }
-  const curves = recogniseCurves(net, drafts)
 
-  for (const draft of drafts.values()) {
+  private clear(): void {
+    this.drafts.clear()
+    this.lengths = new Map()
+    this.records = []
+    this.recordOfRail.clear()
+    this.recordsAtNode.clear()
+  }
+
+  private forget(record: CurveRecord): void {
+    for (const rail of record.curve.rails) if (this.recordOfRail.get(rail.segId) === record) this.recordOfRail.delete(rail.segId)
+    for (const id of record.touched) {
+      const at = this.recordsAtNode.get(id)
+      if (!at) continue
+      at.delete(record)
+      if (at.size === 0) this.recordsAtNode.delete(id)
+    }
+  }
+
+  private draftOf(net: Network, seg: Segment, measures: RailMeasures, line: ResolvedLine): DraftRail | null {
+    const geo = railGeometry(net, seg)
+    if (!geo) return null
+    return { segId: seg.id, radius: geo.radius, hand: geo.hand, length: measures.shapeLength(seg), curve: -1, appliedSpeed: appliedSpeedOnRail(net, seg.id, line.lineSpeed) }
+  }
+
+  private settleCant(net: Network, draft: DraftRail, curve: TrackCurve, line: ResolvedLine): void {
     const seg = net.segments.get(draft.segId)!
-    const appliedSpeed = appliedSpeedOnRail(net, draft.segId, line.lineSpeed)
+    const appliedSpeed = draft.appliedSpeed!
     const byHand = typeof seg.cant === 'number' && Number.isFinite(seg.cant)
     let cant: number
     if (byHand) {
@@ -363,34 +514,38 @@ function buildProfile(net: Network, line: ResolvedLine): TrackProfile {
     } else {
       cant = automaticCant(draft.radius, appliedSpeed, line.lineType, line.gauge)
       // A curve too short for its two half ramps gets the cant that fits
-      const fitting = cantForRampLength(curves[draft.curve].length, appliedSpeed)
+      const fitting = cantForRampLength(curve.length, appliedSpeed)
       if (cant > fitting) cant = layableCant(fitting)
     }
     draft.cant = cant
     draft.automatic = !byHand
-    draft.appliedSpeed = appliedSpeed
     draft.maxSpeed = curveSpeedLimit(draft.radius, cant, line.lineType, line.gauge)
   }
-  const rails = drafts as Map<SegmentId, RailCurve>
 
-  const addRamp = (segId: SegmentId, ramp: CantRamp): void => {
-    if (ramp.hi - ramp.lo < TRACK_T_EPSILON) return
-    const list = ramps.get(segId)
-    if (list) list.push(ramp)
-    else ramps.set(segId, [ramp])
-  }
-  /** Lay on one rail the part `x0`…`x1` (m from the tangent point) of a ramp worth `value(x)` */
-  const layOn = (segId: SegmentId, length: number, entersAtFrom: boolean, offset: number, x0: number, x1: number, value: (x: number) => number, hand?: 1 | -1): void => {
-    if (!(length > 0) || x1 <= x0) return
-    const t0 = (x0 - offset) / length
-    const t1 = (x1 - offset) / length
-    const side = hand === undefined ? {} : { hand }
-    if (entersAtFrom) addRamp(segId, { lo: t0, hi: t1, cantLo: value(x0), cantHi: value(x1), ...side })
-    else addRamp(segId, { lo: 1 - t1, hi: 1 - t0, cantLo: value(x1), cantHi: value(x0), ...side })
-  }
+  /** The ramps at both ends of a curve, and everything they were read through */
+  private layRamps(net: Network, curve: TrackCurve, startSegId: SegmentId, measures: RailMeasures): CurveRecord {
+    const rails = this.drafts as Map<SegmentId, RailCurve>
+    const record: CurveRecord = { curve, index: -1, startSegId, touched: new Set(), ramps: [], straights: [] }
+    for (const rail of curve.rails) {
+      const seg = net.segments.get(rail.segId)!
+      record.touched.add(seg.from)
+      record.touched.add(seg.to)
+    }
+    const addRamp = (segId: SegmentId, ramp: CantRamp): void => {
+      if (ramp.hi - ramp.lo < TRACK_T_EPSILON) return
+      record.ramps.push({ segId, ramp })
+    }
+    /** Lay on one rail the part `x0`…`x1` (m from the tangent point) of a ramp worth `value(x)` */
+    const layOn = (segId: SegmentId, length: number, entersAtFrom: boolean, offset: number, x0: number, x1: number, value: (x: number) => number, hand?: 1 | -1): void => {
+      if (!(length > 0) || x1 <= x0) return
+      const t0 = (x0 - offset) / length
+      const t1 = (x1 - offset) / length
+      const side = hand === undefined ? {} : { hand }
+      if (entersAtFrom) addRamp(segId, { lo: t0, hi: t1, cantLo: value(x0), cantHi: value(x1), ...side })
+      else addRamp(segId, { lo: 1 - t1, hi: 1 - t0, cantLo: value(x1), cantHi: value(x0), ...side })
+    }
 
-  for (const curve of curves) {
-    if (curve.startNode === curve.endNode) continue // closed curve: no end, no ramp
+    if (curve.startNode === curve.endNode) return record // closed curve: no end, no ramp
     for (const atStart of [true, false]) {
       const ordered = atStart ? curve.rails : [...curve.rails].reverse()
       const endRail = rails.get(ordered[0].segId)!
@@ -426,9 +581,9 @@ function buildProfile(net: Network, line: ResolvedLine): TrackProfile {
       let previous: Segment = endSeg
       let next = neighbour
       while (next && offset < half && !rails.has(next.id)) {
-        const length = segmentArcLength(net, next.id)
+        const length = measures.shapeLength(next)
         if (!(length > 0)) break
-        lengths.set(next.id, length)
+        record.straights.push([next.id, length])
         const entersAtFrom = next.from === node
         // The straight rail is walked away from the curve: run from `from` to `to` it leads away
         // from it when entered at `from`, and the inside of the curve is then on its other hand
@@ -436,42 +591,89 @@ function buildProfile(net: Network, line: ResolvedLine): TrackProfile {
         layOn(next.id, length, entersAtFrom, offset, offset, Math.min(offset + length, half), (x) => endRail.cant * share(-x), hand)
         offset += length
         node = entersAtFrom ? next.to : next.from
+        record.touched.add(node)
         previous = next
         next = soleNeighbour(net, node, previous.id)
       }
     }
+    return record
   }
-  return { line, rails, curves, ramps, lengths }
+
+  /** The profile as `buildProfile` lays it out: rails in the order of the network, ramps in the order they were laid */
+  private assemble(line: ResolvedLine, index: NetworkFollower, pool: Set<SegmentId>): TrackProfile {
+    const before = this.profile?.rails
+    const rails = new Map<SegmentId, RailCurve>()
+    const lengths = this.lengths
+    const curves: TrackCurve[] = []
+    this.records.forEach((record, i) => {
+      record.index = i
+      curves.push(record.curve)
+    })
+    for (const seg of index.railsInOrder) {
+      const draft = seg && this.drafts.get(seg.id)
+      if (!seg || !draft) continue
+      const curve = this.recordOfRail.get(seg.id)!.index
+      draft.curve = curve
+      // A rail of a curve kept, at the same place: the same object
+      const kept = !pool.has(seg.id) ? before?.get(seg.id) : undefined
+      rails.set(seg.id, kept && kept.curve === curve ? kept : { ...(draft as RailCurve) })
+      if (pool.has(seg.id)) lengths.set(seg.id, draft.length)
+    }
+    const ramps = new Map<SegmentId, CantRamp[]>()
+    for (const record of this.records) {
+      for (const { segId, ramp } of record.ramps) {
+        const list = ramps.get(segId)
+        if (list) list.push(ramp)
+        else ramps.set(segId, [ramp])
+      }
+      for (const [segId, length] of record.straights) if (!lengths.has(segId)) lengths.set(segId, length)
+    }
+    return { line, rails, curves, ramps, lengths }
+  }
+
+  /** The profile kept against one built from the whole network (tests) */
+  private verify(net: Network, line: ResolvedLine, profile: TrackProfile, index: NetworkFollower): void {
+    const whole = new ProfileTracker().build(net, line, null, index, false)
+    const text = (p: TrackProfile): string => JSON.stringify([[...p.rails], p.curves, [...p.ramps]])
+    if (text(whole) !== text(profile)) throw new Error('The track profile kept is not that of the network')
+    // The lengths are filled as they are asked for: those kept must be those of the rails
+    for (const [segId, length] of profile.lengths) {
+      if (whole.lengths.get(segId) !== undefined && whole.lengths.get(segId) !== length) throw new Error(`The length kept of rail ${segId} is not its length`)
+    }
+  }
 }
 
-interface ProfileEntry {
-  geometry: number
-  zones: number
-  lineKey: string
-  profile: TrackProfile
-}
-
-const profiles = new WeakMap<Network, ProfileEntry>()
+const profiles = new WeakMap<Network, ProfileTracker>()
 
 /** Number of times a profile was built, for the tests that check it is kept */
 export const trackSpeedStats = { profileBuilds: 0, lookAheadWalks: 0, occupancyWalks: 0 }
 
 /**
  * Curves, cants and curve speeds of the network under these line settings. Kept from one call to
- * the next and built again only when the track (`trackGeometryRevision`), the speed zones
- * (`speedZonesRevision`) or the settings have changed; a call that finds nothing changed costs the
- * comparison of the network with its last known state.
+ * the next and built again — only where the track changed, see `ProfileTracker` — when the track,
+ * the speed zones (`speedZonesRevision`) or the settings have changed.
  */
 export function trackProfile(net: Network, line: LineSettings = DEFAULT_LINE_SETTINGS): TrackProfile {
-  const geometry = trackGeometryRevision(net)
-  const zones = speedZonesRevision(net)
   const resolved = resolveLine(line)
   const lineKey = `${resolved.lineSpeed}|${resolved.lineType}|${resolved.gauge}|${resolved.realScale}`
-  const entry = profiles.get(net)
-  if (entry && entry.geometry === geometry && entry.zones === zones && entry.lineKey === lineKey) return entry.profile
-  const profile = buildProfile(net, resolved)
-  trackSpeedStats.profileBuilds++
-  profiles.set(net, { geometry, zones, lineKey, profile })
+  let tracker = profiles.get(net)
+  if (!tracker) {
+    tracker = new ProfileTracker()
+    profiles.set(net, tracker)
+  }
+  const reading = networkChangesSince(net, tracker.cursor)
+  const zones = speedZonesRevision(net)
+  const zonesChanged = zones !== tracker.zones
+  const same = tracker.profile && tracker.lineKey === lineKey && !zonesChanged && reading.changes && !trackChanged(reading.changes)
+  tracker.cursor = reading.cursor
+  if (same) return tracker.profile!
+  const everything = !tracker.profile || tracker.lineKey !== lineKey || !reading.changes
+  const before = tracker.profile
+  const profile = tracker.build(net, resolved, everything ? null : reading.changes, reading.index, zonesChanged)
+  tracker.zones = zones
+  tracker.lineKey = lineKey
+  // A profile whose curves, cants and ramps are those of the one before was not built
+  if (!before || profile.rails !== before.rails) trackSpeedStats.profileBuilds++
   return profile
 }
 

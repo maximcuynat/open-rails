@@ -3,7 +3,7 @@ import { segmentEnds, shapePolyline } from '@domain/geometry/segmentGeometry'
 import type { Network, SegmentId } from '@domain/models/types'
 import { bezierDerivative1, bezierPoint } from '@domain/geometry/curve'
 import { CANT_RANGE } from '@domain/models/cant'
-import { trackCantOn, type TrackProfile } from '@domain/models/trackSpeed'
+import { trackCantOn, type RailCurve, type TrackProfile } from '@domain/models/trackSpeed'
 import type { TrackPiece } from './levelPieces'
 
 // ─────────────────── Cant on the canvas ───────────────────
@@ -38,7 +38,8 @@ const MARK_MIN_PX = { min: 2, max: 3.5 }
 /** Opacity of the mark, at the least cant and at the largest */
 const MARK_ALPHA = { min: 0.3, max: 0.85 }
 
-const stretchesByProfile = new WeakMap<TrackProfile, Map<SegmentId, CantStretch[]>>()
+/** By the rails of the profile: the same object as long as the curves, cants and ramps are the same (see `TrackProfile`) */
+const stretchesByProfile = new WeakMap<ReadonlyMap<SegmentId, RailCurve>, Map<SegmentId, CantStretch[]>>()
 
 /** Number of times the stretches were built, for the tests that check they are kept */
 export const cantRenderStats = { builds: 0 }
@@ -89,11 +90,11 @@ function buildStretches(profile: TrackProfile): Map<SegmentId, CantStretch[]> {
  * out the same object until the track, the zones or the line settings change, and a new one then.
  */
 export function cantStretches(profile: TrackProfile): ReadonlyMap<SegmentId, readonly CantStretch[]> {
-  let kept = stretchesByProfile.get(profile)
+  let kept = stretchesByProfile.get(profile.rails)
   if (!kept) {
     kept = buildStretches(profile)
     cantRenderStats.builds++
-    stretchesByProfile.set(profile, kept)
+    stretchesByProfile.set(profile.rails, kept)
   }
   return kept
 }
