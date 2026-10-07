@@ -95,6 +95,9 @@ export function ContextMenu({ store }: ContextMenuProps) {
     store.closeContextMenu()
   }
 
+  // The track of a dataset project is read only: nothing here cuts, moves or deletes it
+  const canEdit = store.canEditNetwork
+
   const isDoubleSlip =
     target.type === 'junction' && !!target.id && doubleSlipView(store.network.junctions.get(target.id)) !== null
 
@@ -131,29 +134,37 @@ export function ContextMenu({ store }: ContextMenuProps) {
       {target.type === 'segment' && (
         <>
           <div className="ctx-header">Rail sélectionné</div>
-          <button className="ctx-item" onClick={handleCutTrack}>
-            <span className="ctx-icon">✂</span>
-            <span className="ctx-label">Scinder la voie ici</span>
-            {kbd('tool.split')}
-          </button>
-          <button
-            className="ctx-item"
-            onClick={handleParallel}
-          >
-            <span className="ctx-icon">🛤</span>
-            <span className="ctx-label">Créer voie parallèle</span>
-            {kbd('edit.parallelTrack')}
-          </button>
+          {canEdit && (
+            <>
+              <button className="ctx-item" onClick={handleCutTrack}>
+                <span className="ctx-icon">✂</span>
+                <span className="ctx-label">Scinder la voie ici</span>
+                {kbd('tool.split')}
+              </button>
+              <button
+                className="ctx-item"
+                onClick={handleParallel}
+              >
+                <span className="ctx-icon">🛤</span>
+                <span className="ctx-label">Créer voie parallèle</span>
+                {kbd('edit.parallelTrack')}
+              </button>
+            </>
+          )}
           <button className="ctx-item" onClick={handlePlaceTrain}>
             <span className="ctx-icon">🚄</span>
             <span className="ctx-label">Poser une motrice ici</span>
           </button>
-          <div className="ctx-sep" />
-          <button className="ctx-item ctx-danger" onClick={handleDelete}>
-            <span className="ctx-icon">🗑</span>
-            <span className="ctx-label">Supprimer ce rail</span>
-            <kbd className="ctx-kbd">Suppr</kbd>
-          </button>
+          {canEdit && (
+            <>
+              <div className="ctx-sep" />
+              <button className="ctx-item ctx-danger" onClick={handleDelete}>
+                <span className="ctx-icon">🗑</span>
+                <span className="ctx-label">Supprimer ce rail</span>
+                <kbd className="ctx-kbd">Suppr</kbd>
+              </button>
+            </>
+          )}
         </>
       )}
 
@@ -165,22 +176,26 @@ export function ContextMenu({ store }: ContextMenuProps) {
             <span className="ctx-label">Basculer la voie</span>
             {kbd('edit.toggleJunction')}
           </button>
-          {!isDoubleSlip && (
+          {canEdit && !isDoubleSlip && (
             <button className="ctx-item" onClick={handleFlipTurnoutHand}>
               <span className="ctx-icon">⇄</span>
               <span className="ctx-label">Inverser déviation G/D</span>
             </button>
           )}
-          <div className="ctx-sep" />
-          <button className="ctx-item ctx-danger" onClick={handleDelete}>
-            <span className="ctx-icon">🗑</span>
-            <span className="ctx-label">{isDoubleSlip ? 'Supprimer les voies déviées' : 'Supprimer l’aiguillage'}</span>
-            <kbd className="ctx-kbd">Suppr</kbd>
-          </button>
+          {canEdit && (
+            <>
+              <div className="ctx-sep" />
+              <button className="ctx-item ctx-danger" onClick={handleDelete}>
+                <span className="ctx-icon">🗑</span>
+                <span className="ctx-label">{isDoubleSlip ? 'Supprimer les voies déviées' : 'Supprimer l’aiguillage'}</span>
+                <kbd className="ctx-kbd">Suppr</kbd>
+              </button>
+            </>
+          )}
         </>
       )}
 
-      {target.type === 'node' && (
+      {target.type === 'node' && canEdit && (
         <>
           <div className="ctx-header">Nœud de voie</div>
           <button

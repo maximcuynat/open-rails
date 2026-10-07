@@ -3896,3 +3896,12 @@ select.cb-step-select {
     flex-wrap: wrap;
   }
 }
+
+/* A dataset project: its drawing tools are greyed out, the inspector says why */
+.tb-btn.is-locked {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.sp-locked-note {
+  margin: 10px 14px 0;
+}

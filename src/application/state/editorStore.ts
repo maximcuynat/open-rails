@@ -50,6 +50,8 @@ import type { TrackPoint } from '@domain/services/trackPath'
 import { LINE_SPEED_RANGE, overlapsOfZone, rerailTrain } from '@domain/models/speedLimits'
 import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
+import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
+import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
 import {
   saveNetworkToStorage,
   loadNetworkFromStorage,
@@ -370,6 +372,32 @@ export class EditorStore {
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
   /** A phone holds the driving desk (set by the remote session): this screen then only watches */
   remoteDeskConnected = false
+
+  // --- Dataset: a project built from the published « LGV France » lines ---
+  /** Recipe of the dataset the project is built from; null for a hand-drawn or free-imported project */
+  dataset: DatasetRecipe | null = null
+  /** The index the recipe refers to, once fetched (where a train finds the lines it approaches); never saved */
+  datasetIndex: DatasetIndex | null = null
+  /** The files of the lines loaded, kept to be put together again when a line is added */
+  datasetFiles = new Map<LineId, SerializedProject>()
+  /** Fetches the files of some lines; set by the application layer (the store does not fetch) */
+  datasetLoader: ((lines: LineId[]) => Promise<Map<LineId, SerializedProject>>) | null = null
+  /** Lines asked for and not arrived yet */
+  datasetPending = new Set<LineId>()
+  /** The stored project was a recipe without geometry: the application must fetch the lines again */
+  datasetReloadPending = false
+  /** How long the last addition of lines took, in ms (read by the measuring scripts) */
+  datasetLastAddMs = 0
+
+  /** A project from the dataset: its track is read only */
+  get isNetworkLocked(): boolean {
+    return this.dataset !== null
+  }
+
+  /** The track may be drawn, moved or deleted: not while driving, not on a dataset project */
+  get canEditNetwork(): boolean {
+    return !this.isPlayMode && !this.isNetworkLocked
+  }
   /** Train the camera follows while spectating; null = the train the phone drives */
   spectatedTrainId: string | null = null
 
@@ -600,6 +628,7 @@ export class EditorStore {
   private pendingEdit: 'none' | 'orphan' | 'structural' = 'none'
 
   get canUndo(): boolean {
+    if (this.isNetworkLocked) return false
     return this.historyIndex > 0 || (this.pendingEdit !== 'none' && this.historyIndex >= 0)
   }
 
@@ -663,6 +692,7 @@ export class EditorStore {
   }
 
   get canRedo(): boolean {
+    if (this.isNetworkLocked) return false
     return this.historyIndex >= 0 && this.historyIndex < this.history.length - 1
   }
 
@@ -685,6 +715,8 @@ export class EditorStore {
   /** `settled`: the signals have just been checked against the points (`markDirty` does it before saving) */
   pushHistorySnapshot = (settled: boolean = false): void => {
     if (this.isUndoingRedoing) return
+    // A dataset project has nothing to undo: its track is read only, and its save is a recipe
+    if (this.isNetworkLocked) return
     if (!settled) this.settleSignals()
     this.syncTrainsWithNetwork()
     const snapshot = serializeNetwork(
@@ -815,6 +847,7 @@ export class EditorStore {
   dirty = false
 
   setSectionMeta = (sectionId: string, meta: Partial<SectionMetadata>): void => {
+    if (this.isNetworkLocked) return
     this.setSectionsMeta([sectionId], meta)
   }
 
@@ -969,6 +1002,17 @@ export class EditorStore {
   loadFromData = (data: any): void => {
     const res = deserializeNetwork(data)
     this.network = res.network
+    this.forgetDataset()
+    this.adoptLoadedProject(res)
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = null
+    this.resetPendingToolState()
+    this.markDirty()
+    this.notify()
+  }
+
+  /** The trains, settings and provenance a loaded file brings; its network is already in place */
+  private adoptLoadedProject(res: ReturnType<typeof deserializeNetwork>): void {
     this.locomotive = null
     this.restoreTrains(res.trains)
     if (res.projectName) this.projectName = res.projectName
@@ -1002,11 +1046,71 @@ export class EditorStore {
     if (typeof res.boardHeight === 'number' && res.boardHeight > 0) {
       this.boardHeight = res.boardHeight
     }
+  }
+
+  /** The project is no longer one of the dataset */
+  private forgetDataset(): void {
+    this.dataset = null
+    this.datasetIndex = null
+    this.datasetFiles = new Map()
+    this.datasetPending.clear()
+    this.datasetLoader = null
+    this.datasetReloadPending = false
+  }
+
+  /**
+   * Load the lines of the dataset as a locked project: `project` is their union (already
+   * reconciled by the generator, so it is adopted as it is), `files` the file of each line,
+   * `frame` the box the camera is put on unless the project (or `options.camera`) has one.
+   * Trains given in `options` stand in for those of the project (a recipe reloaded at start).
+   */
+  loadDataset = (
+    recipe: DatasetRecipe,
+    project: SerializedProject,
+    files: ReadonlyMap<LineId, SerializedProject>,
+    index: DatasetIndex,
+    frame: BBox | null,
+    options: { name?: string; trains?: SerializedProject['trains']; camera?: SerializedProject['camera'] } = {},
+  ): void => {
+    const data: SerializedProject = { ...project }
+    if (options.trains !== undefined) data.trains = options.trains
+    // The camera of a line file (if any) says nothing: the frame of the journey does, unless a saved one is given
+    if (options.camera) data.camera = options.camera
+    else delete data.camera
+    const tolerance = placementThresholds(typeof data.gauge === 'number' ? data.gauge : undefined).reconcileTolerance
+    const res = deserializeNetwork(data, tolerance)
+    this.network = res.network
+    this.dataset = recipe
+    this.datasetIndex = index
+    this.datasetFiles = new Map(files)
+    this.datasetPending.clear()
+    this.datasetReloadPending = false
+    this.adoptLoadedProject(res)
+    if (options.name) this.projectName = options.name
+    if (!options.camera && frame) this.frameBox(frame)
     this.selection = { nodes: new Set(), segments: new Set() }
-    this.selectedStationId = null
     this.resetPendingToolState()
+    this.tool = 'select'
+    // Nothing to undo back to: the dialog said the previous project would be replaced
+    this.history = []
+    this.historyIndex = -1
+    this.pendingEdit = 'none'
+    this.autosaveFailed = false
+    this.selectedStationId = recipe.stations.find((id) => this.network.stations.has(id)) ?? null
     this.markDirty()
     this.notify()
+  }
+
+  /** Put the camera on a world box, with a margin, within the viewport */
+  frameBox = (box: BBox, viewportW?: number, viewportH?: number): void => {
+    const vw = viewportW ?? this.viewport.w
+    const vh = viewportH ?? this.viewport.h
+    const width = Math.max(1, box.maxX - box.minX)
+    const height = Math.max(1, box.maxY - box.minY)
+    this.camera.x = (box.minX + box.maxX) / 2
+    this.camera.y = (box.minY + box.maxY) / 2
+    this.camera.scale = clampScale(0.9 * Math.min(vw / width, vh / height))
+    this.notifyView()
   }
 
   /**
@@ -1115,6 +1219,7 @@ export class EditorStore {
     this.restoreSignalDisplay({})
     this.flatLevels = false
     this.osmSource = null
+    this.forgetDataset()
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
@@ -1238,6 +1343,8 @@ export class EditorStore {
   }
 
   setTool = (t: Tool): void => {
+    // A dataset project keeps its track as it is: only the looking and train tools apply
+    if (this.isNetworkLocked && !DATASET_LOCKED_TOOLS.has(t)) return
     // If transitioning away from an active creation without finishing, clean up abandoned degree 0 nodes
     this.discardPendingPlacement()
 
@@ -1437,6 +1544,7 @@ export class EditorStore {
    * donnés ou sélectionnés, sinon à partir de 2 nœuds sélectionnés (vecteur perpendiculaire).
    */
   createParallelTrackFromSelection = (customOffset?: number, segmentIds?: Iterable<string>): boolean => {
+    if (this.isNetworkLocked) return false
     const segIds = [...(segmentIds ?? this.selection.segments)]
     if (segIds.length > 0) {
       return this.createParallelTrackFromSegments(segIds, customOffset ?? this.parallelOffset)
@@ -1494,6 +1602,7 @@ export class EditorStore {
    * Relie directement deux nœuds sélectionnés par un rail droit.
    */
   connectSelectedNodes = (): boolean => {
+    if (this.isNetworkLocked) return false
     if (this.selection.nodes.size !== 2) return false
     const [idA, idB] = [...this.selection.nodes]
     // The rail runs from the height of one node to the height of the other (a ramp when they differ)
@@ -1873,6 +1982,9 @@ export class EditorStore {
       }
     }
 
+    // The track of a dataset project stays
+    if (this.isNetworkLocked) return
+
     const sel = this.selection
     if (sel.segments.size === 0 && sel.nodes.size === 0) return
 
@@ -2013,6 +2125,7 @@ export class EditorStore {
    * Reconcile pass run after every track edit, with the tolerance of the current scale.
    */
   reconcileNetwork = (): { splitCount: number; weldedCount: number } => {
+    if (this.isNetworkLocked) return { splitCount: 0, weldedCount: 0 }
     return reconcileNetworkIntersections(this.network, this.getPlacementThresholds().reconcileTolerance)
   }
 
@@ -2025,6 +2138,7 @@ export class EditorStore {
    * Returns true when at least one node changed height.
    */
   shiftSelectionLevel = (delta: number): boolean => {
+    if (this.isNetworkLocked) return false
     const net = this.network
     const step = Math.round(delta)
     if (step === 0) return false
@@ -2198,6 +2312,7 @@ export class EditorStore {
    * at intersecting points/nodes, and auto-detect turnouts & crossings.
    */
   reconcileTopology = (tolerance = this.getPlacementThresholds().healTolerance): { splitCount: number; weldedCount: number } => {
+    if (this.isNetworkLocked) return { splitCount: 0, weldedCount: 0 }
     const res = reconcileNetworkIntersections(this.network, tolerance)
     const pruned = this.pruneOrphans(false)
     if (res.splitCount > 0 || res.weldedCount > 0 || pruned > 0) {
@@ -2213,7 +2328,7 @@ export class EditorStore {
    * Refused while driving. Returns the number of rails before and after, null when refused.
    */
   simplifyToLongRails = (): { before: number; after: number } | null => {
-    if (this.isPlayMode) return null
+    if (this.isPlayMode || this.isNetworkLocked) return null
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
     const result = mergeIntoLongRails(this.network, {
@@ -2239,6 +2354,7 @@ export class EditorStore {
   }
 
   flipCurveSide = (): void => {
+    if (this.isNetworkLocked) return
     this.curveSide = this.curveSide === 1 ? -1 : 1
     this.autoCurveSide = false
     this.notify()
@@ -2260,6 +2376,7 @@ export class EditorStore {
   }
 
   setSelectedCurveRadius = (r: number): void => {
+    if (this.isNetworkLocked) return
     this.selectedCurveRadius = r
     const idx = CURVE_RADII.indexOf(r)
     if (idx >= 0) this.curveProfileIdx = idx
@@ -2277,11 +2394,13 @@ export class EditorStore {
   }
 
   setSelectedTurnoutHand = (hand: 'left' | 'right'): void => {
+    if (this.isNetworkLocked) return
     this.selectedTurnoutHand = hand
     this.notify()
   }
 
   toggleTurnoutHand = (): void => {
+    if (this.isNetworkLocked) return
     this.selectedTurnoutHand = this.selectedTurnoutHand === 'left' ? 'right' : 'left'
     this.notify()
   }
@@ -2385,6 +2504,7 @@ export class EditorStore {
    * (`lastJunctionRefusal` says which).
    */
   toggleTurnoutHandAtSelection = (junctionId?: JunctionId): boolean => {
+    if (this.isNetworkLocked) return false
     let junc: Junction | undefined = junctionId ? this.network.junctions.get(junctionId) : undefined
     if (!junctionId) {
       for (const nid of this.selection.nodes) {
@@ -3270,6 +3390,7 @@ export class EditorStore {
    * with null. Returns true when a rail changed.
    */
   setSelectionCant = (cant: number | null): boolean => {
+    if (this.isNetworkLocked) return false
     if (cant !== null && !Number.isFinite(cant)) return false
     // Whole millimetres within CANT_RANGE; only a curved rail carries a cant
     const target = cant === null ? undefined : Math.max(CANT_RANGE.min, Math.min(CANT_RANGE.max, Math.round(cant)))

@@ -351,7 +351,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // The gizmo is drawn last, on the selection anchor: section badges keep clear of it
-    const gizmoAnchor = store.tool === 'select' && !store.isPlayMode ? getGizmoAnchor(store.network, store.selection) : null
+    const gizmoAnchor = store.tool === 'select' && store.canEditNetwork ? getGizmoAnchor(store.network, store.selection) : null
     const gizmoScreen = gizmoAnchor
       ? {
           x: (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2,
@@ -1192,7 +1192,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const py = e.clientY - rect.top
 
       // Priority 0: Check if click hit a 2D Gizmo translation/rotation handle on selected node or section
-      if (e.button === 0 && store.tool === 'select') {
+      if (e.button === 0 && store.tool === 'select' && store.canEditNetwork) {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
@@ -1828,7 +1828,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.selection = { nodes: new Set([nodeId]), segments: new Set() }
             }
           }
-          // Start dragging selected nodes!
+          // Start dragging selected nodes (not on a dataset project: its track stays where it is)
+          if (!store.canEditNetwork) {
+            redraw()
+            return
+          }
           store.isDraggingNode = true
           store.dragStartWorld = world
           dragPrimaryNodeId = nodeId

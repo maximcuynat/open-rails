@@ -125,12 +125,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         { id: 'undo', label: 'Annuler', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
         { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Maj+Z', disabled: !store.canRedo, separatorAfter: true },
-        { id: 'delete', label: 'Supprimer', shortcut: 'Suppr', disabled: !hasSelection || store.hasPendingPlacement },
-        { id: 'parallel', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack, separatorAfter: true },
+        { id: 'delete', label: 'Supprimer', shortcut: 'Suppr', disabled: !hasSelection || store.hasPendingPlacement || store.isNetworkLocked },
+        { id: 'parallel', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack || store.isNetworkLocked, separatorAfter: true },
         { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A' },
         { id: 'clear', label: 'Tout désélectionner', separatorAfter: true },
-        { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R' },
-        { id: 'long-rails', label: 'Simplifier en rails longs', disabled: store.isPlayMode || store.network.segments.size === 0 },
+        { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R', disabled: store.isNetworkLocked },
+        { id: 'long-rails', label: 'Simplifier en rails longs', disabled: store.isPlayMode || store.isNetworkLocked || store.network.segments.size === 0 },
       ],
       onSelect: (id) => {
         switch (id) {

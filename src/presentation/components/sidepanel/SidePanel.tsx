@@ -1622,7 +1622,13 @@ function InspectorContent({ store }: { store: EditorStore }) {
   } else {
     content = <NetworkPanel store={store} />
   }
-  return content
+  if (!store.isNetworkLocked) return content
+  return (
+    <>
+      <p className="settings-hint sp-locked-note">Réseau importé du jeu de données « LGV France » : la voie n’est pas modifiable.</p>
+      {content}
+    </>
+  )
 }
 
 export function SidePanel({ store }: { store: EditorStore }) {
