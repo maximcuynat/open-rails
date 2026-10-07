@@ -7,3 +7,5 @@ dist
 .claude/
 skills-lock.json
 image.png
+
+tools/lgv-dataset/cache/
