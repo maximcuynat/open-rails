@@ -155,13 +155,13 @@ Hypothèses prises faute de réponse (à confirmer) :
   libre (le jeu de données pré-calculé ne passe pas par là).
 
 ### Lot 1 — Repère global et gares
-- [ ] 4. Projection Lambert-93 à origine fixe dans `osmProjection.ts` (option, l'existante reste
+- [x] 4. Projection Lambert-93 à origine fixe dans `osmProjection.ts` (option, l'existante reste
   par défaut pour l'import libre) ; `osmSource` porte le repère.
-- [ ] 5. Lecture des gares dans `osmRead` / `osmBuild` : nœuds et zones `railway=station`,
+- [x] 5. Lecture des gares dans `osmRead` / `osmBuild` : nœuds et zones `railway=station`,
   `uic_ref`, `name` ; rattachement aux rails à quai ; remplissage de `station_stop`.
-- [ ] 6. Type `Station` dans le domaine, sérialisé dans `SerializedProject` (version 4), dessiné
+- [x] 6. Type `Station` dans le domaine, sérialisé dans `SerializedProject` (version 4), dessiné
   (nom au niveau de détail adapté).
-- [ ] 7. Liste des gares voyageurs SNCF embarquée (`src/domain/import/stations-fr.json`, code UIC,
+- [x] 7. Liste des gares voyageurs SNCF embarquée (`src/domain/import/stations-fr.json`, code UIC,
   nom, lat/lon) ; croisement par `uic_ref` puis par distance.
 
 ### Lot 2 — Jeu de données « LGV France »
@@ -292,6 +292,37 @@ Pistes à creuser (étape 16, pas bloquantes) :
   (0,18 s pour 600 km), à revoir si la France entière devait se charger d'un coup.
 - La vue d'ensemble (niveau schématique) dessine 16 000 appels canvas pour la France : une
   polyligne par section existe déjà, elle profitera des rails longs.
+
+### Lot 1 — fait le 2026-10-07 (branche `feature/lignes-lgv`, trois commits)
+
+- **Repère Lambert-93** (`osmProjection.ts`) : option `frame` de l'import, case « Repère national
+  Lambert-93 » dans la fenêtre, `OsmSource.frame` gardé par la persistance. Formules vérifiées au
+  centimètre sur trois gares SNCF (x_l93/y_l93 ↔ WGS84). La projection locale reste le défaut.
+- **`Network.stations`** : `Station { id, name, pos, uic?, code?, stops: { segId, t, ref? }[] }`,
+  module `models/stations.ts` (add, remove, identité, clean, remap via `replaceRail`, restore),
+  compté par la révision, sauvegardé en **version 4** du projet quand il y a des gares, annulé et
+  rechargé comme le reste.
+- **Import** : la requête Overpass ramène les nœuds `railway=station|halt` ; `osmStations.ts`
+  groupe les positions d'arrêt (`railway=stop`) par code UIC puis par nom à moins de 1 500 m,
+  le nœud de gare précise nom et trigramme (`railway:ref`), un bâtiment seul se rattache aux voies
+  à moins de 80 m, un nœud sur une voie non importée (métro) reste à sa voie. Placeur commun avec
+  les signaux (`osmPlace.ts`). Les voies à quai deviennent des sections `station_stop` nommées
+  « Gare · voie n » (`stationSectionMeta`). Fixture de Clelles enrichie des tags de gare : 1 gare,
+  UIC 8774762, CMS, 2 arrêts.
+- **Liste SNCF** « gares de voyageurs » (2 792 gares, ODbL) dans `src/data/stations-fr.json`
+  (167 ko, régénérée par `tools/stations/fetch-sncf-stations.mjs`), chargée à la demande par la
+  fenêtre d'import ; correspondance par UIC (7 chiffres) sinon à moins de 300 m → nom officiel,
+  trigramme.
+- **Canvas et panneau** : marque et pastille de nom à tout niveau de détail (`stationRender.ts`),
+  réservées avant les signaux et les badges ; sélection et survol avec l'outil sélection ;
+  `StationPanel` en lecture seule (nom, code, UIC, voies à quai et leurs sections).
+- Suite : 2 542 tests verts, `npm run build` vert, contrôle à l'écran sur la fixture de Clelles
+  (fenêtre : « 1 dans la zone », bilan « 1 gare posée, avec 2 voies à quai », projet sauvé en
+  version 4 avec « Clelles - Mens », CMS, deux sections « voie 1 » / « voie 2 »).
+
+Reste pour plus tard (noté) : ramener les ways `railway=platform` pour les numéros de voie quand
+les arrêts n'ont pas de `local_ref` ; mention SNCF dans la fenêtre « À propos » seulement quand le
+projet a des gares (aujourd'hui dès qu'il vient d'OSM).
 
 ## Hors périmètre (cette version)
 

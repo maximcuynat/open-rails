@@ -10,6 +10,7 @@ import {
   groupIssues,
   osmSizeWarning,
   realSignalsInArea,
+  stationsInArea,
   reportFigures,
   reportNotes,
   signalModeHint,
@@ -648,6 +649,10 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
                   </Option>
                   <Option checked={options.disusedTracks} onChange={(on) => set('disusedTracks', on)}>
                     Voies désaffectées
+                  </Option>
+                  <Option checked={options.stations !== false} onChange={(on) => set('stations', on)}>
+                    Gares et voies à quai
+                    {dataset && survey.value && <span className="osm-option-count"> · {stationsInArea(survey.value)}</span>}
                   </Option>
                   {EXTRA_KINDS.map(({ kind, label }) => {
                     const present = survey.value?.extraKinds[kind] ?? 0

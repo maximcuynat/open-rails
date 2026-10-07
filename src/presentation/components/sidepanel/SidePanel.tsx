@@ -19,7 +19,7 @@ import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedL
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
 import { formatDistance, formatRadius } from '@domain/models/units'
-import type { Signal, SpeedZone } from '@domain/models/types'
+import type { Signal, SpeedZone, Station } from '@domain/models/types'
 import { signalBlock } from '@domain/models/signalBlocks'
 import { signalReport } from '@domain/models/signalReport'
 import { defaultSignalStatus, signalAspect } from '@domain/models/signalling'
@@ -185,6 +185,29 @@ function SpeedZonePanel({ store, zone }: { store: EditorStore; zone: SpeedZone }
       <button className="sp-danger" onClick={() => store.deleteSpeedZone(zone.id)}>
         Supprimer la limite
       </button>
+    </>
+  )
+}
+
+/** A station picked with the selection tool: what the import read of it, and its platform tracks */
+function StationPanel({ store, station }: { store: EditorStore; station: Station }) {
+  const sections = networkDerived(store.network, store.sectionMeta).sections
+  return (
+    <>
+      <PanelHeader>Gare</PanelHeader>
+      <div className="sp-section">
+        <Field label="Nom" value={station.name} />
+        {station.code && <Field label="Code" value={station.code} />}
+        {station.uic && <Field label="UIC" value={station.uic} />}
+        <Field label="Voies à quai" value={station.stops.length === 0 ? 'aucune' : String(station.stops.length)} />
+        {station.stops.map((stop, i) => {
+          const section = findSectionBySegment(sections, stop.segId)
+          return <Field key={`${stop.segId}-${i}`} label={`Voie ${stop.ref ?? i + 1}`} value={section ? section.name : '—'} />
+        })}
+      </div>
+      <div className="sp-section">
+        <p className="sp-hint">Lue depuis OpenStreetMap et la liste des gares de la SNCF ; elle suit ses rails et ne se modifie pas ici.</p>
+      </div>
     </>
   )
 }
@@ -1573,7 +1596,10 @@ function InspectorContent({ store }: { store: EditorStore }) {
   let content: ReactNode
   const speedZone = store.selectedSpeedZone
   const signal = store.selectedSignal
-  if (signal) {
+  const station = store.selectedStation
+  if (station) {
+    content = <StationPanel key={station.id} store={store} station={station} />
+  } else if (signal) {
     // Signalling mode: the picked signal comes before anything else
     content = <SignalPanel key={signal.id} store={store} signal={signal} />
   } else if (speedZone) {

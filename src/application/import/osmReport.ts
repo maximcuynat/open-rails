@@ -108,6 +108,12 @@ export function reportNotes(report: OsmImportReport): string[] {
         : 'Un groupe de voies isolé du réseau principal a été laissé de côté.',
     )
   }
+  if (report.stations) {
+    const { placed, stops, skipped } = report.stations
+    if (placed > 0) notes.push(`${plural(placed, 'gare posée', 'gares posées')}, avec ${plural(stops, 'voie à quai', 'voies à quai')}.`)
+    const without = skipped['no-track-nearby'] ?? 0
+    if (without > 0) notes.push(`${plural(without, 'gare nommée sans voie importée à portée', 'gares nommées sans voie importée à portée')} : non posée${without > 1 ? 's' : ''}.`)
+  }
   return notes
 }
 
@@ -200,6 +206,13 @@ export function defaultSignalMode(level: SignallingLevel): OsmSignalMode {
 }
 
 /** « 125 signaux réels dans la zone »: the ones the import can lay, counted before anything is built */
+/** How many stations the data names in the area, beside the box that imports them */
+export function stationsInArea(survey: Pick<OsmSurvey, 'stations'>): string {
+  const count = survey.stations ?? 0
+  if (count <= 0) return 'aucune dans la zone'
+  return count > 1 ? `${formatCount(count)} dans la zone` : '1 dans la zone'
+}
+
 export function realSignalsInArea(survey: Pick<OsmSurvey, 'usableSignals' | 'typedMainSignals'>): string {
   const count = survey.usableSignals ?? survey.typedMainSignals
   if (count <= 0) return 'aucun signal réel dans la zone'

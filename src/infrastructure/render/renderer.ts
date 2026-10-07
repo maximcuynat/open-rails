@@ -15,6 +15,7 @@ import { nodesAmongInBox, nodesInBox, railsInBox } from '@domain/geometry/networ
 import { networkCheckToken } from '@domain/models/networkWatch'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
+import { renderStations, type StationRenderOptions } from './stationRender'
 import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type SectionStripeStyle } from './lodTracks'
 import { renderCantMarks } from './cantRender'
 import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGradientChevrons, type GradientColors } from './gradientRender'
@@ -541,6 +542,8 @@ export interface RenderNetworkOptions {
   speedZones?: SpeedZoneHighlight
   /** Signals, blocks and what goes with them (see `renderSignalling`). Absent: no signal is drawn. */
   signals?: SignalRenderOptions
+  /** The station picked and the one under the cursor; the stations themselves are always drawn */
+  stations?: Pick<StationRenderOptions, 'selectedId' | 'hoveredId'>
   /**
    * Cant and slopes marked on the track (`cantRender.ts`, `gradientRender.ts`). Absent: neither is
    * drawn. The cant is read under `line` — full size only — and the slopes need `gradient`.
@@ -985,6 +988,10 @@ export function renderNetwork(
       diagnosticMarkers.push(...merged)
     }
   }
+
+  // STATIONS: a mark and a name, at every zoom, driving view included; they take their room before
+  // the signals and the badges
+  renderStations(ctx, cam, vw, vh, net, { ...options?.stations, space })
 
   // Speed zone boards (part of the track: they stay in driving mode) and overlap warnings. Hidden
   // with the bands at far zoom.

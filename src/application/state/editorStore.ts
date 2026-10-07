@@ -13,7 +13,7 @@ import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctio
 import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
-import { cleanStations } from '@domain/models/stations'
+import { cleanStations, stationAt } from '@domain/models/stations'
 import {
   addSignal,
   addSignalPair,
@@ -26,7 +26,7 @@ import {
   signalsRevision,
   type SignalRefusal,
 } from '@domain/models/signals'
-import type { Signal, SignalRole } from '@domain/models/types'
+import type { Signal, SignalRole, Station } from '@domain/models/types'
 import { addSignalRow, moveSignalsOffSwitches, signalForwardFor, signalRowPlaces, slideSignal } from '@domain/services/signalLayout'
 import { signalHeadWorld } from '@infrastructure/render/signalRender'
 import {
@@ -504,6 +504,10 @@ export class EditorStore {
   signalRowStart: SignalAim | null = null
   /** Signal tools: where the drag along the track has got to; null while the gesture is still a click */
   signalRowEnd: TrackPoint | null = null
+  /** Station picked with the selection tool (read only: its panel says what it is) */
+  selectedStationId: string | null = null
+  /** Station under the cursor with the selection tool */
+  hoveredStationId: string | null = null
   /** Signal picked in the signalling mode */
   selectedSignalId: string | null = null
   /** Signal under the cursor in the signalling mode (select and delete sub-modes) */
@@ -751,6 +755,7 @@ export class EditorStore {
         this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
+        this.selectedStationId = null
         this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
@@ -786,6 +791,7 @@ export class EditorStore {
         this.restoreSignallingSettings(res)
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
+        this.selectedStationId = null
         this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
@@ -997,6 +1003,7 @@ export class EditorStore {
       this.boardHeight = res.boardHeight
     }
     this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = null
     this.resetPendingToolState()
     this.markDirty()
     this.notify()
@@ -1110,6 +1117,7 @@ export class EditorStore {
     this.osmSource = null
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = null
     this.tool = 'pan'
     this.resetPendingToolState()
     this.projectName = DEFAULT_PROJECT_NAME
@@ -1237,8 +1245,14 @@ export class EditorStore {
     // survive as a real selection (and show the gizmo) once the tool is left
     if (this.tool !== t && (this.tool === 'place' || this.tool === 'curve' || this.tool === 'turnout')) {
       this.selection = { nodes: new Set(), segments: new Set() }
+      this.selectedStationId = null
     }
 
+    // A station is only picked with the selection tool
+    if (t !== 'select') {
+      this.selectedStationId = null
+      this.hoveredStationId = null
+    }
     // Zones are only picked inside the signalling mode, which always opens on its selection
     if (t !== 'signal' || this.tool !== 'signal') {
       this.signalToolSubMode = 'select'
@@ -1710,6 +1724,7 @@ export class EditorStore {
 
   clearSelection = (): void => {
     this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = null
     this.notify()
   }
 
@@ -2200,6 +2215,7 @@ export class EditorStore {
   simplifyToLongRails = (): { before: number; after: number } | null => {
     if (this.isPlayMode) return null
     this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = null
     const result = mergeIntoLongRails(this.network, {
       fit: fitPath,
       // 30 cm at full size, and the same share of the gauge on a model scale
@@ -3763,6 +3779,34 @@ export class EditorStore {
   }
 
   /** The signal picked in the signalling mode; null outside it or once the signal is gone */
+  /** The station picked, if it still exists */
+  get selectedStation(): Station | null {
+    return this.selectedStationId ? this.network.stations.get(this.selectedStationId) ?? null : null
+  }
+
+  /** Pick a station (null: none): its panel opens. Picking one drops the track selection. */
+  selectStation = (id: string | null): boolean => {
+    if (id !== null && !this.network.stations.has(id)) return false
+    if (id === this.selectedStationId) return true
+    if (id !== null) this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = id
+    this.notify()
+    return true
+  }
+
+  /** The station whose mark is under a world position, within `tolerance` metres */
+  stationAt = (worldPos: Point, tolerance: number = 14 / this.camera.scale): Station | null => {
+    return stationAt(this.network, worldPos, tolerance)
+  }
+
+  /** Remember the station under the cursor (selection tool). True when it changed. */
+  updateStationHover = (worldPos: Point): boolean => {
+    const hovered = this.tool === 'select' && !this.isPlayMode ? this.stationAt(worldPos)?.id ?? null : null
+    if (hovered === this.hoveredStationId) return false
+    this.hoveredStationId = hovered
+    return true
+  }
+
   get selectedSignal(): Signal | null {
     if (this.tool !== 'signal' || !this.selectedSignalId) return null
     return this.network.signals.get(this.selectedSignalId) ?? null

@@ -394,6 +394,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         // Construction view only, and not with a signal tool in hand: the preview says enough then
         report: !store.isPlayMode && store.tool !== 'pan' && store.signalPlacementMode === null,
       },
+      stations: { selectedId: store.selectedStationId, hoveredId: store.hoveredStationId },
     }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
@@ -1803,6 +1804,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
+        // A station first: its mark is small and stands over the track
+        const station = store.stationAt(world, hitTol)
+        if (station) {
+          store.selectStation(station.id)
+          redraw()
+          return
+        }
+        if (store.selectedStationId) store.selectStation(null)
         const nodeId = hitShownNode(store.network, store.selection, world, hitTol, store.camera.scale)
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
@@ -2141,7 +2150,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const hoveredNodeId = hitShownNode(store.network, store.selection, rawWorld, hitTol, store.camera.scale)
           const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
           const hoveredVehicle = store.trains.length > 0 ? store.findVehicleAt(rawWorld) : null
-          if (hoveredNodeId || hoveredSegId || hoveredVehicle) {
+          if (store.updateStationHover(rawWorld)) draw()
+          if (hoveredNodeId || hoveredSegId || hoveredVehicle || store.hoveredStationId) {
             canvas.style.cursor = 'pointer'
           } else if (canvas.style.cursor === 'pointer') {
             canvas.style.cursor = isSpaceDown ? 'grab' : ''
