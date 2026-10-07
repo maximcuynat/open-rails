@@ -20,31 +20,62 @@ import type { Network } from './types'
 // The tests run with `verifyNetworkRevisions`: every revision read is checked against the content
 // of the network, and a change made without `touchNetwork` throws.
 
-interface Counter {
-  value: number
+/** One move of the revision of a network: what was put, taken out or changed in place, by its id */
+export interface JournalEntry {
+  op: 'set' | 'delete' | 'touch'
+  /** Which map the id is a key of; unknown for a touch that only gave an id */
+  map: keyof Network | null
+  /**
+   * Null: the whole map (or, with no map, the whole network) is to be looked at again. A touch of
+   * the `junctions` map as a whole stands for the tables, zones and signals: nothing of the nodes and rails.
+   */
+  id: string | null
 }
 
-/** A map of a network: changing what it holds moves the revision of the network */
+/** Moves of the revision kept in the journal of a network; a reader further behind reads the whole network */
+const JOURNAL_KEPT = 4096
+
+interface Counter {
+  value: number
+  /** The last moves, `journal[i]` being the one that brought `value` to `journalStart + i + 1` */
+  journal: JournalEntry[]
+  journalStart: number
+}
+
+function record(counter: Counter, entry: JournalEntry): void {
+  counter.value++
+  counter.journal.push(entry)
+  if (counter.journal.length > JOURNAL_KEPT) {
+    // Dropped by halves: shifting the journal at every move would cost as much as it saves
+    const dropped = counter.journal.length >> 1
+    counter.journal.splice(0, dropped)
+    counter.journalStart += dropped
+  }
+}
+
+/** A map of a network: changing what it holds moves the revision of the network, and says what */
 class CountingMap<K, V> extends Map<K, V> {
   private counter: Counter | undefined
+  private name: keyof Network | undefined
 
-  constructor(counter: Counter) {
+  constructor(counter: Counter, name: keyof Network) {
     super()
     this.counter = counter
+    this.name = name
   }
 
   override set(key: K, value: V): this {
-    if (this.counter) this.counter.value++
+    if (this.counter) record(this.counter, { op: 'set', map: this.name!, id: key as unknown as string })
     return super.set(key, value)
   }
 
   override delete(key: K): boolean {
-    if (this.counter) this.counter.value++
+    if (this.counter) record(this.counter, { op: 'delete', map: this.name!, id: key as unknown as string })
     return super.delete(key)
   }
 
   override clear(): void {
-    if (this.counter) this.counter.value++
+    if (this.counter) record(this.counter, { op: 'delete', map: this.name!, id: null })
     super.clear()
   }
 }
@@ -52,31 +83,57 @@ class CountingMap<K, V> extends Map<K, V> {
 const counters = new WeakMap<Network, Counter>()
 /** Changes made in place by code that does not know its network: they count for every network */
 let epoch = 0
+/** The same, for a route table alone: whoever follows a network reads its tables again, nothing else */
+let tablesEpoch = 0
 
 /** An empty network that knows when it changes (see the top of this file) */
 export function createCountedNetwork(): Network {
-  const counter: Counter = { value: 0 }
+  const counter: Counter = { value: 0, journal: [], journalStart: 0 }
   const net: Network = {
-    nodes: new CountingMap(counter),
-    segments: new CountingMap(counter),
-    adjacency: new CountingMap(counter),
-    junctions: new CountingMap(counter),
-    speedZones: new CountingMap(counter),
-    signals: new CountingMap(counter),
+    nodes: new CountingMap(counter, 'nodes'),
+    segments: new CountingMap(counter, 'segments'),
+    adjacency: new CountingMap(counter, 'adjacency'),
+    junctions: new CountingMap(counter, 'junctions'),
+    speedZones: new CountingMap(counter, 'speedZones'),
+    signals: new CountingMap(counter, 'signals'),
   }
   counters.set(net, counter)
   return net
 }
 
-/** Something of the network was changed in place: a node, a rail, a route table, a zone, a signal */
-export function touchNetwork(net: Network): void {
+/**
+ * Something of the network was changed in place: a node, a rail, a route table, a zone, a signal.
+ * `id`: which one, when the caller knows — whoever follows the network then looks at that alone;
+ * `null`: nothing among the nodes and rails (a table, a zone or a signal, which are read whole);
+ * without it, the whole network is looked at again.
+ */
+export function touchNetwork(net: Network, id?: string | null): void {
   const counter = counters.get(net)
-  if (counter) counter.value++
+  if (!counter) return
+  if (id === null) record(counter, { op: 'touch', map: 'junctions', id: null })
+  else record(counter, { op: 'touch', map: null, id: id ?? null })
 }
 
-/** Something was changed in place in a network, whichever it is */
+/**
+ * The moves of the revision of a network since its count was `since`, for whoever follows it:
+ * null when they are no longer kept (the reader reads the whole network), with the count now.
+ * A network without revision has none.
+ */
+export function networkJournal(net: Network, since: number): { entries: readonly JournalEntry[] | null; value: number; epoch: number } | null {
+  const counter = counters.get(net)
+  if (!counter) return null
+  if (since < counter.journalStart || since > counter.value) return { entries: null, value: counter.value, epoch }
+  return { entries: since === counter.value ? [] : counter.journal.slice(since - counter.journalStart), value: counter.value, epoch }
+}
+
+/** Something was changed in place in a network, whichever it is — and whatever it is: every network is read whole again */
 export function networkChanged(): void {
   epoch++
+}
+
+/** A route table was changed in place (points thrown), in a network the caller does not know */
+export function tablesChanged(): void {
+  tablesEpoch++
 }
 
 /**
@@ -196,8 +253,8 @@ export function verifyingNetworkRevisions(): boolean {
 export function networkCheckToken(net: Network): number | undefined {
   const counter = counters.get(net)
   if (!counter) return undefined
-  // Both only ever go up: their sum moves whenever one of them does
-  const revision = counter.value + epoch
+  // All only ever go up: their sum moves whenever one of them does
+  const revision = counter.value + epoch + tablesEpoch
   if (verifying) {
     let record = verified.get(net)
     if (!record) {

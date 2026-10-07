@@ -3,6 +3,7 @@ import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, nodeLeve
 import { splitSegment, declareBranchOff } from '@domain/models/junction'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
+import { touchNetwork } from '../models/networkWatch'
 
 /**
  * Result of computing an auto-connect preview or application.
@@ -851,6 +852,7 @@ export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0, det
         const detachedNode = addNode(net, detachedPos, nodeLevel(bestNode))
         if (seg.from === bestNode.id) seg.from = detachedNode.id
         else if (seg.to === bestNode.id) seg.to = detachedNode.id
+        touchNetwork(net, seg.id)
         // Rebuild adjacency
         net.adjacency.get(bestNode.id)?.splice(adj.indexOf(segIdToDetach), 1)
         net.adjacency.set(detachedNode.id, [segIdToDetach])

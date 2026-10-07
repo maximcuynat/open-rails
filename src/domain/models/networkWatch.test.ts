@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { addNode, addSegment, createNetwork, removeSegment } from './network'
-import { networkChanged, networkCheckToken, touchNetwork, verifyNetworkRevisions } from './networkWatch'
+import { networkChanged, networkCheckToken, networkJournal, touchNetwork, verifyNetworkRevisions } from './networkWatch'
 import { trackGeometryRevision } from './trackSpeed'
 import { networkDerived } from '@infrastructure/render/networkDerived'
 import { declareTurnout, toggleJunction } from './junction'
@@ -97,5 +97,47 @@ describe('the revision of a network', () => {
 
     toggleJunction(junction)
     expect(networkDerived(net)).not.toBe(derived)
+  })
+})
+
+describe('the journal of a network', () => {
+  it('says what moved the revision: the key put or taken out of which map, the id touched, or nothing known', () => {
+    const net = createNetwork()
+    const start = networkJournal(net, 0)!
+    expect(start.entries).toEqual([])
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 10, y: 0 })
+    const rail = addSegment(net, a.id, b.id)!
+    const since = networkJournal(net, 0)!
+    expect(since.entries!.map((e) => `${e.op} ${e.map} ${e.id}`)).toEqual([
+      `set nodes ${a.id}`, `set adjacency ${a.id}`,
+      `set nodes ${b.id}`, `set adjacency ${b.id}`,
+      `set segments ${rail.id}`,
+    ])
+    a.pos = { x: 1, y: 0 }
+    touchNetwork(net, a.id)
+    touchNetwork(net, null)
+    touchNetwork(net)
+    const touched = networkJournal(net, since.value)!
+    expect(touched.entries).toEqual([
+      { op: 'touch', map: null, id: a.id },
+      { op: 'touch', map: 'junctions', id: null },
+      { op: 'touch', map: null, id: null },
+    ])
+    // A count ahead of the network, or from before what is kept, has no entries to give
+    expect(networkJournal(net, touched.value + 1)!.entries).toBeNull()
+    expect(networkJournal(net, touched.value)!.entries).toEqual([])
+    // A network without revision has no journal
+    expect(networkJournal({ ...net }, 0)).toBeNull()
+  })
+
+  it('drops its oldest half past its size: a reader that far behind reads the whole network', () => {
+    const net = createNetwork()
+    const node = addNode(net, { x: 0, y: 0 })
+    const first = networkJournal(net, 0)!.value
+    for (let i = 0; i < 5000; i++) touchNetwork(net, node.id)
+    const now = networkJournal(net, first)!
+    expect(now.entries).toBeNull()
+    expect(networkJournal(net, now.value - 100)!.entries).toHaveLength(100)
   })
 })

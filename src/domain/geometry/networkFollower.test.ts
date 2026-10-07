@@ -7,8 +7,11 @@ import type { PathPiece } from '../models/types'
 import { touchNetwork } from '../models/networkWatch'
 import { snapToNearestTrack } from '../models/locomotive'
 import { getTrackTangentAt } from './tangent'
-import { NetworkFollower, networkIndex, nodesInBox, railsInBox } from './networkFollower'
-import type { Network } from '../models/types'
+import { NetworkFollower, anyChange, dirtyNodesOf, networkChangesSince, networkIndex, nodesInBox, railsInBox } from './networkFollower'
+import { railMeasures } from './railMeasures'
+import { segmentShapeLength } from './segmentGeometry'
+import { declareTurnout, toggleJunction } from '../models/junction'
+import type { Network, RailNode } from '../models/types'
 
 /** Deterministic pseudo-random numbers in [0, 1) */
 function randomSource(seed: number): () => number {
@@ -52,9 +55,10 @@ describe('NetworkFollower', () => {
     const first = follower.follow(net)
     expect(first.movedNodes).toEqual([a.id, b.id, c.id])
     expect(first.changedRails).toEqual([ab.id, bc.id])
-    expect(follower.follow(net)).toEqual({ movedNodes: [], changedRails: [], leftNodes: [] })
+    expect(follower.follow(net)).toEqual({ movedNodes: [], changedRails: [], leftNodes: [], removedNodes: [], removedRails: [], structure: false, reorderedRails: [], changedTables: [] })
 
     c.pos = { x: 200, y: 50 }
+    touchNetwork(net, c.id)
     const moved = follower.follow(net)
     expect(moved.movedNodes).toEqual([c.id])
     expect(moved.changedRails).toEqual([bc.id])
@@ -211,5 +215,222 @@ describe('long rails through the index', () => {
     expect(keptResult).toEqual(exhaustiveResult)
     expect(keptResult.splitCount).toBe(1)
     expect(serializeNetwork(kept, 'x')).toEqual(serializeNetwork(exhaustive, 'x'))
+  })
+})
+
+describe('what the follower tells beyond the geometry', () => {
+  /** A stem, a set of points, a straight and a diverging rail */
+  function fork() {
+    resetIdCounter(0)
+    const net = createNetwork()
+    const stem = addNode(net, { x: 0, y: 0 })
+    const points = addNode(net, { x: 50, y: 0 })
+    const straight = addNode(net, { x: 100, y: 0 })
+    const branch = addNode(net, { x: 100, y: 6 })
+    const s0 = addSegment(net, stem.id, points.id)!
+    const s1 = addSegment(net, points.id, straight.id)!
+    const s2 = addSegment(net, points.id, branch.id)!
+    return { net, stem, points, straight, branch, s0, s1, s2 }
+  }
+
+  it('a node moved is not a change of structure; a rail laid, taken out or re-ended is', () => {
+    const { net, straight, branch, s1, s2 } = fork()
+    const follower = new NetworkFollower()
+    expect(follower.follow(net).structure).toBe(true)
+    straight.pos = { x: 110, y: 0 }
+    touchNetwork(net, straight.id)
+    expect(follower.follow(net).structure).toBe(false)
+    const more = addSegment(net, straight.id, branch.id)!
+    expect(follower.follow(net).structure).toBe(true)
+    removeSegment(net, more.id)
+    expect(follower.follow(net).structure).toBe(true)
+    s1.to = branch.id
+    s2.to = straight.id
+    touchNetwork(net, s1.id)
+    touchNetwork(net, s2.id)
+    expect(follower.follow(net).structure).toBe(true)
+    expect(follower.follow(net).structure).toBe(false)
+  })
+
+  it('tells the rails that are no longer in the order they were', () => {
+    const { net, s0, s1 } = fork()
+    const follower = new NetworkFollower()
+    follower.follow(net)
+    // s1 put back at the end: it is out of sequence with s2, which is told with it
+    net.segments.delete(s1.id)
+    net.segments.set(s1.id, s1)
+    const changes = follower.follow(net)
+    expect(changes.structure).toBe(true)
+    // Read through the journal, the rail put back alone; read whole, the one it passed as well
+    expect(changes.reorderedRails).toContain(s1.id)
+    expect(changes.changedRails).toEqual([])
+    expect(follower.follow(net).reorderedRails).toEqual([])
+    // A rail taken out leaves the order of the others as it was
+    net.segments.delete(s0.id)
+    expect(follower.follow(net).reorderedRails).toEqual([])
+  })
+
+  it('tells the nodes whose route table came, was thrown, moved or went', () => {
+    const { net, points, straight, s0, s1, s2 } = fork()
+    const follower = new NetworkFollower()
+    expect(follower.follow(net).changedTables).toEqual([])
+    const junction = declareTurnout(net, { nodeId: points.id, stemSegmentId: s0.id, straightSegmentId: s1.id, divergingSegmentId: s2.id })!
+    expect(follower.follow(net).changedTables).toEqual([points.id])
+    expect(follower.follow(net).changedTables).toEqual([])
+    toggleJunction(junction)
+    expect(follower.follow(net).changedTables).toEqual([points.id])
+    junction.nodeId = straight.id
+    expect(follower.follow(net).changedTables.sort()).toEqual([points.id, straight.id].sort())
+    net.junctions.delete(junction.id)
+    expect(follower.follow(net).changedTables).toEqual([straight.id])
+  })
+})
+
+describe('the feed of changes of a network', () => {
+  it('gives each reader what changed since its own cursor, as one', () => {
+    const { net, points, straight, branch, s2 } = (() => {
+      resetIdCounter(0)
+      const net = createNetwork()
+      const stem = addNode(net, { x: 0, y: 0 })
+      const points = addNode(net, { x: 50, y: 0 })
+      const straight = addNode(net, { x: 100, y: 0 })
+      const branch = addNode(net, { x: 100, y: 6 })
+      addSegment(net, stem.id, points.id)
+      addSegment(net, points.id, straight.id)
+      const s2 = addSegment(net, points.id, branch.id)!
+      return { net, points, straight, branch, s2 }
+    })()
+    // A reader without cursor starts from the network
+    const first = networkChangesSince(net, undefined)!
+    expect(first.changes).toBeNull()
+    // Nothing changed: nothing to tell, the cursor stays
+    const again = networkChangesSince(net, first.cursor)!
+    expect(again.changes).toEqual({ movedNodes: [], changedRails: [], leftNodes: [], removedNodes: [], removedRails: [], structure: false, reorderedRails: [], changedTables: [] })
+    expect(again.cursor).toBe(first.cursor)
+
+    straight.pos = { x: 110, y: 0 }
+    touchNetwork(net)
+    const other = networkChangesSince(net, undefined)!
+    const moved = networkChangesSince(net, first.cursor)!
+    expect(moved.changes!.movedNodes).toEqual([straight.id])
+    expect(moved.changes!.structure).toBe(false)
+
+    // Two passes later, a reader behind gets both as one; the one up to date gets the last
+    const rail = addSegment(net, straight.id, branch.id)!
+    networkChangesSince(net, moved.cursor)
+    branch.pos = { x: 100, y: 10 }
+    touchNetwork(net)
+    const both = networkChangesSince(net, moved.cursor)!
+    expect(both.changes!.changedRails.sort()).toEqual([rail.id, s2.id].sort())
+    expect(both.changes!.movedNodes).toEqual([branch.id])
+    expect(both.changes!.structure).toBe(true)
+    const last = networkChangesSince(net, other.cursor)!
+    expect(last.changes!.structure).toBe(true)
+    expect(dirtyNodesOf(both.changes!, both.index)).toEqual(new Set([straight.id, branch.id, points.id]))
+  })
+
+  it('leaves behind a reader that waited more passes than it keeps, or more entries than the network holds', () => {
+    const net = scatter(3, 30, 300)
+    const start = networkChangesSince(net, undefined)!
+    const nodes = [...net.nodes.values()]
+    for (let i = 0; i < 70; i++) {
+      const node = nodes[i % nodes.length]
+      node.pos = { x: node.pos.x + 1, y: node.pos.y }
+      touchNetwork(net)
+      networkIndex(net)
+    }
+    expect(networkChangesSince(net, start.cursor)!.changes).toBeNull()
+    // Few passes, but more changed than the network holds
+    const fresh = networkChangesSince(net, undefined)!
+    for (let i = 0; i < 3; i++) {
+      for (const node of net.nodes.values()) node.pos = { x: node.pos.x + 1, y: node.pos.y }
+      touchNetwork(net)
+      networkIndex(net)
+    }
+    expect(networkChangesSince(net, fresh.cursor)!.changes).toBeNull()
+    // A network without revision is compared at every reading
+    const bare = plain(net)
+    const once = networkChangesSince(bare, undefined)
+    expect(once.changes).toBeNull()
+    expect(anyChange(networkChangesSince(bare, once.cursor).changes!)).toBe(false)
+    const node = [...bare.nodes.values()][0]
+    node.pos = { x: node.pos.x + 1, y: node.pos.y }
+    expect(networkChangesSince(bare, once.cursor).changes!.movedNodes).toEqual([node.id])
+  })
+})
+
+describe('rail measures', () => {
+  it('give the length of every rail, measured once, and again when the rail changed', () => {
+    const net = scatter(5, 40, 400)
+    const measures = railMeasures(net)
+    for (const seg of net.segments.values()) expect(measures.shapeLength(seg)).toBe(segmentShapeLength(net, seg))
+    const seg = [...net.segments.values()][4]
+    const node = net.nodes.get(seg.to)!
+    node.pos = { x: node.pos.x + 20, y: node.pos.y + 20 }
+    touchNetwork(net)
+    expect(railMeasures(net).shapeLength(seg)).toBe(segmentShapeLength(net, seg))
+    // Without revision: compared each time, right as well
+    const bare = plain(net)
+    expect(railMeasures(bare).shapeLength(seg)).toBe(segmentShapeLength(bare, seg))
+    node.pos = { x: node.pos.x + 5, y: node.pos.y }
+    expect(railMeasures(bare).shapeLength(seg)).toBe(segmentShapeLength(bare, seg))
+  })
+})
+
+describe('following a network through its journal', () => {
+  it('tells the same changes as a look at the whole network, edit after edit, with the records in order', () => {
+    const net = scatter(11, 120, 600)
+    const random = randomSource(7)
+    const byJournal = new NetworkFollower()
+    byJournal.follow(net)
+    const nodes = (): RailNode[] => [...net.nodes.values()]
+    const rails = () => [...net.segments.values()]
+    for (let step = 0; step < 80; step++) {
+      const whole = new NetworkFollower()
+      whole.follow(net)
+      const kind = random()
+      if (kind < 0.4) {
+        const node = nodes()[Math.floor(random() * net.nodes.size)]
+        node.pos = { x: node.pos.x + 3, y: node.pos.y - 2 }
+        touchNetwork(net, node.id)
+      } else if (kind < 0.55) {
+        const a = nodes()[Math.floor(random() * net.nodes.size)]
+        const b = nodes()[Math.floor(random() * net.nodes.size)]
+        if (a !== b) addSegment(net, a.id, b.id)
+      } else if (kind < 0.7) {
+        removeSegment(net, rails()[Math.floor(random() * net.segments.size)].id)
+      } else if (kind < 0.8) {
+        // A rail put back at the end of the network
+        const seg = rails()[Math.floor(random() * net.segments.size)]
+        net.segments.delete(seg.id)
+        net.segments.set(seg.id, seg)
+      } else if (kind < 0.9) {
+        const seg = rails().find((s) => s.via)!
+        seg.via = { x: seg.via!.x + 1, y: seg.via!.y }
+        touchNetwork(net, seg.id)
+      } else {
+        const node = nodes()[Math.floor(random() * net.nodes.size)]
+        node.level = (node.level ?? 0) + 1
+        touchNetwork(net, node.id)
+      }
+      const told = byJournal.follow(net)
+      const seen = whole.follow(net)
+      // The same nodes and rails told (a rail put back: the journal names it alone, the whole look names its neighbour too)
+      expect([...told.movedNodes].sort()).toEqual([...seen.movedNodes].sort())
+      expect([...told.changedRails].sort()).toEqual([...seen.changedRails].sort())
+      expect([...told.removedRails].sort()).toEqual([...seen.removedRails].sort())
+      expect(told.structure).toBe(seen.structure)
+      for (const id of seen.reorderedRails) if (!told.reorderedRails.includes(id)) expect(told.reorderedRails.length).toBeGreaterThan(0)
+      // The records read through the journal are those of the network, in its order (checked by the test setup too)
+      let ord = -1
+      for (const node of net.nodes.values()) {
+        const rec = byJournal.nodes.get(node.id)!
+        expect(rec.ord).toBeGreaterThan(ord)
+        ord = rec.ord
+      }
+      expect(railsInBox(net, { minX: 100, minY: 100, maxX: 300, maxY: 300 }).map((s) => s.id)).toEqual(
+        railsInBox(plain(net), { minX: 100, minY: 100, maxX: 300, maxY: 300 }).map((s) => s.id),
+      )
+    }
   })
 })
