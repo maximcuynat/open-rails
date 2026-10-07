@@ -1,4 +1,4 @@
-import type { NodeId } from '../models/types'
+import type { NodeId, Point } from '../models/types'
 import type { OsmImportIssue, OsmImportOptions, OsmImportReport, OsmImportResult, OsmSurvey, OverpassResponse } from './osmTypes'
 import { throughTracksAtNode } from '../models/crossing'
 import { findJunctionAtNode, syncJunctions } from '../models/junction'
@@ -6,7 +6,7 @@ import { generateId, resetIdCounter, segmentBand, syncIdCounter } from '../model
 import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { analyzeKinematics } from '../services/kinematicDiagnostics'
 import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
-import { createProjection } from './osmProjection'
+import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
 import { buildChains, buildGraph, chainEnds, components, restrictGraph, type Chain, type TrackGraph } from './osmGraph'
 import { findChainCrossings, type ChainCrossing } from './osmCrossings'
 import { planLevels, separateStructures, trackAt } from './osmLevels'
@@ -31,7 +31,14 @@ const RAILS_PER_LEVEL_CHANGE = 1.9
 /** How many times the contacts left are settled the way the editor would, each time changing the track */
 const MAX_SETTLE_PASSES = 20
 
-/** Centre of the tracks kept: the origin of the projection */
+/** The frame of an import and its projection: the national one when asked for, else centred on the data */
+function frameOf(read: OsmRead, options: OsmImportOptions): { frame: OsmFrame; origin: { lat: number; lon: number }; project: (lat: number, lon: number) => Point } {
+  const frame: OsmFrame = options.frame ?? 'local'
+  const origin = frame === 'lambert93' ? LAMBERT93_ORIGIN : centreOf(read)
+  return { frame, origin, project: projectionFor(frame, origin) }
+}
+
+/** Centre of the tracks kept: the origin of the local projection */
 function centreOf(read: OsmRead): { lat: number; lon: number } {
   let south = Infinity
   let north = -Infinity
@@ -85,8 +92,8 @@ function innerBox(data: OverpassResponse, read: OsmRead): { south: number; north
 }
 
 /** The graph of the tracks the options keep, without the parts that do not touch the main network */
-function mainNetwork(read: OsmRead, options: OsmImportOptions, origin: { lat: number; lon: number }): { graph: TrackGraph; dropped: number; droppedLength: number } {
-  const whole = buildGraph(read, createProjection(origin.lat, origin.lon))
+function mainNetwork(read: OsmRead, options: OsmImportOptions, project: (lat: number, lon: number) => Point): { graph: TrackGraph; dropped: number; droppedLength: number } {
+  const whole = buildGraph(read, project)
   const keep = new Set<number>()
   let dropped = 0
   let droppedLength = 0
@@ -108,7 +115,7 @@ function mainNetwork(read: OsmRead, options: OsmImportOptions, origin: { lat: nu
  */
 export function surveyOsm(data: OverpassResponse, options: OsmImportOptions): OsmSurvey {
   const read = readOsm(data, options)
-  const { graph, droppedLength } = mainNetwork(read, options, centreOf(read))
+  const { graph, droppedLength } = mainNetwork(read, options, frameOf(read, options).project)
   const survey: OsmSurvey = {
     ways: 0,
     lengthKm: 0,
@@ -187,10 +194,10 @@ interface Attempt {
 /** Converts an Overpass answer into a network ready to be loaded as it is. */
 export function convertOsm(data: OverpassResponse, options: OsmImportOptions): OsmImportResult {
   const read = readOsm(data, options)
-  const origin = centreOf(read)
+  const { frame, origin, project } = frameOf(read, options)
 
   // Only the main network is kept: what does not touch it is counted and left out
-  const { graph, dropped } = mainNetwork(read, options, origin)
+  const { graph, dropped } = mainNetwork(read, options, project)
 
   const chains = buildChains(graph)
   const ends = chainEnds(chains)
@@ -312,14 +319,14 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     graph,
     chains,
     built,
-    project: createProjection(origin.lat, origin.lon),
+    project,
     mode: options.signals ?? 'generated',
     line: importLine(lineSpeed, highSpeed),
   })
   report.signals = signals.report
   issues.push(...signals.issues)
 
-  const result: OsmImportResult = { network: net, highSpeed, origin, report }
+  const result: OsmImportResult = { network: net, highSpeed, origin, frame, report }
   if (lineSpeed !== undefined) result.lineSpeed = lineSpeed
   const dataDate = data?.osm3s?.timestamp_osm_base
   if (typeof dataDate === 'string') result.dataDate = dataDate

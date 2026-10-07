@@ -473,6 +473,16 @@ describe('what an import leaves in a project', () => {
     }
   })
 
+  it('keeps the frame of an import made in Lambert-93, and reads anything else as local', () => {
+    const national = { ...source, frame: 'lambert93' as const }
+    const data = JSON.parse(JSON.stringify(save({ osmSource: national })))
+    expect(data.osmSource).toEqual(national)
+    expect(deserializeNetwork(data).osmSource).toEqual(national)
+    for (const frame of ['local', 'utm', 3, null]) {
+      expect(deserializeNetwork({ ...save(), osmSource: { ...source, frame } } as never).osmSource).toEqual(source)
+    }
+  })
+
   it('a saved project does not share the provenance with the editor', () => {
     const live = { ...source }
     const data = save({ osmSource: live })

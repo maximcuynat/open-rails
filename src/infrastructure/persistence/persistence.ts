@@ -644,10 +644,13 @@ function positiveNumber(value: unknown): number | undefined {
 /** The provenance read from a file: kept only when every field is usable */
 function storedOsmSource(value: unknown): OsmSource | undefined {
   if (!value || typeof value !== 'object') return undefined
-  const { lat, lon, dataDate, importedAt } = value as Record<string, unknown>
+  const { lat, lon, dataDate, importedAt, frame } = value as Record<string, unknown>
   if (typeof lat !== 'number' || !Number.isFinite(lat) || typeof lon !== 'number' || !Number.isFinite(lon)) return undefined
   if (typeof dataDate !== 'string' || typeof importedAt !== 'string') return undefined
-  return { lat, lon, dataDate, importedAt }
+  const source: OsmSource = { lat, lon, dataDate, importedAt }
+  // The only frame other than the local one; anything else is read as local
+  if (frame === 'lambert93') source.frame = frame
+  return source
 }
 
 /**

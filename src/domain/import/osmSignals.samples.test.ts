@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { convertOsm, surveyOsm } from './osmImport'
 import type { OsmImportIssue, OsmImportResult, OsmSignalMode } from './osmTypes'
 import { contentsOf, openInEditor, options, readFixture } from './osmImport.testkit'
-import { createProjection } from './osmProjection'
+import { projectionFor } from './osmProjection'
 import { importLine, isUsableSignal } from './osmSignals'
 import { walkForward } from '../models/locomotive'
 import { resetIdCounter } from '../models/network'
@@ -95,7 +95,7 @@ describe('signals of the sample areas', () => {
     expectAllWellPlaced(result.network)
 
     // Each one within 3 m of a signal node of the data: 35 cm of fitting, 2 m when moved clear of points
-    const project = createProjection(result.origin.lat, result.origin.lon)
+    const project = projectionFor(result.frame, result.origin)
     const places = nodes.filter((el) => isUsableSignal(el.tags)).map((el) => project(el.lat!, el.lon!))
     const gaps = [...result.network.signals.values()].map((signal) => {
       const pos = signalWorldPosition(result.network, signal)!

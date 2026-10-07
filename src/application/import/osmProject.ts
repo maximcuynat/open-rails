@@ -43,14 +43,16 @@ export function osmLineSettings(result: Pick<OsmImportResult, 'lineSpeed' | 'hig
 }
 
 /** Where the data comes from, as the project keeps it (the ODbL asks for it) */
-export function osmSourceOf(result: Pick<OsmImportResult, 'origin' | 'dataDate'>, now: Date = new Date()): OsmSource {
+export function osmSourceOf(result: Pick<OsmImportResult, 'origin' | 'dataDate' | 'frame'>, now: Date = new Date()): OsmSource {
   const importedAt = now.toISOString()
-  return {
+  const source: OsmSource = {
     lat: result.origin.lat,
     lon: result.origin.lon,
     dataDate: result.dataDate || importedAt.slice(0, 10),
     importedAt,
   }
+  if (result.frame === 'lambert93') source.frame = result.frame
+  return source
 }
 
 export function osmProjectName(placeName?: string): string {

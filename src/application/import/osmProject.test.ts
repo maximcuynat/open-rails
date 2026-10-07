@@ -41,6 +41,7 @@ function importResult(overrides: Partial<OsmImportResult> = {}): OsmImportResult
     lineSpeed: 140,
     highSpeed: false,
     origin: { lat: 48.8443, lon: 2.3744 },
+    frame: 'local',
     dataDate: '2026-10-06T07:12:00Z',
     report: REPORT,
     ...overrides,
@@ -84,6 +85,11 @@ describe('provenance of an import', () => {
       dataDate: '2026-10-06T07:12:00Z',
       importedAt: '2026-10-06T09:30:00.000Z',
     })
+  })
+
+  it('says the frame only when it is the national one', () => {
+    expect('frame' in osmSourceOf(importResult(), NOW)).toBe(false)
+    expect(osmSourceOf(importResult({ frame: 'lambert93' }), NOW).frame).toBe('lambert93')
   })
 
   it('dates the data from the day of the import when the answer carries no date', () => {

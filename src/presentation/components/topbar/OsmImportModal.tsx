@@ -672,6 +672,20 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
                 </div>
               </div>
 
+              {/* --- Frame --- */}
+              <div className="settings-section">
+                <div className="settings-label">
+                  Repère
+                  <span className="settings-hint">Où les coordonnées du réseau prennent leur origine</span>
+                </div>
+                <fieldset className="osm-options" disabled={phase === 'converting'}>
+                  <Option checked={options.frame === 'lambert93'} onChange={(on) => set('frame', on ? 'lambert93' : 'local')}>
+                    Repère national Lambert-93
+                    <span className="osm-option-count"> · les imports se superposent ; les longueurs s’écartent de 1 m par km, 3 m en Corse</span>
+                  </Option>
+                </fieldset>
+              </div>
+
               {/* --- Signals --- */}
               <div className="settings-section">
                 <div className="settings-label">

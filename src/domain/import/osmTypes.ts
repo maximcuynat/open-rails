@@ -1,4 +1,5 @@
 import type { Network } from '../models/types'
+import type { OsmFrame } from './osmProjection'
 
 // Contract of the OpenStreetMap import. The conversion is pure: it takes the JSON an
 // Overpass server answers and returns a network, with no DOM and no network call.
@@ -50,6 +51,11 @@ export interface OsmImportOptions {
   keepDetachedOverKm?: number
   /** The signals to lay. The signalling level of the project plays no part: it only reads them. `generated` when absent. */
   signals?: OsmSignalMode
+  /**
+   * The frame the network is projected in. `local` when absent: a projection centred on the data.
+   * `lambert93`: the national frame, the same for every import, so that two imports line up.
+   */
+  frame?: OsmFrame
 }
 
 export const DEFAULT_OSM_IMPORT_OPTIONS: OsmImportOptions = {
@@ -174,6 +180,8 @@ export interface OsmSource {
   /** Centre of the projection: world (0, 0). */
   lat: number
   lon: number
+  /** The frame the network is projected in; `local` when absent. */
+  frame?: OsmFrame
   /** `osm3s.timestamp_osm_base` of the answer when present, else the day of the import (ISO). */
   dataDate: string
   importedAt: string
@@ -188,8 +196,10 @@ export interface OsmImportResult {
   lineSpeed?: number
   /** True when any `highspeed=yes` or `railway:tvm` track was kept. */
   highSpeed: boolean
-  /** Centre used for the projection. */
+  /** Centre used for the projection: world (0, 0). */
   origin: { lat: number; lon: number }
+  /** The frame the network is projected in (`projectionFor(frame, origin)` reads it back). */
+  frame: OsmFrame
   dataDate?: string
   report: OsmImportReport
 }
