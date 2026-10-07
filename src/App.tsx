@@ -7,12 +7,14 @@ import { ToolBar } from '@presentation/components/toolbar/ToolBar'
 import { SidePanel } from '@presentation/components/sidepanel/SidePanel'
 import { CanvasOverlay } from '@presentation/components/canvas/CanvasOverlay'
 import { MiniMap } from '@presentation/components/minimap/MiniMap'
-import { ToastContainer } from '@presentation/components/common/Toast'
+import { ToastContainer, showToast } from '@presentation/components/common/Toast'
 import { DrivingDock } from '@presentation/components/hud/DrivingDock'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
 import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
 import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@domain/import/osmTypes'
+import { installLineStreaming, reloadDataset } from '@application/dataset/journeyLoader'
+import { datasetErrorMessage, loadDatasetIndex } from '@application/dataset/datasetClient'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
@@ -41,6 +43,22 @@ export default function App() {
     window.addEventListener('rail:fit-view', handler)
     return () => window.removeEventListener('rail:fit-view', handler)
   }, [store, vp])
+
+  // A project saved as a recipe of the dataset: its lines are fetched again at start. A full
+  // export of such a project, imported back, only needs the index so that the lines a train
+  // nears can be fetched.
+  useEffect(() => {
+    if (store.datasetReloadPending) {
+      showToast('Rechargement de la ligne…', 'info')
+      void reloadDataset(store)
+        .then(() => showToast(`Ligne « ${store.projectName} » rechargée`, 'success'))
+        .catch((error: unknown) => showToast(datasetErrorMessage(error), 'error', 8000))
+    } else if (store.dataset && !store.datasetIndex) {
+      void loadDatasetIndex()
+        .then((index) => installLineStreaming(store, index))
+        .catch(() => {})
+    }
+  }, [store, store.dataset])
 
   // Persist state when reloading or navigating away
   useEffect(() => {
