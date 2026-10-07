@@ -388,6 +388,8 @@ export class EditorStore {
   datasetReloadPending = false
   /** How long the last addition of lines took, in ms (read by the measuring scripts) */
   datasetLastAddMs = 0
+  /** The stored recipe-only project, kept until its lines are fetched again (trains and camera to put back) */
+  datasetStoredProject: SerializedProject | null = null
 
   /** A project from the dataset: its track is read only */
   get isNetworkLocked(): boolean {
@@ -946,6 +948,12 @@ export class EditorStore {
     if (!saved) return false
     this.network = saved.network
     this.trains = saved.trains
+    this.dataset = saved.dataset ?? null
+    if (saved.dataset && saved.network.segments.size === 0) {
+      // A recipe without its geometry: the application fetches the lines again and puts the trains back
+      this.datasetReloadPending = true
+      this.datasetStoredProject = saved.stored
+    }
     if (saved.projectName) {
       this.projectName = saved.projectName
     }
@@ -1003,10 +1011,17 @@ export class EditorStore {
     const res = deserializeNetwork(data)
     this.network = res.network
     this.forgetDataset()
+    // A full export of a dataset project carries its recipe: it stays read only
+    if (res.dataset) this.dataset = res.dataset
     this.adoptLoadedProject(res)
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
     this.resetPendingToolState()
+    if (res.dataset) {
+      this.history = []
+      this.historyIndex = -1
+      this.pendingEdit = 'none'
+    }
     this.markDirty()
     this.notify()
   }
@@ -1056,6 +1071,7 @@ export class EditorStore {
     this.datasetPending.clear()
     this.datasetLoader = null
     this.datasetReloadPending = false
+    this.datasetStoredProject = null
   }
 
   /**
@@ -1173,14 +1189,16 @@ export class EditorStore {
     }
     // Putting a project the browser has no room for into text again at every edit is time spent
     // for nothing: it is tried again once the project is smaller
-    const size = this.network.nodes.size + this.network.segments.size
+    // A dataset project is saved as its recipe: the lines are fetched again, never written
+    const recipeOnly = this.dataset !== null
+    const size = recipeOnly ? 0 : this.network.nodes.size + this.network.segments.size
     if (this.autosaveFailed && size >= this.autosaveFailedSize) return
-    const sections = networkDerived(this.network, this.sectionMeta).sections
+    const sections = recipeOnly ? undefined : networkDerived(this.network, this.sectionMeta).sections
     const saved = saveNetworkToStorage(
-      this.network,
+      recipeOnly ? EMPTY_NETWORK : this.network,
       this.projectName,
       this.camera,
-      this.sectionMeta,
+      recipeOnly ? undefined : this.sectionMeta,
       this.gridMode,
       this.gridSpacing,
       sections,
@@ -2257,7 +2275,7 @@ export class EditorStore {
 
   /** What an import leaves in the project, saved with it */
   private get projectOrigin(): ProjectOrigin {
-    return { flatLevels: this.flatLevels, osmSource: this.osmSource }
+    return { flatLevels: this.flatLevels, osmSource: this.osmSource, dataset: this.dataset }
   }
 
   /** Levels with or without relief. One undo step when it changed. */
@@ -4240,6 +4258,8 @@ const reconciledSteps = new WeakMap<SerializedProject, number>()
 
 /** How long the write of the project to localStorage waits after an edit, ms: the edits made meanwhile are written with it */
 const AUTOSAVE_DELAY_MS = 400
+/** What a dataset project writes in place of its track: nothing (never changed) */
+const EMPTY_NETWORK = createNetwork()
 
 /** Nodes and rails the undo history keeps in all, over all its steps (50 steps of a network of 40 000) */
 const HISTORY_BUDGET = 2_000_000

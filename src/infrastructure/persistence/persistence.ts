@@ -26,6 +26,7 @@ import type { SerializedTrain, TrainSet } from '../../domain/models/train'
 import { DEFAULT_LINE_SETTINGS, LINE_SPEED_RANGE, type LineSettings, type LineType } from '../../domain/models/speedLimits'
 import { CANT_RANGE } from '../../domain/models/cant'
 import type { OsmSource } from '../../domain/import/osmTypes'
+import { readDatasetRecipe, type DatasetRecipe } from '../../domain/dataset/datasetRecipe'
 
 export const STORAGE_KEY = 'open-rail:network'
 
@@ -193,6 +194,13 @@ export interface SerializedProject {
   showSignalReservations?: boolean
   /** Display: cant and slopes marked on the track; only written when unticked (on by default) */
   hideInclination?: boolean
+  /**
+   * The project is built from the published « LGV France » dataset: the lines to fetch again,
+   * from which release of the data, between which stations. A save that carries it with no node
+   * is a recipe only (the browser's storage, never a file): the application fetches the lines
+   * again. Not a version of its own: an older build reads a file with it as an ordinary project.
+   */
+  dataset?: DatasetRecipe
 }
 
 /**
@@ -293,6 +301,7 @@ function serializedSegment(items: SerializedItems, net: Network, s: Segment): Se
 export interface ProjectOrigin {
   flatLevels?: boolean
   osmSource?: OsmSource | null
+  dataset?: DatasetRecipe | null
 }
 
 /**
@@ -441,6 +450,7 @@ export function serializeNetwork(
     // A project drawn by hand carries neither: it is written back as it was
     flatLevels: origin?.flatLevels ? true : undefined,
     osmSource: origin?.osmSource ? { ...origin.osmSource } : undefined,
+    dataset: origin?.dataset ? { ...origin.dataset, lines: [...origin.dataset.lines], stations: [...origin.dataset.stations] } : undefined,
     // A project on the default line carries neither: a file saved before lines existed is written back as it was
     lineSpeed: line?.lineSpeed !== DEFAULT_LINE_SETTINGS.lineSpeed ? line?.lineSpeed : undefined,
     lineType: line?.lineType !== DEFAULT_LINE_SETTINGS.lineType ? line?.lineType : undefined,
@@ -722,6 +732,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   boardWidth?: number
   boardHeight?: number
   trains: TrainSet[]
+  dataset?: DatasetRecipe
 } {
   // A file from a newer build holds things this one would read wrong (a long rail as a straight line)
   if (typeof data?.version === 'number' && data.version > PROJECT_VERSION) {
@@ -942,6 +953,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
     boardWidth: typeof data.boardWidth === 'number' ? data.boardWidth : undefined,
     boardHeight: typeof data.boardHeight === 'number' ? data.boardHeight : undefined,
     trains,
+    dataset: readDatasetRecipe(data.dataset),
   }
 }
 
@@ -1046,34 +1058,7 @@ export function saveNetworkToStorage(
 /**
  * Load persisted network state from localStorage (or memory fallback).
  */
-export function loadNetworkFromStorage(): {
-  network: Network
-  projectName?: string
-  camera?: SerializedCamera
-  sectionMeta?: Record<string, any>
-  gridMode?: 'auto' | 'fixed'
-  gridSpacing?: number
-  unit?: Unit
-  scalePreset?: ScalePresetId
-  gauge?: number
-  trackSpacing?: number
-  levelHeight?: number
-  maxGradient?: number
-  flatLevels?: boolean
-  osmSource?: OsmSource
-  lineSpeed?: number
-  lineType?: LineType
-  signallingLevel?: SignallingLevel
-  signalStopEnforced?: boolean
-  showSignalBlocks?: boolean
-  showSignalReservations?: boolean
-  hideInclination?: boolean
-  showDimensions?: boolean
-  boardEnabled?: boolean
-  boardWidth?: number
-  boardHeight?: number
-  trains: TrainSet[]
-} | null {
+export function loadNetworkFromStorage(): (ReturnType<typeof deserializeNetwork> & { stored: SerializedProject }) | null {
   try {
     const storage = getStorage()
     if (!storage) return null
@@ -1081,7 +1066,8 @@ export function loadNetworkFromStorage(): {
     if (!raw) return null
     const parsed = JSON.parse(raw) as SerializedProject
     if (!parsed || typeof parsed !== 'object') return null
-    return deserializeNetwork(parsed)
+    // The stored text itself goes with it: a recipe without geometry has trains to put back later
+    return { ...deserializeNetwork(parsed), stored: parsed }
   } catch (err) {
     console.warn('Failed to load network from storage', err)
     return null

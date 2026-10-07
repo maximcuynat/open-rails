@@ -4,7 +4,7 @@ import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
 import { addStation } from '@domain/models/stations'
 import { fakeIndex } from '@domain/dataset/datasetIndex.testkit'
 import type { DatasetRecipe } from '@domain/dataset/datasetRecipe'
-import { resetMemoryStorage, type SerializedProject } from '@infrastructure/persistence/persistence'
+import { getStorage, loadNetworkFromStorage, resetMemoryStorage, type SerializedProject } from '@infrastructure/persistence/persistence'
 
 /**
  * A line file as the dataset would give it: a straight track of four rails along x, a branch
@@ -119,5 +119,60 @@ describe('a project loaded from the dataset', () => {
     expect(again.isNetworkLocked).toBe(false)
     again.setTool('place')
     expect(again.tool).toBe('place')
+  })
+})
+
+describe('a dataset project saved as a recipe', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetIdCounter()
+  })
+
+  it('writes its recipe, trains and camera to the storage, never its track', () => {
+    const { store } = lockedStore()
+    expect(store.placeTrainItem({ x: 300, y: 0 })).toBe(true)
+    store.flushPersistedState()
+    const text = getStorage()!.getItem('open-rail:network')!
+    expect(text.length).toBeLessThan(5000)
+    const stored = JSON.parse(text) as SerializedProject
+    expect(stored.nodes).toEqual([])
+    expect(stored.segments).toEqual([])
+    expect(stored.dataset).toEqual(recipe())
+    expect(stored.trains?.length).toBe(1)
+    expect(stored.camera?.x).toBe(1000)
+    expect(store.autosaveFailed).toBe(false)
+
+    const read = loadNetworkFromStorage()!
+    expect(read.dataset).toEqual(recipe())
+    expect(read.network.segments.size).toBe(0)
+    expect(read.stored.trains?.length).toBe(1)
+  })
+
+  it('comes back locked and empty, waiting for its lines to be fetched again', () => {
+    const { store } = lockedStore()
+    store.placeTrainItem({ x: 300, y: 0 })
+    store.flushPersistedState()
+    const again = new EditorStore()
+    expect(again.isNetworkLocked).toBe(true)
+    expect(again.network.segments.size).toBe(0)
+    expect(again.datasetReloadPending).toBe(true)
+    expect(again.datasetStoredProject?.trains?.length).toBe(1)
+    expect(again.canUndo).toBe(false)
+  })
+
+  it('exports its whole track with its recipe, and a re-import of that file stays locked', () => {
+    const { store, project } = lockedStore()
+    const exported = store.exportProject()
+    expect(exported.nodes.length).toBe(project.nodes.length)
+    expect(exported.dataset).toEqual(recipe())
+
+    const fresh = new EditorStore()
+    fresh.loadFromData(JSON.parse(JSON.stringify(exported)))
+    expect(fresh.isNetworkLocked).toBe(true)
+    expect(fresh.network.segments.size).toBe(project.segments.length)
+    expect(fresh.canUndo).toBe(false)
+
+    fresh.loadFromData(JSON.parse(JSON.stringify(project)))
+    expect(fresh.isNetworkLocked).toBe(false)
   })
 })
