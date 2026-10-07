@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import { mergeIntoLongRails } from '@domain/services/longRails'
 import { fitPath } from '@domain/geometry/arcFit'
-import { networkChanged, networkCheckToken, touchNetwork } from '@domain/models/networkWatch'
+import { networkCheckToken, touchNetwork, verifyingNetworkRevisions } from '@domain/models/networkWatch'
+import { dirtyNodesOf, networkChangesSince } from '@domain/geometry/networkFollower'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
@@ -70,7 +71,7 @@ import { isConsolePreference, type ConsolePreference } from '@application/consol
 import { defaultKeybindings, mergeWithDefaults, shortcutLabel, type ActionId, type Keybindings } from '@application/keybindings/keybindings'
 import type { Junction, JunctionId, Network, Point, Selection, Segment, SpeedZone } from '@domain/models/types'
 import type { SectionMetadata } from '@domain/models/sections'
-import { networkDerived, sectionMetaChanged } from '@infrastructure/render/networkDerived'
+import { applySectionMeta, networkDerived, sectionMetaChanged } from '@infrastructure/render/networkDerived'
 import { type Unit, type ScalePresetId, SCALE_PRESETS, LEVEL_HEIGHT_RANGE, MAX_GRADIENT_RANGE } from '@domain/models/units'
 import type { GradientLimits } from '@domain/services/kinematicDiagnostics'
 import type { OsmSource } from '@domain/import/osmTypes'
@@ -731,11 +732,11 @@ export class EditorStore {
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
-        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot))
+        // The step is put back onto the network in place: what did not change is kept as it is
+        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot), this.network)
         this.network = res.network
         this.restoreTrains(res.trains)
-        if (res.sectionMeta) this.sectionMeta = res.sectionMeta
-        else this.sectionMeta = {}
+        applySectionMeta(this.sectionMeta, snapshot.sectionMeta ?? {})
         if (res.unit) this.unit = res.unit
         if (res.scalePreset) this.scalePreset = res.scalePreset
         if (res.gauge) this.gauge = res.gauge
@@ -766,11 +767,11 @@ export class EditorStore {
     if (snapshot) {
       this.isUndoingRedoing = true
       try {
-        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot))
+        // The step is put back onto the network in place: what did not change is kept as it is
+        const res = deserializeNetwork(snapshot, reconciledSteps.get(snapshot), this.network)
         this.network = res.network
         this.restoreTrains(res.trains)
-        if (res.sectionMeta) this.sectionMeta = res.sectionMeta
-        else this.sectionMeta = {}
+        applySectionMeta(this.sectionMeta, snapshot.sectionMeta ?? {})
         if (res.unit) this.unit = res.unit
         if (res.scalePreset) this.scalePreset = res.scalePreset
         if (res.gauge) this.gauge = res.gauge
@@ -834,7 +835,7 @@ export class EditorStore {
         }
       }
     }
-    sectionMetaChanged(this.sectionMeta)
+    sectionMetaChanged(this.sectionMeta, sectionIds.flatMap((sectionId) => [sectionId, ...sectionId.split('-')]))
     this.markDirty()
     this.notify()
   }
@@ -1141,9 +1142,10 @@ export class EditorStore {
 
   getVersion = (): number => this.version
 
-  /** The network `notify` last checked the route tables, zones and signals of, and its revision then */
+  /** The network `notify` last checked the route tables, zones and signals of, its revision then, and where in its feed of changes */
   private syncedNetwork: Network | null = null
   private syncedToken: number | undefined = undefined
+  private syncedCursor: number | undefined = undefined
 
   /** Notify UI subscribers that something changed. Call after mutating state. */
   notify = (): void => {
@@ -1152,13 +1154,24 @@ export class EditorStore {
     // since they last were (see `networkWatch`)
     const token = networkCheckToken(this.network)
     if (token === undefined || token !== this.syncedToken || this.network !== this.syncedNetwork) {
-      autoDetectJunctions(this.network)
+      // Only the tables at the nodes where something changed since the last check can have anything to follow
+      const reading = networkChangesSince(this.network, this.network === this.syncedNetwork ? this.syncedCursor : undefined)
+      const scope = token !== undefined && reading.changes ? dirtyNodesOf(reading.changes, reading.index) : undefined
+      autoDetectJunctions(this.network, scope)
+      if (scope && verifyingNetworkRevisions()) {
+        // Tests: a check of every table right after must find nothing to follow
+        const after = networkCheckToken(this.network)
+        autoDetectJunctions(this.network)
+        if (networkCheckToken(this.network) !== after) throw new Error('A route table away from the nodes that changed had something to follow')
+      }
       // The domain moves the zones itself when a rail is replaced; this only drops what would be
       // left on a rail taken out of the graph by other means
       cleanSpeedZones(this.network)
       cleanSignals(this.network)
       this.syncedNetwork = this.network
       this.syncedToken = networkCheckToken(this.network)
+      // What the check itself changed (tables) is not to be checked again
+      this.syncedCursor = networkChangesSince(this.network, reading.cursor).cursor
     }
     this.syncTrainsWithNetwork()
     this.version++
@@ -1675,9 +1688,6 @@ export class EditorStore {
 
   markDirty = (): void => {
     this.dirty = true
-    // An edit was committed: whatever is kept of the network is compared again, even if a change
-    // made in place forgot to say so (`touchNetwork`)
-    networkChanged()
     if (!this.isUndoingRedoing) this.settleSignals()
     this.savePersistedState()
     this.pushHistorySnapshot(true)
@@ -1758,7 +1768,8 @@ export class EditorStore {
         seg.via.y = initVia.y
       }
     }
-    if (this.draggedNodeInitialPositions.size > 0) touchNetwork(this.network)
+    for (const nid of this.draggedNodeInitialPositions.keys()) touchNetwork(this.network, nid)
+    for (const sid of this.draggedViaInitialPositions.keys()) touchNetwork(this.network, sid)
     if (this.draggedNodeInitialPositions.size > 0) this.realignTrains()
     this.unpinTrains()
     this.gizmoHoverAxis = null
@@ -1884,7 +1895,7 @@ export class EditorStore {
         dissolvedSeg = dissolveNode(this.network, nid)
         if (dissolvedSeg && oldMeta) {
           this.sectionMeta[dissolvedSeg.id] = { ...oldMeta }
-          sectionMetaChanged(this.sectionMeta)
+          sectionMetaChanged(this.sectionMeta, [dissolvedSeg.id])
         }
       }
 
@@ -3250,6 +3261,7 @@ export class EditorStore {
       if (!seg || seg.kind !== 'curve' || !seg.via || seg.cant === target) continue
       if (target === undefined) delete seg.cant
       else seg.cant = target
+      touchNetwork(this.network, seg.id)
       changed = true
     }
     if (changed) this.markDirty()

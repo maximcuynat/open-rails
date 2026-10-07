@@ -1,4 +1,4 @@
-import type { Network, NodeId, SegmentId, Point, Segment } from '../models/types'
+import type { Network, NodeId, RailNode, SegmentId, Point, Segment } from '../models/types'
 import { leaveDirectionOnShape, segmentEnds } from '../geometry/segmentGeometry'
 import { MAX_TRANSITION_DEFLECTION_DEG } from '../geometry/tangent'
 import { placementThresholds } from '../geometry/scale'
@@ -60,7 +60,7 @@ export function computeTransitionAngleDeg(dir1: Point, dir2: Point): number {
  * the automatic weld (reconcile tolerance) leaves them apart, so a train stops at the gap.
  * One issue is reported on each of the two ends.
  */
-function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
+export function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
   const issues: KinematicIssue[] = []
   const { healTolerance } = placementThresholds(gauge)
   const minCos = Math.cos((MAX_TRANSITION_DEFLECTION_DEG * Math.PI) / 180)
@@ -111,23 +111,29 @@ function detectTrackGaps(net: Network, gauge?: number): KinematicIssue[] {
 /** A slope in ‰ as shown to the user: one decimal at most, with a decimal comma */
 const formatPermille = (permille: number): string => String(Math.round(permille * 10) / 10).replace('.', ',')
 
+/** One issue per rail steeper than the limit, reported at its lower end; null when the rail is within it */
+export function steepGradientIssue(net: Network, seg: Segment, limits: GradientLimits): KinematicIssue | null {
+  const permille = Math.abs(segmentGradient(net, seg, limits.levelHeight))
+  if (permille <= limits.maxGradient + 1e-6) return null
+  const ends = segmentEndLevels(net, seg)
+  return {
+    id: `steep-${seg.id}`,
+    nodeId: ends.from <= ends.to ? seg.from : seg.to,
+    kind: 'steep_gradient',
+    severity: 'warning',
+    // One decimal: a slope just over the limit must not read as the limit itself
+    gradientPermille: Math.round(permille * 10) / 10,
+    message: `Pente de ${formatPermille(permille)} ‰, au-delà du maximum de ${formatPermille(limits.maxGradient)} ‰`,
+    involvedSegmentIds: [seg.id],
+  }
+}
+
 /** One issue per ramp steeper than the limit, reported at its lower end */
 function detectSteepGradients(net: Network, limits: GradientLimits): KinematicIssue[] {
   const issues: KinematicIssue[] = []
   for (const seg of net.segments.values()) {
-    const permille = Math.abs(segmentGradient(net, seg, limits.levelHeight))
-    if (permille <= limits.maxGradient + 1e-6) continue
-    const ends = segmentEndLevels(net, seg)
-    issues.push({
-      id: `steep-${seg.id}`,
-      nodeId: ends.from <= ends.to ? seg.from : seg.to,
-      kind: 'steep_gradient',
-      severity: 'warning',
-      // One decimal: a slope just over the limit must not read as the limit itself
-      gradientPermille: Math.round(permille * 10) / 10,
-      message: `Pente de ${formatPermille(permille)} ‰, au-delà du maximum de ${formatPermille(limits.maxGradient)} ‰`,
-      involvedSegmentIds: [seg.id],
-    })
+    const issue = steepGradientIssue(net, seg, limits)
+    if (issue) issues.push(issue)
   }
   return issues
 }
@@ -141,29 +147,23 @@ export interface GradientLimits {
   maxGradient: number
 }
 
-/**
- * Scan the network and detect all kinematic and directional issues.
- * `gauge` scales the distance under which two facing rail ends are reported as a gap.
- * `gradient` turns on the report of ramps steeper than the project allows.
- */
-export function analyzeKinematics(net: Network, gauge?: number, gradient?: GradientLimits): KinematicIssue[] {
-  const issues: KinematicIssue[] = detectTrackGaps(net, gauge)
-  if (gradient) issues.push(...detectSteepGradients(net, gradient))
-  const maxDeflection = MAX_TRANSITION_DEFLECTION_DEG + 1e-6
+/** The deflection beyond which a joint is a corner */
+export const MAX_DEFLECTION = MAX_TRANSITION_DEFLECTION_DEG + 1e-6
 
-  for (const node of net.nodes.values()) {
+/** The issues at one node: how its rails meet there, from their tangents alone. Pushed into `issues`. */
+export function nodeIssues(net: Network, node: RailNode, issues: KinematicIssue[], maxDeflection = MAX_DEFLECTION): void {
     const segIds = net.adjacency.get(node.id) ?? []
-    if (segIds.length === 0) continue
+    if (segIds.length === 0) return
 
     // Case 1: Simple 2-rail connection
     if (segIds.length === 2) {
       const s1 = net.segments.get(segIds[0])
       const s2 = net.segments.get(segIds[1])
-      if (!s1 || !s2) continue
+      if (!s1 || !s2) return
 
       const d1 = getOutgoingTangent(net, s1, node.id)
       const d2 = getOutgoingTangent(net, s2, node.id)
-      if (!d1 || !d2) continue
+      if (!d1 || !d2) return
 
       const dot = Math.max(-1, Math.min(1, d1.x * d2.x + d1.y * d2.y))
 
@@ -193,7 +193,7 @@ export function analyzeKinematics(net: Network, gauge?: number, gradient?: Gradi
             involvedSegmentIds: [s1.id, s2.id],
           })
         }
-        continue
+        return
       }
 
       const deflection = computeTransitionAngleDeg(d1, d2)
@@ -214,10 +214,10 @@ export function analyzeKinematics(net: Network, gauge?: number, gradient?: Gradi
     // Case 2: 3-rail intersection (turnout candidate)
     else if (segIds.length === 3) {
       const segs = segIds.map(id => net.segments.get(id)).filter((s): s is Segment => !!s)
-      if (segs.length !== 3) continue
+      if (segs.length !== 3) return
 
       const dirs = segs.map(s => getOutgoingTangent(net, s, node.id))
-      if (dirs.some(d => !d)) continue
+      if (dirs.some(d => !d)) return
 
       const d0 = dirs[0]!
       const d1 = dirs[1]!
@@ -234,10 +234,10 @@ export function analyzeKinematics(net: Network, gauge?: number, gradient?: Gradi
           kind: 'invalid_turnout',
           severity: 'error',
           angleDeg: 0,
-          message: `Jonction à 3 voies incohérente : aucune voie continue ou tronc commun traversant`,
+          message: `Jonction à 3 voies incohérente : aucune voie return ou tronc commun traversant`,
           involvedSegmentIds: segIds,
         })
-        continue
+        return
       }
 
       const def01 = computeTransitionAngleDeg(d0, d1)
@@ -304,8 +304,8 @@ export function analyzeKinematics(net: Network, gauge?: number, gradient?: Gradi
             const dotB = dirs[remaining[0]]!.x * dirs[remaining[1]]!.x + dirs[remaining[0]]!.y * dirs[remaining[1]]!.y
             if (dotB < -0.65) {
               // C'est une vraie traversée oblique ou orthogonale en X :
-              // chaque ligne continue tout droit sans changer de voie. C'est parfaitement franchissable !
-              continue
+              // chaque ligne return tout droit sans changer de voie. C'est parfaitement franchissable !
+              return
             }
           }
 
@@ -360,7 +360,7 @@ export function analyzeKinematics(net: Network, gauge?: number, gradient?: Gradi
               })
             }
             // Valid 3-way turnout!
-            continue
+            return
           }
         }
       }
@@ -388,5 +388,14 @@ export function analyzeKinematics(net: Network, gauge?: number, gradient?: Gradi
     }
   }
 
+/**
+ * Scan the network and detect all kinematic and directional issues.
+ * `gauge` scales the distance under which two facing rail ends are reported as a gap.
+ * `gradient` turns on the report of ramps steeper than the project allows.
+ */
+export function analyzeKinematics(net: Network, gauge?: number, gradient?: GradientLimits): KinematicIssue[] {
+  const issues: KinematicIssue[] = detectTrackGaps(net, gauge)
+  if (gradient) issues.push(...detectSteepGradients(net, gradient))
+  for (const node of net.nodes.values()) nodeIssues(net, node, issues)
   return issues
 }

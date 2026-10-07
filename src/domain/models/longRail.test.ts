@@ -183,7 +183,8 @@ describe('a long rail: one rail that carries its whole path', () => {
   it('a saved path that does not hold together is read as the straight line between its nodes', () => {
     const { net } = longRail()
     const saved = serializeNetwork(net, 'Broken')
-    saved.segments[0].path = [[0, 0, 0, 0, -5]]
+    // The saved form is shared with the network it was taken from: a change to it is a copy
+    saved.segments[0] = { ...saved.segments[0], path: [[0, 0, 0, 0, -5]] }
     const read = [...deserializeNetwork(saved).network.segments.values()][0]
     expect(read.kind).toBe('straight')
   })

@@ -90,7 +90,7 @@ export function invalidateSpeedZones(net: Network): void {
   state.revision++
   state.index = null
   // Zones are resized and given another speed in place: the network itself is told too
-  touchNetwork(net)
+  touchNetwork(net, null)
 }
 
 /**

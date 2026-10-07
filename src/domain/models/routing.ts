@@ -74,7 +74,7 @@ function buildJunctionIndex(net: Network): JunctionIndex {
 export function invalidateJunctionIndex(net: Network): void {
   junctionIndexes.delete(net)
   // A table moved to another node was changed in place: the network itself is told too
-  touchNetwork(net)
+  touchNetwork(net, null)
 }
 
 /**

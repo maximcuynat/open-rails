@@ -16,12 +16,12 @@ export { generateId, resetIdCounter }
  */
 export function syncIdCounter(net: Network): void {
   let max = 0
+  // `prefix_number`: read without a regular expression, there are as many ids as nodes and rails
   const scan = (id: string) => {
-    const match = id.match(/_(\d+)$/)
-    if (match) {
-      const n = parseInt(match[1], 10)
-      if (!Number.isNaN(n) && n > max) max = n
-    }
+    const at = id.lastIndexOf('_')
+    if (at < 0 || at === id.length - 1) return
+    const n = Number(id.slice(at + 1))
+    if (Number.isInteger(n) && n >= 0 && n > max) max = n
   }
   for (const id of net.nodes.keys()) scan(id)
   for (const id of net.segments.keys()) scan(id)
@@ -187,9 +187,9 @@ export function setNodesLevel(net: Network, nodeIds: Iterable<NodeId>, level: nu
     if (!node || nodeLevel(node) === target) continue
     if (target === 0) delete node.level
     else node.level = target
+    touchNetwork(net, id)
     changed++
   }
-  if (changed > 0) touchNetwork(net)
   return changed
 }
 
@@ -214,7 +214,7 @@ export function addChildSegment(
     seg.parentSegmentId = ancestorId
     // A cant set by hand goes with the curve: each curved piece of the rail keeps it
     if (seg.kind === 'curve' && parent.cant !== undefined) seg.cant = parent.cant
-    touchNetwork(net)
+    touchNetwork(net, seg.id)
   }
   return seg
 }

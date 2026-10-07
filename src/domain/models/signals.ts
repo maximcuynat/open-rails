@@ -146,7 +146,7 @@ export function invalidateSignals(net: Network): void {
   state.revision++
   state.index = null
   // Signals are moved and turned in place: the network itself is told too
-  touchNetwork(net)
+  touchNetwork(net, null)
 }
 
 /**

@@ -1,7 +1,9 @@
 import type { Camera } from '@infrastructure/render/camera'
 import { segmentEnds } from '../../domain/geometry/segmentGeometry'
 import { createNetwork, resetIdCounter, syncIdCounter, nodeLevel, MIN_LEVEL, MAX_LEVEL } from '../../domain/models/network'
-import { touchNetwork } from '../../domain/models/networkWatch'
+import { touchNetwork, verifyingNetworkRevisions } from '../../domain/models/networkWatch'
+import { networkChangesSince } from '../../domain/geometry/networkFollower'
+import { invalidateJunctionIndex } from '../../domain/models/routing'
 import { declareTurnout, findJunctionAtNode, junctionAdded, normalizeTurnoutRoles, stemRailFor } from '../../domain/models/junction'
 import { cleanSpeedZones, restoreSpeedZone } from '../../domain/models/speedZones'
 import {
@@ -195,7 +197,82 @@ export interface SignalDisplaySettings {
  * with the editor, which changes them in place.
  */
 function copySectionMeta(meta: Record<string, any>): Record<string, any> {
-  return Object.fromEntries(Object.entries(meta).map(([id, value]) => [id, { ...value }]))
+  const copy: Record<string, any> = {}
+  for (const id in meta) {
+    const value = meta[id]
+    // Tests: an entry changed in place would show in every copy that holds it
+    copy[id] = verifyingNetworkRevisions() && value && typeof value === 'object' ? Object.freeze(value) : value
+  }
+  return copy
+}
+
+/**
+ * The nodes and rails of a network as they are saved, each made once and kept until it changes:
+ * a step of the undo history on a large network is then a list of what is already there. The
+ * objects are never changed afterwards (frozen in the tests); a step holds the very object the
+ * network's list holds, which is how `deserializeNetwork` tells a node or rail that is still as
+ * it was saved without reading it.
+ */
+interface SerializedItems {
+  cursor: number | undefined
+  nodes: Map<string, SerializedNode>
+  segments: Map<string, SerializedSegment>
+}
+
+const serializedItems = new WeakMap<Network, SerializedItems>()
+
+function itemsOf(net: Network): SerializedItems {
+  let items = serializedItems.get(net)
+  if (!items) {
+    items = { cursor: undefined, nodes: new Map(), segments: new Map() }
+    serializedItems.set(net, items)
+  }
+  const reading = networkChangesSince(net, items.cursor)
+  items.cursor = reading.cursor
+  const changes = reading.changes
+  // Lost, or more ids kept than the network has (nodes gone are not told): everything anew
+  if (!changes || items.nodes.size > net.nodes.size + 1024) {
+    items.nodes.clear()
+    items.segments.clear()
+    return items
+  }
+  for (const id of changes.movedNodes) items.nodes.delete(id)
+  for (const id of changes.changedRails) items.segments.delete(id)
+  for (const id of changes.removedRails) items.segments.delete(id)
+  return items
+}
+
+const keep = <T extends object>(item: T): T => (verifyingNetworkRevisions() ? Object.freeze(item) : item)
+
+function serializedNode(items: SerializedItems, n: RailNode): SerializedNode {
+  let saved = items.nodes.get(n.id)
+  if (!saved) {
+    saved = keep({
+      id: n.id,
+      x: n.pos.x,
+      y: n.pos.y,
+      ...(nodeLevel(n) !== 0 ? { level: nodeLevel(n) } : {}),
+    })
+    items.nodes.set(n.id, saved)
+  }
+  return saved
+}
+
+function serializedSegment(items: SerializedItems, net: Network, s: Segment): SerializedSegment {
+  let saved = items.segments.get(s.id)
+  if (!saved) {
+    saved = keep({
+      id: s.id,
+      from: s.from,
+      to: s.to,
+      kind: s.kind,
+      via: s.via ? keep({ x: s.via.x, y: s.via.y }) : undefined,
+      ...(isStoredCant(s) ? { cant: s.cant } : {}),
+      ...(s.kind === 'path' ? { path: storedPath(net, s) } : {}),
+    })
+    items.segments.set(s.id, saved)
+  }
+  return saved
 }
 
 /** What an import leaves in a project beyond its track: levels without relief, and where the data comes from */
@@ -231,28 +308,12 @@ export function serializeNetwork(
   signalDisplay?: SignalDisplaySettings,
   origin?: ProjectOrigin,
 ): SerializedProject {
+  const items = itemsOf(net)
   const nodes: SerializedNode[] = []
-  for (const n of net.nodes.values()) {
-    nodes.push({
-      id: n.id,
-      x: n.pos.x,
-      y: n.pos.y,
-      ...(nodeLevel(n) !== 0 ? { level: nodeLevel(n) } : {}),
-    })
-  }
+  for (const n of net.nodes.values()) nodes.push(serializedNode(items, n))
 
   const segments: SerializedSegment[] = []
-  for (const s of net.segments.values()) {
-    segments.push({
-      id: s.id,
-      from: s.from,
-      to: s.to,
-      kind: s.kind,
-      via: s.via ? { x: s.via.x, y: s.via.y } : undefined,
-      ...(isStoredCant(s) ? { cant: s.cant } : {}),
-      ...(s.kind === 'path' ? { path: storedPath(net, s) } : {}),
-    })
-  }
+  for (const s of net.segments.values()) segments.push(serializedSegment(items, net, s))
 
   const junctions: SerializedJunction[] = []
   for (const j of net.junctions.values()) {
@@ -461,6 +522,81 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
 export const PROJECT_VERSION = 3
 
 /**
+ * Whether the entries of a live map can be left where they are to take the order of the saved
+ * list: the live ids the list keeps are in the list's order, so that those it drops can be taken
+ * out, those it changes put back in place, and those it adds come after. Takes out the dropped
+ * ones when so. False when the map must be laid out again.
+ */
+function keepOrder(live: Map<string, unknown>, saved: { id: string }[]): { inPlace: boolean; dropped: number } {
+  if (live.size === saved.length) {
+    // The same ids in the same order, without a set
+    let i = 0
+    let same = true
+    for (const id of live.keys()) {
+      if (saved[i++].id !== id) {
+        same = false
+        break
+      }
+    }
+    if (same) return { inPlace: true, dropped: 0 }
+  }
+  const wanted = new Set<string>()
+  for (const item of saved) wanted.add(item.id)
+  let at = 0
+  const dropped: string[] = []
+  for (const id of live.keys()) {
+    if (!wanted.has(id)) {
+      dropped.push(id)
+      continue
+    }
+    // A saved id that is not live can only come after every live one: it is put in at the end
+    if (saved[at]?.id !== id) return { inPlace: false, dropped: 0 }
+    at++
+  }
+  for (const id of dropped) live.delete(id)
+  return { inPlace: true, dropped: dropped.length }
+}
+
+/** True when a saved table is the live one, field for field */
+function sameJunction(live: Junction, j: SerializedJunction): boolean {
+  if (!j || live.nodeId !== j.nodeId || live.kind !== j.kind || live.active !== j.active || live.frogNumber !== j.frogNumber) return false
+  if (!Array.isArray(j.passages) || j.passages.length !== live.passages.length) return false
+  for (let i = 0; i < live.passages.length; i++) {
+    const p = j.passages[i]
+    if (!Array.isArray(p) || p[0] !== live.passages[i].a || p[1] !== live.passages[i].b) return false
+  }
+  if (!Array.isArray(j.positions) || j.positions.length !== live.positions.length) return false
+  for (let i = 0; i < live.positions.length; i++) {
+    const position = j.positions[i]
+    if (!Array.isArray(position) || position.length !== live.positions[i].length) return false
+    for (let k = 0; k < position.length; k++) if (position[k] !== live.positions[i][k]) return false
+  }
+  return true
+}
+
+/** The network brought to the data in place against one read anew: the same nodes, rails, adjacency, tables, zones and signals, in the same order */
+function checkAgainstFresh(net: Network, data: SerializedProject, reconciledAt?: number): void {
+  const fresh = deserializeNetwork(data, reconciledAt).network
+  const parts = (n: Network): Record<string, string> => ({
+    nodes: JSON.stringify([...n.nodes.values()].map((node) => [node.id, node.pos.x, node.pos.y, node.level ?? 0])),
+    rails: JSON.stringify([...n.segments.values()].map((seg) => [seg.id, seg.from, seg.to, seg.kind, seg.via?.x, seg.via?.y, seg.cant, seg.path])),
+    adjacency: JSON.stringify([...n.adjacency]),
+    tables: JSON.stringify([...n.junctions.values()].map((j) => [j.id, j.nodeId, j.kind, j.passages, j.positions, j.active, j.frogNumber])),
+    zones: JSON.stringify([...n.speedZones.values()]),
+    signals: JSON.stringify([...n.signals.values()]),
+  })
+  const mine = parts(net)
+  const theirs = parts(fresh)
+  for (const part in mine) {
+    if (mine[part] === theirs[part]) continue
+    let at = 0
+    while (mine[part][at] === theirs[part][at]) at++
+    const from = Math.max(0, at - 60)
+    throw new Error(`The network brought to a saved step in place is not the one read from it: ${part} differ at ${at}:\n  in place: ${mine[part].slice(from, at + 120)}\n  read:     ${theirs[part].slice(from, at + 120)}`)
+  }
+}
+
+/**
  * The path of a long rail as it is saved: one `[x, y, heading, curvature, length]` per piece, where
  * the rail lies now (it follows its nodes when they are moved).
  */
@@ -520,8 +656,13 @@ function storedOsmSource(value: unknown): OsmSource | undefined {
  *
  * `reconciledAt`: the tolerance at which the network the data was taken from is known to have been
  * reconciled (`isNetworkReconciled`). Only for data that never left the memory of the editor.
+ *
+ * `into`: a network to bring to the data in place instead of a new one (a step of the undo
+ * history put back): a node, rail or table still as it is in the data stays the object it is,
+ * so that everything kept from the network (sections, profile, index…) only works out again
+ * what differs. The maps are laid out again in the order of the data.
  */
-export function deserializeNetwork(data: SerializedProject, reconciledAt?: number): {
+export function deserializeNetwork(data: SerializedProject, reconciledAt?: number, into?: Network): {
   network: Network
   projectName?: string
   camera?: SerializedCamera
@@ -553,33 +694,73 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   if (typeof data?.version === 'number' && data.version > PROJECT_VERSION) {
     throw new Error(`Project version ${data.version} is newer than this build reads (${PROJECT_VERSION})`)
   }
-  const net = createNetwork()
+  const net = into ?? createNetwork()
   if (!data || typeof data !== 'object') {
     return { network: net, trains: [] }
   }
 
+  // What the network holds now, to be kept where the data says the same (see `SerializedItems`).
+  // A map whose order is already that of the data keeps its entries in place; otherwise it is
+  // laid out again in the order of the data.
+  const items = into ? itemsOf(into) : null
+  const savedNodes = Array.isArray(data.nodes) ? data.nodes.filter((n) => n && typeof n.id === 'string') : []
+  const savedSegments = Array.isArray(data.segments) ? data.segments.filter((s) => s && typeof s.id === 'string' && s.from && s.to) : []
+  const nodesKept = into ? keepOrder(into.nodes, savedNodes) : { inPlace: false, dropped: 0 }
+  const nodesInPlace = nodesKept.inPlace
+  const liveNodes = into && !nodesInPlace ? new Map(into.nodes) : into ? into.nodes : null
+  const segmentsKept = into ? keepOrder(into.segments, savedSegments) : { inPlace: false, dropped: 0 }
+  const segmentsInPlace = segmentsKept.inPlace
+  const liveSegments = into && !segmentsInPlace ? new Map(into.segments) : into ? into.segments : null
+  const liveJunctions = into ? new Map(into.junctions) : null
+  // Every node and rail as it is, none dropped, every rail between the nodes it is: the rails of each node are as they are
+  const railsAsTheyAre =
+    segmentsInPlace && nodesInPlace && segmentsKept.dropped === 0 && nodesKept.dropped === 0 &&
+    into!.segments.size === savedSegments.length && into!.nodes.size === savedNodes.length &&
+    savedSegments.every((s) => items!.segments.get(s.id) === s)
+  if (into) {
+    if (!nodesInPlace) into.nodes.clear()
+    if (!segmentsInPlace) into.segments.clear()
+    if (!railsAsTheyAre) into.adjacency.clear()
+    into.junctions.clear()
+    invalidateJunctionIndex(into)
+    into.speedZones.clear()
+    into.signals.clear()
+  }
+
   // 1. Restore nodes
-  if (Array.isArray(data.nodes)) {
-    for (const n of data.nodes) {
-      if (!n || typeof n.id !== 'string') continue
-      const x = typeof n.x === 'number' && !Number.isNaN(n.x) ? n.x : 0
-      const y = typeof n.y === 'number' && !Number.isNaN(n.y) ? n.y : 0
-      const node: RailNode = { id: n.id, pos: { x, y } }
-      if (isStoredLevel(n.level)) node.level = n.level
-      net.nodes.set(node.id, node)
-      net.adjacency.set(node.id, [])
+  for (const n of savedNodes) {
+    const live = liveNodes?.get(n.id)
+    if (live && items!.nodes.get(n.id) === n) {
+      if (!nodesInPlace) net.nodes.set(n.id, live)
+      if (!railsAsTheyAre) net.adjacency.set(n.id, [])
+      continue
     }
+    const x = typeof n.x === 'number' && !Number.isNaN(n.x) ? n.x : 0
+    const y = typeof n.y === 'number' && !Number.isNaN(n.y) ? n.y : 0
+    const node: RailNode = { id: n.id, pos: { x, y } }
+    if (isStoredLevel(n.level)) node.level = n.level
+    net.nodes.set(node.id, node)
+    if (!railsAsTheyAre) net.adjacency.set(node.id, [])
   }
 
   // 2. Restore segments
   // Legacy saves carry the level on the rails: each node takes, among the levels of its rails, the
   // one furthest from the ground (the upper one on a tie)
   const legacyLevels = new Map<string, number>()
-  if (Array.isArray(data.segments)) {
-    for (const s of data.segments) {
-      if (!s || typeof s.id !== 'string' || !s.from || !s.to) continue
+  if (!railsAsTheyAre) {
+    for (const s of savedSegments) {
       // Segments must link existing nodes
-      if (!net.nodes.has(s.from) || !net.nodes.has(s.to)) continue
+      if (!net.nodes.has(s.from) || !net.nodes.has(s.to)) {
+        if (segmentsInPlace) net.segments.delete(s.id)
+        continue
+      }
+      const live = liveSegments?.get(s.id)
+      if (live && items!.segments.get(s.id) === s) {
+        if (!segmentsInPlace) net.segments.set(s.id, live)
+        net.adjacency.get(s.from)?.push(s.id)
+        net.adjacency.get(s.to)?.push(s.id)
+        continue
+      }
 
       const path = s.kind === 'path' ? readPath(s.path) : null
       const kind: SegmentKind = path ? 'path' : s.kind === 'curve' ? 'curve' : 'straight'
@@ -623,7 +804,15 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
 
   // 3. Restore the route tables as they were saved: roles and positions are not re-derived
   if (Array.isArray(data.junctions)) {
-    for (const j of data.junctions) restoreJunction(net, j)
+    for (const j of data.junctions) {
+      const live = liveJunctions?.get(j?.id)
+      if (live && net.nodes.has(live.nodeId) && sameJunction(live, j) && !findJunctionAtNode(net, live.nodeId)) {
+        net.junctions.set(live.id, live)
+        junctionAdded(net, live)
+      } else {
+        restoreJunction(net, j)
+      }
+    }
   }
 
   // Speed zones name rails, like the tables: they are put back on the rails as saved, before the
@@ -656,9 +845,13 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
 
   cleanSpeedZones(net)
   cleanSignals(net)
-  syncIdCounter(net)
-  // Heights, cants and frog numbers were written onto the nodes, rails and tables in place
-  touchNetwork(net)
+  // Only a reconcile pass makes ids
+  if (reconciledAt !== tolerance) syncIdCounter(net)
+  // Heights, cants and frog numbers were written onto the nodes, rails and tables in place — on
+  // a network brought to the data in place, only legacy heights are, the rest is put whole
+  touchNetwork(net, into && legacyLevels.size === 0 ? null : undefined)
+  // Tests: a network brought to the data in place is the one read anew from it
+  if (into && verifyingNetworkRevisions()) checkAgainstFresh(net, data, reconciledAt)
 
   // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
   const trains = deserializeTrains(net, data.trains)

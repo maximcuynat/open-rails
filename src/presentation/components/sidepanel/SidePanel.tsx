@@ -4,6 +4,7 @@ import { arcRadius, arcDeflectionDeg } from '@domain/geometry/tangent'
 import { doubleSlipView, findJunctionAtNode, findJunctionBySegment, turnoutView, type DoubleSlipSide } from '@domain/models/junction'
 import { leaveDirection } from '@domain/models/routing'
 import { MAX_LEVEL, MIN_LEVEL, nodeLevel } from '@domain/models/network'
+import { touchNetwork } from '@domain/models/networkWatch'
 import {
   findSectionBySegment,
   type TrackSection,
@@ -561,12 +562,14 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
   const applyX = (v: number) => {
     setX(v)
     node.pos.x = v
+    touchNetwork(store.network, node.id)
     store.markDirty()
     store.notify()
   }
   const applyY = (v: number) => {
     setY(v)
     node.pos.y = v
+    touchNetwork(store.network, node.id)
     store.markDirty()
     store.notify()
   }
