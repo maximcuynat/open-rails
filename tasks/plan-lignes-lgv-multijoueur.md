@@ -165,15 +165,15 @@ Hypothèses prises faute de réponse (à confirmer) :
   nom, lat/lon) ; croisement par `uic_ref` puis par distance.
 
 ### Lot 2 — Jeu de données « LGV France »
-- [ ] 8. Script `tools/lgv-dataset/` (Node, TypeScript, réutilise `domain/import/`) : extraction
+- [x] 8. Script `tools/lgv-dataset/` (Node, TypeScript, réutilise `domain/import/`) : extraction
   Geofabrik → filtre LGV + raccordements → conversion par ligne → fichiers de géométrie +
   index. Liste des raccordements à inclure établie à la main (Marseille, Lyon Part-Dieu,
   Paris Gare de Lyon, Valence…) et versionnée.
-- [ ] 9. Format de l'index et des fichiers de ligne, documenté ; test d'aller-retour
+- [x] 9. Format de l'index et des fichiers de ligne, documenté ; test d'aller-retour
   sérialisation ; mention ODbL et date dans l'index.
-- [ ] 10. Publication dans `public/data/lgv/` (servi par GitHub Pages) ; action CI de
+- [x] 10. Publication dans `public/data/lgv/` (servi par GitHub Pages) ; action CI de
   régénération (manuelle d'abord, mensuelle ensuite). Taille totale notée.
-- [ ] 11. Contrôle : LGV Méditerranée vérifiée sur place (vitesse 300, aiguillages de
+- [x] 11. Contrôle : LGV Méditerranée vérifiée sur place (vitesse 300, aiguillages de
   bifurcation, raccordement de Marseille), Marseille → Lyon mesurable sur le canevas.
 
 ### Lot 3 — Recherche de gares et chargement par ligne
@@ -181,6 +181,9 @@ Hypothèses prises faute de réponse (à confirmer) :
   ordonnée de gares, homonymes distingués, aperçu de la longueur et des lignes traversées.
 - [ ] 13. Plus court chemin sur l'index ; téléchargement des lignes ; assemblage ; projet
   verrouillé ; cadrage ; attribution ODbL.
+  Recherche de chemin **orientée** (état = nœud + rail d'arrivée) : `findPath` travaille par nœud et
+  trouve ou non selon le nœud de départ choisi (Lot 2 : Marseille → Part-Dieu trouvé à la 17e
+  combinaison départ/arrivée, 325 km).
 - [ ] 14. Chargement / libération à la ligne selon vue + trains + itinéraire ; anticipation
   avant qu'un train atteigne une ligne non chargée.
 - [ ] 15. Facteur d'accélération du temps dans la simulation (si confirmé).
@@ -323,6 +326,49 @@ Pistes à creuser (étape 16, pas bloquantes) :
 Reste pour plus tard (noté) : ramener les ways `railway=platform` pour les numéros de voie quand
 les arrêts n'ont pas de `local_ref` ; mention SNCF dans la fenêtre « À propos » seulement quand le
 projet a des gares (aujourd'hui dès qu'il vient d'OSM).
+
+### Lot 2 — fait le 2026-10-07 (branche `feature/lignes-lgv`, trois commits)
+
+- **Extraction** : 40 tuiles de 2° clippées à la France (aire Overpass 3602202162), aucune trop
+  grande ; 4 raccordements. Premier passage : 44 requêtes, Overpass « busy » 20 fois (pauses 30,
+  60, 120 s), la dernière tuile a échoué au 4e essai et est passée à la relance (le cache reprend),
+  ≈ 45 min en tout ; les corrections de couloir ont coûté 3 requêtes de plus. Cache brut 44 Mo.
+- **Deux défauts vus sur la première génération** (350 495 éléments, 189 565 rails, 16 117 km,
+  337 « lignes », 46,75 Mio) et corrigés : `["railway:tvm"]` attrapait `railway:tvm=no`
+  (18 766 voies classiques) → filtre `~"^[0-9]"` ; l'identité des lignes par `ref` ne tenait pas
+  (« 752 000 » avec espace, « LN2 », absent, trois LGV sous 752000, relations « voie 1 / voie 2 /
+  section » qui fragmentaient) → le manifeste liste les **relations OSM par id** pour chaque
+  ligne, par ordre de priorité ; les autres relations ne disent rien ; plus de repli sur les noms.
+  Le cache a été migré par script (voies classiques retirées) au lieu d'être redemandé.
+- **Génération retenue** : 91 322 éléments fusionnés ; `convertOsm` 26 s ; 36 626 rails, 6 001 km
+  de voie, 57 gares, 25 bouts détachés < 2 km retirés ; réconciliation 0 coupe / 0 soudure ;
+  9 zones de vitesse coupées aux frontières ; 680 ways grande vitesse hors relation listée
+  (raccordements, pris par propagation) ; **« autres » vide**. 16 fichiers, 35 raccords entre
+  lignes, **8,53 Mio** (table par ligne dans `public/data/lgv/README.md`) : les 12 LGV de 66 ko
+  (Perpignan–Figueres) à 1 099 ko (Sud-Est, 927 km de voie) ; raccordements 53 à 1 057 ko (Paris).
+  Longueurs cohérentes avec le réseau réel (LGV Est 826 km de voie pour 406 km de ligne double…).
+- **Couloirs de raccordement** tracés depuis OSM après deux trous trouvés par composantes
+  connexes et bouts de voie : la LGV Méditerranée finit à la bifurcation des Tuileries (nord de
+  Marseille), la ligne PLM descend à Saint-Charles en 7,4 km ; la ligne Lyon–Grenoble passe 800 m
+  au nord de la droite Saint-Quentin – Saint-Priest et la PLM 600 m à l'ouest de la droite
+  Vénissieux – Guillotière. Points tous les ~1 km dans les courbes, rayon 400 m ; disque de
+  Gare de Lyon ramené à 1 km (Bercy et Austerlitz ne sont pas voulus).
+- **Contrôles** : `npm test` vert (`dataset.samples.test.ts` actif : fichiers chargés, index
+  cohérent, union Marseille–Lyon), `tsc` vert. Navigateur sans tête sur `lgv-mediterranee.json`
+  (841 ko) : import 369 ms, autosauvegarde 1,47 Mio OK, trame 16,6 ms (plancher logiciel), 0,7 ms
+  de script. Union Méditerranée + Rhône-Alpes + deux raccordements : 9 131 rails, 2,04 Mio, un
+  seul tenant (hors 95 nœuds d'un bout isolé), **Marseille Saint-Charles → Lyon Part-Dieu
+  325,2 km / 2 364 rails** par `findPath`. Captures : Aix-en-Provence TGV et Avignon TGV nommées
+  avec « voie 3 / voie 4 », vitesses 300 et 320, bifurcations avec tables, Tuileries reliée,
+  faisceau de Saint-Charles « voie A … voie C ».
+- **CI de régénération différée** : Overpass refuse déjà les requêtes nationales depuis un poste
+  (une tuile sur deux « busy »), un runner ferait pire ; `node tools/lgv-dataset/run.mjs` à la
+  main, cache hors git.
+
+Reste pour plus tard (noté) : gares doublées par le regroupement (Paris Austerlitz ×3, CDG 2 TGV
+×2 sous deux UIC) et un nœud « Calais, France » sans UIC ; couloirs tracés à la main (une
+alternative : les relations des lignes classiques clippées par une boîte) ; `findPath` orienté
+(Lot 3) ; `--round` non mesuré (les fichiers tiennent déjà sous 1,1 Mio).
 
 ## Hors périmètre (cette version)
 

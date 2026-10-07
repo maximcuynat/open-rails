@@ -1,0 +1,1410 @@
+{
+ "version": 1,
+ "dataDate": "2026-10-07T16:59:56Z",
+ "generatedAt": "2026-10-07T19:07:51.352Z",
+ "attribution": [
+  "Voies, gares et signaux : © les contributeurs d’OpenStreetMap, licence ODbL 1.0 — https://www.openstreetmap.org/copyright",
+  "Noms et codes des gares : SNCF Gares & Connexions, « Gares de voyageurs », licence ODbL 1.0 — https://ressources.data.sncf.com/explore/dataset/gares-de-voyageurs/"
+ ],
+ "frame": "lambert93",
+ "origin": {
+  "lat": 46.5,
+  "lon": 3
+ },
+ "lines": [
+  {
+   "id": "lgv-atlantique",
+   "name": "LGV Atlantique",
+   "highSpeed": true,
+   "file": "lgv-atlantique.json",
+   "bytes": 574800,
+   "rails": 2286,
+   "lengthKm": 527.08,
+   "bbox": {
+    "minX": -189452.08,
+    "minY": -257288.04,
+    "maxX": -51195.47,
+    "maxY": -102071.82
+   },
+   "stations": [
+    "st_83540",
+    "st_83541"
+   ],
+   "ref": "431000"
+  },
+  {
+   "id": "lgv-bretagne-pays-de-la-loire",
+   "name": "LGV Bretagne - Pays de la Loire",
+   "highSpeed": true,
+   "file": "lgv-bretagne-pays-de-la-loire.json",
+   "bytes": 425331,
+   "rails": 1770,
+   "lengthKm": 409.66,
+   "bbox": {
+    "minX": -344339.74,
+    "minY": -189054.25,
+    "maxX": -187983.28,
+    "maxY": -158406.81
+   },
+   "stations": [],
+   "ref": "408000"
+  },
+  {
+   "id": "lgv-contournement-nimes-montpellier",
+   "name": "LGV Contournement de Nîmes et Montpellier",
+   "highSpeed": true,
+   "file": "lgv-contournement-nimes-montpellier.json",
+   "bytes": 365004,
+   "rails": 1184,
+   "lengthKm": 129.01,
+   "bbox": {
+    "minX": 69261.01,
+    "minY": 295235.83,
+    "maxX": 122966.5,
+    "maxY": 326819.36
+   },
+   "stations": [
+    "st_83533",
+    "st_83584"
+   ],
+   "ref": "834000"
+  },
+  {
+   "id": "lgv-est-europeenne",
+   "name": "LGV Est européenne",
+   "highSpeed": true,
+   "file": "lgv-est-europeenne.json",
+   "bytes": 719672,
+   "rails": 2992,
+   "lengthKm": 825.92,
+   "bbox": {
+    "minX": -27374.17,
+    "minY": -305123.87,
+    "maxX": 347015.07,
+    "maxY": -252150.03
+   },
+   "stations": [
+    "st_83544",
+    "st_83546",
+    "st_83547",
+    "st_83585"
+   ],
+   "ref": "005000"
+  },
+  {
+   "id": "lgv-interconnexion-est",
+   "name": "LGV Interconnexion Est",
+   "highSpeed": true,
+   "file": "lgv-interconnexion-est.json",
+   "bytes": 251939,
+   "rails": 1041,
+   "lengthKm": 150.26,
+   "bbox": {
+    "minX": -31773.7,
+    "minY": -285664.7,
+    "maxX": -14154.44,
+    "maxY": -241042.45
+   },
+   "stations": [
+    "st_83542",
+    "st_83543",
+    "st_83586"
+   ],
+   "ref": "226310"
+  },
+  {
+   "id": "lgv-mediterranee",
+   "name": "LGV Méditerranée",
+   "highSpeed": true,
+   "file": "lgv-mediterranee.json",
+   "bytes": 861400,
+   "rails": 3892,
+   "lengthKm": 519.74,
+   "bbox": {
+    "minX": 120021.4,
+    "minY": 163550.6,
+    "maxX": 190923.74,
+    "maxY": 346679.04
+   },
+   "stations": [
+    "st_83534",
+    "st_83535",
+    "st_83536"
+   ],
+   "ref": "752000"
+  },
+  {
+   "id": "lgv-nord",
+   "name": "LGV Nord",
+   "highSpeed": true,
+   "file": "lgv-nord.json",
+   "bytes": 1067441,
+   "rails": 4452,
+   "lengthKm": 800.72,
+   "bbox": {
+    "minX": -105774.81,
+    "minY": -503145.55,
+    "maxX": 19764.12,
+    "maxY": -277975.88
+   },
+   "stations": [
+    "st_83549",
+    "st_83550",
+    "st_83551",
+    "st_83552",
+    "st_83588"
+   ],
+   "ref": "226000"
+  },
+  {
+   "id": "lgv-perpignan-figueres",
+   "name": "LGV Perpignan - Figueres",
+   "highSpeed": true,
+   "file": "lgv-perpignan-figueres.json",
+   "bytes": 67707,
+   "rails": 304,
+   "lengthKm": 55.66,
+   "bbox": {
+    "minX": -15281.11,
+    "minY": 423840.08,
+    "maxX": -11350.69,
+    "maxY": 450405.65
+   },
+   "stations": []
+  },
+  {
+   "id": "lgv-rhin-rhone",
+   "name": "LGV Rhin-Rhône",
+   "highSpeed": true,
+   "file": "lgv-rhin-rhone.json",
+   "bytes": 392170,
+   "rails": 1661,
+   "lengthKm": 292.54,
+   "bbox": {
+    "minX": 174077.34,
+    "minY": -131312.95,
+    "maxX": 298386.26,
+    "maxY": -81621.99
+   },
+   "stations": [
+    "st_83545",
+    "st_83548",
+    "st_83587"
+   ],
+   "ref": "014000"
+  },
+  {
+   "id": "lgv-rhone-alpes",
+   "name": "LGV Rhône-Alpes",
+   "highSpeed": true,
+   "file": "lgv-rhone-alpes.json",
+   "bytes": 328254,
+   "rails": 1401,
+   "lengthKm": 235.59,
+   "bbox": {
+    "minX": 145551.5,
+    "minY": 65655.98,
+    "maxX": 164332.27,
+    "maxY": 165307.36
+   },
+   "stations": [
+    "st_83539"
+   ],
+   "ref": "752000"
+  },
+  {
+   "id": "lgv-sud-est",
+   "name": "LGV Sud-Est",
+   "highSpeed": true,
+   "file": "lgv-sud-est.json",
+   "bytes": 1125109,
+   "rails": 4822,
+   "lengthKm": 927.25,
+   "bbox": {
+    "minX": -41386.69,
+    "minY": -252896.96,
+    "maxX": 146822.13,
+    "maxY": 73679.97
+   },
+   "stations": [
+    "st_83537",
+    "st_83538"
+   ],
+   "ref": "752000"
+  },
+  {
+   "id": "lgv-sud-europe-atlantique",
+   "name": "LGV Sud Europe Atlantique",
+   "highSpeed": true,
+   "file": "lgv-sud-europe-atlantique.json",
+   "bytes": 679121,
+   "rails": 2786,
+   "lengthKm": 664.82,
+   "bbox": {
+    "minX": -276387.23,
+    "minY": -102074.88,
+    "maxX": -165762.66,
+    "maxY": 168586.77
+   },
+   "stations": [
+    "st_83581",
+    "st_83582",
+    "st_83583"
+   ],
+   "ref": "566000"
+  },
+  {
+   "id": "racc-lyon-part-dieu-nord",
+   "name": "Raccordement de Lyon Part-Dieu par le nord",
+   "highSpeed": false,
+   "file": "racc-lyon-part-dieu-nord.json",
+   "bytes": 54312,
+   "rails": 224,
+   "lengthKm": 16.65,
+   "bbox": {
+    "minX": 144766.1,
+    "minY": 68512.39,
+    "maxX": 147766.14,
+    "maxY": 76924.14
+   },
+   "stations": [
+    "st_83562"
+   ]
+  },
+  {
+   "id": "racc-lyon-part-dieu-sud",
+   "name": "Raccordement de Lyon Part-Dieu par le sud",
+   "highSpeed": false,
+   "file": "racc-lyon-part-dieu-sud.json",
+   "bytes": 562074,
+   "rails": 2274,
+   "lengthKm": 141.37,
+   "bbox": {
+    "minX": 143205.57,
+    "minY": 78273.9,
+    "maxX": 164187.05,
+    "maxY": 93583.43
+   },
+   "stations": [
+    "st_83557",
+    "st_83558",
+    "st_83559",
+    "st_83560",
+    "st_83561",
+    "st_83589"
+   ]
+  },
+  {
+   "id": "racc-marseille-saint-charles",
+   "name": "Raccordement de Marseille Saint-Charles",
+   "highSpeed": false,
+   "file": "racc-marseille-saint-charles.json",
+   "bytes": 387084,
+   "rails": 1564,
+   "lengthKm": 60.97,
+   "bbox": {
+    "minX": 190606.72,
+    "minY": 346407.61,
+    "maxX": 194636.46,
+    "maxY": 352251.99
+   },
+   "stations": [
+    "st_83553",
+    "st_83554",
+    "st_83555",
+    "st_83556"
+   ]
+  },
+  {
+   "id": "racc-paris-gare-de-lyon",
+   "name": "Raccordement de Paris Gare de Lyon",
+   "highSpeed": false,
+   "file": "racc-paris-gare-de-lyon.json",
+   "bytes": 1082574,
+   "rails": 3973,
+   "lengthKm": 243.35,
+   "bbox": {
+    "minX": -47609.94,
+    "minY": -262036.74,
+    "maxX": -30127.08,
+    "maxY": -230458.2
+   },
+   "stations": [
+    "st_83563",
+    "st_83564",
+    "st_83565",
+    "st_83566",
+    "st_83567",
+    "st_83568",
+    "st_83569",
+    "st_83570",
+    "st_83571",
+    "st_83572",
+    "st_83573",
+    "st_83574",
+    "st_83575",
+    "st_83576",
+    "st_83577",
+    "st_83578",
+    "st_83579",
+    "st_83580"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "nodeId": "n_3183",
+   "x": 122756.93,
+   "y": 295447.95,
+   "lines": [
+    "lgv-contournement-nimes-montpellier",
+    "lgv-mediterranee"
+   ]
+  },
+  {
+   "nodeId": "n_3787",
+   "x": 122430.2,
+   "y": 295761.3,
+   "lines": [
+    "lgv-contournement-nimes-montpellier",
+    "lgv-mediterranee"
+   ]
+  },
+  {
+   "nodeId": "n_4501",
+   "x": 122966.5,
+   "y": 295235.83,
+   "lines": [
+    "lgv-contournement-nimes-montpellier",
+    "lgv-mediterranee"
+   ]
+  },
+  {
+   "nodeId": "n_4551",
+   "x": 122540.08,
+   "y": 295653.62,
+   "lines": [
+    "lgv-contournement-nimes-montpellier",
+    "lgv-mediterranee"
+   ]
+  },
+  {
+   "nodeId": "n_10947",
+   "x": 190923.74,
+   "y": 346679.04,
+   "lines": [
+    "lgv-mediterranee",
+    "racc-marseille-saint-charles"
+   ]
+  },
+  {
+   "nodeId": "n_11156",
+   "x": 190802.53,
+   "y": 346580.27,
+   "lines": [
+    "lgv-mediterranee",
+    "racc-marseille-saint-charles"
+   ]
+  },
+  {
+   "nodeId": "n_12361",
+   "x": 155731.14,
+   "y": 163550.99,
+   "lines": [
+    "lgv-mediterranee",
+    "lgv-rhone-alpes"
+   ]
+  },
+  {
+   "nodeId": "n_12398",
+   "x": 155735.51,
+   "y": 163550.6,
+   "lines": [
+    "lgv-mediterranee",
+    "lgv-rhone-alpes"
+   ]
+  },
+  {
+   "nodeId": "n_12441",
+   "x": 162460.8,
+   "y": 93376.16,
+   "lines": [
+    "lgv-rhone-alpes",
+    "racc-lyon-part-dieu-sud"
+   ]
+  },
+  {
+   "nodeId": "n_13349",
+   "x": 162294.35,
+   "y": 93065.64,
+   "lines": [
+    "lgv-rhone-alpes",
+    "racc-lyon-part-dieu-sud"
+   ]
+  },
+  {
+   "nodeId": "n_17706",
+   "x": -165765.45,
+   "y": -102074.88,
+   "lines": [
+    "lgv-atlantique",
+    "lgv-sud-europe-atlantique"
+   ]
+  },
+  {
+   "nodeId": "n_18033",
+   "x": -165762.66,
+   "y": -102071.82,
+   "lines": [
+    "lgv-atlantique",
+    "lgv-sud-europe-atlantique"
+   ]
+  },
+  {
+   "nodeId": "n_21765",
+   "x": 145553.05,
+   "y": 65684.19,
+   "lines": [
+    "lgv-rhone-alpes",
+    "lgv-sud-est"
+   ]
+  },
+  {
+   "nodeId": "n_22057",
+   "x": 145551.5,
+   "y": 65655.98,
+   "lines": [
+    "lgv-rhone-alpes",
+    "lgv-sud-est"
+   ]
+  },
+  {
+   "nodeId": "n_22326",
+   "x": 145762.47,
+   "y": 73646.61,
+   "lines": [
+    "lgv-sud-est",
+    "racc-lyon-part-dieu-nord"
+   ]
+  },
+  {
+   "nodeId": "n_22448",
+   "x": 145712.57,
+   "y": 73679.97,
+   "lines": [
+    "lgv-sud-est",
+    "racc-lyon-part-dieu-nord"
+   ]
+  },
+  {
+   "nodeId": "n_23527",
+   "x": 161963.69,
+   "y": 92358.52,
+   "lines": [
+    "lgv-rhone-alpes",
+    "racc-lyon-part-dieu-sud"
+   ]
+  },
+  {
+   "nodeId": "n_23981",
+   "x": 161418.62,
+   "y": 91182.54,
+   "lines": [
+    "lgv-rhone-alpes",
+    "racc-lyon-part-dieu-sud"
+   ]
+  },
+  {
+   "nodeId": "n_29003",
+   "x": -188286.79,
+   "y": -175380.93,
+   "lines": [
+    "lgv-atlantique",
+    "lgv-bretagne-pays-de-la-loire"
+   ]
+  },
+  {
+   "nodeId": "n_29041",
+   "x": -187983.28,
+   "y": -175262.38,
+   "lines": [
+    "lgv-atlantique",
+    "lgv-bretagne-pays-de-la-loire"
+   ]
+  },
+  {
+   "nodeId": "n_33635",
+   "x": -41378.12,
+   "y": -252896.96,
+   "lines": [
+    "lgv-sud-est",
+    "racc-paris-gare-de-lyon"
+   ]
+  },
+  {
+   "nodeId": "n_34020",
+   "x": -41386.69,
+   "y": -252884.57,
+   "lines": [
+    "lgv-sud-est",
+    "racc-paris-gare-de-lyon"
+   ]
+  },
+  {
+   "nodeId": "n_34870",
+   "x": -32037.09,
+   "y": -237633.87,
+   "lines": [
+    "lgv-sud-est",
+    "racc-paris-gare-de-lyon"
+   ]
+  },
+  {
+   "nodeId": "n_35130",
+   "x": -32105.18,
+   "y": -237721.19,
+   "lines": [
+    "lgv-sud-est",
+    "racc-paris-gare-de-lyon"
+   ]
+  },
+  {
+   "nodeId": "n_35451",
+   "x": -19871.51,
+   "y": -241042.45,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-sud-est"
+   ]
+  },
+  {
+   "nodeId": "n_35542",
+   "x": -23343.07,
+   "y": -244664.71,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-sud-est"
+   ]
+  },
+  {
+   "nodeId": "n_36093",
+   "x": -19990.97,
+   "y": -241587.06,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-sud-est"
+   ]
+  },
+  {
+   "nodeId": "n_36137",
+   "x": -23342.14,
+   "y": -244668.74,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-sud-est"
+   ]
+  },
+  {
+   "nodeId": "n_36495",
+   "x": -20459.28,
+   "y": -273377.74,
+   "lines": [
+    "lgv-est-europeenne",
+    "lgv-interconnexion-est"
+   ]
+  },
+  {
+   "nodeId": "n_36664",
+   "x": -20445.38,
+   "y": -273256.51,
+   "lines": [
+    "lgv-est-europeenne",
+    "lgv-interconnexion-est"
+   ]
+  },
+  {
+   "nodeId": "n_37546",
+   "x": -30371.86,
+   "y": -285266.41,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-nord"
+   ]
+  },
+  {
+   "nodeId": "n_37736",
+   "x": -29835.69,
+   "y": -285664.7,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-nord"
+   ]
+  },
+  {
+   "nodeId": "n_38373",
+   "x": -19862.44,
+   "y": -273982.64,
+   "lines": [
+    "lgv-est-europeenne",
+    "lgv-interconnexion-est"
+   ]
+  },
+  {
+   "nodeId": "n_38429",
+   "x": -19709.78,
+   "y": -274279.51,
+   "lines": [
+    "lgv-est-europeenne",
+    "lgv-interconnexion-est"
+   ]
+  },
+  {
+   "nodeId": "n_38681",
+   "x": -31736.27,
+   "y": -282753.74,
+   "lines": [
+    "lgv-interconnexion-est",
+    "lgv-nord"
+   ]
+  }
+ ],
+ "stations": [
+  {
+   "id": "st_83543",
+   "name": "Aéroport Charles de Gaulle 2 TGV",
+   "x": -31380.46,
+   "y": -278314.01,
+   "lines": [
+    "lgv-interconnexion-est"
+   ],
+   "uic": "8727149",
+   "code": "RYT",
+   "lat": 49.003652,
+   "lon": 2.570892
+  },
+  {
+   "id": "st_83586",
+   "name": "Aéroport Charles de Gaulle 2 TGV",
+   "x": -31380.58,
+   "y": -278315.46,
+   "lines": [
+    "lgv-interconnexion-est"
+   ],
+   "uic": "8700147",
+   "code": "RYT",
+   "lat": 49.003652,
+   "lon": 2.570892
+  },
+  {
+   "id": "st_83535",
+   "name": "Aix-en-Provence TGV",
+   "x": 187611.42,
+   "y": 335468.92,
+   "lines": [
+    "lgv-mediterranee"
+   ],
+   "uic": "8731901",
+   "code": "AXV",
+   "lat": 43.455237,
+   "lon": 5.317534
+  },
+  {
+   "id": "st_83553",
+   "name": "Arenc Euroméditerranée",
+   "x": 192157.09,
+   "y": 351110.67,
+   "lines": [
+    "racc-marseille-saint-charles"
+   ],
+   "uic": "8758034",
+   "code": "AEM",
+   "lat": 43.313234,
+   "lon": 5.367622
+  },
+  {
+   "id": "st_83582",
+   "name": "Aubie - Saint-Antoine",
+   "x": -269269.08,
+   "y": 159061.87,
+   "lines": [
+    "lgv-sud-europe-atlantique"
+   ],
+   "uic": "8749123",
+   "code": "ATX",
+   "lat": 45.015142,
+   "lon": -0.419884
+  },
+  {
+   "id": "st_83534",
+   "name": "Avignon TGV",
+   "x": 143438.82,
+   "y": 284735.07,
+   "lines": [
+    "lgv-mediterranee"
+   ],
+   "uic": "8731896",
+   "code": "AVV",
+   "lat": 43.921586,
+   "lon": 4.786079
+  },
+  {
+   "id": "st_83548",
+   "name": "Belfort - Montbéliard TGV",
+   "x": 292825.89,
+   "y": -127842.57,
+   "lines": [
+    "lgv-rhin-rhone"
+   ],
+   "uic": "8730082",
+   "code": "BFB",
+   "lat": 47.585937,
+   "lon": 6.897687
+  },
+  {
+   "id": "st_83545",
+   "name": "Besançon Franche-Comté TGV",
+   "x": 223085.17,
+   "y": -93904.63,
+   "lines": [
+    "lgv-rhin-rhone"
+   ],
+   "uic": "8730086",
+   "code": "BFC",
+   "lat": 47.307361,
+   "lon": 5.953195
+  },
+  {
+   "id": "st_83580",
+   "name": "Boussy-Saint-Antoine",
+   "x": -34364.61,
+   "y": -242406.48,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768213",
+   "code": "BXI",
+   "lat": 48.680893,
+   "lon": 2.532726
+  },
+  {
+   "id": "st_83565",
+   "name": "Brunoy",
+   "x": -36306.85,
+   "y": -244457.33,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768212",
+   "code": "BNY",
+   "lat": 48.699112,
+   "lon": 2.506422
+  },
+  {
+   "id": "st_83549",
+   "name": "Calais - Fréthun",
+   "x": -83786.75,
+   "y": -490161.76,
+   "lines": [
+    "lgv-nord"
+   ],
+   "uic": "8728107",
+   "code": "FHS",
+   "lat": 50.901221,
+   "lon": 1.810891
+  },
+  {
+   "id": "st_83550",
+   "name": "Calais, France",
+   "x": -83516.78,
+   "y": -492491.17,
+   "lines": [
+    "lgv-nord"
+   ]
+  },
+  {
+   "id": "st_83544",
+   "name": "Champagne-Ardenne TGV",
+   "x": 72443.31,
+   "y": -302080.32,
+   "lines": [
+    "lgv-est-europeenne"
+   ],
+   "uic": "8717192",
+   "code": "CGV",
+   "lat": 49.214806,
+   "lon": 3.994632
+  },
+  {
+   "id": "st_83578",
+   "name": "Combs-la-Ville - Quincy",
+   "x": -33307.48,
+   "y": -240946.45,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768214",
+   "code": "CBV",
+   "lat": 48.667179,
+   "lon": 2.547798
+  },
+  {
+   "id": "st_83568",
+   "name": "Créteil Pompadour",
+   "x": -41494.76,
+   "y": -252518.06,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8760880",
+   "code": "CTP",
+   "lat": 48.77154,
+   "lon": 2.435276
+  },
+  {
+   "id": "st_83583",
+   "name": "Gauriaguet",
+   "x": -267474.51,
+   "y": 154802.11,
+   "lines": [
+    "lgv-sud-europe-atlantique"
+   ],
+   "uic": "8749122",
+   "code": "GGT",
+   "lat": 45.054294,
+   "lon": -0.399269
+  },
+  {
+   "id": "st_83551",
+   "name": "Haute Picardie TGV",
+   "x": -12074.25,
+   "y": -373387.51,
+   "lines": [
+    "lgv-nord"
+   ],
+   "uic": "8731388",
+   "code": "HPI",
+   "lat": 49.859182,
+   "lon": 2.8319
+  },
+  {
+   "id": "st_83581",
+   "name": "La Gorp",
+   "x": -275773.47,
+   "y": 168369.98,
+   "lines": [
+    "lgv-sud-europe-atlantique"
+   ],
+   "uic": "8758475",
+   "code": "GOP",
+   "lat": 44.928835,
+   "lon": -0.496384
+  },
+  {
+   "id": "st_83538",
+   "name": "Le Creusot - Montceau-les-Mines - Montchanin TGV",
+   "x": 114462.93,
+   "y": -30560.66,
+   "lines": [
+    "lgv-sud-est"
+   ],
+   "uic": "8769410",
+   "code": "LCM",
+   "lat": 46.765343,
+   "lon": 4.499513
+  },
+  {
+   "id": "st_83575",
+   "name": "Le Vert de Maisons",
+   "x": -41727.64,
+   "y": -254477.65,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768124",
+   "code": "VDP",
+   "lat": 48.78934,
+   "lon": 2.43148
+  },
+  {
+   "id": "st_83579",
+   "name": "Lieusaint - Moissy",
+   "x": -31719.78,
+   "y": -236543.3,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768215",
+   "code": "LIU",
+   "lat": 48.628305,
+   "lon": 2.568935
+  },
+  {
+   "id": "st_83552",
+   "name": "Lille Europe",
+   "x": 5342.23,
+   "y": -460268.65,
+   "lines": [
+    "lgv-nord"
+   ],
+   "uic": "8722326",
+   "code": "LEW",
+   "lat": 50.639224,
+   "lon": 3.075796
+  },
+  {
+   "id": "st_83547",
+   "name": "Lorraine TGV",
+   "x": 232107.09,
+   "y": -276590.54,
+   "lines": [
+    "lgv-est-europeenne"
+   ],
+   "uic": "8714210",
+   "code": "TGL",
+   "lat": 48.947773,
+   "lon": 6.169838
+  },
+  {
+   "id": "st_83589",
+   "name": "Lyon Jean Macé",
+   "x": 143208.68,
+   "y": 82188.78,
+   "lines": [
+    "racc-lyon-part-dieu-sud"
+   ],
+   "uic": "8728262",
+   "code": "LJC",
+   "lat": 45.74495,
+   "lon": 4.84139
+  },
+  {
+   "id": "st_83560",
+   "name": "Lyon Part Dieu",
+   "x": 144576.51,
+   "y": 80414.78,
+   "lines": [
+    "racc-lyon-part-dieu-sud"
+   ],
+   "uic": "8772319",
+   "code": "LYD",
+   "lat": 45.760559,
+   "lon": 4.859355
+  },
+  {
+   "id": "st_83539",
+   "name": "Lyon Saint-Exupéry TGV",
+   "x": 161449.98,
+   "y": 84383.73,
+   "lines": [
+    "lgv-rhone-alpes"
+   ],
+   "uic": "8776290",
+   "code": "SXA",
+   "lat": 45.721109,
+   "lon": 5.074969
+  },
+  {
+   "id": "st_83537",
+   "name": "Mâcon Loché TGV",
+   "x": 136922.96,
+   "y": 22593.27,
+   "lines": [
+    "lgv-sud-est"
+   ],
+   "uic": "8772570",
+   "code": "MLH",
+   "lat": 46.282884,
+   "lon": 4.778876
+  },
+  {
+   "id": "st_83576",
+   "name": "Maisons-Alfort - Alfortville",
+   "x": -42128.98,
+   "y": -255954.92,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768115",
+   "code": "MFA",
+   "lat": 48.802071,
+   "lon": 2.426977
+  },
+  {
+   "id": "st_83542",
+   "name": "Marne-la-Vallée Chessy",
+   "x": -15932.34,
+   "y": -263382.98,
+   "lines": [
+    "lgv-interconnexion-est"
+   ],
+   "uic": "8711184",
+   "code": "MLV",
+   "lat": 48.869856,
+   "lon": 2.78272
+  },
+  {
+   "id": "st_83554",
+   "name": "Marseille Saint-Charles",
+   "x": 193256.19,
+   "y": 352202.99,
+   "lines": [
+    "racc-marseille-saint-charles"
+   ],
+   "uic": "8775100",
+   "code": "MSC",
+   "lat": 43.302666,
+   "lon": 5.380407
+  },
+  {
+   "id": "st_83541",
+   "name": "Massy TGV",
+   "x": -54322.38,
+   "y": -247568.25,
+   "lines": [
+    "lgv-atlantique"
+   ],
+   "uic": "8739370",
+   "code": "MPW",
+   "lat": 48.725758,
+   "lon": 2.261254
+  },
+  {
+   "id": "st_83587",
+   "name": "Méroux",
+   "x": 292865.31,
+   "y": -127860.02,
+   "lines": [
+    "lgv-rhin-rhone"
+   ],
+   "uic": "8718440",
+   "code": "MOX",
+   "lat": 47.58659,
+   "lon": 6.89903
+  },
+  {
+   "id": "st_83546",
+   "name": "Meuse TGV",
+   "x": 166205.94,
+   "y": -277810.3,
+   "lines": [
+    "lgv-est-europeenne"
+   ],
+   "uic": "8714732",
+   "code": "TGM",
+   "lat": 48.978549,
+   "lon": 5.270954
+  },
+  {
+   "id": "st_83588",
+   "name": "Mont de Terre",
+   "x": 6850.82,
+   "y": -457871.34,
+   "lines": [
+    "lgv-nord"
+   ],
+   "uic": "8728712",
+   "code": "MXT",
+   "lat": 50.617667,
+   "lon": 3.096603
+  },
+  {
+   "id": "st_83563",
+   "name": "Montgeron - Crosne",
+   "x": -39576.76,
+   "y": -245493.17,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768210",
+   "code": "KRW",
+   "lat": 48.708094,
+   "lon": 2.462224
+  },
+  {
+   "id": "st_83584",
+   "name": "Montpellier Sud de France",
+   "x": 74631.86,
+   "y": 322222.59,
+   "lines": [
+    "lgv-contournement-nimes-montpellier"
+   ],
+   "uic": "8768888",
+   "code": "MSF",
+   "lat": 43.594787,
+   "lon": 3.924623
+  },
+  {
+   "id": "st_83533",
+   "name": "Nîmes Pont du Gard",
+   "x": 121293.42,
+   "y": 296873.77,
+   "lines": [
+    "lgv-contournement-nimes-montpellier"
+   ],
+   "uic": "8770397",
+   "code": "NIM",
+   "lat": 43.81681,
+   "lon": 4.50768
+  },
+  {
+   "id": "st_83569",
+   "name": "Paris Austerlitz",
+   "x": -46458.79,
+   "y": -260250.2,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8754702",
+   "code": "PAZ",
+   "lat": 48.842285,
+   "lon": 2.364891
+  },
+  {
+   "id": "st_83571",
+   "name": "Paris Austerlitz",
+   "x": -46451.82,
+   "y": -260310.26,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8754700",
+   "code": "PAZ",
+   "lat": 48.842285,
+   "lon": 2.364891
+  },
+  {
+   "id": "st_83572",
+   "name": "Paris Austerlitz",
+   "x": -46508.16,
+   "y": -260311.02,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8754700",
+   "code": "PAZ",
+   "lat": 48.842285,
+   "lon": 2.364891
+  },
+  {
+   "id": "st_83570",
+   "name": "Paris Bercy Bourgogne - Pays d'Auvergne",
+   "x": -45283.28,
+   "y": -260079.01,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768666",
+   "code": "PBY",
+   "lat": 48.83917,
+   "lon": 2.38278
+  },
+  {
+   "id": "st_83573",
+   "name": "Paris Gare de Lyon",
+   "x": -45921.21,
+   "y": -260566.54,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768603",
+   "code": "PLY",
+   "lat": 48.844888,
+   "lon": 2.37352
+  },
+  {
+   "id": "st_83574",
+   "name": "Paris Gare de Lyon",
+   "x": -45870.56,
+   "y": -260656.78,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768600",
+   "code": "PLY",
+   "lat": 48.844888,
+   "lon": 2.37352
+  },
+  {
+   "id": "st_83555",
+   "name": "Picon Busserine",
+   "x": 194168.2,
+   "y": 349051.65,
+   "lines": [
+    "racc-marseille-saint-charles"
+   ],
+   "uic": "8775929",
+   "code": "XPC",
+   "lat": 43.330999,
+   "lon": 5.392746
+  },
+  {
+   "id": "st_83557",
+   "name": "Saint-Fons",
+   "x": 144116.77,
+   "y": 86525.24,
+   "lines": [
+    "racc-lyon-part-dieu-sud"
+   ],
+   "uic": "8772850",
+   "code": "SFS",
+   "lat": 45.705811,
+   "lon": 4.852566
+  },
+  {
+   "id": "st_83559",
+   "name": "Saint-Priest",
+   "x": 150556.18,
+   "y": 88508.22,
+   "lines": [
+    "racc-lyon-part-dieu-sud"
+   ],
+   "uic": "8772335",
+   "code": "SPR",
+   "lat": 45.686659,
+   "lon": 4.934242
+  },
+  {
+   "id": "st_83561",
+   "name": "Saint-Quentin-Fallavier",
+   "x": 163569.51,
+   "y": 93527.08,
+   "lines": [
+    "racc-lyon-part-dieu-sud"
+   ],
+   "uic": "8772338",
+   "code": "SQF",
+   "lat": 45.638109,
+   "lon": 5.099896
+  },
+  {
+   "id": "st_83556",
+   "name": "Sainte-Marthe en Provence",
+   "x": 193941.89,
+   "y": 348159.01,
+   "lines": [
+    "racc-marseille-saint-charles"
+   ],
+   "uic": "8775184",
+   "code": "SAH",
+   "lat": 43.339241,
+   "lon": 5.390412
+  },
+  {
+   "id": "st_83562",
+   "name": "Sathonay - Rillieux",
+   "x": 145614.29,
+   "y": 73777.17,
+   "lines": [
+    "racc-lyon-part-dieu-nord"
+   ],
+   "uic": "8772370",
+   "code": "SYR",
+   "lat": 45.820264,
+   "lon": 4.875315
+  },
+  {
+   "id": "st_83577",
+   "name": "Savigny-le-Temple - Nandy",
+   "x": -30680.09,
+   "y": -232899,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768218",
+   "code": "ZTN",
+   "lat": 48.595519,
+   "lon": 2.583678
+  },
+  {
+   "id": "st_83585",
+   "name": "Vaires - Torcy",
+   "x": -26502.5,
+   "y": -263970.31,
+   "lines": [
+    "lgv-est-europeenne"
+   ],
+   "uic": "8711629",
+   "code": "VAI",
+   "lat": 48.874953,
+   "lon": 2.639986
+  },
+  {
+   "id": "st_83536",
+   "name": "Valence TGV Rhône-Alpes Sud",
+   "x": 155926.27,
+   "y": 165520.11,
+   "lines": [
+    "lgv-mediterranee"
+   ],
+   "uic": "8776302",
+   "code": "VAL",
+   "lat": 44.991545,
+   "lon": 4.978703
+  },
+  {
+   "id": "st_83540",
+   "name": "Vendôme - Villiers-sur-Loir TGV",
+   "x": -148101.28,
+   "y": -148705.92,
+   "lines": [
+    "lgv-atlantique"
+   ],
+   "uic": "8757121",
+   "code": "VDT",
+   "lat": 47.821937,
+   "lon": 1.021143
+  },
+  {
+   "id": "st_83558",
+   "name": "Vénissieux",
+   "x": 147009.4,
+   "y": 86577.86,
+   "lines": [
+    "racc-lyon-part-dieu-sud"
+   ],
+   "uic": "8772332",
+   "code": "VSX",
+   "lat": 45.705551,
+   "lon": 4.888109
+  },
+  {
+   "id": "st_83567",
+   "name": "Villeneuve Triage",
+   "x": -41276.65,
+   "y": -249538.15,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768180",
+   "code": "VSG",
+   "lat": 48.745198,
+   "lon": 2.438192
+  },
+  {
+   "id": "st_83566",
+   "name": "Villeneuve-Saint-Georges",
+   "x": -40725.53,
+   "y": -247922.33,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768182",
+   "code": "VSB",
+   "lat": 48.730113,
+   "lon": 2.446011
+  },
+  {
+   "id": "st_83564",
+   "name": "Yerres",
+   "x": -38013.59,
+   "y": -245279.62,
+   "lines": [
+    "racc-paris-gare-de-lyon"
+   ],
+   "uic": "8768211",
+   "code": "YES",
+   "lat": 48.706759,
+   "lon": 2.48337
+  }
+ ]
+}
