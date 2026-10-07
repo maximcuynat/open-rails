@@ -273,14 +273,24 @@ export async function fetchOverpass(
 ): Promise<OverpassResponse> {
   const problem = areaProblem(area)
   if (problem) throw new OsmError('too-large', problem)
+  const answer = await askOverpass(buildOverpassQuery(area, kinds), options)
+  if (!hasRailwayWay(answer)) throw new OsmError('empty', OSM_ERROR_MESSAGES.empty)
+  return answer
+}
 
+/**
+ * Run one Overpass query, whatever it asks for: each server is asked in turn until one answers;
+ * when all of them are busy the list is gone through once more after a pause. The first answer is
+ * taken as it is, empty or not (the caller knows what it asked for). Throws an `OsmError`:
+ * `aborted`, `too-large`, `busy`, `offline` or `invalid`.
+ */
+export async function askOverpass(query: string, options: OverpassRequestOptions = {}): Promise<OverpassResponse> {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
   const servers = options.servers ?? OVERPASS_SERVERS
   const rounds = options.rounds ?? OVERPASS_ROUNDS
   const pauseMs = options.pauseMs ?? OVERPASS_RETRY_PAUSE_MS
   const timeoutMs = options.timeoutMs ?? OVERPASS_REQUEST_TIMEOUT_MS
   const sleep = options.sleep ?? abortableSleep
-  const query = buildOverpassQuery(area, kinds)
   const attempts = servers.length * rounds
   const failures: Failure[] = []
   let attempt = 0
@@ -302,10 +312,7 @@ export async function fetchOverpass(
         timeoutMs,
         onBytes: (receivedBytes) => options.onProgress?.({ phase: 'receiving', server, attempt, attempts, receivedBytes }),
       })
-      if (typeof answer !== 'string') {
-        if (!hasRailwayWay(answer)) throw new OsmError('empty', OSM_ERROR_MESSAGES.empty)
-        return answer
-      }
+      if (typeof answer !== 'string') return answer
       roundFailures.push(answer)
     }
     failures.push(...roundFailures)

@@ -260,3 +260,30 @@ export function remapSpeedZones(net: Network, replacement: RailReplacement): voi
   }
   if (changed) invalidateSpeedZones(net)
 }
+
+/**
+ * Cut the zones so that none runs over rails of two different groups (`groupOf` names the group
+ * of a rail): a zone laid through a junction between two lines becomes one zone per line, same
+ * speed, stretches in their order. New ids come from the counter of the network. Returns how many
+ * zones were cut.
+ */
+export function splitSpeedZonesBy(net: Network, groupOf: (segId: SegmentId) => string): number {
+  let cut = 0
+  for (const zone of [...net.speedZones.values()]) {
+    const runs: TrackSpan[][] = []
+    let group: string | null = null
+    for (const span of zone.spans) {
+      const g = groupOf(span.segId)
+      if (g !== group) {
+        runs.push([])
+        group = g
+      }
+      runs[runs.length - 1].push(span)
+    }
+    if (runs.length < 2) continue
+    removeSpeedZone(net, zone.id)
+    for (const run of runs) addSpeedZone(net, run, zone.speed)
+    cut++
+  }
+  return cut
+}

@@ -1,4 +1,4 @@
-import type { Network } from '../models/types'
+import type { Network, SegmentId } from '../models/types'
 import type { OsmFrame } from './osmProjection'
 
 // Contract of the OpenStreetMap import. The conversion is pure: it takes the JSON an
@@ -12,6 +12,8 @@ export interface OverpassElement {
   lon?: number
   /** Node ids of a way, in drawing order. */
   nodes?: number[]
+  /** Members of a relation (`out body`): what a railway line is made of */
+  members?: { type: 'node' | 'way' | 'relation'; ref: number; role?: string }[]
   tags?: Record<string, string>
 }
 
@@ -53,6 +55,8 @@ export interface OsmImportOptions {
   signals?: OsmSignalMode
   /** Read the stations and the stop positions into stations with their platform tracks. On when absent. */
   stations?: boolean
+  /** Remember the OpenStreetMap way each rail was laid from (`OsmImportResult.wayOfRail`). Off when absent. */
+  traceWays?: boolean
   /**
    * The frame the network is projected in. `local` when absent: a projection centred on the data.
    * `lambert93`: the national frame, the same for every import, so that two imports line up.
@@ -223,6 +227,8 @@ export interface OsmImportResult {
   origin: { lat: number; lon: number }
   /** The frame the network is projected in (`projectionFor(frame, origin)` reads it back). */
   frame: OsmFrame
+  /** The OSM way each rail was laid from, when `traceWays` asked for it (a rail cut since answers for its parent) */
+  wayOfRail?: ReadonlyMap<SegmentId, number>
   dataDate?: string
   report: OsmImportReport
 }

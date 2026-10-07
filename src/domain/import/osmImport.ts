@@ -277,6 +277,16 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     contacts = checkNetwork(net).contacts
   }
 
+  // From here on no rail changes: the signals and the stations only add to the network
+  let wayOfRail: Map<string, number> | undefined
+  if (options.traceWays) {
+    wayOfRail = new Map()
+    for (const segId of net.segments.keys()) {
+      const [way] = wayOf(segId)
+      if (way !== undefined) wayOfRail.set(segId, way)
+    }
+  }
+
   const junctions = syncJunctions(net)
   const report: OsmImportReport = {
     nodes: net.nodes.size,
@@ -338,6 +348,7 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
 
   const result: OsmImportResult = { network: net, highSpeed, origin, frame, report }
   if (lineSpeed !== undefined) result.lineSpeed = lineSpeed
+  if (wayOfRail) result.wayOfRail = wayOfRail
   const dataDate = data?.osm3s?.timestamp_osm_base
   if (typeof dataDate === 'string') result.dataDate = dataDate
   return result

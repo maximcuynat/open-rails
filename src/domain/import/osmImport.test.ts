@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { convertOsm, surveyOsm } from './osmImport'
 import type { OsmImportResult, OverpassElement, OverpassResponse } from './osmTypes'
-import { along, answer, levelCounts, nodeNear, nodesWithRails, openInEditor, options, osmNode, osmTrack, osmWay, placeIn } from './osmImport.testkit'
+import { along, answer, levelCounts, nodeNear, nodesWithRails, openInEditor, options, osmNode, osmTrack, osmWay, placeIn, readFixture } from './osmImport.testkit'
 import { segmentShapeLengthBetween } from '../geometry/segmentGeometry'
 import { findJunctionAtNode } from '../models/junction'
 import { walkForward } from '../models/locomotive'
@@ -569,5 +569,19 @@ describe('the frame of an import', () => {
     const lengthOf = (net: Network): number => [...net.segments.values()].reduce((sum, seg) => sum + segmentShapeLengthBetween(net, seg, 0, 1), 0)
     const local = convertOsm(answer(line.elements), options())
     expect(Math.abs(lengthOf(first.network) / lengthOf(local.network) - 1)).toBeLessThan(0.003)
+  })
+})
+
+describe('the way each rail was laid from', () => {
+  it('is remembered on request, for every rail, and a rail cut since answers for its parent', () => {
+    const data = readFixture('lgv-pasilly')
+    const ways = new Set(data.elements.filter((el) => el.type === 'way').map((el) => el.id))
+    const result = convertOsm(data, options({ traceWays: true }))
+    expect(result.wayOfRail!.size).toBe(result.network.segments.size)
+    for (const [segId, way] of result.wayOfRail!) {
+      expect(result.network.segments.has(segId)).toBe(true)
+      expect(ways.has(way)).toBe(true)
+    }
+    expect(convertOsm(data, options()).wayOfRail).toBeUndefined()
   })
 })

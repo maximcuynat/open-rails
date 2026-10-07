@@ -5,6 +5,7 @@ import {
   OVERPASS_SERVERS,
   areaProblem,
   areaSizeKm,
+  askOverpass,
   buildOverpassQuery,
   estimateAnswerBytes,
   fetchOverpass,
@@ -302,5 +303,23 @@ describe('downloading from Overpass', () => {
     const received = seen.filter((p) => p.phase === 'receiving')
     expect(received.length).toBeGreaterThan(0)
     expect(received[received.length - 1].receivedBytes).toBe(JSON.stringify(tracks).length)
+  })
+})
+
+describe('a query written by the caller', () => {
+  it('takes the first answer as it is, empty or not, and still rotates the servers', async () => {
+    const empty = { osm3s: { timestamp_osm_base: '2026-10-06T07:12:00Z' }, elements: [] }
+    const fetch = scripted(() => status(504), () => ok(empty))
+    const answer = await askOverpass('[out:json];node(1);out;', { fetch, servers: SERVERS, sleep: noWait })
+    expect(answer.elements).toEqual([])
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(String(fetch.mock.calls[0][0])).toBe(SERVERS[0])
+    const sent = fetch.mock.calls[1][1]!.body as URLSearchParams
+    expect(sent.get('data')).toBe('[out:json];node(1);out;')
+  })
+
+  it('reports a busy service the same way as the download of an area', async () => {
+    const error = await failure(askOverpass('[out:json];node(1);out;', { fetch: scripted(() => status(504)), servers: SERVERS, rounds: 1, sleep: noWait }))
+    expect(error.kind).toBe('busy')
   })
 })
