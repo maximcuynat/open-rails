@@ -8,6 +8,10 @@ prêt à être chargé par l'éditeur : un fichier projet par ligne et un index.
 - Noms et codes des gares : SNCF Gares & Connexions, « Gares de voyageurs », licence ODbL 1.0 — https://ressources.data.sncf.com/explore/dataset/gares-de-voyageurs/
 - Repère : Lambert-93 (EPSG:2154), origine (46,5° N, 3° E) au monde (0, 0), y vers le sud.
 
+Dans l'éditeur : Fichier ▸ « Ligne entre gares… » cherche les gares dans `index.json`, télécharge les fichiers des
+lignes de l'itinéraire et les charge comme projet verrouillé (sauvegardé comme recette, rechargé à l'ouverture) ; une ligne
+voisine est ajoutée quand un train s'en approche.
+
 Régénérer : `node tools/lgv-dataset/run.mjs` (voir `tools/lgv-dataset/manifest.json` ; `--offline` relit le cache).
 
 ## Fichiers

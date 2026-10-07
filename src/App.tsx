@@ -20,6 +20,8 @@ export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
   if (storeRef.current === null) storeRef.current = new EditorStore()
   const store = storeRef.current
+  // Under `npm run dev` only: the measuring scripts of tools/perf drive the store directly
+  if (import.meta.env.DEV) (window as unknown as { __openRailsStore?: EditorStore }).__openRailsStore = store
 
   // The phone desk belongs to this page: opened from the Simulation menu, gone with the page
   const remoteRef = useRef<RemoteSession | null>(null)

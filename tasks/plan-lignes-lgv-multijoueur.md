@@ -177,18 +177,47 @@ Hypothèses prises faute de réponse (à confirmer) :
   bifurcation, raccordement de Marseille), Marseille → Lyon mesurable sur le canevas.
 
 ### Lot 3 — Recherche de gares et chargement par ligne
-- [ ] 12. Champ « Ligne entre gares… » (menu Fichier ou Cartes) : complétion sur l'index, liste
+- [x] 12. Champ « Ligne entre gares… » (menu Fichier ou Cartes) : complétion sur l'index, liste
   ordonnée de gares, homonymes distingués, aperçu de la longueur et des lignes traversées.
-- [ ] 13. Plus court chemin sur l'index ; téléchargement des lignes ; assemblage ; projet
+- [x] 13. Plus court chemin sur l'index ; téléchargement des lignes ; assemblage ; projet
   verrouillé ; cadrage ; attribution ODbL.
   Recherche de chemin **orientée** (état = nœud + rail d'arrivée) : `findPath` travaille par nœud et
   trouve ou non selon le nœud de départ choisi (Lot 2 : Marseille → Part-Dieu trouvé à la 17e
   combinaison départ/arrivée, 325 km).
-- [ ] 14. Chargement / libération à la ligne selon vue + trains + itinéraire ; anticipation
+- [x] 14. Chargement / libération à la ligne selon vue + trains + itinéraire ; anticipation
   avant qu'un train atteigne une ligne non chargée.
 - [ ] 15. Facteur d'accélération du temps dans la simulation (si confirmé).
-- [ ] 16. Mesure sur Marseille → Lyon chargée : images par seconde en conduite, mémoire, temps
+- [x] 16. Mesure sur Marseille → Lyon chargée : images par seconde en conduite, mémoire, temps
   de chargement. Décision tuiles / IndexedDB sur ces chiffres.
+
+### Lot 3 bis — Fusion de projets (« Fichier ▸ Ajouter un JSON au projet… »)
+Demandé le 2026-10-07 : importer plusieurs JSON quelconques dans un même projet, conflits,
+jonctions et coordonnées résolus. Le Lot 3 ne réunit que des fichiers du jeu de données (mêmes
+ids, même repère) ; ce lot généralise à tout fichier, sur le même code (`projectSlices.ts`).
+Hypothèses tant que l'utilisateur ne dit pas autrement : **le projet courant gagne** sur un
+conflit (réglages, voie décrite deux fois) ; le placement manuel est le dernier point, séparable.
+- [ ] 25. Renumérotation du fichier entrant (`renumberProject` : nœuds, rails, tables, zones,
+  signaux, gares, clés de `sectionMeta`, `parentSegmentId`) à partir du compteur courant ;
+  identité du résultat avec le fichier d'origine à la renumérotation près (test).
+- [ ] 26. Coordonnées : même repère → rien ; import OSM en repère local → reprojection en
+  Lambert-93 (inverse de la projection locale à écrire, testé au centimètre contre la
+  projection directe) quand le projet courant est en Lambert-93, et l'inverse ; un fichier sans
+  géoréférence ni repère commun est posé tel quel et signalé (voir 29).
+- [ ] 27. Dédoublonnage avant soudure : rails identiques (extrémités à moins de la tolérance de
+  réconciliation, même forme) → un seul, le projet courant gagne ; gares par code UIC puis par
+  nom ; zones de vitesse et signaux portés par un rail écarté retirés. Sans ce pas, deux imports
+  qui se recouvrent fabriquent des croisements fantômes entre les deux copies.
+- [ ] 28. Soudure aux bords : `reconcileNetworkIntersections` sur la zone de contact (boîte des
+  rails ajoutés élargie de la tolérance), `syncJunctions` propose les tables des fourches nées de
+  la soudure ; bilan dans la fenêtre d'import (rails ajoutés, écartés, nœuds soudés, croisements,
+  gares fusionnées, réglages ignorés) ; un pas d'annulation pour toute la fusion.
+- [ ] 29. Placement manuel d'un réseau sans géoréférence : fantôme du fichier déplaçable et
+  tournable sur le canevas, clic pour poser, puis 27–28. Interface surtout ; à faire si les
+  fichiers ne viennent pas tous d'OSM.
+Vérification : deux imports OSM voisins qui se recouvrent (fixtures de Pasilly et Clelles
+découpées en deux moitiés avec recouvrement) donnent après fusion le même réseau que l'import
+d'un bloc (idiome `parts` de `projectSlices.test.ts`) ; un fichier en repère local ajouté à un
+projet Lambert-93 se superpose aux gares du registre à moins de 5 m.
 
 ### Lot 4 — Salon à N pupitres et état du monde
 - [ ] 17. `rooms.ts` et `remoteHost.ts` : N pupitres, un train par pupitre, prise et rendu des
@@ -216,6 +245,7 @@ Hypothèses prises faute de réponse (à confirmer) :
    superposent.
 3. **Lot 2** — `public/data/lgv/` existe, LGV Méditerranée se charge en un clic.
 4. **Lot 3** — « Marseille Saint-Charles → Lyon » tapé, ligne chargée, conduite en solo.
+4 bis. **Lot 3 bis** — un second JSON ajouté au projet se soude au premier sans doublon, bilan lisible.
 5. **Lot 4** — deux téléphones conduisent deux trains sur la ligne, le PC aiguille, en local.
 6. **Lot 5** — la même partie depuis le site publié.
 
@@ -369,6 +399,57 @@ Reste pour plus tard (noté) : gares doublées par le regroupement (Paris Auster
 ×2 sous deux UIC) et un nœud « Calais, France » sans UIC ; couloirs tracés à la main (une
 alternative : les relations des lignes classiques clippées par une boîte) ; `findPath` orienté
 (Lot 3) ; `--round` non mesuré (les fichiers tiennent déjà sous 1,1 Mio).
+
+### Lot 3 — fait le 2026-10-07 (branche `feature/lignes-lgv`, neuf commits, le facteur de temps à part)
+
+- **Fichier ▸ « Ligne entre gares… »** (`LineBetweenStationsModal.tsx`, paresseuse) : recherche par
+  préfixe de mots sur le nom normalisé ou le trigramme (`stationSearch.ts`), homonymes signalés
+  par UIC et trigramme (les deux « Aéroport Charles de Gaulle 2 TGV »), gares ordonnées (monter,
+  descendre, retirer), aperçu (lignes dans l'ordre, km de voie, octets, date, attribution),
+  « Charger » ou « Charger et remplacer ». Logique pure dans `src/domain/dataset/` (`lineRoute.ts`,
+  `journeyPlan.ts`), testée sur un index fabriqué et sur le vrai : Marseille → Lyon = les 4 lignes
+  attendues, Paris → Marseille passe par la Sud-Est.
+- **Itinéraire sur l'index** : lignes = sommets, raccords = arêtes, Dijkstra à balayage ; pas de
+  recherche sur la géométrie. Les types de l'index ont quitté `tools/` pour `src/domain/dataset/`
+  (`readDatasetIndex` valide ce qui est lu), le générateur les importe.
+- **Projet verrouillé** (`store.dataset`, `isNetworkLocked`, `canEditNetwork`) : `setTool` refuse les
+  outils de construction (gardés : sélection, vue, mesure, train, attelage), les méthodes d'édition
+  du store rendent la main, pas d'historique (`canUndo` faux), glisser de nœud et gizmo coupés dans
+  le canevas ; barre d'outils grisée « Réseau importé, non modifiable », menus contextuel et
+  Édition sans couper/supprimer/parallèle, note dans l'inspecteur. Trains, conduite, aiguillages
+  manœuvrés, gares : inchangés.
+- **Recette à la place de la géométrie** : `SerializedProject.dataset`, portée par `ProjectOrigin` ;
+  `flushPersistedState` écrit un réseau vide avec trains, caméra, réglages (750 à 990 caractères
+  au lieu de 2 Mio) ; au démarrage, `reloadDataset` retélécharge les lignes et repose trains et
+  caméra (toasts « Rechargement de la ligne… » / « … rechargée ») ; fichiers injoignables → message
+  en français, recette conservée, reprise au prochain démarrage (vérifié en coupant les routes
+  `data/lgv/**`). L'export JSON reste la géométrie complète plus la recette : réimporté, il se
+  reverrouille. `PROJECT_VERSION` reste 4 (argumenté dans le plan d'implémentation).
+- **Lignes à la volée** : une fois par seconde en conduite, tout raccord à moins de 5 km de la tête
+  d'un train vers une ligne non chargée est demandé (`datasetLoader`, posé par
+  `installLineStreaming`), puis `unionProjects` + `deserializeNetwork(union, tolérance, réseau)` **en
+  place** : trains intacts, conduite continue, recette étendue, toast « … chargée en route ». Jamais
+  de déchargement. Test sous l'oracle des révisions.
+- **Mesures** (`tools/perf/measure-driving.cjs`, Chromium sans tête, tramage logiciel ; le store est
+  exposé sur `window.__openRailsStore` en build de développement seulement) :
+
+  | | Marseille → Lyon (4 lignes, 9 131 rails) | Marseille → Avignon, train à Valence (2 → 3 lignes) |
+  |---|---|---|
+  | Aperçu | 958 km de voie, 2,0 Mio | 581 km, 1,2 Mio |
+  | Charger → toast | 300 ms | 237 ms |
+  | Tas JS vide / chargé | 28 / 71 Mio | 28 / 52 Mio |
+  | Conduite 30 s | 60 i/s, trame médiane 16,7 ms, p95 16,8 ms, pire 33 ms | 59,6 i/s, p95 16,8 ms, **pire 217 ms** (ajout de la LGV Rhône-Alpes, 1 401 rails, union de 6 857 rails rechargée en place) |
+  | Tas en conduite | 90 → 172 Mio en 30 s (le ramasse-miettes du Chromium sans tête tarde ; l'autre série redescend de 142 à 79) | 112 → 90 Mio |
+  | Rechargement par recette | 567 ms | 550 ms |
+
+  **Décision (item 16)** : ni tuiles ni IndexedDB. Un trajet se charge en 0,3 s, se recharge en
+  0,6 s, tient en 70 Mio ; l'à-coup de 217 ms d'une ligne ajoutée en route est perceptible mais
+  rare (une fois par ligne) ; à revoir seulement si les lignes classiques décuplent le réseau
+  (désérialiser la seule ligne ajoutée au lieu de l'union).
+
+Reste pour plus tard (noté) : l'à-coup de l'ajout en route (désérialiser la tranche ajoutée seule) ;
+le tas qui grimpe en conduite à vérifier sur un vrai navigateur ; un item « Recharger la ligne »
+dans Fichier pour réessayer sans redémarrer ; mémoire double des fichiers gardés (`datasetFiles`).
 
 ## Hors périmètre (cette version)
 
