@@ -13,6 +13,7 @@ import { toggleJunction, toggleTurnoutHand, turnoutHandFlipSegments, findJunctio
 import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
+import { cleanStations } from '@domain/models/stations'
 import {
   addSignal,
   addSignalPair,
@@ -1168,6 +1169,7 @@ export class EditorStore {
       // left on a rail taken out of the graph by other means
       cleanSpeedZones(this.network)
       cleanSignals(this.network)
+      cleanStations(this.network)
       this.syncedNetwork = this.network
       this.syncedToken = networkCheckToken(this.network)
       // What the check itself changed (tables) is not to be checked again

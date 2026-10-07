@@ -111,9 +111,11 @@ function degrees(value: number): string {
 }
 
 /**
- * The Overpass QL query for the tracks of an area. Ways first, then their nodes by recursion, in
- * one `out body`: every node comes once, with its tags (switches, signals, buffer stops are tags
- * of the nodes of a track). No relation: a line relation runs for hundreds of kilometres.
+ * The Overpass QL query for the tracks of an area. Ways and the station nodes first, then the
+ * nodes of the ways by recursion, in one `out body`: every node comes once, with its tags
+ * (switches, signals, buffer stops and stop positions are tags of the nodes of a track; a station
+ * is often a node of its own, beside the track). No relation: a line relation runs for hundreds of
+ * kilometres.
  */
 export function buildOverpassQuery(area: OsmArea, kinds: OsmQueryKinds = ALL_QUERY_KINDS): string {
   const values = ['rail', ...ALL_EXTRA_KINDS.filter((kind) => kinds.extraKinds.includes(kind))]
@@ -124,7 +126,7 @@ export function buildOverpassQuery(area: OsmArea, kinds: OsmQueryKinds = ALL_QUE
       : `(${degrees(area.south)},${degrees(area.west)},${degrees(area.north)},${degrees(area.east)})`
   return [
     `[out:json][timeout:${OVERPASS_SERVER_TIMEOUT_S}];`,
-    `way[railway~"^(${values.join('|')})$"]${where};`,
+    `(way[railway~"^(${values.join('|')})$"]${where};node[railway~"^(station|halt)$"]${where};);`,
     '(._;>;);',
     'out body qt;',
   ].join('\n')

@@ -46,7 +46,8 @@ export function AboutModal({ isOpen, osmSource, onClose }: AboutModalProps) {
             <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener noreferrer">
               ODbL 1.0
             </a>
-            . S'il est partagé, il le reste sous cette licence, avec cette mention.
+            . S'il est partagé, il le reste sous cette licence, avec cette mention. Les noms officiels et les codes de ses gares
+            viennent du jeu « Gares de voyageurs » de SNCF Gares & Connexions, sous la même licence.
           </p>
         )}
         <p>

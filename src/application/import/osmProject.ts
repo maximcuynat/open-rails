@@ -3,6 +3,8 @@ import type { OsmImportIssue, OsmImportResult, OsmSource } from '@domain/import/
 import type { SignallingLevel } from '@domain/models/signals'
 import { DEFAULT_LINE_SETTINGS, LINE_PRESETS, LINE_SPEED_RANGE, type LineSettings } from '@domain/models/speedLimits'
 import { SCALE_PRESETS } from '@domain/models/units'
+import { findSectionChains, type SectionMetadata } from '@domain/models/sections'
+import type { Network } from '@domain/models/types'
 import { serializeNetwork, type SerializedProject } from '@infrastructure/persistence/persistence'
 
 /**
@@ -61,8 +63,39 @@ export function osmProjectName(placeName?: string): string {
 }
 
 /**
+ * The platform tracks of the stations as sections: each section a stop stands on becomes a
+ * « voie à quai » named after its station and platform. One entry under the key of the section and
+ * one per rail, as the editor writes them; the names are unique, as `nameSections` keeps a name
+ * for one section only.
+ */
+export function stationSectionMeta(net: Network): Record<string, SectionMetadata> {
+  const meta: Record<string, SectionMetadata> = {}
+  if (net.stations.size === 0) return meta
+  const sections = findSectionChains(net)
+  const sectionOf = new Map<string, (typeof sections)[number]>()
+  for (const section of sections) for (const segId of section.segmentIds) sectionOf.set(segId, section)
+  for (const station of net.stations.values()) {
+    /** Platform labels by section: two stops on one section make one « voie A/B » */
+    const labels = new Map<(typeof sections)[number], string[]>()
+    station.stops.forEach((stop, i) => {
+      const section = sectionOf.get(stop.segId)
+      if (!section) return
+      const list = labels.get(section) ?? []
+      list.push(stop.ref ?? String(i + 1))
+      labels.set(section, list)
+    })
+    for (const [section, refs] of labels) {
+      const entry: SectionMetadata = { type: 'station_stop', name: `${station.name} · voie ${refs.join('/')}`, isCustomName: true }
+      meta[section.sortedSegKey] = entry
+      for (const segId of section.segmentIds) meta[segId] = { ...entry }
+    }
+  }
+  return meta
+}
+
+/**
  * The project file of an import: full size, in metres, no baseboard, no camera (the view is
- * framed on the network once loaded) and no train.
+ * framed on the network once loaded) and no train. Its sections are the platform tracks.
  */
 export function buildOsmProject(result: OsmImportResult, options: OsmProjectOptions): SerializedProject {
   const real = SCALE_PRESETS['1:1']
@@ -70,7 +103,7 @@ export function buildOsmProject(result: OsmImportResult, options: OsmProjectOpti
     result.network,
     osmProjectName(options.placeName),
     undefined,
-    {},
+    stationSectionMeta(result.network),
     undefined,
     undefined,
     undefined,

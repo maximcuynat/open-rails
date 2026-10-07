@@ -68,6 +68,7 @@ export function surveyFigures(survey: OsmSurvey): Figure[] {
     { label: survey.switches > 1 ? 'aiguillages' : 'aiguillage', value: formatCount(survey.switches) },
     { label: survey.bridges > 1 ? 'ponts' : 'pont', value: formatCount(survey.bridges) },
     { label: survey.tunnels > 1 ? 'tunnels' : 'tunnel', value: formatCount(survey.tunnels) },
+    { label: (survey.stations ?? 0) > 1 ? 'gares' : 'gare', value: formatCount(survey.stations ?? 0) },
     { label: 'rails estimés', value: `≈ ${formatCount(survey.estimatedRails)}` },
   ]
 }
@@ -83,6 +84,7 @@ export function reportFigures(report: OsmImportReport): Figure[] {
     { label: report.speedZones > 1 ? 'zones de vitesse' : 'zone de vitesse', value: formatCount(report.speedZones) },
     { label: report.railsOnBridge > 1 ? 'rails sur un pont' : 'rail sur un pont', value: formatCount(report.railsOnBridge) },
     { label: report.railsInTunnel > 1 ? 'rails en tunnel' : 'rail en tunnel', value: formatCount(report.railsInTunnel) },
+    ...(report.stations ? [{ label: report.stations.placed > 1 ? 'gares' : 'gare', value: formatCount(report.stations.placed) }] : []),
   ]
 }
 
@@ -143,10 +145,15 @@ export const OSM_ISSUE_TEXT: Record<OsmIssueKind, { one: string; many: string; m
     many: 'Signaux réels non posés',
     meaning: 'Les données ne disent pas à quel sens de circulation le signal s’adresse, ou il se trouve sur un aiguillage.',
   },
+  'station-not-placed': {
+    one: 'Gare sans voie',
+    many: 'Gares sans voie',
+    meaning: 'La gare est nommée dans les données, mais aucune voie importée ne passe assez près pour lui donner des voies à quai.',
+  },
 }
 
 /** Order of the groups in the report: what needs a decision first */
-const ISSUE_ORDER: readonly OsmIssueKind[] = ['undecided-crossing', 'unknown-junction', 'sharp-angle', 'uncertain-level', 'signal-not-placed', 'cut-by-area']
+const ISSUE_ORDER: readonly OsmIssueKind[] = ['undecided-crossing', 'unknown-junction', 'sharp-angle', 'uncertain-level', 'signal-not-placed', 'station-not-placed', 'cut-by-area']
 
 export interface OsmIssueGroup {
   kind: OsmIssueKind

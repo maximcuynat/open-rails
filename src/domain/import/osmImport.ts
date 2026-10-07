@@ -7,6 +7,8 @@ import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { analyzeKinematics } from '../services/kinematicDiagnostics'
 import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
 import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
+import { createTrackPlacer } from './osmPlace'
+import { countStations, layStations } from './osmStations'
 import { buildChains, buildGraph, chainEnds, components, restrictGraph, type Chain, type TrackGraph } from './osmGraph'
 import { findChainCrossings, type ChainCrossing } from './osmCrossings'
 import { planLevels, separateStructures, trackAt } from './osmLevels'
@@ -127,6 +129,7 @@ export function surveyOsm(data: OverpassResponse, options: OsmImportOptions): Os
     signals: 0,
     typedMainSignals: 0,
     usableSignals: 0,
+    stations: countStations(read),
     estimatedRails: 0,
     detachedKm: droppedLength / 1000,
   }
@@ -312,19 +315,26 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     if (options.speedLimits && edge.track.speed !== null && (lineSpeed === undefined || edge.track.speed > lineSpeed)) lineSpeed = edge.track.speed
   }
 
-  // The signals come last, on the track as it is handed over: they change neither nodes nor rails
+  // The signals and the stations come last, on the track as it is handed over: they change
+  // neither nodes nor rails
+  const placer = createTrackPlacer(net, chains, built)
   const signals = laySignals({
     net,
     read,
     graph,
-    chains,
     built,
     project,
+    placer,
     mode: options.signals ?? 'generated',
     line: importLine(lineSpeed, highSpeed),
   })
   report.signals = signals.report
   issues.push(...signals.issues)
+  if (options.stations !== false) {
+    const stations = layStations({ net, read, graph, project, placer })
+    report.stations = stations.report
+    issues.push(...stations.issues)
+  }
 
   const result: OsmImportResult = { network: net, highSpeed, origin, frame, report }
   if (lineSpeed !== undefined) result.lineSpeed = lineSpeed

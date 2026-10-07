@@ -22,6 +22,9 @@ import {
   type OsmIssueGroup,
 } from '@application/import/osmReport'
 import { convertOsm, surveyOsm } from '@domain/import/osmImport'
+import { projectionFor } from '@domain/import/osmProjection'
+import { matchStationRegistry } from '@domain/models/stationRegistry'
+import { loadStationRegistry } from '@application/import/stationRegistry'
 import {
   DEFAULT_OSM_IMPORT_OPTIONS,
   OSM_ATTRIBUTION,
@@ -183,6 +186,8 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
 
   useEffect(() => {
     placeInput.current?.focus()
+    // The official names of the stations are fetched now, to be there when the import runs
+    void loadStationRegistry()
     // Closing the window drops whatever request is still out
     return () => abort.current?.abort()
   }, [])
@@ -309,6 +314,8 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
     await nextPaint()
     try {
       const result = convertOsm(dataset.response, options)
+      // The official names and codes of the stations; without the list, the names of the data
+      if (result.network.stations.size > 0) matchStationRegistry(result.network, await loadStationRegistry(), projectionFor(result.frame, result.origin))
       loadOsmImport(store, result, { levels: options.levels, placeName: dataset.placeName, signallingLevel: level })
       const control = controlNote(signalReport(store.network, { level, line: store.lineSettings }), level, store.network.signals.size)
       setOutcome({

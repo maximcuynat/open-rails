@@ -172,8 +172,8 @@ describe('a long rail: one rail that carries its whole path', () => {
     expect(segmentArcLength(back, read.id)).toBeCloseTo(LENGTH)
     expect(positionOnSegment(back, read.id, 0.5)!.x).toBeCloseTo(positionOnSegment(net, rail.id, 0.5)!.x)
 
-    expect(PROJECT_VERSION).toBe(3)
-    expect(() => deserializeNetwork({ ...saved, version: 4 as 3 })).toThrow()
+    expect(PROJECT_VERSION).toBe(4)
+    expect(() => deserializeNetwork({ ...saved, version: 5 as 4 })).toThrow()
     // A project without long rail is still written as before
     const plain = createNetwork()
     addSegment(plain, addNode(plain, { x: 0, y: 0 }).id, addNode(plain, { x: 10, y: 0 }).id)

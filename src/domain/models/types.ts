@@ -163,6 +163,35 @@ export interface Signal {
   oneWay?: boolean
 }
 
+export type StationId = string
+
+/** A platform track of a station: the place of a rail where trains stop at it */
+export interface StationStop {
+  segId: SegmentId
+  /** Parameter on the rail, 0…1 */
+  t: number
+  /** Platform or track number as the data gives it (`local_ref`), when known */
+  ref?: string
+}
+
+/**
+ * A railway station: a name, a place, and the rails trains stop at (its platform tracks). Laid by
+ * the OpenStreetMap import, read by the canvas and the panels; nothing edits one yet. It names
+ * rails, so the domain keeps its stops in place when a rail is cut or merged and drops them with
+ * the rail (see `replaceRail`). Change it only through the helpers of `models/stations.ts`.
+ */
+export interface Station {
+  id: StationId
+  name: string
+  /** Where the station is drawn and looked for: on the track when it was built from its stops */
+  pos: Point
+  /** UIC code, the seven digits OpenStreetMap writes (`uic_ref`) */
+  uic?: string
+  /** Three-letter code of the SNCF registry (MSC for Marseille Saint-Charles) */
+  code?: string
+  stops: StationStop[]
+}
+
 export interface Network {
   nodes: Map<NodeId, RailNode>
   segments: Map<SegmentId, Segment>
@@ -178,6 +207,8 @@ export interface Network {
   speedZones: Map<SpeedZoneId, SpeedZone>
   /** Signals laid on the track (see `models/signals.ts`) */
   signals: Map<SignalId, Signal>
+  /** Stations and their platform tracks (see `models/stations.ts`) */
+  stations: Map<StationId, Station>
 }
 
 export interface Selection {

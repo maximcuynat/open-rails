@@ -53,9 +53,14 @@ async function failure(promise: Promise<unknown>): Promise<OsmError> {
 }
 
 describe('the Overpass query', () => {
-  it('asks for the tracks around a point, then their nodes, in one output', () => {
+  it('asks for the tracks and the stations around a point, then the nodes of the tracks, in one output', () => {
     expect(buildOverpassQuery(AREA, { extraKinds: [], disused: false })).toBe(
-      ['[out:json][timeout:60];', 'way[railway~"^(rail)$"](around:2000,48.8443,2.3744);', '(._;>;);', 'out body qt;'].join('\n'),
+      [
+        '[out:json][timeout:60];',
+        '(way[railway~"^(rail)$"](around:2000,48.8443,2.3744);node[railway~"^(station|halt)$"](around:2000,48.8443,2.3744););',
+        '(._;>;);',
+        'out body qt;',
+      ].join('\n'),
     )
   })
 

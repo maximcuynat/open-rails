@@ -179,6 +179,12 @@ describe('sample areas', () => {
     const { report, network } = result
     expect(report).toMatchObject({ turnouts: 5, doubleSlips: 1, fixedCrossings: 0, stackedCrossings: 0, undecidedCrossings: 0, droppedComponents: 0, lengthWithoutSpeedKm: 0 })
     expect(issuesByKind(result)).toEqual({ 'cut-by-area': 2 })
+    // Its station: the two stop positions, grouped by UIC code, and the building node for the trigram
+    expect(report.stations).toEqual({ found: 1, placed: 1, stops: 2, skipped: {} })
+    const station = [...network.stations.values()][0]
+    expect(station).toMatchObject({ name: 'Clelles-Mens', uic: '8774762', code: 'CMS' })
+    expect(station.stops).toHaveLength(2)
+    for (const stop of station.stops) expect(network.segments.has(stop.segId)).toBe(true)
     expect(report.lengthKm).toBeCloseTo(12.58, 1)
     expect(report.rails).toBeGreaterThan(300)
     expect(report.rails).toBeLessThan(450)
