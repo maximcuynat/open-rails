@@ -1,6 +1,6 @@
 import { generateId, addNode, addSegment, addCurveSegment, addChildSegment, addPathSegment, detachSegment, replaceRail, segmentHeightAt, setNodesLevel } from './network'
 import { pathSlice } from '../geometry/railPath'
-import { networkChanged, touchNetwork } from './networkWatch'
+import { tablesChanged, touchNetwork } from './networkWatch'
 import { removalReplacement, splitReplacement } from './trackObjects'
 import { computeCurvePiece, computeStraightPiece } from '../profiles/profiles'
 import { bezierPoint } from '../geometry/curve'
@@ -180,7 +180,7 @@ export function setJunctionPosition(junction: Junction, index: number): void {
   if (index >= 0 && index < junction.positions.length && junction.active !== index) {
     junction.active = index
     // Changed in place, in a network this does not know (`networkWatch`)
-    networkChanged()
+    tablesChanged()
   }
 }
 
@@ -539,7 +539,7 @@ export function normalizeTurnoutRoles(net: Network, junc: Junction): void {
   const branches = orderBranches(sides)
   junc.passages = branches.map((b) => ({ a: stemId, b }))
   junc.active = Math.max(0, branches.indexOf(openRail))
-  touchNetwork(net)
+  touchNetwork(net, null)
 }
 
 /**
@@ -569,12 +569,16 @@ function orderStraightFirst(a: BranchSide, b: BranchSide): [BranchSide, BranchSi
  * - a double slip that loses a rail becomes a turnout, open on the same rail when it survives;
  * - any other extra rail leaves the table alone and follows the default rule;
  * - a fork that has no table gets the one `proposeJunction` reads from its geometry.
+ * `scope`: the nodes at which something changed — only their tables are checked and only they
+ * may get one (a table at any other node reads the same as it did); every node without it.
  * Returns the tables of the network.
  */
-export function syncJunctions(net: Network): Junction[] {
+export function syncJunctions(net: Network, scope?: ReadonlySet<NodeId>): Junction[] {
   const seen = new Set<NodeId>()
   for (const junc of [...net.junctions.values()]) {
-    if (!net.nodes.has(junc.nodeId) || seen.has(junc.nodeId)) {
+    const gone = !net.nodes.has(junc.nodeId)
+    if (!gone && scope && !scope.has(junc.nodeId)) continue
+    if (gone || seen.has(junc.nodeId)) {
       net.junctions.delete(junc.id)
       invalidateJunctionIndex(net)
       continue
@@ -601,8 +605,9 @@ export function syncJunctions(net: Network): Junction[] {
     }
   }
 
-  for (const [nodeId, adj] of net.adjacency) {
-    if (adj.length >= 3 && !findJunctionAtNode(net, nodeId)) proposeJunction(net, nodeId)
+  for (const nodeId of scope ?? net.adjacency.keys()) {
+    const adj = net.adjacency.get(nodeId)
+    if (adj && adj.length >= 3 && !findJunctionAtNode(net, nodeId)) proposeJunction(net, nodeId)
   }
   return [...net.junctions.values()]
 }
@@ -654,7 +659,7 @@ function dropDeadPassages(net: Network, junc: Junction, rails: Set<SegmentId>): 
 
   const active = positions.findIndex((position) => position.some((i) => openBefore.some((p) => samePair(p, passages[i]))))
   const wasThreeWay = junc.kind === 'three_way'
-  touchNetwork(net)
+  touchNetwork(net, null)
   junc.passages = passages
   junc.positions = positions
   junc.active = Math.max(0, active)
@@ -704,7 +709,7 @@ function addThirdBranch(net: Network, junc: Junction, extraSegId: SegmentId): vo
   junc.passages = branches.map((b) => ({ a: stemId, b }))
   junc.positions = branches.map((_, i) => [i])
   junc.active = Math.max(0, branches.indexOf(openRail))
-  touchNetwork(net)
+  touchNetwork(net, null)
 }
 
 /**
@@ -805,6 +810,7 @@ export function splitSegment(
     if (lenSq > 0) {
       t = Math.max(0.005, Math.min(0.995, ((splitPoint.x - nodeA.pos.x) * dx + (splitPoint.y - nodeA.pos.y) * dy) / lenSq))
       midNode.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
+      touchNetwork(net, midNode.id)
       // The new node is at the height the rail has there: each piece keeps its share of a ramp
       setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
     } else {
@@ -848,6 +854,7 @@ export function splitSegment(
       y: (1 - t) * q0.y + t * q1.y,
     }
     midNode.pos = bt
+    touchNetwork(net, midNode.id)
     setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
 
     detachSegment(net, segmentId)
@@ -863,6 +870,7 @@ export function splitSegment(
       const t = Math.max(0.005, Math.min(0.995, closestParamOnShape(ends, splitPoint)))
       const at = t * ends.path.length
       midNode.pos = pointOnShape(ends, t)
+      touchNetwork(net, midNode.id)
       setNodesLevel(net, [midNode.id], segmentHeightAt(net, seg, t))
       const first = pathSlice(ends.path, 0, at)
       const second = pathSlice(ends.path, at, ends.path.length)
@@ -908,6 +916,7 @@ export function weldNodes(net: Network, keepNodeId: NodeId, removeNodeId: NodeId
     // Re-route segment to keepNode
     if (seg.from === removeNodeId) seg.from = keepNodeId
     if (seg.to === removeNodeId) seg.to = keepNodeId
+    touchNetwork(net, seg.id)
 
     if (!keepSegIds.includes(sid)) {
       keepSegIds.push(sid)
@@ -984,7 +993,8 @@ export function toggleTurnoutHand(net: Network, junctionId: JunctionId): boolean
   if (divSeg && divSeg.via) {
     divSeg.via = reflectPoint(divSeg.via)
   }
-  touchNetwork(net)
+  touchNetwork(net, divNode.id)
+  if (divSeg) touchNetwork(net, divSeg.id)
 
   return true
 }
