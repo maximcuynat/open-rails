@@ -52,6 +52,8 @@ import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
+import { connectionsToward } from '@domain/dataset/lineRoute'
+import { unionProjects } from '@infrastructure/persistence/projectSlices'
 import {
   saveNetworkToStorage,
   loadNetworkFromStorage,
@@ -390,6 +392,12 @@ export class EditorStore {
   datasetLastAddMs = 0
   /** The stored recipe-only project, kept until its lines are fetched again (trains and camera to put back) */
   datasetStoredProject: SerializedProject | null = null
+  /** Seconds since the trains were last checked against the connections to lines not loaded */
+  private datasetCheckElapsed = 0
+  /** Lines fetched because a train came near them; the dock says so */
+  onDatasetLinesAdded: ((lines: LineId[], rails: number) => void) | null = null
+  /** A fetch of lines a train came near failed; the dock says so */
+  onDatasetError: ((error: unknown) => void) | null = null
 
   /** A project from the dataset: its track is read only */
   get isNetworkLocked(): boolean {
@@ -1127,6 +1135,75 @@ export class EditorStore {
     this.camera.y = (box.minY + box.maxY) / 2
     this.camera.scale = clampScale(0.9 * Math.min(vw / width, vh / height))
     this.notifyView()
+  }
+
+  /**
+   * Once a second while driving: every connection within reach of a train's lead that leads to
+   * a line not loaded has that line asked for (once; the loader is the application's). Nothing
+   * is ever unloaded.
+   */
+  private checkDatasetLines(dt: number): void {
+    if (!this.dataset || !this.datasetIndex || !this.datasetLoader) return
+    this.datasetCheckElapsed += dt
+    if (this.datasetCheckElapsed < DATASET_CHECK_PERIOD_S) return
+    this.datasetCheckElapsed = 0
+    const gates = connectionsToward(this.datasetIndex, new Set(this.dataset.lines))
+    if (gates.length === 0) return
+    const wanted = new Set<LineId>()
+    for (const train of this.trains) {
+      const lead = train.vehicles[0]
+      const pos = lead ? positionOnSegment(this.network, lead.front.segId, lead.front.t) : null
+      if (!pos) continue
+      for (const gate of gates) {
+        if (Math.hypot(gate.x - pos.x, gate.y - pos.y) > DATASET_LOOKAHEAD_M) continue
+        for (const id of gate.lines) if (!this.datasetPending.has(id)) wanted.add(id)
+      }
+    }
+    if (wanted.size === 0) return
+    const ids = [...wanted]
+    for (const id of ids) this.datasetPending.add(id)
+    void this.datasetLoader(ids)
+      .then((files) => {
+        const rails = this.addDatasetLines(files)
+        if (rails > 0) this.onDatasetLinesAdded?.(ids, rails)
+      })
+      .catch((error: unknown) => {
+        console.warn('Lignes du jeu de données non chargées', error)
+        this.onDatasetError?.(error)
+      })
+      .finally(() => {
+        for (const id of ids) this.datasetPending.delete(id)
+      })
+  }
+
+  /**
+   * Add the files of some lines to the dataset project, in place: the union of every file is
+   * loaded onto the live network (what is already there stays the object it is, the trains keep
+   * their rails, the driving goes on). Returns how many rails were added.
+   */
+  addDatasetLines = (files: ReadonlyMap<LineId, SerializedProject>): number => {
+    if (!this.dataset) return 0
+    const added: LineId[] = []
+    for (const [id, project] of files) {
+      if (!this.datasetFiles.has(id)) added.push(id)
+      this.datasetFiles.set(id, project)
+    }
+    if (added.length === 0) return 0
+    const before = this.network.segments.size
+    const t0 = performance.now()
+    const union = unionProjects([...this.datasetFiles.values()])
+    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
+    const res = deserializeNetwork(union, tolerance, this.network)
+    if (res.sectionMeta) {
+      const keys = Object.keys(res.sectionMeta).filter((key) => !(key in this.sectionMeta))
+      for (const key of keys) this.sectionMeta[key] = res.sectionMeta[key]
+      if (keys.length) sectionMetaChanged(this.sectionMeta, keys)
+    }
+    this.dataset = { ...this.dataset, lines: [...this.dataset.lines, ...added] }
+    this.datasetLastAddMs = performance.now() - t0
+    this.savePersistedState()
+    this.notify()
+    return this.network.segments.size - before
   }
 
   /**
@@ -4208,6 +4285,8 @@ export class EditorStore {
       tickTrainSet(this.network, train, dt, this.trains, occupancy, env)
       this.reportImpact(train)
     }
+    // A train nearing a line of the dataset that is not loaded: its file is asked for now
+    this.checkDatasetLines(dt)
     // Once every train has moved: what each one holds, what the signals show, the signals passed
     // (nothing at all on a network without signal)
     // The driven train holds the track over the stopping distance its physics works out; the
@@ -4258,6 +4337,10 @@ const reconciledSteps = new WeakMap<SerializedProject, number>()
 
 /** How long the write of the project to localStorage waits after an edit, ms: the edits made meanwhile are written with it */
 const AUTOSAVE_DELAY_MS = 400
+/** How close (m) a train's lead comes to a connection before the line beyond it is fetched */
+export const DATASET_LOOKAHEAD_M = 5000
+/** How often (s) the trains are checked against the connections */
+const DATASET_CHECK_PERIOD_S = 1
 /** What a dataset project writes in place of its track: nothing (never changed) */
 const EMPTY_NETWORK = createNetwork()
 

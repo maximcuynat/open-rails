@@ -1,3 +1,4 @@
+import { datasetErrorMessage } from '@application/dataset/datasetClient'
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { overspeedMessage, signalPassedMessage, trainImpactMessage, type EditorStore } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
@@ -55,6 +56,19 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
     store.onTrainImpact = (_train, speed) => showToast(trainImpactMessage(speed), 'warning')
     return () => {
       store.onTrainImpact = null
+    }
+  }, [store])
+
+  // Lines of the dataset fetched as a train nears them, or not
+  useEffect(() => {
+    store.onDatasetLinesAdded = (lines) => {
+      const names = lines.map((id) => store.datasetIndex?.lines.find((line) => line.id === id)?.name ?? id)
+      showToast(`${names.join(', ')} : ligne${lines.length > 1 ? 's' : ''} chargée${lines.length > 1 ? 's' : ''} en route`, 'info')
+    }
+    store.onDatasetError = (error) => showToast(datasetErrorMessage(error), 'warning', 6000)
+    return () => {
+      store.onDatasetLinesAdded = null
+      store.onDatasetError = null
     }
   }, [store])
 

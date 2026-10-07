@@ -5,6 +5,7 @@ import { addStation } from '@domain/models/stations'
 import { fakeIndex } from '@domain/dataset/datasetIndex.testkit'
 import type { DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { getStorage, loadNetworkFromStorage, resetMemoryStorage, type SerializedProject } from '@infrastructure/persistence/persistence'
+import { fakeDataset } from '@application/dataset/dataset.testkit'
 
 /**
  * A line file as the dataset would give it: a straight track of four rails along x, a branch
@@ -174,5 +175,66 @@ describe('a dataset project saved as a recipe', () => {
 
     fresh.loadFromData(JSON.parse(JSON.stringify(project)))
     expect(fresh.isNetworkLocked).toBe(false)
+  })
+})
+
+describe('lines fetched as a train nears them', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetIdCounter()
+  })
+
+  /** Line a loaded alone, with a loader that answers with line b when asked */
+  function driving(connectionX = 1000) {
+    const { index, files } = fakeDataset()
+    index.connections[0].x = connectionX
+    const store = new EditorStore()
+    const a = files['a.json']
+    store.loadDataset({ version: 1, dataDate: index.dataDate, lines: ['a'], stations: ['s1'] }, a, new Map([['a', a]]), index, null)
+    let release: (() => void) | null = null
+    const asked: string[][] = []
+    store.datasetLoader = (lines) => {
+      asked.push(lines)
+      return new Promise((resolve) => {
+        release = () => resolve(new Map(lines.map((id) => [id, files[`${id}.json`]])))
+      })
+    }
+    expect(store.placeTrainItem({ x: 300, y: 0 })).toBe(true)
+    store.togglePlayMode()
+    expect(store.isPlayMode).toBe(true)
+    return { store, asked, release: () => release?.(), railsOfB: files['b.json'].segments.length }
+  }
+
+  it('asks for the line beyond a connection within reach, once, and adds it without stopping the train', async () => {
+    const { store, asked, release, railsOfB } = driving()
+    const before = store.network.segments.size
+    const train = store.trains[0]
+    const front = train.vehicles[0].front.segId
+    store.tickAllTrains(1.0)
+    expect(asked).toEqual([['b']])
+    expect(store.datasetPending.has('b')).toBe(true)
+    store.tickAllTrains(1.0)
+    expect(asked.length).toBe(1)
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(store.network.segments.size).toBe(before + railsOfB)
+    expect(store.dataset?.lines).toEqual(['a', 'b'])
+    expect(store.datasetPending.size).toBe(0)
+    expect(store.isPlayMode).toBe(true)
+    expect(store.trains.length).toBe(1)
+    expect(store.trains[0]).toBe(train)
+    expect(store.network.segments.has(front)).toBe(true)
+    expect(store.datasetLastAddMs).toBeGreaterThanOrEqual(0)
+    store.tickAllTrains(1.0)
+    expect(asked.length).toBe(1)
+  })
+
+  it('leaves alone a connection out of reach, and does nothing on an unlocked project', () => {
+    const { store, asked } = driving(60_000)
+    store.tickAllTrains(1.0)
+    store.tickAllTrains(1.0)
+    expect(asked).toEqual([])
+    const free = new EditorStore()
+    expect(free.addDatasetLines(new Map())).toBe(0)
   })
 })
