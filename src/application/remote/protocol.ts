@@ -134,7 +134,7 @@ export type DecodeResult =
 
 // ─── Room code ───────────────────────────────────────────────────────────────
 
-type RandomSource = (bytes: Uint8Array) => unknown
+type RandomSource = (bytes: Uint8Array<ArrayBuffer>) => unknown
 
 const cryptoRandom: RandomSource = (bytes) => globalThis.crypto.getRandomValues(bytes)
 

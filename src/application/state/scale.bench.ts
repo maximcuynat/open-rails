@@ -1,10 +1,10 @@
-import { bench, describe } from 'vitest'
+import { test } from 'vitest'
 import { EditorStore } from './editorStore'
 import { addNode, addSegment, hitNode, hitSegment } from '@domain/models/network'
 import { snapToNearestTrack } from '@domain/models/locomotive'
 import { deserializeNetwork, serializeNetwork } from '@infrastructure/persistence/persistence'
 import { networkDerived } from '@infrastructure/render/networkDerived'
-import { touchNetwork } from '@domain/models/networkWatch'
+import { touchNetwork, verifyNetworkRevisions } from '@domain/models/networkWatch'
 import { buildStations, STATION_CENTRE, STATION_PITCH } from '@infrastructure/render/benchNetworks'
 
 /**
@@ -14,6 +14,9 @@ import { buildStations, STATION_CENTRE, STATION_PITCH } from '@infrastructure/re
  * `SCALE_COPIES` sets the size: the network is that many stations squared (3 → 13 527 rails, the
  * default; 9 → about 122 000 rails).
  */
+
+// Measured as the editor runs: without the check of the revisions the tests add
+verifyNetworkRevisions(false)
 
 const copies = Number(process.env.SCALE_COPIES ?? 3)
 const net = buildStations(copies)
@@ -32,76 +35,77 @@ const once = { time: 0, iterations: 2, warmupTime: 0, warmupIterations: 0 }
 
 let edits = 0
 
-describe(`${net.segments.size} rails, outside the drawing`, () => {
-  bench('notify, nothing changed', () => {
-    store.notify()
-  }, few)
+/** One more rail in the open, far from the stations */
+const layRail = (): void => {
+  const y = inTheOpen.y + edits++ * 10
+  const a = addNode(store.network, { x: inTheOpen.x, y })
+  const b = addNode(store.network, { x: inTheOpen.x + 30, y })
+  addSegment(store.network, a.id, b.id)
+}
 
-  bench('derived data asked again, nothing changed', () => {
-    networkDerived(store.network, store.sectionMeta)
-  }, few)
+test(`${net.segments.size} rails: what costs nothing when nothing changed`, async ({ bench }) => {
+  await bench.compare(
+    bench('notify, nothing changed', () => {
+      store.notify()
+    }),
+    bench('derived data asked again, nothing changed', () => {
+      networkDerived(store.network, store.sectionMeta)
+    }),
+    bench('mouse move: node and rail under the cursor', () => {
+      const p = { x: onTrack.x + 1.3, y: onTrack.y + 0.7 }
+      hitNode(store.network, p, 0.5)
+      hitSegment(store.network, p, 0.5)
+    }),
+    bench('mouse move: nearest track', () => {
+      snapToNearestTrack(store.network, { x: onTrack.x + 1.3, y: onTrack.y + 0.7 }, 5)
+    }),
+    few,
+  )
+})
 
-  bench('mouse move: node and rail under the cursor', () => {
-    const p = { x: onTrack.x + 1.3, y: onTrack.y + 0.7 }
-    hitNode(store.network, p, 0.5)
-    hitSegment(store.network, p, 0.5)
-  }, few)
-
-  bench('mouse move: nearest track', () => {
-    snapToNearestTrack(store.network, { x: onTrack.x + 1.3, y: onTrack.y + 0.7 }, 5)
-  }, few)
-
-  bench('edit committed: one rail laid in the open', () => {
-    const y = inTheOpen.y + edits++ * 10
-    const a = addNode(store.network, { x: inTheOpen.x, y })
-    const b = addNode(store.network, { x: inTheOpen.x + 30, y })
-    addSegment(store.network, a.id, b.id)
-    store.reconcileNetwork()
-    store.markDirty()
-  }, once)
-
-  // What that edit is made of. In the browser the write to storage waits for the edits to pause.
-  bench('  of which: track checked for crossings and joins', () => {
-    const y = inTheOpen.y + edits++ * 10
-    const a = addNode(store.network, { x: inTheOpen.x, y })
-    const b = addNode(store.network, { x: inTheOpen.x + 30, y })
-    addSegment(store.network, a.id, b.id)
-    store.reconcileNetwork()
-  }, once)
-
-  bench('  of which: sections and diagnostics worked out again', () => {
-    touchNetwork(store.network)
-    const y = inTheOpen.y + edits++ * 10
-    const a = addNode(store.network, { x: inTheOpen.x, y })
-    const b = addNode(store.network, { x: inTheOpen.x + 30, y })
-    addSegment(store.network, a.id, b.id)
-    networkDerived(store.network, store.sectionMeta).kinematicIssues(store.gauge, store.gradientLimits)
-  }, once)
-
-  bench('  of which: undo step recorded', () => {
-    store.pushHistorySnapshot(true)
-  }, once)
-
-  bench('  of which: project written to storage', () => {
-    store.flushPersistedState()
-  }, once)
-
-  // Between two steps taken, as the editor takes them, from a track checked for crossings and joins
-  bench('undo then redo', () => {
-    store.undo()
-    store.redo()
-  }, { ...once, setup: () => {
-    for (let i = 0; i < 2; i++) {
-      const y = inTheOpen.y + edits++ * 10
-      const a = addNode(store.network, { x: inTheOpen.x, y })
-      const b = addNode(store.network, { x: inTheOpen.x + 30, y })
-      addSegment(store.network, a.id, b.id)
+test(`${net.segments.size} rails: an edit, its parts, undo, load`, async ({ bench }) => {
+  await bench.compare(
+    bench('edit committed: one rail laid in the open', () => {
+      layRail()
       store.reconcileNetwork()
       store.markDirty()
-    }
-  } })
-
-  bench('project read back from its saved form', () => {
-    deserializeNetwork(serializeNetwork(store.network, 'bench'))
-  }, once)
+    }),
+    // What that edit is made of. In the browser the write to storage waits for the edits to pause.
+    bench('  of which: track checked for crossings and joins', () => {
+      layRail()
+      store.reconcileNetwork()
+    }),
+    bench('  of which: sections and diagnostics worked out again', () => {
+      touchNetwork(store.network)
+      layRail()
+      networkDerived(store.network, store.sectionMeta).kinematicIssues(store.gauge, store.gradientLimits)
+    }),
+    bench('  of which: undo step recorded', () => {
+      store.pushHistorySnapshot(true)
+    }),
+    bench('  of which: project written to storage', () => {
+      store.flushPersistedState()
+    }),
+    // Between two steps taken, as the editor takes them, from a track checked for crossings and joins
+    bench(
+      'undo then redo',
+      {
+        beforeAll: () => {
+          for (let i = 0; i < 2; i++) {
+            layRail()
+            store.reconcileNetwork()
+            store.markDirty()
+          }
+        },
+      },
+      () => {
+        store.undo()
+        store.redo()
+      },
+    ),
+    bench('project read back from its saved form', () => {
+      deserializeNetwork(serializeNetwork(store.network, 'bench'))
+    }),
+    once,
+  )
 })

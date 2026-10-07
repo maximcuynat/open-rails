@@ -14,7 +14,7 @@ npm run build        # tsc --noEmit && vite build (typecheck gates the build)
 npm run typecheck    # tsc --noEmit
 npm test             # vitest run (whole suite, ~2 s)
 npm run test:watch   # vitest watch mode
-npm run bench        # vitest bench: one frame, one mouse move, one edit, on 13 527 rails (SCALE_COPIES=9: 122 000)
+npm run bench        # vitest bench (verbose reporter, or nothing shows): one frame, one mouse move, one edit, on 13 527 rails (SCALE_COPIES=9: 122 000)
 
 npx vitest run src/domain/models/train.test.ts      # single file
 npx vitest run -t "<test name substring>"           # single test by name
