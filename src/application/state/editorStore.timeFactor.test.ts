@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from './editorStore'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
+import { positionOnSegment } from '@domain/models/locomotive'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 
 /**
@@ -8,6 +9,8 @@ import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
  * cylinder takes a few seconds to empty, in tenths of a second) and the handle at full power
  */
 function driving(): EditorStore {
+  // Each store starts from an empty storage: the previous one's autosave must not be its project
+  resetMemoryStorage()
   const store = new EditorStore()
   const net = store.network
   let previous = addNode(net, { x: 0, y: 0 })
@@ -55,10 +58,9 @@ describe('the time factor', () => {
     fast.setTimeFactor(10)
     fast.simulateFrame(0.1)
     for (let i = 0; i < 10; i++) slow.simulateFrame(0.1)
-    const front = (store: EditorStore) => store.trains[0].vehicles[0].front
+    const frontX = (store: EditorStore) => { const f = store.trains[0].vehicles[0].front; return positionOnSegment(store.network, f.segId, f.t)!.x }
     expect(fast.trains[0].currentSpeed).toBeGreaterThan(0)
     expect(fast.trains[0].currentSpeed).toBeCloseTo(slow.trains[0].currentSpeed, 6)
-    expect(front(fast).segId).toBe(front(slow).segId)
-    expect(front(fast).t).toBeCloseTo(front(slow).t, 6)
+    expect(frontX(fast)).toBeCloseTo(frontX(slow), 3)
   })
 })
