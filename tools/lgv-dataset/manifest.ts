@@ -8,9 +8,19 @@ export interface DatasetManifest {
   bbox: [number, number, number, number]
   tileDeg: number
   keepDetachedOverKm: number
-  /** Names and ids of the line relations, by `ref` */
-  lines: Record<string, { id: string; name: string }>
+  /** The lines to publish, in order of precedence: a way in two of them goes to the first */
+  lines: LineSpec[]
   approaches: Approach[]
+}
+
+/** A published line: the OSM relations whose member ways make it */
+export interface LineSpec {
+  id: string
+  name: string
+  /** RFN line code, for the index */
+  ref?: string
+  /** Ids of the relations (`type=route`, `route=railway|tracks`); refs and names are too unsteady to go by */
+  relations: number[]
 }
 
 /** A classic line from the end of a high-speed line into a city-centre terminal */
@@ -28,5 +38,6 @@ export function readManifest(path = fileURLToPath(new URL('./manifest.json', imp
   const raw = JSON.parse(readFileSync(path, 'utf8')) as DatasetManifest
   if (!Array.isArray(raw.bbox) || raw.bbox.length !== 4) throw new Error('manifest: bbox must be [south, west, north, east]')
   if (!(raw.tileDeg > 0)) throw new Error('manifest: tileDeg must be positive')
+  if (!Array.isArray(raw.lines) || raw.lines.some((l) => !l.id || !l.name || !Array.isArray(l.relations))) throw new Error('manifest: lines must be [{ id, name, relations }]')
   return raw
 }

@@ -31,6 +31,7 @@ export interface BuiltDataset {
     droppedComponents: number
     reconcile: { splitCount: number; weldedCount: number }
     zonesCut: number
+    unlistedHighSpeedWays: number
     convertMs: number
   }
 }
@@ -95,6 +96,7 @@ export function buildDataset(
       droppedComponents: result.report.droppedComponents,
       reconcile,
       zonesCut,
+      unlistedHighSpeedWays: assignment.unlistedHighSpeedWays,
       convertMs,
     },
   }
@@ -150,6 +152,7 @@ export async function main(argv: string[]): Promise<number> {
   const r = built.report
   log(`converted in ${(r.convertMs / 1000).toFixed(1)} s: ${r.rails} rails, ${r.lengthKm.toFixed(0)} km of track, ${r.stations} stations, ${r.droppedComponents} detached parts dropped`)
   log(`reconcile: ${r.reconcile.splitCount} split, ${r.reconcile.weldedCount} welded; ${r.zonesCut} speed zones cut at line borders`)
+  log(`${r.unlistedHighSpeedWays} high-speed ways in no listed relation (taken from a neighbour, else « autres »)`)
 
   mkdirSync(OUT_DIR, { recursive: true })
   let total = 0

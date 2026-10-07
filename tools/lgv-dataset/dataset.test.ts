@@ -22,7 +22,7 @@ const manifest = (over: Partial<DatasetManifest> = {}): DatasetManifest => ({
   bbox: [41.3, -5.2, 51.1, 9.6],
   tileDeg: 2,
   keepDetachedOverKm: 0,
-  lines: { '752000': { id: 'lgv-sud-est', name: 'LGV Sud-Est' } },
+  lines: [{ id: 'lgv-sud-est', name: 'LGV Sud-Est', ref: '752000', relations: [900] }],
   approaches: [{ id: 'racc-test', name: 'Raccordement test', stationUic: '87751008', corridor: [[43.4, 5.37], [43.3, 5.38]], radiusM: 400, stationRadiusM: 1500 }],
   ...over,
 })
@@ -55,7 +55,7 @@ describe('queries', () => {
     expect(q).toContain('[timeout:180]')
     expect(q).toContain('area(3602202162)->.fr;')
     expect(q).toContain('way[railway=rail][highspeed=yes](area.fr)(43.3,5.2,45.3,7.2)')
-    expect(q).toContain('way[railway=rail]["railway:tvm"](area.fr)(43.3,5.2,45.3,7.2)')
+    expect(q).toContain('way[railway=rail]["railway:tvm"~"^[0-9]"](area.fr)(43.3,5.2,45.3,7.2)')
     expect(q).toContain('node(around.w:400)[railway~"^(station|halt)$"]')
     expect(q).toContain('rel(bw.w)[type=route][route~"^(tracks|railway)$"];\nout body;')
   })
@@ -144,17 +144,33 @@ describe('the line of each rail', () => {
     expect(relations.map((r) => [r.ref, r.name, [...r.ways]])).toEqual([['752000', undefined, [100]], [undefined, 'Ligne de Test à Essai', [200]]])
   })
 
-  it('names a rail after the relation of its way, with the manifest word for it, and after the way itself otherwise', () => {
+  it('names a rail after the listed relation of its way; unlisted relations say nothing, a lone section follows a neighbour', () => {
     const d = data()
     const result = convertOsm(d, options({ traceWays: true }))
-    const { lineOf, lines } = assignLines(result, d, manifest({ approaches: [] }), new Map())
+    const { lineOf, lines, unlistedHighSpeedWays } = assignLines(result, d, manifest({ approaches: [] }), new Map())
     const byLine = new Map<string, number>()
     for (const line of lineOf.values()) byLine.set(line, (byLine.get(line) ?? 0) + 1)
-    expect([...byLine.keys()].sort()).toEqual(['lgv-sud-est', 'ligne-de-test-a-essai', 'voie-de-service'])
+    // Way 100 is in the listed relation 900; way 200 only in the unlisted relation 901 and way 400 in none:
+    // both are propagated from way 100 at the junction; way 300 is apart, with no relation: « autres »
+    expect([...byLine.keys()].sort()).toEqual(['autres', 'lgv-sud-est'])
     expect(lines.get('lgv-sud-est')).toEqual({ id: 'lgv-sud-est', name: 'LGV Sud-Est', ref: '752000', highSpeed: true })
-    expect(lines.get('ligne-de-test-a-essai')!.highSpeed).toBe(false)
-    expect(lines.get('voie-de-service')!.highSpeed).toBe(false)
+    expect(unlistedHighSpeedWays).toBe(2)
     expect(lineOf.size).toBe(result.network.segments.size)
+  })
+
+  it('gives a way to the first listed line that holds it', () => {
+    const d = data()
+    const result = convertOsm(d, options({ traceWays: true }))
+    const m = manifest({
+      approaches: [],
+      lines: [
+        { id: 'first', name: 'First', relations: [901] },
+        { id: 'second', name: 'Second', relations: [900, 901] },
+      ],
+    })
+    const { lineOf, lines } = assignLines(result, d, m, new Map())
+    expect([...new Set(lineOf.values())].sort()).toEqual(['autres', 'first', 'second'])
+    expect(lines.get('first')!.ref).toBeUndefined()
   })
 
   it('gives a way of an approach to the approach, unless it is a high-speed way; what nobody names is « autres »', () => {

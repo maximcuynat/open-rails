@@ -5,12 +5,14 @@ import type { Network, SegmentId } from '@domain/models/types'
 import type { DatasetManifest } from './manifest'
 
 // Which line each rail belongs to. A way names its line through the relations it is a member of
-// (`type=route`, `route=tracks|railway`, the French RFN line relations); the manifest gives the
-// id and name to keep for a relation by its `ref`. A way fetched for an approach belongs to the
-// approach, unless it is a high-speed way. Then, so that a border always falls on a junction node
-// or a track end, every section (a run of rails between two nodes of degree ≠ 2) takes the line
-// that holds most of its length; a section no way of which says anything takes the line of a
-// neighbouring section, and what is left is « autres ».
+// (`type=route`, `route=tracks|railway`): the manifest lists, for each line to publish, the ids of
+// the relations that make it, in order of precedence (a way in two lines goes to the first). The
+// other relations say nothing (Overpass returns every relation a way is in: cross-border routes,
+// « voie 1 » of a classic line…). A way fetched for an approach belongs to the approach, unless
+// it is a high-speed way. Then, so that a border always falls on a junction node or a track end,
+// every section (a run of rails between two nodes of degree ≠ 2) takes the line that holds most
+// of its length; a section no way of which says anything takes the line of a neighbouring
+// section, and what is left is « autres ».
 
 export type LineId = string
 
@@ -27,23 +29,19 @@ export const OTHER_LINE: LineInfo = { id: 'autres', name: 'Autres voies', highSp
 export interface LineAssignment {
   lineOf: Map<SegmentId, LineId>
   lines: Map<LineId, LineInfo>
+  /** High-speed ways in no listed relation and no approach: what the manifest misses (they are propagated or « autres ») */
+  unlistedHighSpeedWays: number
 }
 
 interface Relation {
   id: number
   ref?: string
   name?: string
-  highSpeed: boolean
   ways: Set<number>
 }
 
-const slug = (text: string): string =>
-  text
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+/** A way carries high-speed traffic: `highspeed=yes`, or a TVM speed (`railway:tvm=no` is on classic tracks) */
+export const isHighSpeedWay = (tags: Record<string, string>): boolean => tags.highspeed === 'yes' || /^[0-9]/.test(tags['railway:tvm'] ?? '')
 
 /** The line relations of the answer, with the ways they hold */
 export function readLineRelations(data: OverpassResponse): Relation[] {
@@ -54,7 +52,7 @@ export function readLineRelations(data: OverpassResponse): Relation[] {
     if (tags.type !== 'route' || !(tags.route === 'tracks' || tags.route === 'railway')) continue
     const ways = new Set<number>()
     for (const member of element.members) if (member.type === 'way') ways.add(member.ref)
-    const relation: Relation = { id: element.id, ways, highSpeed: tags.highspeed === 'yes' || /LGV|grande vitesse/i.test(tags.name ?? '') }
+    const relation: Relation = { id: element.id, ways }
     if (tags.ref) relation.ref = tags.ref
     if (tags.name) relation.name = tags.name
     relations.push(relation)
@@ -62,14 +60,15 @@ export function readLineRelations(data: OverpassResponse): Relation[] {
   return relations
 }
 
-/** The line a relation stands for: the manifest's word first, else its own name */
-function lineOfRelation(relation: Relation, manifest: DatasetManifest): LineInfo | null {
-  const given = relation.ref !== undefined ? manifest.lines[relation.ref] : undefined
-  if (given) return { id: given.id, name: given.name, ref: relation.ref, highSpeed: true }
-  if (!relation.name) return null
-  const info: LineInfo = { id: slug(relation.name), name: relation.name, highSpeed: relation.highSpeed }
-  if (relation.ref !== undefined) info.ref = relation.ref
-  return info
+/** The published line each listed relation belongs to, and the rank of that line (its precedence) */
+function linesOfManifest(manifest: DatasetManifest): Map<number, { info: LineInfo; rank: number }> {
+  const byRelation = new Map<number, { info: LineInfo; rank: number }>()
+  manifest.lines.forEach((spec, rank) => {
+    const info: LineInfo = { id: spec.id, name: spec.name, highSpeed: true }
+    if (spec.ref !== undefined) info.ref = spec.ref
+    for (const relation of spec.relations) if (!byRelation.has(relation)) byRelation.set(relation, { info, rank })
+  })
+  return byRelation
 }
 
 /**
@@ -106,21 +105,27 @@ export function assignLines(
   const approachOfWay = new Map<number, string>()
   for (const [approachId, ways] of approachWays) for (const way of ways) if (!approachOfWay.has(way)) approachOfWay.set(way, approachId)
   const approachInfo = new Map(manifest.approaches.map((a) => [a.id, { id: a.id, name: a.name, highSpeed: false } as LineInfo]))
+  const listed = linesOfManifest(manifest)
 
+  let unlistedHighSpeedWays = 0
   const lineOfWay = new Map<number, LineId | null>()
   const wayLine = (way: number): LineId | null => {
     if (lineOfWay.has(way)) return lineOfWay.get(way)!
     const tags = wayTags.get(way) ?? {}
-    const highSpeed = tags.highspeed === 'yes' || tags['railway:tvm'] !== undefined
+    const highSpeed = isHighSpeedWay(tags)
     let line: LineId | null = null
-    const candidates = (relationsOfWay.get(way) ?? []).map((r) => ({ r, info: lineOfRelation(r, manifest) })).filter((c) => c.info) as { r: Relation; info: LineInfo }[]
-    // A high-speed way belongs to its high-speed relation; a classic way of an approach to the approach
-    const preferred = candidates.find((c) => c.info.highSpeed) ?? candidates[0]
+    // The listed line of highest precedence among the way's relations
+    let preferred: { info: LineInfo; rank: number } | undefined
+    for (const relation of relationsOfWay.get(way) ?? []) {
+      const candidate = listed.get(relation.id)
+      if (candidate && (!preferred || candidate.rank < preferred.rank)) preferred = candidate
+    }
+    // A high-speed way belongs to its line; a classic way of an approach to the approach
     const approach = approachOfWay.get(way)
     if (highSpeed && preferred) line = keep(preferred.info)
     else if (approach) line = keep(approachInfo.get(approach)!)
     else if (preferred) line = keep(preferred.info)
-    else if (tags.name) line = keep({ id: slug(tags.name), name: tags.name, highSpeed })
+    else if (highSpeed) unlistedHighSpeedWays++
     lineOfWay.set(way, line)
     return line
   }
@@ -171,7 +176,7 @@ export function assignLines(
     const line = lineOfSection.get(i) ?? keep(OTHER_LINE)
     for (const segId of section.segmentIds) lineOf.set(segId, line)
   })
-  return { lineOf, lines }
+  return { lineOf, lines, unlistedHighSpeedWays }
 }
 
 /** The groups a map of lines makes, for `splitSpeedZonesBy` */

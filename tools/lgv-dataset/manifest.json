@@ -1,27 +1,89 @@
 {
   "version": 1,
-  "comment": "What the « LGV France » dataset is made of. bbox: south, west, north, east (degrees), the whole of metropolitan France. Tiles of tileDeg degrees are asked one by one for the high-speed tracks. The approaches are the classic lines that take the trains from the end of a high-speed line into a city-centre terminal: a corridor of waypoints (lat, lon), the rails within radiusM of it, and every rail within stationRadiusM of the terminal. Waypoints are the stations of the SNCF list along the way, plus a few places where the line bends between two stations. lines: names and ids given to the OSM line relations, by their ref (the six-digit RFN line code); a relation without an entry here is named after its OSM name.",
+  "comment": "What the « LGV France » dataset is made of. bbox: south, west, north, east (degrees), the whole of metropolitan France. Tiles of tileDeg degrees are asked one by one for the high-speed tracks. The approaches are the classic lines that take the trains from the end of a high-speed line into a city-centre terminal: a corridor of waypoints (lat, lon), the rails within radiusM of it, and every rail within stationRadiusM of the terminal. Waypoints are the stations of the SNCF list along the way, plus a few places where the line bends between two stations. lines: the lines published, each made of the ways of the OSM relations listed (type=route, route=railway|tracks: the whole line, its « voie 1 / voie 2 » and section relations), in order of precedence; refs and names of those relations are too unsteady to go by (« 752 000 » with a space, « LN2 », none at all, three LGV under one RFN code). A high-speed way in none of them takes the line of a neighbouring section, else « autres ».",
   "bbox": [41.3, -5.2, 51.1, 9.6],
   "tileDeg": 2,
   "keepDetachedOverKm": 2,
-  "lines": {
-    "752000": { "id": "lgv-sud-est", "name": "LGV Sud-Est" },
-    "431000": { "id": "lgv-atlantique", "name": "LGV Atlantique" },
-    "226000": { "id": "lgv-nord", "name": "LGV Nord" },
-    "752300": { "id": "lgv-rhone-alpes", "name": "LGV Rhône-Alpes" },
-    "752330": { "id": "lgv-mediterranee", "name": "LGV Méditerranée" },
-    "005000": { "id": "lgv-est", "name": "LGV Est européenne" },
-    "750000": { "id": "lgv-rhin-rhone", "name": "LGV Rhin-Rhône" },
-    "430000": { "id": "lgv-bretagne-pays-de-la-loire", "name": "LGV Bretagne - Pays de la Loire" },
-    "532000": { "id": "lgv-sud-europe-atlantique", "name": "LGV Sud Europe Atlantique" }
-  },
+  "lines": [
+    {
+      "id": "lgv-interconnexion-est",
+      "name": "LGV Interconnexion Est",
+      "ref": "226310",
+      "relations": [7235438, 7235484, 7425724, 7425725]
+    },
+    {
+      "id": "lgv-mediterranee",
+      "name": "LGV Méditerranée",
+      "ref": "752000",
+      "relations": [6582800, 1086413, 1086451, 1086452, 3262540]
+    },
+    {
+      "id": "lgv-rhone-alpes",
+      "name": "LGV Rhône-Alpes",
+      "ref": "752000",
+      "relations": [2418217, 1086425]
+    },
+    {
+      "id": "lgv-sud-est",
+      "name": "LGV Sud-Est",
+      "ref": "752000",
+      "relations": [270176, 6362946, 7423384]
+    },
+    {
+      "id": "lgv-contournement-nimes-montpellier",
+      "name": "LGV Contournement de Nîmes et Montpellier",
+      "ref": "834000",
+      "relations": [8539304, 16836362]
+    },
+    {
+      "id": "lgv-perpignan-figueres",
+      "name": "LGV Perpignan - Figueres",
+      "relations": [1628397]
+    },
+    {
+      "id": "lgv-rhin-rhone",
+      "name": "LGV Rhin-Rhône",
+      "ref": "014000",
+      "relations": [146142, 7259878, 7259879, 7260774, 7260775]
+    },
+    {
+      "id": "lgv-est-europeenne",
+      "name": "LGV Est européenne",
+      "ref": "005000",
+      "relations": [5388618, 270118, 7123150, 7123151, 7123152, 7124205, 7124206]
+    },
+    {
+      "id": "lgv-nord",
+      "name": "LGV Nord",
+      "ref": "226000",
+      "relations": [270121, 7239532, 7234166, 7234167, 18029410, 18029411]
+    },
+    {
+      "id": "lgv-atlantique",
+      "name": "LGV Atlantique",
+      "ref": "431000",
+      "relations": [271511, 15569452, 15569451]
+    },
+    {
+      "id": "lgv-bretagne-pays-de-la-loire",
+      "name": "LGV Bretagne - Pays de la Loire",
+      "ref": "408000",
+      "relations": [224214, 15569463]
+    },
+    {
+      "id": "lgv-sud-europe-atlantique",
+      "name": "LGV Sud Europe Atlantique",
+      "ref": "566000",
+      "relations": [547038, 15572775]
+    }
+  ],
   "approaches": [
     {
       "id": "racc-marseille-saint-charles",
       "name": "Raccordement de Marseille Saint-Charles",
       "stationUic": "87751008",
-      "comment": "From the junction of the LGV Méditerranée with the Paris–Marseille line, between Vitrolles and Septèmes, down to Saint-Charles: Vitrolles Aéroport, Septèmes-les-Vallons, Saint-Antoine, Picon Busserine, Marseille Saint-Charles.",
-      "corridor": [[43.441734, 5.237122], [43.403114, 5.370176], [43.369599, 5.35781], [43.330999, 5.392746], [43.302666, 5.380407]],
+      "comment": "From the bifurcation des Tuileries, where the LGV Méditerranée joins the Paris–Marseille line in the north of Marseille (Saint-Louis), down to Saint-Charles along that line (7.4 km): the waypoints follow its curve through Les Aygalades and Saint-Barthélemy, about a kilometre apart.",
+      "corridor": [[43.3534, 5.354], [43.3458, 5.3655], [43.3413, 5.3722], [43.3341, 5.3829], [43.3262, 5.3913], [43.3185, 5.3932], [43.3095, 5.3917], [43.302666, 5.380407]],
       "radiusM": 400,
       "stationRadiusM": 1500
     },
@@ -29,8 +91,8 @@
       "id": "racc-lyon-part-dieu-sud",
       "name": "Raccordement de Lyon Part-Dieu par le sud",
       "stationUic": "87723197",
-      "comment": "From the junction of Grenay (LGV Rhône-Alpes) along the Lyon–Grenoble line: Saint-Quentin-Fallavier, Saint-Priest, Vénissieux, La Guillotière, Lyon Part-Dieu.",
-      "corridor": [[45.638109, 5.099896], [45.686659, 4.934242], [45.705551, 4.888109], [45.7445, 4.8495], [45.760559, 4.859355]],
+      "comment": "From Saint-Quentin-Fallavier past the junction of Grenay (where the raccordement of the LGV Rhône-Alpes joins the Lyon–Grenoble line) along that line to Saint-Priest and Vénissieux, then the Paris–Marseille line north to Lyon-Guillotière and its raccordement to Part-Dieu. Waypoints follow the track about a kilometre apart where it curves (it runs 800 m north of the straight line Saint-Quentin – Saint-Priest, and 600 m west of the straight line Vénissieux – Guillotière), through the Guillotière triangle to Part-Dieu.",
+      "corridor": [[45.638109, 5.099896], [45.6455, 5.0858], [45.6554, 5.0655], [45.6601, 5.045], [45.6653, 5.0216], [45.6687, 5.0064], [45.6737, 4.984], [45.6792, 4.9595], [45.686659, 4.934242], [45.705551, 4.888109], [45.7123, 4.8697], [45.7147, 4.8587], [45.7172, 4.8509], [45.7226, 4.8487], [45.7295, 4.8485], [45.7353, 4.8498], [45.7412, 4.8479], [45.7391, 4.8511], [45.7404, 4.8557], [45.742, 4.8576], [45.7523, 4.8605], [45.760559, 4.859355]],
       "radiusM": 400,
       "stationRadiusM": 1500
     },
@@ -47,10 +109,10 @@
       "id": "racc-paris-gare-de-lyon",
       "name": "Raccordement de Paris Gare de Lyon",
       "stationUic": "87686006",
-      "comment": "From the start of the LGV Sud-Est at Lieusaint along the Paris–Marseille line: Lieusaint-Moissy, Combs-la-Ville, Brunoy, Montgeron, Villeneuve-Saint-Georges, Maisons-Alfort, Paris Gare de Lyon.",
+      "comment": "From the start of the LGV Sud-Est at Lieusaint along the Paris–Marseille line: Lieusaint-Moissy, Combs-la-Ville, Brunoy, Montgeron, Villeneuve-Saint-Georges, Maisons-Alfort, Paris Gare de Lyon. The terminal disc is 1 km: the platforms of Gare de Lyon reach 800 m from its head, Bercy and Austerlitz are not wanted.",
       "corridor": [[48.628305, 2.568935], [48.667179, 2.547798], [48.6981, 2.5057], [48.7046, 2.4571], [48.730113, 2.446011], [48.802071, 2.426977], [48.844888, 2.37352]],
       "radiusM": 400,
-      "stationRadiusM": 1500
+      "stationRadiusM": 1000
     }
   ]
 }
