@@ -186,7 +186,7 @@ Hypothèses prises faute de réponse (à confirmer) :
   combinaison départ/arrivée, 325 km).
 - [x] 14. Chargement / libération à la ligne selon vue + trains + itinéraire ; anticipation
   avant qu'un train atteigne une ligne non chargée.
-- [ ] 15. Facteur d'accélération du temps dans la simulation (si confirmé).
+- [x] 15. Facteur d'accélération du temps dans la simulation (confirmé le 2026-10-07).
 - [x] 16. Mesure sur Marseille → Lyon chargée : images par seconde en conduite, mémoire, temps
   de chargement. Décision tuiles / IndexedDB sur ces chiffres.
 
@@ -446,6 +446,15 @@ alternative : les relations des lignes classiques clippées par une boîte) ; `f
   0,6 s, tient en 70 Mio ; l'à-coup de 217 ms d'une ligne ajoutée en route est perceptible mais
   rare (une fois par ligne) ; à revoir seulement si les lignes classiques décuplent le réseau
   (désérialiser la seule ligne ajoutée au lieu de l'union).
+
+- **Facteur de temps** (dixième commit) : `store.timeFactor` ∈ {1, 2, 5, 10}, préférence
+  `open-rail:time-factor`, bouton « ×1 » cyclique dans le dock de conduite (PC seul, non envoyé au
+  pupitre). Mis en œuvre en **répétant le pas de la trame** autant de fois que le facteur
+  (`simulateFrame`), pas en l'étirant : un pas étiré ne vaut pas dix petits (la prise de traction
+  et de frein avance par pas), alors que dix pas répétés sont exactement dix pas à ×1 (test). La
+  signalisation tourne donc aussi par pas ; le franchissement d'un signal se détecte de toute
+  façon par la distance parcourue (`signalling.ts`), ×10 est sûr. Coût CPU × facteur, sur un pas
+  de 0,1 ms.
 
 Reste pour plus tard (noté) : l'à-coup de l'ajout en route (désérialiser la tranche ajoutée seule) ;
 le tas qui grimpe en conduite à vérifier sur un vrai navigateur ; un item « Recharger la ligne »

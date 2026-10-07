@@ -167,6 +167,15 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
               </button>
               <button
                 type="button"
+                className={`console-tool console-time-factor${store.timeFactor !== 1 ? ' is-active' : ''}`}
+                title="Vitesse du temps : le temps simulé court plus vite que le vrai (×1, ×2, ×5, ×10)"
+                aria-label={`Vitesse du temps : ×${store.timeFactor}`}
+                onClick={() => store.cycleTimeFactor()}
+              >
+                ×{store.timeFactor}
+              </button>
+              <button
+                type="button"
                 className={`console-tool${store.showTrainDebug ? ' is-active' : ''}`}
                 title={`Squelette debug${store.shortcutHint('train.debug')}`}
                 aria-label="Squelette debug des trains"

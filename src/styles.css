@@ -3954,3 +3954,10 @@ select.cb-step-select {
   padding-left: 18px;
   font-size: 13px;
 }
+
+/* The time factor button of the driving dock shows its value as text */
+.console-tool.console-time-factor {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 34px;
+}

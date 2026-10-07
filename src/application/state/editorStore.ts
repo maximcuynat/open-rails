@@ -66,9 +66,11 @@ import {
 } from '@infrastructure/persistence/persistence'
 import {
   loadConsolePreference,
+  loadTimeFactorPreference,
   loadKeyPreferences,
   loadRemoteHostPreference,
   saveConsolePreference,
+  saveTimeFactorPreference,
   saveKeyPreferences,
   saveRemoteHostPreference,
 } from '@infrastructure/persistence/preferences'
@@ -848,6 +850,8 @@ export class EditorStore {
   theme: ThemeMode = 'auto'
   /** Driving console asked for in Affichage; `auto` picks one from the size of the window */
   consolePreference: ConsolePreference = 'auto'
+  /** How fast the simulated time runs against the real one; the host's choice, kept across projects */
+  timeFactor: TimeFactor = 1
   /** Address of this PC on the local network, typed by the user for the phone desk; empty when none */
   remoteDeskHost = ''
   /** What each side holds the brake handle on (see `setSelectedTrainBrakeCommand`), and on which train */
@@ -943,6 +947,8 @@ export class EditorStore {
     this.loadKeyPreferences()
     const savedConsole = loadConsolePreference()
     if (isConsolePreference(savedConsole)) this.consolePreference = savedConsole
+    const savedFactor = Number(loadTimeFactorPreference())
+    if (isTimeFactor(savedFactor)) this.timeFactor = savedFactor
     this.remoteDeskHost = loadRemoteHostPreference()
     this.loadPersistedState()
     this.pushHistorySnapshot()
@@ -1763,6 +1769,20 @@ export class EditorStore {
     this.consolePreference = preference
     saveConsolePreference(preference)
     this.notify()
+  }
+
+  /** Run the simulated time faster or slower than the real one; the choice follows the user across projects */
+  setTimeFactor = (factor: number): void => {
+    if (!isTimeFactor(factor) || factor === this.timeFactor) return
+    this.timeFactor = factor
+    saveTimeFactorPreference(factor)
+    this.notify()
+  }
+
+  /** The next factor of the list, back to ×1 after the last */
+  cycleTimeFactor = (): void => {
+    const i = TIME_FACTORS.indexOf(this.timeFactor)
+    this.setTimeFactor(TIME_FACTORS[(i + 1) % TIME_FACTORS.length])
   }
 
   /** Kept as typed: whoever builds the pairing address validates it */
@@ -2981,16 +3001,26 @@ export class EditorStore {
         this.stopSimulationLoop()
         return
       }
+      // The real time of the frame, bounded (a tab left in the background does not jump)
       const dt = Math.min((now - this.simLastTime) / 1000, 0.1)
       this.simLastTime = now
-      if (this.trains.length > 0) {
-        this.tickAllTrains(dt)
-      } else if (this.locomotive) {
-        this.tickSimulation(dt)
-      }
+      this.simulateFrame(dt)
       this.simRafId = requestAnimationFrame(loop)
     }
     this.simRafId = requestAnimationFrame(loop)
+  }
+
+  /**
+   * One frame of simulation: the step of real time, taken as many times as the time factor says.
+   * Repeating the step, rather than stretching it, keeps everything that happens per step (the
+   * traction and brakes taking hold, the signalling, the collisions) exactly as at ×1.
+   */
+  simulateFrame = (dt: number): void => {
+    for (let i = 0; i < this.timeFactor; i++) {
+      if (this.trains.length > 0) this.tickAllTrains(dt)
+      else if (this.locomotive) this.tickSimulation(dt)
+      else return
+    }
   }
 
   /** Stop simulation loop */
@@ -4337,6 +4367,10 @@ const reconciledSteps = new WeakMap<SerializedProject, number>()
 
 /** How long the write of the project to localStorage waits after an edit, ms: the edits made meanwhile are written with it */
 const AUTOSAVE_DELAY_MS = 400
+/** The speeds of the simulated time the host may choose */
+export const TIME_FACTORS = [1, 2, 5, 10] as const
+export type TimeFactor = (typeof TIME_FACTORS)[number]
+export const isTimeFactor = (v: unknown): v is TimeFactor => (TIME_FACTORS as readonly number[]).includes(v as number)
 /** How close (m) a train's lead comes to a connection before the line beyond it is fetched */
 export const DATASET_LOOKAHEAD_M = 5000
 /** How often (s) the trains are checked against the connections */
