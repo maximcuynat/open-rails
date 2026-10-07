@@ -13,12 +13,11 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "types": ["vite/client", "node"],
-    "baseUrl": ".",
     "paths": {
-      "@domain/*": ["src/domain/*"],
-      "@application/*": ["src/application/*"],
-      "@infrastructure/*": ["src/infrastructure/*"],
-      "@presentation/*": ["src/presentation/*"]
+      "@domain/*": ["./src/domain/*"],
+      "@application/*": ["./src/application/*"],
+      "@infrastructure/*": ["./src/infrastructure/*"],
+      "@presentation/*": ["./src/presentation/*"]
     }
   },
   "include": ["src", "tools", "vite.config.ts"]

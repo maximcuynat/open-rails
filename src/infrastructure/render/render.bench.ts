@@ -1,4 +1,5 @@
-import { bench, describe } from 'vitest'
+import { test } from 'vitest'
+import { verifyNetworkRevisions } from '@domain/models/networkWatch'
 import { createCamera } from '@infrastructure/render/camera'
 import { renderNetworkWithTrains } from '@infrastructure/render/renderer'
 import { DEFAULT_LINE_SETTINGS } from '@domain/models/speedLimits'
@@ -10,6 +11,9 @@ import { buildStations, buildYard, marseille, STATION_CENTRE, STATION_PITCH } fr
  * `npm test`. Only the JavaScript side is measured (the canvas is a stub): what the browser
  * spends rasterising comes on top, roughly in proportion to the number of strokes.
  */
+
+// Measured as the editor runs: without the check of the revisions the tests add
+verifyNetworkRevisions(false)
 
 /** A canvas that accepts every call and records nothing */
 function stubCtx(): CanvasRenderingContext2D {
@@ -45,13 +49,15 @@ const options = {
 for (const [lines, perLine] of [[20, 50], [40, 100]] as const) {
   const net = buildYard(lines, perLine)
   const ctx = stubCtx()
-  describe(`${net.segments.size} rails`, () => {
-    for (const scale of ZOOMS) {
-      const cam = createCamera((perLine * 30) / 2, (lines * 6) / 2, scale)
-      bench(`${scale} px/m`, () => {
-        renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
-      })
-    }
+  test(`${net.segments.size} rails`, async ({ bench }) => {
+    await bench.compare(
+      ...ZOOMS.map((scale) => {
+        const cam = createCamera((perLine * 30) / 2, (lines * 6) / 2, scale)
+        return bench(`${scale} px/m`, () => {
+          renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
+        })
+      }),
+    )
   })
 }
 
@@ -63,13 +69,15 @@ const STATION_ZOOMS = [0.3, 0.7, 2.2]
 {
   const net = deserializeNetwork(marseille).network
   const ctx = stubCtx()
-  describe(`Marseille Saint-Charles, ${net.segments.size} rails, ${net.speedZones.size} speed zones`, () => {
-    for (const scale of STATION_ZOOMS) {
-      const cam = createCamera(STATION_CENTRE.x, STATION_CENTRE.y, scale)
-      bench(`${scale} px/m`, () => {
-        renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
-      })
-    }
+  test(`Marseille Saint-Charles, ${net.segments.size} rails, ${net.speedZones.size} speed zones`, async ({ bench }) => {
+    await bench.compare(
+      ...STATION_ZOOMS.map((scale) => {
+        const cam = createCamera(STATION_CENTRE.x, STATION_CENTRE.y, scale)
+        return bench(`${scale} px/m`, () => {
+          renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
+        })
+      }),
+    )
   })
 }
 
@@ -78,13 +86,15 @@ for (const copies of [3, 9]) {
   const net = buildStations(copies)
   const ctx = stubCtx()
   const middle = ((copies - 1) * STATION_PITCH) / 2
-  describe(`${copies * copies} stations, ${net.segments.size} rails`, () => {
+  test(`${copies * copies} stations, ${net.segments.size} rails`, async ({ bench }) => {
     // Whole region in the window, then one station among the others at the three scales
-    for (const scale of [0.6 / copies, ...STATION_ZOOMS]) {
-      const cam = createCamera(STATION_CENTRE.x + middle, STATION_CENTRE.y + middle, scale)
-      bench(`${scale} px/m`, () => {
-        renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
-      })
-    }
+    await bench.compare(
+      ...[0.6 / copies, ...STATION_ZOOMS].map((scale) => {
+        const cam = createCamera(STATION_CENTRE.x + middle, STATION_CENTRE.y + middle, scale)
+        return bench(`${scale} px/m`, () => {
+          renderNetworkWithTrains(ctx, cam, VW, VH, net, selection, undefined, options, () => {})
+        })
+      }),
+    )
   })
 }
