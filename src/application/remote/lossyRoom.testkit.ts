@@ -1,4 +1,4 @@
-import { RoomRelay, type RelayConnection } from '../../../tools/remote-relay/rooms'
+import { RoomRelay, type RelayConnection } from './roomRelay'
 import { decodeMessage, encodeMessage, type RemoteMessage } from './protocol'
 import { systemScheduler, type LinkStatus, type RemoteLink, type Scheduler } from './remoteLink'
 
