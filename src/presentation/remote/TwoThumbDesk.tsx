@@ -9,7 +9,8 @@ import {
 } from '@presentation/components/console/consoleParts'
 import { consoleView, decimal, notchStops } from '@presentation/components/console/consoleModel'
 import { SignalPanel } from '@presentation/components/console/signalParts'
-import { trainTitle } from './deskView'
+import { aheadLabel, trainTitle } from './deskView'
+import { useAheadDistance } from './deskHooks'
 import { BrakePad, TractionPad } from './ThumbPads'
 
 /**
@@ -30,6 +31,7 @@ export function TwoThumbDesk({ state, fleet, canSwitchCab, cut, bar, onCommand }
   onCommand: (command: ConsoleCommand) => void
 }) {
   const view = consoleView(state, fleet)
+  const aheadDistance = useAheadDistance(state)
   const parts = { state, fleet, view, onCommand }
   const speed = { '--phone-speed': view.speedRatio } as CSSProperties
   const effort = { '--console-effort': `${view.handlePercent}%` } as CSSProperties
@@ -62,6 +64,11 @@ export function TwoThumbDesk({ state, fleet, canSwitchCab, cut, bar, onCommand }
           <span>Pente <b>{view.gradient}</b></span>
           <span>Accél. <b>{view.acceleration} m/s²</b></span>
         </div>
+        {state.ahead && aheadDistance !== null && (
+          <p className="phone-ahead" role="status">
+            Train devant <b>{aheadLabel(aheadDistance, state.ahead)}</b>
+          </p>
+        )}
         {/* Only on a network that has signals: it does not come or go while driving */}
         {view.signals && <SignalPanel signals={view.signals} />}
         {!state.brake && <p className="console-note">Pas de frein à air : la commande freine directement.</p>}

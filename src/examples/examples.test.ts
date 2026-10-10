@@ -91,6 +91,7 @@ describe('example networks', () => {
         if (data.junctions) expect([...network.junctions.keys()].sort()).toEqual(data.junctions.map((junction) => junction.id).sort())
         expect(network.speedZones.size).toBe(data.speedZones?.length ?? 0)
         expect(network.signals.size).toBe(data.signals?.length ?? 0)
+        expect(network.stations.size).toBe(data.stations?.length ?? 0)
         expect(trains.map((train) => train.vehicles.length)).toEqual((data.trains ?? []).map((train) => train.vehicles.length))
         for (const [nodeId, rails] of network.adjacency) {
           expect(rails.length, `rails at ${nodeId}`).toBeGreaterThan(0)

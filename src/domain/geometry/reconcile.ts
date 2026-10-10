@@ -7,6 +7,7 @@ import { NetworkFollower, segmentBox } from './networkFollower'
 import { autoDetectJunctions, weldNodes } from '../models/junction'
 import { splitReplacement } from '../models/trackObjects'
 import { addNode, addChildSegment, addPathSegment, detachSegment, removeDuplicateSegments, replaceRail, isRamp, levelsMeet, nodeLevel, LEVEL_CLEARANCE, segmentEndLevels, segmentHeightAt, setNodesLevel } from '../models/network'
+import { touchNetwork } from '../models/networkWatch'
 
 /**
  * Split an existing segment at an existing node that lies on it.
@@ -44,6 +45,7 @@ export function splitSegmentAtNode(
     if (lenSq > 0) {
       t = at ?? Math.max(0.005, Math.min(0.995, ((node.pos.x - nodeA.pos.x) * dx + (node.pos.y - nodeA.pos.y) * dy) / lenSq))
       node.pos = { x: nodeA.pos.x + t * dx, y: nodeA.pos.y + t * dy }
+      touchNetwork(net, node.id)
       adoptHeight(t)
     } else {
       adoptHeight(0)
@@ -73,6 +75,7 @@ export function splitSegmentAtNode(
       y: (1 - t) * q0.y + t * q1.y,
     }
     node.pos = bt
+    touchNetwork(net, node.id)
     adoptHeight(t)
 
     detachSegment(net, segmentId)
@@ -87,6 +90,7 @@ export function splitSegmentAtNode(
       const t = at ?? Math.max(0.005, Math.min(0.995, closestParamOnShape(ends, node.pos)))
       const cut = t * ends.path.length
       node.pos = pointOnShape(ends, t)
+      touchNetwork(net, node.id)
       adoptHeight(t)
       const first = pathSlice(ends.path, 0, cut)
       const second = pathSlice(ends.path, cut, ends.path.length)
@@ -434,6 +438,8 @@ class ReconcileState {
   private readonly dirtyRails = new Set<SegmentId>()
   /** Changed since the rails laid over each other were last dropped */
   private readonly unchecked = new Set<SegmentId>()
+  /** Nodes at which something changed since the route tables were last checked (end of a pass) */
+  readonly changedSinceSync = new Set<NodeId>()
 
   constructor(readonly tolerance: number) {
     this.follower = new NetworkFollower(tolerance)
@@ -443,8 +449,18 @@ class ReconcileState {
    * Takes the network as it stands for one that needs no mending (it was rebuilt from one that
    * needed none): its nodes and rails are noted, not looked into.
    */
-  adopt(net: Network): void {
-    this.follower.follow(net)
+  adopt(net: Network): Set<NodeId> {
+    const changes = this.follower.follow(net)
+    const dirty = new Set<NodeId>(changes.movedNodes)
+    for (const id of changes.leftNodes) dirty.add(id)
+    for (const id of changes.changedTables) dirty.add(id)
+    for (const sid of changes.changedRails) {
+      const rec = this.follower.rails.get(sid)!
+      dirty.add(rec.from)
+      dirty.add(rec.to)
+    }
+    for (const id of dirty) this.changedSinceSync.add(id)
+    return dirty
   }
 
   /** Drops the duplicate rails, then gives the next thing to mend: the closest, and among equals the first of the network */
@@ -493,6 +509,8 @@ class ReconcileState {
       this.dirtyNodes.add(rec.from)
       this.dirtyNodes.add(rec.to)
     }
+    for (const id of this.dirtyNodes) this.changedSinceSync.add(id)
+    for (const id of changes.changedTables) this.changedSinceSync.add(id)
   }
 
   /** True when a pass now would leave the track as it is: nothing is left to mend and nothing changed since */
@@ -600,8 +618,18 @@ export function isNetworkReconciled(net: Network, tolerance: number): boolean {
  * then only looks at what changed since. Ends, like a pass, by bringing the route tables in line.
  */
 export function adoptReconciledNetwork(net: Network, tolerance: number): void {
+  const known = states.get(net)
+  if (known && known.tolerance === tolerance) {
+    // A network that was already followed: only the tables where it changed since have anything to follow
+    known.adopt(net)
+    const scope = new Set(known.changedSinceSync)
+    known.changedSinceSync.clear()
+    autoDetectJunctions(net, scope)
+    return
+  }
   const state = new ReconcileState(tolerance)
   state.adopt(net)
+  state.changedSinceSync.clear()
   states.set(net, state)
   autoDetectJunctions(net)
 }
@@ -649,6 +677,14 @@ export function reconcileNetworkIntersections(
     }
   }
 
+  /** The nodes the mends touched: the only ones whose route tables may have something to follow */
+  const touched = new Set<NodeId>()
+  const endsOf = (segId: SegmentId): void => {
+    const seg = net.segments.get(segId)
+    if (!seg) return
+    touched.add(seg.from)
+    touched.add(seg.to)
+  }
   let settled = false
   while (iterations < 40) {
     iterations++
@@ -659,9 +695,13 @@ export function reconcileNetworkIntersections(
     }
 
     if (best.type === 'weld' && best.weldNodeId && best.nodeId) {
+      touched.add(best.weldNodeId)
+      touched.add(best.nodeId)
       weldNodes(net, best.weldNodeId, best.nodeId)
       weldedCount++
     } else if (best.type === 'split' && best.segId && best.nodeId) {
+      touched.add(best.nodeId)
+      endsOf(best.segId)
       splitSegmentAtNode(net, best.segId, best.nodeId)
       splitCount++
     } else if (best.type === 'cross' && best.segId && best.seg2Id && best.crossPoint) {
@@ -672,6 +712,9 @@ export function reconcileNetworkIntersections(
       const cuts: [SegmentId, number | undefined][] = [[best.segId, best.crossT1], [best.seg2Id, best.crossT2]]
       if (first && second && isRamp(net, first) && !isRamp(net, second)) cuts.reverse()
       const crossNode = addNode(net, best.crossPoint)
+      touched.add(crossNode.id)
+      endsOf(best.segId)
+      endsOf(best.seg2Id)
       for (const [segId, at] of cuts) splitSegmentAtNode(net, segId, crossNode.id, at)
       splitCount += 2
     }
@@ -682,8 +725,15 @@ export function reconcileNetworkIntersections(
     else removeDuplicateSegments(net, tolerance)
   }
 
-  // Re-detect all junctions in the reconciled network
-  autoDetectJunctions(net)
+  // The route tables follow the track where it changed since they were last checked and where it
+  // was mended; `exhaustive` checks them all, as the reference
+  if (state) {
+    for (const id of state.changedSinceSync) touched.add(id)
+    state.changedSinceSync.clear()
+    autoDetectJunctions(net, touched)
+  } else {
+    autoDetectJunctions(net)
+  }
 
   return { splitCount, weldedCount }
 }

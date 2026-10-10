@@ -78,6 +78,8 @@ import {
 } from './placementPreview'
 import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { driverPlaces, pointsNear, pointsPlaces } from '@application/console/dispatcher'
+import { POINTS_HIT_RADIUS_PX, renderDispatchOverlay } from '@infrastructure/render/dispatchRender'
 import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
 import { positionOnSegment } from '@domain/models/locomotive'
 import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
@@ -351,7 +353,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // The gizmo is drawn last, on the selection anchor: section badges keep clear of it
-    const gizmoAnchor = store.tool === 'select' && !store.isPlayMode ? getGizmoAnchor(store.network, store.selection) : null
+    const gizmoAnchor = store.tool === 'select' && store.canEditNetwork ? getGizmoAnchor(store.network, store.selection) : null
     const gizmoScreen = gizmoAnchor
       ? {
           x: (gizmoAnchor.worldPos.x - cam.x) * cam.scale + rect.width / 2,
@@ -394,6 +396,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         // Construction view only, and not with a signal tool in hand: the preview says enough then
         report: !store.isPlayMode && store.tool !== 'pan' && store.signalPlacementMode === null,
       },
+      stations: { selectedId: store.selectedStationId, hoveredId: store.hoveredStationId },
     }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
@@ -531,6 +534,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.strokeRect(x, y, w, h)
       ctx.setLineDash([])
       ctx.restore()
+    }
+
+    // While trains run: a mark on every set of points, whatever the zoom, and the driver above each driven train
+    if (store.isPlayMode) {
+      renderDispatchOverlay(ctx, cam, rect.width, rect.height, store.dispatcherVisible ? pointsPlaces(store) : [], driverPlaces(store).filter((d) => store.deskNames.size > 0 || !d.host))
     }
 
     // Snap indicator (all construction tools)
@@ -1190,8 +1198,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const px = e.clientX - rect.left
       const py = e.clientY - rect.top
 
+      // While trains run, with the dispatcher's board up: a click on the mark of a set of points throws it
+      if (e.button === 0 && store.dispatcherVisible && !isSpaceDown && store.tool !== 'pan') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const junction = pointsNear(store, world, POINTS_HIT_RADIUS_PX / store.camera.scale)
+        if (junction) {
+          if (!store.toggleActiveJunction(junction.id, world)) showToast(store.junctionRefusalMessage, 'warning')
+          redraw()
+          return
+        }
+      }
+
       // Priority 0: Check if click hit a 2D Gizmo translation/rotation handle on selected node or section
-      if (e.button === 0 && store.tool === 'select') {
+      if (e.button === 0 && store.tool === 'select' && store.canEditNetwork) {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
@@ -1803,6 +1822,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
+        // A station first: its mark is small and stands over the track
+        const station = store.stationAt(world, hitTol)
+        if (station) {
+          store.selectStation(station.id)
+          redraw()
+          return
+        }
+        if (store.selectedStationId) store.selectStation(null)
         const nodeId = hitShownNode(store.network, store.selection, world, hitTol, store.camera.scale)
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
@@ -1819,7 +1846,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
               store.selection = { nodes: new Set([nodeId]), segments: new Set() }
             }
           }
-          // Start dragging selected nodes!
+          // Start dragging selected nodes (not on a dataset project: its track stays where it is)
+          if (!store.canEditNetwork) {
+            redraw()
+            return
+          }
           store.isDraggingNode = true
           store.dragStartWorld = world
           dragPrimaryNodeId = nodeId
@@ -2141,7 +2172,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const hoveredNodeId = hitShownNode(store.network, store.selection, rawWorld, hitTol, store.camera.scale)
           const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
           const hoveredVehicle = store.trains.length > 0 ? store.findVehicleAt(rawWorld) : null
-          if (hoveredNodeId || hoveredSegId || hoveredVehicle) {
+          if (store.updateStationHover(rawWorld)) draw()
+          if (hoveredNodeId || hoveredSegId || hoveredVehicle || store.hoveredStationId) {
             canvas.style.cursor = 'pointer'
           } else if (canvas.style.cursor === 'pointer') {
             canvas.style.cursor = isSpaceDown ? 'grab' : ''

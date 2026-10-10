@@ -5,29 +5,31 @@ import { generateId, resetIdCounter } from './ids'
 import { createCountedNetwork, touchNetwork } from './networkWatch'
 import { nodesWithin, railsWithin } from '../geometry/networkFollower'
 import { remapSignals } from './signals'
+import { remapStations } from './stations'
 import { remapSpeedZones } from './speedZones'
 import { duplicateReplacement, mergeReplacements, notifyRailReplaced, removalReplacement, type RailReplacement } from './trackObjects'
 
 export { generateId, resetIdCounter }
 
 /**
- * Scan all node, segment, junction, speed zone and signal IDs in the network and update
+ * Scan all node, segment, junction, speed zone, signal and station IDs in the network and update
  * idCounter so that any future generateId calls will not collide.
  */
 export function syncIdCounter(net: Network): void {
   let max = 0
+  // `prefix_number`: read without a regular expression, there are as many ids as nodes and rails
   const scan = (id: string) => {
-    const match = id.match(/_(\d+)$/)
-    if (match) {
-      const n = parseInt(match[1], 10)
-      if (!Number.isNaN(n) && n > max) max = n
-    }
+    const at = id.lastIndexOf('_')
+    if (at < 0 || at === id.length - 1) return
+    const n = Number(id.slice(at + 1))
+    if (Number.isInteger(n) && n >= 0 && n > max) max = n
   }
   for (const id of net.nodes.keys()) scan(id)
   for (const id of net.segments.keys()) scan(id)
   for (const id of net.junctions.keys()) scan(id)
   for (const id of net.speedZones.keys()) scan(id)
   for (const id of net.signals.keys()) scan(id)
+  for (const id of net.stations.keys()) scan(id)
   resetIdCounter(max)
 }
 
@@ -187,9 +189,9 @@ export function setNodesLevel(net: Network, nodeIds: Iterable<NodeId>, level: nu
     if (!node || nodeLevel(node) === target) continue
     if (target === 0) delete node.level
     else node.level = target
+    touchNetwork(net, id)
     changed++
   }
-  if (changed > 0) touchNetwork(net)
   return changed
 }
 
@@ -214,7 +216,7 @@ export function addChildSegment(
     seg.parentSegmentId = ancestorId
     // A cant set by hand goes with the curve: each curved piece of the rail keeps it
     if (seg.kind === 'curve' && parent.cant !== undefined) seg.cant = parent.cant
-    touchNetwork(net)
+    touchNetwork(net, seg.id)
   }
   return seg
 }
@@ -444,6 +446,7 @@ export function replaceRail(net: Network, replacement: RailReplacement): void {
   replaceJunctionRail(net, replacement.oldId, pieces)
   remapSpeedZones(net, replacement)
   remapSignals(net, replacement)
+  remapStations(net, replacement)
   notifyRailReplaced(net, replacement)
 }
 

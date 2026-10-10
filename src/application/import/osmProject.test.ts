@@ -4,7 +4,9 @@ import type { OsmImportReport, OsmImportResult } from '@domain/import/osmTypes'
 import { addNode, addSegment, createNetwork, resetIdCounter } from '@domain/models/network'
 import { addSpeedZone } from '@domain/models/speedZones'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
-import { buildOsmProject, loadOsmImport, osmLineSettings, osmProjectName, osmSourceOf, showOsmPlace } from './osmProject'
+import { buildOsmProject, loadOsmImport, osmLineSettings, osmProjectName, osmSourceOf, showOsmPlace, stationSectionMeta } from './osmProject'
+import { addStation } from '@domain/models/stations'
+import { networkDerived } from '@infrastructure/render/networkDerived'
 
 const REPORT: OsmImportReport = {
   nodes: 4,
@@ -41,6 +43,7 @@ function importResult(overrides: Partial<OsmImportResult> = {}): OsmImportResult
     lineSpeed: 140,
     highSpeed: false,
     origin: { lat: 48.8443, lon: 2.3744 },
+    frame: 'local',
     dataDate: '2026-10-06T07:12:00Z',
     report: REPORT,
     ...overrides,
@@ -84,6 +87,11 @@ describe('provenance of an import', () => {
       dataDate: '2026-10-06T07:12:00Z',
       importedAt: '2026-10-06T09:30:00.000Z',
     })
+  })
+
+  it('says the frame only when it is the national one', () => {
+    expect('frame' in osmSourceOf(importResult(), NOW)).toBe(false)
+    expect(osmSourceOf(importResult({ frame: 'lambert93' }), NOW).frame).toBe('lambert93')
   })
 
   it('dates the data from the day of the import when the answer carries no date', () => {
@@ -210,6 +218,50 @@ describe('loading an import in the editor', () => {
     const store = storeWithProject()
     expect(() => loadOsmImport(store, importResult(), { levels: true, now: NOW })).not.toThrow()
     expect(store.network.segments.size).toBe(3)
+  })
+})
+
+describe('the platform tracks of the stations as sections', () => {
+  /** Two platform tracks (two rails each) off a through line: a station with a stop on each */
+  function stationNetwork() {
+    const net = createNetwork()
+    const nodes = [0, 100, 200, 300].map((x) => addNode(net, { x, y: 0 }))
+    const line = nodes.slice(1).map((n, i) => addSegment(net, nodes[i].id, n.id)!)
+    const p1 = addNode(net, { x: 100, y: 6 })
+    const pm = addNode(net, { x: 150, y: 6 })
+    const p2 = addNode(net, { x: 200, y: 6 })
+    const platform = [addSegment(net, p1.id, pm.id)!, addSegment(net, pm.id, p2.id)!]
+    addSegment(net, nodes[1].id, p1.id)
+    addSegment(net, p2.id, nodes[2].id)
+    return { net, line, platform }
+  }
+
+  it('names each section a stop stands on after its station and platform, under the key of the section and of its rails', () => {
+    const { net, line, platform } = stationNetwork()
+    const station = addStation(net, { name: 'Clelles - Mens', pos: { x: 150, y: 3 }, stops: [{ segId: line[1].id, t: 0.5, ref: '1' }, { segId: platform[0].id, t: 0.9, ref: '2' }] })
+    const meta = stationSectionMeta(net)
+    const one = { type: 'station_stop', name: 'Clelles - Mens · voie 1', isCustomName: true }
+    const two = { type: 'station_stop', name: 'Clelles - Mens · voie 2', isCustomName: true }
+    expect(meta).toEqual({
+      [line[1].id]: one,
+      [platform.map((s) => s.id).sort().join('-')]: two,
+      [platform[0].id]: two,
+      [platform[1].id]: two,
+    })
+    // The project of the import carries them
+    expect(buildOsmProject(importResult({ network: net }), { levels: true, now: NOW }).sectionMeta).toEqual(meta)
+    // And the editor reads them as the sections of the platform tracks (this fills `meta` in with the other sections)
+    const sections = networkDerived(net, meta).sections.filter((s) => s.type === 'station_stop')
+    expect(sections.map((s) => s.name).sort()).toEqual(['Clelles - Mens · voie 1', 'Clelles - Mens · voie 2'])
+    expect(station.stops).toHaveLength(2)
+  })
+
+  it('numbers the platforms that carry no number, joins two stops on one section, and writes nothing without station', () => {
+    const { net, line } = stationNetwork()
+    expect(stationSectionMeta(net)).toEqual({})
+    addStation(net, { name: 'Halte', pos: { x: 0, y: 0 }, stops: [{ segId: line[1].id, t: 0.3 }, { segId: line[1].id, t: 0.7 }, { segId: line[0].id, t: 0.5 }] })
+    const names = Object.values(stationSectionMeta(net)).map((m) => m.name)
+    expect(new Set(names)).toEqual(new Set(['Halte · voie 1/2', 'Halte · voie 3']))
   })
 })
 

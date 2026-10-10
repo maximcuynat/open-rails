@@ -81,7 +81,7 @@ describe('WebSocketLink', () => {
     const { sockets, received } = setup()
     const socket = sockets[0]
     socket.open()
-    socket.receive({ t: 'peer-joined' })
+    socket.receive({ t: 'peer-joined', desk: 1 })
     socket.receive('{broken')
     socket.receive({ t: 'command', seq: 1, trainId: 't_1', command: { type: 'notchSet', notch: 999 } })
     socket.receive({ t: 'whatever' })
@@ -89,7 +89,7 @@ describe('WebSocketLink', () => {
     socket.receive({ t: 'pong' })
     socket.receive({ t: 'ping' })
     socket.receive({ t: 'state', state: null, ack: 2 })
-    expect(received).toEqual([{ t: 'peer-joined' }, { t: 'state', state: null, ack: 2 }])
+    expect(received).toEqual([{ t: 'peer-joined', desk: 1 }, { t: 'state', state: null, ack: 2 }])
     // A ping is answered
     expect(socket.sent).toEqual([{ t: 'pong' }])
   })

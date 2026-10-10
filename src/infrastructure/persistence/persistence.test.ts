@@ -9,7 +9,8 @@ import {
   segmentBand,
   segmentEndLevels,
 } from '../../domain/models/network'
-import { placeTurnout, toggleJunction, activeBranchOf, turnoutView } from '../../domain/models/junction'
+import { declareTurnout, placeTurnout, toggleJunction, activeBranchOf, turnoutView } from '../../domain/models/junction'
+import { touchNetwork } from '../../domain/models/networkWatch'
 import { openExit } from '../../domain/models/routing'
 import {
   serializeNetwork,
@@ -472,6 +473,16 @@ describe('what an import leaves in a project', () => {
     }
   })
 
+  it('keeps the frame of an import made in Lambert-93, and reads anything else as local', () => {
+    const national = { ...source, frame: 'lambert93' as const }
+    const data = JSON.parse(JSON.stringify(save({ osmSource: national })))
+    expect(data.osmSource).toEqual(national)
+    expect(deserializeNetwork(data).osmSource).toEqual(national)
+    for (const frame of ['local', 'utm', 3, null]) {
+      expect(deserializeNetwork({ ...save(), osmSource: { ...source, frame } } as never).osmSource).toEqual(source)
+    }
+  })
+
   it('a saved project does not share the provenance with the editor', () => {
     const live = { ...source }
     const data = save({ osmSource: live })
@@ -662,5 +673,57 @@ describe('track levels', () => {
       expect(chain(1, -1)).toEqual([1, 1, -1])
       expect(chain(undefined, -1)).toEqual([0, -1, -1])
     })
+  })
+})
+
+describe('a step put back onto the live network', () => {
+  it('keeps every node, rail and table still as saved, and replaces only what the step changes', () => {
+    resetIdCounter(0)
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 0 })
+    const c = addNode(net, { x: 100, y: 0 })
+    const d = addNode(net, { x: 100, y: 6 })
+    const s0 = addSegment(net, a.id, b.id)!
+    const s1 = addSegment(net, b.id, c.id)!
+    const s2 = addSegment(net, b.id, d.id)!
+    declareTurnout(net, { nodeId: b.id, stemSegmentId: s0.id, straightSegmentId: s1.id, divergingSegmentId: s2.id })
+    const table = [...net.junctions.values()][0]
+    const step = serializeNetwork(net, 'x')
+
+    // The saved form is shared with the network: the same objects, never changed afterwards
+    expect(serializeNetwork(net, 'x').segments[0]).toBe(step.segments[0])
+    c.pos = { x: 110, y: 0 }
+    touchNetwork(net, c.id)
+    expect(serializeNetwork(net, 'x').nodes[2]).not.toBe(step.nodes[2])
+    expect(serializeNetwork(net, 'x').nodes[0]).toBe(step.nodes[0])
+
+    const extra = addSegment(net, c.id, d.id)!
+    const res = deserializeNetwork(step, undefined, net)
+    expect(res.network).toBe(net)
+    expect(net.nodes.get(a.id)).toBe(a)
+    expect(net.nodes.get(c.id)).not.toBe(c)
+    expect(net.nodes.get(c.id)!.pos).toEqual({ x: 100, y: 0 })
+    expect(net.segments.get(s0.id)).toBe(s0)
+    expect(net.segments.has(extra.id)).toBe(false)
+    expect(net.junctions.get(table.id)).toBe(table)
+    expect([...net.segments.keys()]).toEqual([s0.id, s1.id, s2.id])
+    expect(net.adjacency.get(c.id)).toEqual([s1.id])
+  })
+
+  it('lays the maps out again in the order of the step when the live order is another', () => {
+    resetIdCounter(0)
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 50, y: 0 })
+    const c = addNode(net, { x: 100, y: 0 })
+    const s0 = addSegment(net, a.id, b.id)!
+    const s1 = addSegment(net, b.id, c.id)!
+    const step = serializeNetwork(net, 'x')
+    net.segments.delete(s0.id)
+    net.segments.set(s0.id, s0)
+    deserializeNetwork(step, undefined, net)
+    expect([...net.segments.keys()]).toEqual([s0.id, s1.id])
+    expect(net.segments.get(s1.id)).toBe(s1)
   })
 })

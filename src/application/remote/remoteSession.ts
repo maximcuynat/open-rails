@@ -1,8 +1,8 @@
 import type { EditorStore } from '@application/state/editorStore'
-import { applyConsoleCommand } from '@application/console/consoleCommands'
-import { buildConsoleState, buildFleet } from '@application/console/consoleState'
+import { applyDeskCommand } from '@application/console/consoleCommands'
+import { buildDeskConsoleState, buildFleet } from '@application/console/consoleState'
 import { createRemoteHost, type RemoteHost, type RemoteHostSnapshot } from './remoteHost'
-import type { RemoteLink, Scheduler } from './remoteLink'
+import { systemScheduler, type RemoteLink, type Scheduler } from './remoteLink'
 
 /**
  * The phone desk as the PC sees it: one session at most, opened and cut by the user. It belongs to
@@ -28,11 +28,24 @@ export interface RemoteSession {
   close(): void
 }
 
+/** How long a desk that lost its link keeps its seat and its train, ms */
+export const DESK_RETURN_GRACE_MS = 20000
+
 export function createRemoteSession(deps: RemoteSessionDeps): RemoteSession {
   const { store } = deps
   const listeners = new Set<() => void>()
   let host: RemoteHost | null = null
   let offHost: (() => void) | null = null
+
+  const scheduler = deps.scheduler ?? systemScheduler
+  /** The desks gone and not yet given up on, with the timer that will */
+  const away = new Map<number, unknown>()
+  const forgive = (desk: number) => {
+    const timer = away.get(desk)
+    if (timer === undefined) return
+    scheduler.clearTimeout(timer)
+    away.delete(desk)
+  }
 
   const emit = () => {
     for (const listener of [...listeners]) listener()
@@ -48,19 +61,30 @@ export function createRemoteSession(deps: RemoteSessionDeps): RemoteSession {
       if (host) return
       host = createRemoteHost({
         link: deps.createLink(),
-        getState: () => buildConsoleState(store),
+        getState: (desk) => buildDeskConsoleState(store, desk),
         getFleet: () => buildFleet(store),
         // The store methods behind a command notify, so the screen of the PC follows the phone
-        apply: (command) => applyConsoleCommand(store, command, 'remote'),
+        apply: (desk, command) => applyDeskCommand(store, desk, command),
+        seat: (desk, name, back) => {
+          forgive(desk)
+          // Another phone under the number of one that left: it does not inherit its train
+          if (!back) store.unseatDesk(desk)
+          store.seatDesk(desk, name)
+        },
+        // A desk that leaves stops its train at once, and keeps it for the time a phone takes to
+        // find its network again: only then is the train nobody's
+        unseat: (desk) => {
+          forgive(desk)
+          store.restDesk(desk)
+          away.set(desk, scheduler.setTimeout(() => {
+            away.delete(desk)
+            store.unseatDesk(desk)
+          }, DESK_RETURN_GRACE_MS))
+        },
         scheduler: deps.scheduler,
         generateRoom: deps.generateRoom,
       })
-      const opened = host
-      offHost = host.subscribe(() => {
-        // The PC turns spectator while a phone holds the desk
-        store.setRemoteDeskConnected(opened.getSnapshot().deskConnected)
-        emit()
-      })
+      offHost = host.subscribe(emit)
       emit()
     },
     close() {
@@ -71,7 +95,8 @@ export function createRemoteSession(deps: RemoteSessionDeps): RemoteSession {
       host = null
       // Puts back a brake the phone was holding, then closes the room and the link
       closing.stop()
-      store.setRemoteDeskConnected(false)
+      for (const desk of [...away.keys()]) forgive(desk)
+      store.unseatAllDesks()
       emit()
     },
   }

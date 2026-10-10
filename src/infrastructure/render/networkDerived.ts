@@ -1,18 +1,21 @@
-import type { Network, NodeId, SegmentId } from '@domain/models/types'
-import { pathChecksum } from '@domain/geometry/railPath'
+import type { Network, NodeId, Segment, SegmentId } from '@domain/models/types'
 import { networkCheckToken, verifyingNetworkRevisions } from '@domain/models/networkWatch'
 import { gradientRamps, type GradientRamp, type RampRail } from '@domain/models/network'
-import { bezierPoint, curveLength } from '@domain/geometry/curve'
+import { bezierPoint } from '@domain/geometry/curve'
+import { anyChange, networkChangesSince, type NetworkChanges, type NetworkFollower } from '@domain/geometry/networkFollower'
+import { railMeasures, type RailMeasures } from '@domain/geometry/railMeasures'
+import { SectionTracker } from '@domain/models/sectionTracker'
 import { pointOnShape, reversedShape, segmentEnds, shapeChordCount, shapePolyline } from '@domain/geometry/segmentGeometry'
 import { detectCrossings, type DiamondCrossing } from '@domain/models/crossing'
 import {
-  computeTrackSections,
   detectDirectionConflicts,
   type DirectionConflict,
+  type SectionEndpointCache,
   type SectionMetadata,
   type TrackSection,
 } from '@domain/models/sections'
-import { analyzeKinematics, type GradientLimits, type KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import type { GradientLimits, KinematicIssue } from '@domain/services/kinematicDiagnostics'
+import { KinematicTracker } from '@domain/services/kinematicTracker'
 import { detectConnectedComponents, detectDeadEnds, detectLoops } from '@domain/services/pathfinding'
 
 /** A part of the network no rail joins to the rest */
@@ -62,7 +65,7 @@ export interface NetworkDerived {
   loops(): readonly (readonly NodeId[])[]
   components(): readonly NetworkComponent[]
   /** Length of all the rails (m) and how many of them are curved, straight */
-  trackTotals(): { length: number; curves: number; straights: number }
+  trackTotals(): TrackTotals
   /** The diamond crossings of the network (`detectCrossings`) */
   crossings(): readonly DiamondCrossing[]
 }
@@ -112,86 +115,6 @@ function sectionPolyline(net: Network, section: TrackSection): SectionPolyline |
 }
 
 /**
- * Copy of everything the derived data depends on, compared value by value at each frame. The
- * network is mutated in place from many places (helpers, drags, panels), so there is no revision
- * to trust: the comparison is exact and costs one pass over the network.
- */
-class NetworkSnapshot {
-  private nums: number[] = []
-  private strs: (string | undefined)[] = []
-
-  /** Records the current state of the network; true when it differs from the last one recorded */
-  update(net: Network): boolean {
-    const nums = this.nums
-    const strs = this.strs
-    let ni = 0
-    let si = 0
-    let changed = false
-    const num = (v: number): void => {
-      if (nums[ni] !== v) {
-        nums[ni] = v
-        changed = true
-      }
-      ni++
-    }
-    const str = (v: string | undefined): void => {
-      if (strs[si] !== v) {
-        strs[si] = v
-        changed = true
-      }
-      si++
-    }
-
-    for (const node of net.nodes.values()) {
-      str(node.id)
-      num(node.pos.x)
-      num(node.pos.y)
-      num(node.level ?? 0)
-    }
-    for (const seg of net.segments.values()) {
-      str(seg.id)
-      str(seg.from)
-      str(seg.to)
-      str(seg.kind)
-      str(seg.parentSegmentId)
-      num(seg.via ? 1 : 0)
-      num(seg.via?.x ?? 0)
-      num(seg.via?.y ?? 0)
-      num(seg.kind === 'path' && seg.path ? pathChecksum(seg.path) : 0)
-    }
-    for (const [nodeId, segIds] of net.adjacency) {
-      str(nodeId)
-      num(segIds.length)
-      for (const sid of segIds) str(sid)
-    }
-    for (const junction of net.junctions.values()) {
-      str(junction.id)
-      str(junction.nodeId)
-      str(junction.kind)
-      num(junction.active)
-      num(junction.frogNumber ?? -1)
-      num(junction.passages.length)
-      for (const passage of junction.passages) {
-        str(passage.a)
-        str(passage.b)
-      }
-      num(junction.positions.length)
-      for (const position of junction.positions) {
-        num(position.length)
-        for (const index of position) num(index)
-      }
-    }
-
-    if (nums.length !== ni || strs.length !== si) {
-      nums.length = ni
-      strs.length = si
-      changed = true
-    }
-    return changed
-  }
-}
-
-/**
  * One state of the settings of the sections (names, kinds, colours). Those of a network that has a
  * revision are told apart the same way: by the object and a counter moved by `sectionMetaChanged`
  * whenever something is written into it. Otherwise by their whole content, as text.
@@ -202,18 +125,75 @@ interface MetaStamp {
   text: string
 }
 
-const metaRevisions = new WeakMap<object, number>()
+/** The count of writes into one settings object, and which keys the last ones wrote (null: not known) */
+interface MetaWrites {
+  revision: number
+  /** Keys written at each count, the last `META_WRITES_KEPT` counts only */
+  log: { revision: number; keys: Set<string> | null }[]
+}
 
-/** Names or settings of sections were written into `meta`: what is kept of them is worked out again */
-export function sectionMetaChanged(meta: Record<string, SectionMetadata>): void {
-  metaRevisions.set(meta, (metaRevisions.get(meta) ?? 0) + 1)
+const META_WRITES_KEPT = 64
+const metaRevisions = new WeakMap<object, MetaWrites>()
+
+function metaWrites(meta: object): MetaWrites {
+  let writes = metaRevisions.get(meta)
+  if (!writes) {
+    writes = { revision: 0, log: [] }
+    metaRevisions.set(meta, writes)
+  }
+  return writes
+}
+
+/**
+ * Names or settings of sections were written into `meta`: what is kept of them is worked out
+ * again. `keys`: the entries written, when the writer knows them — only the sections they belong
+ * to are then read again.
+ */
+export function sectionMetaChanged(meta: Record<string, SectionMetadata>, keys?: Iterable<string>): void {
+  const writes = metaWrites(meta)
+  writes.revision++
+  writes.log.push({ revision: writes.revision, keys: keys ? new Set(keys) : null })
+  if (writes.log.length > META_WRITES_KEPT) writes.log.shift()
+}
+
+/** The keys written into `meta` since count `since`, or null when some write did not say */
+function metaKeysWrittenSince(meta: object, since: number): Set<string> | null {
+  const writes = metaWrites(meta)
+  if (writes.log.length === 0 || writes.log[0].revision > since + 1) return null
+  const keys = new Set<string>()
+  for (const entry of writes.log) {
+    if (entry.revision <= since) continue
+    if (!entry.keys) return null
+    for (const key of entry.keys) keys.add(key)
+  }
+  return keys
+}
+
+/**
+ * Brings the settings of the sections to those saved (a step of the undo history), in place:
+ * the entries that differ are put back, the others left as they are, and only the keys that
+ * changed are told to `sectionMetaChanged`.
+ */
+export function applySectionMeta(live: Record<string, SectionMetadata>, saved: Record<string, SectionMetadata>): void {
+  const changed: string[] = []
+  for (const key in saved) {
+    if (live[key] === saved[key]) continue
+    live[key] = saved[key]
+    changed.push(key)
+  }
+  for (const key in live) {
+    if (key in saved) continue
+    delete live[key]
+    changed.push(key)
+  }
+  if (changed.length > 0) sectionMetaChanged(live, changed)
 }
 
 function metaStamp(counted: boolean, meta: Record<string, SectionMetadata> | undefined): MetaStamp {
   if (!counted) return { ref: undefined, revision: 0, text: meta ? JSON.stringify(meta) : '' }
   return {
     ref: meta,
-    revision: meta ? (metaRevisions.get(meta) ?? 0) : 0,
+    revision: meta ? (metaRevisions.get(meta)?.revision ?? 0) : 0,
     // The tests check the counter against the content, as they do for the network
     text: meta && verifyingNetworkRevisions() ? JSON.stringify(meta) : '',
   }
@@ -228,10 +208,99 @@ function sameMeta(a: MetaStamp, b: MetaStamp): boolean {
   return true
 }
 
+/** What is kept of the graph while its structure holds: a node moved changes none of it */
+interface GraphCache {
+  deadEnds?: NodeId[]
+  loops?: NodeId[][]
+  components?: NetworkComponent[]
+}
+
+/** What is kept of the geometry while the network holds: the settings of the sections change none of it */
+interface GeometryCache {
+  rampIndexes: Map<number, RampIndex>
+  steep: Map<string, Set<SegmentId>>
+  crossings?: DiamondCrossing[]
+}
+
+export interface TrackTotals {
+  length: number
+  curves: number
+  straights: number
+}
+
+/** What a rail adds to the totals */
+interface RailShare {
+  length: number
+  curved: boolean
+}
+
+/**
+ * The totals of the track, kept from one edit to the next: what a rail that changed added is
+ * taken off and what it adds now put on. The sum is the one a loop over the rails makes, give or
+ * take the last digits.
+ */
+class TotalsTracker {
+  private readonly shares = new Map<SegmentId, RailShare>()
+  private totals: TrackTotals | null = null
+  private sum = { length: 0, curves: 0, straights: 0 }
+
+  update(net: Network, changes: NetworkChanges | null): void {
+    this.totals = null
+    const measures = railMeasures(net)
+    if (!changes) {
+      this.shares.clear()
+      this.sum = { length: 0, curves: 0, straights: 0 }
+      for (const seg of net.segments.values()) this.add(net, seg, measures)
+      return
+    }
+    for (const sid of changes.removedRails) this.drop(sid)
+    for (const sid of changes.changedRails) {
+      this.drop(sid)
+      const seg = net.segments.get(sid)
+      if (seg) this.add(net, seg, measures)
+    }
+  }
+
+  get(): TrackTotals {
+    return (this.totals ??= { ...this.sum })
+  }
+
+  private drop(sid: SegmentId): void {
+    const share = this.shares.get(sid)
+    if (!share) return
+    this.shares.delete(sid)
+    this.sum.length -= share.length
+    if (share.curved) this.sum.curves--
+    else this.sum.straights--
+  }
+
+  private add(net: Network, seg: Segment, measures: RailMeasures): void {
+    const a = net.nodes.get(seg.from)
+    const b = net.nodes.get(seg.to)
+    if (!a || !b) return
+    const curved = seg.kind === 'curve' && !!seg.via
+    // The length of the shape of a curve is `curveLength` over its whole parameter
+    const length = curved ? measures.shapeLength(seg) : Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
+    this.shares.set(seg.id, { length, curved })
+    this.sum.length += length
+    if (curved) this.sum.curves++
+    else this.sum.straights++
+  }
+}
+
 interface CacheEntry {
-  snapshot: NetworkSnapshot
-  /** `networkCheckToken` of the last comparison */
+  /** Where this reader is in the feed of changes of the network */
+  cursor: number | undefined
+  /** `networkCheckToken` of the last reading */
   checkedAt: number | undefined
+  index: NetworkFollower
+  tracker: SectionTracker
+  endpoints: SectionEndpointCache
+  totals: TotalsTracker | null
+  /** The issues per gauge and gradient limits asked for, each following the network */
+  kinematics: Map<string, KinematicTracker>
+  graph: GraphCache
+  geometry: GeometryCache
   /** The settings of the sections as `compute` left them: it writes the names it gives into them */
   meta: MetaStamp
   derived: NetworkDerived
@@ -239,38 +308,34 @@ interface CacheEntry {
 
 const cache = new WeakMap<Network, CacheEntry>()
 
-function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | undefined): NetworkDerived {
-  const sections = computeTrackSections(net, sectionMeta)
-  const sectionOfSegment = new Map<SegmentId, TrackSection>()
-  for (const sec of sections) {
-    for (const sid of sec.segmentIds) {
-      // First section wins, as with `findSectionBySegment`
-      if (!sectionOfSegment.has(sid)) sectionOfSegment.set(sid, sec)
-    }
-  }
-  const issues = new Map<string, KinematicIssue[]>()
+const issueKey = (gauge?: number, gradient?: GradientLimits): string => `${gauge}|${gradient?.levelHeight}|${gradient?.maxGradient}`
+
+function compute(
+  net: Network,
+  sectionMeta: Record<string, SectionMetadata> | undefined,
+  entry: Omit<CacheEntry, 'derived' | 'meta'>,
+  settled: boolean,
+  changedKeys: Set<string> | null = null,
+): NetworkDerived {
+  const sections = entry.tracker.sections(net, sectionMeta, settled, changedKeys)
+  const sectionOfSegment = entry.tracker.sectionOfSegment
+  const { graph, geometry, kinematics, index } = entry
+  const { rampIndexes, steep } = geometry
   let polylines: SectionPolyline[] | undefined
   let badgeAnchors: Float64Array | undefined
-  const rampIndexes = new Map<number, RampIndex>()
-  const steep = new Map<string, Set<SegmentId>>()
-  const issueKey = (gauge?: number, gradient?: GradientLimits): string => `${gauge}|${gradient?.levelHeight}|${gradient?.maxGradient}`
-  let deadEnds: NodeId[] | undefined
-  let loops: NodeId[][] | undefined
-  let components: NetworkComponent[] | undefined
-  let totals: { length: number; curves: number; straights: number } | undefined
-  let crossings: DiamondCrossing[] | undefined
   return {
     sections,
     sectionOfSegment,
-    conflicts: detectDirectionConflicts(net, sections),
+    conflicts: detectDirectionConflicts(net, sections, entry.endpoints),
     kinematicIssues(gauge, gradient) {
       const key = issueKey(gauge, gradient)
-      let found = issues.get(key)
-      if (!found) {
-        found = analyzeKinematics(net, gauge, gradient)
-        issues.set(key, found)
+      let tracker = kinematics.get(key)
+      if (!tracker) {
+        tracker = new KinematicTracker(gauge, gradient)
+        tracker.update(net, null, index)
+        kinematics.set(key, tracker)
       }
-      return found
+      return tracker.issues(net, index)
     },
     sectionPolylines() {
       if (!polylines) {
@@ -326,51 +391,64 @@ function compute(net: Network, sectionMeta: Record<string, SectionMetadata> | un
       }
       return rails
     },
-    deadEnds: () => (deadEnds ??= detectDeadEnds(net)),
-    loops: () => (loops ??= detectLoops(net)),
-    components: () => (components ??= detectConnectedComponents(net)),
+    deadEnds: () => (graph.deadEnds ??= detectDeadEnds(net)),
+    loops: () => (graph.loops ??= detectLoops(net)),
+    components: () => (graph.components ??= detectConnectedComponents(net)),
     trackTotals() {
-      if (!totals) {
-        totals = { length: 0, curves: 0, straights: 0 }
-        for (const seg of net.segments.values()) {
-          const a = net.nodes.get(seg.from)
-          const b = net.nodes.get(seg.to)
-          if (!a || !b) continue
-          if (seg.kind === 'curve' && seg.via) {
-            totals.length += curveLength(a.pos, seg.via, b.pos)
-            totals.curves++
-          } else {
-            totals.length += Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y)
-            totals.straights++
-          }
-        }
+      if (!entry.totals) {
+        entry.totals = new TotalsTracker()
+        entry.totals.update(net, null)
       }
-      return totals
+      return entry.totals.get()
     },
-    crossings: () => (crossings ??= detectCrossings(net)),
+    crossings: () => (geometry.crossings ??= detectCrossings(net)),
   }
 }
 
-/** Sections, direction conflicts and diagnostics of the network, kept from one frame to the next */
+/**
+ * Sections, direction conflicts and diagnostics of the network, kept from one frame to the next
+ * and, after an edit, worked out again only where the network changed (see `SectionTracker`).
+ */
 export function networkDerived(net: Network, sectionMeta?: Record<string, SectionMetadata>): NetworkDerived {
   const token = networkCheckToken(net)
   const counted = token !== undefined
   let entry = cache.get(net)
   if (!entry) {
-    const snapshot = new NetworkSnapshot()
-    snapshot.update(net)
-    const derived = compute(net, sectionMeta)
-    entry = { snapshot, checkedAt: token, meta: metaStamp(counted, sectionMeta), derived }
+    const reading = networkChangesSince(net, undefined)
+    const tracker = new SectionTracker()
+    tracker.update(net, null, reading.index)
+    const partial = { cursor: reading.cursor, checkedAt: token, index: reading.index, tracker, endpoints: new WeakMap(), totals: null, kinematics: new Map(), graph: {}, geometry: { rampIndexes: new Map(), steep: new Map() } }
+    // The settings are stamped once the names given are written into them
+    const derived = compute(net, sectionMeta, partial, false)
+    entry = { ...partial, meta: metaStamp(counted, sectionMeta), derived }
     cache.set(net, entry)
     return entry.derived
   }
-  // The same revision: the network is what it was. Otherwise it is compared with what was kept of it
-  const trusted = counted && entry.checkedAt === token
-  entry.checkedAt = token
-  // Always updated, even when the metadata alone changed: the snapshot must follow the network
-  const changed = !trusted && entry.snapshot.update(net)
-  if (changed || !sameMeta(entry.meta, metaStamp(counted, sectionMeta))) {
-    entry.derived = compute(net, sectionMeta)
+  // The same revision: the network is what it was. Otherwise what changed since is read from the feed
+  let changed = false
+  if (!counted || entry.checkedAt !== token) {
+    const reading = networkChangesSince(net, entry.cursor)
+    const changes = reading.changes
+    entry.cursor = reading.cursor
+    entry.checkedAt = token
+    if (!changes || anyChange(changes)) {
+      changed = true
+      entry.index = reading.index
+      entry.tracker.update(net, changes, reading.index)
+      for (const tracker of entry.kinematics.values()) tracker.update(net, changes, reading.index)
+      entry.totals?.update(net, changes)
+      if (!changes || changes.structure) entry.graph = {}
+      entry.geometry = { ...entry.geometry, rampIndexes: new Map(), steep: new Map(), crossings: undefined }
+    }
+  }
+  const stamp = metaStamp(counted, sectionMeta)
+  const settled = sameMeta(entry.meta, stamp)
+  if (changed || !settled) {
+    // The settings as they were left are trusted when they are the same object at the same count;
+    // the same object written into since: the keys written, when every writer said
+    const sameObject = !!stamp.ref && stamp.ref === entry.meta.ref
+    const changedKeys = sameObject && !settled ? metaKeysWrittenSince(stamp.ref!, entry.meta.revision) : null
+    entry.derived = compute(net, sectionMeta, entry, settled && sameObject, changedKeys)
     entry.meta = metaStamp(counted, sectionMeta)
   }
   return entry.derived

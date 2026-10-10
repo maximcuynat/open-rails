@@ -185,11 +185,12 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     expect(derived.loops()).toHaveLength(0)
     expect(derived.deadEnds()).toEqual(detectDeadEnds(net))
 
-    // A node moved: the same graph, but nothing is kept across a change of the network
+    // A node moved: the same graph, the analyses of it are kept
     const kept = derived.components()
     net.nodes.get(ids[1])!.pos.y = 2
     networkChanged()
-    expect(networkDerived(net).components()).not.toBe(kept)
+    expect(networkDerived(net)).not.toBe(derived)
+    expect(networkDerived(net).components()).toBe(kept)
     expect(networkDerived(net).components()).toEqual(detectConnectedComponents(net))
 
     // A rail cut off from the rest makes a second part
@@ -197,7 +198,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     expect(networkDerived(net).components()).toEqual(detectConnectedComponents(net))
   })
 
-  it('works the graph analyses out again when a table changes', () => {
+  it('keeps the graph analyses when a table changes: the graph is the same', () => {
     const { net, ids, segs } = line()
     const d = addNode(net, { x: 60, y: 4 })
     const branch = addSegment(net, ids[1], d.id)!
@@ -213,7 +214,7 @@ describe('networkDerived (données dérivées gardées d\'une image à l\'autre)
     })
     const after = networkDerived(net)
     expect(after).not.toBe(before)
-    expect(after.loops()).not.toBe(loops)
+    expect(after.loops()).toBe(loops)
     expect(after.loops()).toEqual(detectLoops(net))
     expect(after.sections).toEqual(computeTrackSections(net))
   })

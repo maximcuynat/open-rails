@@ -34,7 +34,9 @@ export interface Scheduler {
 
 /** Reads the globals at call time, so fake timers installed later are honoured */
 export const systemScheduler: Scheduler = {
-  now: () => Date.now(),
+  // A monotonic clock: the wall clock may jump (a laptop waking, a virtual machine), and a jump
+  // must not read as fifteen seconds of silence
+  now: () => performance.now(),
   setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms),
   clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
   setInterval: (callback, ms) => globalThis.setInterval(callback, ms),

@@ -1,4 +1,5 @@
-import type { Network } from '../models/types'
+import type { Network, SegmentId } from '../models/types'
+import type { OsmFrame } from './osmProjection'
 
 // Contract of the OpenStreetMap import. The conversion is pure: it takes the JSON an
 // Overpass server answers and returns a network, with no DOM and no network call.
@@ -11,6 +12,8 @@ export interface OverpassElement {
   lon?: number
   /** Node ids of a way, in drawing order. */
   nodes?: number[]
+  /** Members of a relation (`out body`): what a railway line is made of */
+  members?: { type: 'node' | 'way' | 'relation'; ref: number; role?: string }[]
   tags?: Record<string, string>
 }
 
@@ -50,6 +53,15 @@ export interface OsmImportOptions {
   keepDetachedOverKm?: number
   /** The signals to lay. The signalling level of the project plays no part: it only reads them. `generated` when absent. */
   signals?: OsmSignalMode
+  /** Read the stations and the stop positions into stations with their platform tracks. On when absent. */
+  stations?: boolean
+  /** Remember the OpenStreetMap way each rail was laid from (`OsmImportResult.wayOfRail`). Off when absent. */
+  traceWays?: boolean
+  /**
+   * The frame the network is projected in. `local` when absent: a projection centred on the data.
+   * `lambert93`: the national frame, the same for every import, so that two imports line up.
+   */
+  frame?: OsmFrame
 }
 
 export const DEFAULT_OSM_IMPORT_OPTIONS: OsmImportOptions = {
@@ -80,6 +92,8 @@ export interface OsmSurvey {
   typedMainSignals: number
   /** The `railway=signal` nodes the import can lay as they are: a kind it reads, and a direction */
   usableSignals?: number
+  /** Stations the data names (by UIC code or name), whether or not their tracks are kept */
+  stations?: number
   /** Rough number of rails the conversion will lay. */
   estimatedRails: number
   /** Length of the tracks left out because they do not touch the main network (see `keepDetachedOverKm`). */
@@ -95,6 +109,7 @@ export interface OsmImportIssue {
     | 'sharp-angle' // a joint the trains cannot pass
     | 'cut-by-area' // a track end that is the edge of the imported area, not a buffer stop
     | 'signal-not-placed' // a real signal the import reads but could not lay
+    | 'station-not-placed' // a station with no track near enough to stand at
   /** World position, metres. */
   x: number
   y: number
@@ -146,6 +161,22 @@ export interface OsmSignalReport {
   stretchesLeftToReal: number
 }
 
+/** Why a stop or a station the import reads was not laid */
+export type OsmStationSkip =
+  | 'unnamed' // a stop position with neither name nor UIC code: nothing to make a station of
+  | 'track-not-imported' // on a way the options leave out (a metro station under a railway one)
+  | 'off-track' // too far from the track once laid
+  | 'no-track-nearby' // a station node with no track within reach
+
+export interface OsmStationReport {
+  /** Stations the data names, by UIC code or name */
+  found: number
+  /** Stations laid, and the platform tracks they got */
+  placed: number
+  stops: number
+  skipped: Partial<Record<OsmStationSkip, number>>
+}
+
 export interface OsmImportReport {
   nodes: number
   rails: number
@@ -166,6 +197,8 @@ export interface OsmImportReport {
   droppedComponents: number
   /** What was done about the signals; absent from a report written before the import laid any */
   signals?: OsmSignalReport
+  /** What the import did about the stations; absent when they were not asked for */
+  stations?: OsmStationReport
   issues: OsmImportIssue[]
 }
 
@@ -174,6 +207,8 @@ export interface OsmSource {
   /** Centre of the projection: world (0, 0). */
   lat: number
   lon: number
+  /** The frame the network is projected in; `local` when absent. */
+  frame?: OsmFrame
   /** `osm3s.timestamp_osm_base` of the answer when present, else the day of the import (ISO). */
   dataDate: string
   importedAt: string
@@ -188,8 +223,12 @@ export interface OsmImportResult {
   lineSpeed?: number
   /** True when any `highspeed=yes` or `railway:tvm` track was kept. */
   highSpeed: boolean
-  /** Centre used for the projection. */
+  /** Centre used for the projection: world (0, 0). */
   origin: { lat: number; lon: number }
+  /** The frame the network is projected in (`projectionFor(frame, origin)` reads it back). */
+  frame: OsmFrame
+  /** The OSM way each rail was laid from, when `traceWays` asked for it (a rail cut since answers for its parent) */
+  wayOfRail?: ReadonlyMap<SegmentId, number>
   dataDate?: string
   report: OsmImportReport
 }

@@ -1,6 +1,7 @@
 import { Modal } from '../common/Modal'
 import { formatDataDate } from '@application/import/osmReport'
 import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL, type OsmSource } from '@domain/import/osmTypes'
+import { DATASET_ATTRIBUTION } from '@domain/dataset/datasetIndex'
 
 export const REPO_URL = 'https://github.com/maximcuynat/open-rails'
 export const RELEASE_NOTES_URL = `${REPO_URL}/releases/tag/v${__APP_VERSION__}`
@@ -9,10 +10,12 @@ interface AboutModalProps {
   isOpen: boolean
   /** Where the open network comes from, when it was imported from OpenStreetMap */
   osmSource?: OsmSource | null
+  /** The open network is a journey of the published « LGV France » dataset */
+  dataset?: boolean
   onClose: () => void
 }
 
-export function AboutModal({ isOpen, osmSource, onClose }: AboutModalProps) {
+export function AboutModal({ isOpen, osmSource, dataset, onClose }: AboutModalProps) {
   return (
     <Modal isOpen={isOpen} title="À propos d'Open Rails" closeLabel="Fermer" onClose={onClose}>
       <div className="about-body">
@@ -46,8 +49,21 @@ export function AboutModal({ isOpen, osmSource, onClose }: AboutModalProps) {
             <a href="https://opendatacommons.org/licenses/odbl/" target="_blank" rel="noopener noreferrer">
               ODbL 1.0
             </a>
-            . S'il est partagé, il le reste sous cette licence, avec cette mention.
+            . S'il est partagé, il le reste sous cette licence, avec cette mention. Les noms officiels et les codes de ses gares
+            viennent du jeu « Gares de voyageurs » de SNCF Gares & Connexions, sous la même licence.
           </p>
+        )}
+        {dataset && (
+          <p>
+            Il vient du jeu de données « LGV France » publié avec Open Rails, lui-même tiré de ces sources :
+          </p>
+        )}
+        {dataset && (
+          <ul className="about-attribution">
+            {DATASET_ATTRIBUTION.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
         )}
         <p>
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">Code source sur GitHub</a>

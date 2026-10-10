@@ -7,7 +7,7 @@ import { reconcileNetworkIntersections } from '../geometry/reconcile'
 import { distToCurve } from '../geometry/curve'
 import { distToSegment, nodeLevel } from '../models/network'
 import type { Network, Point, RailNode } from '../models/types'
-import { createProjection } from './osmProjection'
+import { projectionFor } from './osmProjection'
 import { DEFAULT_OSM_IMPORT_OPTIONS, type OsmImportOptions, type OsmImportResult, type OverpassElement, type OverpassResponse } from './osmTypes'
 
 /** Where the hand-made answers are: world (0, 0) of the kit */
@@ -40,7 +40,7 @@ export function osmTrack(wayId: number, firstId: number, places: [number, number
 
 /** Where a place of the kit (metres east and south of its own origin) lies in the world of a converted network */
 export function placeIn(result: OsmImportResult, x: number, y: number): Point {
-  return createProjection(result.origin.lat, result.origin.lon)(PLACE.lat - y / METRES_PER_DEGREE_LAT, PLACE.lon + x / METRES_PER_DEGREE_LON)
+  return projectionFor(result.frame, result.origin)(PLACE.lat - y / METRES_PER_DEGREE_LAT, PLACE.lon + x / METRES_PER_DEGREE_LON)
 }
 
 /** Places every `step` metres on the straight line from one place to another, both included */

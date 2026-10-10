@@ -121,5 +121,6 @@ export function applyNodeTransform(
     seg.via.x = via.x
     seg.via.y = via.y
   }
-  touchNetwork(net)
+  if (!pivotOnly) for (const nid of initialNodes.keys()) touchNetwork(net, nid)
+  for (const sid of initialVias.keys()) touchNetwork(net, sid)
 }

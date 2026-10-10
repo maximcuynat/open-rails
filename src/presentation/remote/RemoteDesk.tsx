@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import type { ConsoleCommand, ConsoleState, FleetEntry } from '@application/console/consoleContract'
 import {
   DESK_QUERY_PARAM,
+  MAX_DESKS,
+  MAX_DRIVER_NAME_LENGTH,
   ROOM_CODE_LENGTH,
   normalizeRoomCode,
   roomFromPageUrl,
@@ -9,9 +11,12 @@ import {
 import { ConsoleIcon } from '@presentation/components/console/instruments'
 import { newSignalPassed } from '@presentation/components/console/consoleModel'
 import {
+  DRIVER_NAME_KEY,
+  cleanDriverName,
   compositionLabel,
   deskOrientation,
   deskScreen,
+  fleetChoice,
   fleetSpeedLabel,
   hapticFor,
   turnoutView,
@@ -28,7 +33,8 @@ import './remoteDesk.css'
 export default function RemoteDesk() {
   const [room, setRoom] = useState<string | null>(() => roomFromPageUrl(window.location.href))
   const [attempt, setAttempt] = useState(0)
-  const { snapshot, session, send } = useRemoteDesk(room, attempt)
+  const [name, setName] = useState<string | null>(() => readDriverName())
+  const { snapshot, session, send, trouble } = useRemoteDesk(room, attempt, name)
   // The driver asked for the list while the PC still drives a train
   const [browsing, setBrowsing] = useState(false)
   // Train touched in the list, until the PC answers with its state
@@ -84,6 +90,20 @@ export default function RemoteDesk() {
     send({ type: 'selectTrain', trainId })
   }
 
+  const rename = (raw: string) => {
+    const next = cleanDriverName(raw, MAX_DRIVER_NAME_LENGTH)
+    if (next === name) return
+    try {
+      if (next) localStorage.setItem(DRIVER_NAME_KEY, next)
+      else localStorage.removeItem(DRIVER_NAME_KEY)
+    } catch {
+      // Private browsing: the name lasts as long as the page
+    }
+    setName(next)
+    // The PC learns a name when the desk sits down: it sits down again
+    setAttempt((n) => n + 1)
+  }
+
   const release = () => {
     if (!online) return
     // The list right away; the PC confirms by sending a state without a train
@@ -113,7 +133,19 @@ export default function RemoteDesk() {
           </StatusScreen>
         )
       case 'connecting':
-        return <StatusScreen busy title="Connexion au PC…" text={`Code ${room}`} />
+        return (
+          <StatusScreen
+            busy
+            title="Connexion au PC…"
+            text={
+              trouble === 'direct'
+                ? 'Le PC répond, mais la connexion directe ne passe pas : l’un des deux réseaux est trop fermé. Essayez sur le même Wi-Fi que le PC.'
+                : trouble === 'broker'
+                  ? 'Le service de mise en relation ne répond pas. Vérifiez la connexion Internet du téléphone ; nouvel essai en cours.'
+                  : `Code ${room}`
+            }
+          />
+        )
       case 'ended':
         return (
           <StatusScreen title={ENDED_TEXT[screen.reason].title} text={ENDED_TEXT[screen.reason].text}>
@@ -128,10 +160,13 @@ export default function RemoteDesk() {
             <FleetList
               room={room ?? ''}
               fleet={snapshot.fleet}
+              desk={snapshot.desk}
+              name={name}
               online={screen.online}
               pending={pending}
               awake={awake}
               onPick={pick}
+              onRename={rename}
             />
           </>
         )
@@ -163,10 +198,18 @@ export default function RemoteDesk() {
   }
 }
 
+function readDriverName(): string | null {
+  try {
+    return cleanDriverName(localStorage.getItem(DRIVER_NAME_KEY), MAX_DRIVER_NAME_LENGTH)
+  } catch {
+    return null
+  }
+}
+
 const ENDED_TEXT: Record<Extract<DeskScreen, { kind: 'ended' }>['reason'], { title: string; text: string }> = {
   'room-full': {
-    title: 'Pupitre déjà pris',
-    text: 'Un autre téléphone est déjà relié à ce PC. Coupez-le depuis le PC, puis réessayez.',
+    title: 'Salon complet',
+    text: `Ce salon a déjà ses ${MAX_DESKS} pupitres. Attendez qu’un conducteur quitte, puis réessayez.`,
   },
   'host-closed': {
     title: 'Session terminée',
@@ -236,14 +279,19 @@ function CutBanner() {
   )
 }
 
-function FleetList({ room, fleet, online, pending, awake, onPick }: {
+function FleetList({ room, fleet, desk, name, online, pending, awake, onPick, onRename }: {
   room: string
   fleet: readonly FleetEntry[]
+  /** The number of this desk in the room */
+  desk: number | null
+  name: string | null
   online: boolean
   pending: string | null
   awake: boolean
   onPick: (trainId: string) => void
+  onRename: (name: string) => void
 }) {
+  const [draft, setDraft] = useState(name ?? '')
   return (
     <main className={`phone-fleet${online ? '' : ' is-cut'}`}>
       <header className="phone-fleet-head">
@@ -253,6 +301,27 @@ function FleetList({ room, fleet, online, pending, awake, onPick }: {
           {room}
         </span>
       </header>
+      <form
+        className="phone-driver"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onRename(draft)
+        }}
+      >
+        <label htmlFor="phone-driver-name">Votre nom</label>
+        <input
+          id="phone-driver-name"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => onRename(draft)}
+          maxLength={MAX_DRIVER_NAME_LENGTH}
+          placeholder={desk === null ? 'Pupitre' : `Pupitre ${desk}`}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="done"
+        />
+      </form>
       {fleet.length === 0 ? (
         <div className="phone-empty">
           <h2>Aucun train sur le réseau</h2>
@@ -260,12 +329,14 @@ function FleetList({ room, fleet, online, pending, awake, onPick }: {
         </div>
       ) : (
         <ul className="phone-trains">
-          {fleet.map((entry) => (
+          {fleet.map((entry) => {
+            const choice = fleetChoice(entry, desk, pending)
+            return (
             <li key={entry.id}>
               <button
                 type="button"
-                className={`phone-train${entry.driven ? ' is-driven' : ''}${pending === entry.id ? ' is-pending' : ''}`}
-                disabled={!online}
+                className={`phone-train${choice.mine ? ' is-driven' : ''}${choice.taken ? ' is-taken' : ''}${pending === entry.id ? ' is-pending' : ''}`}
+                disabled={!online || choice.taken}
                 onClick={() => onPick(entry.id)}
               >
                 <span className="phone-train-rank">{entry.rank}</span>
@@ -275,15 +346,16 @@ function FleetList({ room, fleet, online, pending, awake, onPick }: {
                 </span>
                 <span className="phone-train-side">
                   <b>{fleetSpeedLabel(entry)}</b>
-                  <small>{pending === entry.id ? 'Prise des commandes…' : entry.driven ? 'Aux commandes' : 'Conduire'}</small>
+                  <small>{choice.label}</small>
                 </span>
               </button>
             </li>
-          ))}
+            )
+          })}
         </ul>
       )}
       <footer className="phone-fleet-foot">
-        Toucher un train prend ses commandes sur le PC.
+        Toucher un train libre prend ses commandes.
         {!awake && ' L’écran peut se mettre en veille : gardez-le actif.'}
       </footer>
     </main>

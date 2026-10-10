@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { CONSOLE_COMMAND_TYPES } from '../console/consoleContract'
 import type { ConsoleCommand, ConsoleSignals, ConsoleState, FleetEntry } from '../console/consoleContract'
 import {
+  MAX_DESKS,
+  MAX_DRIVER_NAME_LENGTH,
   MAX_FLEET_ENTRIES,
+  MAX_LABEL_LENGTH,
   MAX_MESSAGE_BYTES,
   NOTCH_LIMIT,
   PROTOCOL_VERSION,
@@ -16,6 +19,7 @@ import {
   normalizeRoomCode,
   pairingUrl,
   relayUrl,
+  remoteRoute,
   roomFromPageUrl,
   type RemoteMessage,
 } from './protocol'
@@ -89,15 +93,34 @@ describe('protocol: round trip', () => {
     const messages: RemoteMessage[] = [
       { t: 'host', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token' },
       { t: 'join', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token' },
+      { t: 'join', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token', name: 'Léa' },
+      { t: 'join', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token', name: 'x'.repeat(MAX_DRIVER_NAME_LENGTH) },
       { t: 'opened', room: 'ABC234', hosts: ['192.168.1.42'] },
-      { t: 'joined', room: 'ABC234' },
-      { t: 'peer-joined' },
+      { t: 'joined', room: 'ABC234', desk: 1 },
+      { t: 'joined', room: 'ABC234', desk: MAX_DESKS },
+      { t: 'peer-joined', desk: 1 },
+      { t: 'peer-joined', desk: MAX_DESKS, name: 'Léa' },
       { t: 'peer-left' },
+      { t: 'peer-left', desk: 1 },
+      { t: 'peer-left', desk: MAX_DESKS },
       { t: 'error', code: 'room-full' },
       { t: 'ping' },
       { t: 'pong' },
       { t: 'fleet', fleet: [ENTRY, { ...ENTRY, id: 't_2', rank: 2, driven: false }] },
+      { t: 'fleet', fleet: [ENTRY], to: 1 },
+      {
+        t: 'fleet',
+        fleet: [
+          { ...ENTRY, driver: 'host', driverName: 'PC' },
+          { ...ENTRY, id: 't_2', rank: 2, driver: 1, driverName: 'Léa' },
+          { ...ENTRY, id: 't_3', rank: 3, driver: MAX_DESKS, driverName: `Pupitre ${MAX_DESKS}` },
+          { ...ENTRY, id: 't_4', rank: 4, driven: false, driver: null },
+        ],
+        to: MAX_DESKS,
+      },
       { t: 'state', state: STATE, ack: 12 },
+      { t: 'state', state: STATE, ack: 12, to: 1 },
+      { t: 'state', state: null, ack: 0, to: MAX_DESKS },
       { t: 'state', state: null, ack: 0 },
       { t: 'state', state: { ...STATE, trainId: null, brake: null, legacyThrottle: -1 }, ack: 3 },
       { t: 'state', state: { ...STATE, stoppingDistance: null }, ack: 3 },
@@ -132,6 +155,8 @@ describe('protocol: round trip', () => {
       { t: 'bye' },
       ...COMMANDS.map((c, i): RemoteMessage => ({ t: 'command', seq: i + 1, trainId: 't_1', command: c })),
       { t: 'command', seq: 99, trainId: null, command: { type: 'emergencyBrake' } },
+      { t: 'command', seq: 4, trainId: 't_1', command: { type: 'switchCab' }, from: 1 },
+      { t: 'command', seq: 5, trainId: null, command: { type: 'selectTrain', trainId: 't_2' }, from: MAX_DESKS },
     ]
     for (const message of messages) {
       expect(decodeMessage(encodeMessage(message))).toEqual({ ok: true, message })
@@ -140,6 +165,26 @@ describe('protocol: round trip', () => {
 
   it('covers every command type of the contract', () => {
     expect(new Set(COMMANDS.map((c) => c.type))).toEqual(new Set(CONSOLE_COMMAND_TYPES))
+  })
+
+  it('writes no optional field that was not there', () => {
+    const keys = (value: unknown) => {
+      const result = decode(value)
+      return result.ok ? Object.keys(result.message).sort() : null
+    }
+    expect(MAX_DESKS).toBe(8)
+    expect(MAX_DRIVER_NAME_LENGTH).toBe(20)
+    expect(PROTOCOL_VERSION).toBe(2)
+    expect(keys({ t: 'join', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token' })).toEqual(['client', 'room', 't', 'v'])
+    expect(keys({ t: 'peer-joined', desk: 1 })).toEqual(['desk', 't'])
+    expect(keys({ t: 'peer-left' })).toEqual(['t'])
+    expect(keys({ t: 'fleet', fleet: [] })).toEqual(['fleet', 't'])
+    expect(keys({ t: 'state', state: null, ack: 0 })).toEqual(['ack', 'state', 't'])
+    expect(keys(command({ type: 'switchCab' }))).toEqual(['command', 'seq', 't', 'trainId'])
+    const fleet = decode({ t: 'fleet', fleet: [ENTRY] })
+    expect(fleet.ok && fleet.message.t === 'fleet' && Object.keys(fleet.message.fleet[0]).sort()).toEqual(Object.keys(ENTRY).sort())
+    // A name is the business of a desk: a host has none
+    expect(keys({ t: 'host', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token', name: 'Léa' })).toEqual(['client', 'room', 't', 'v'])
   })
 
   it('drops the fields it does not know', () => {
@@ -219,6 +264,60 @@ describe('protocol: rejection', () => {
     expect(decode({ t: 'command', seq: 1, trainId: 'x'.repeat(65), command: ok })).toEqual(malformed)
     expect(decode(command({ type: 'selectTrain', trainId: '' }))).toEqual(malformed)
     expect(decode(command({ type: 'selectTrain', trainId: 'x'.repeat(65) }))).toEqual(malformed)
+  })
+
+  it('rejects a desk number out of 1 … 8, wherever it stands', () => {
+    const fleet = { t: 'fleet', fleet: [ENTRY] }
+    const state = { t: 'state', state: null, ack: 0 }
+    const ok = command({ type: 'switchCab' })
+    for (const desk of [1, 2, MAX_DESKS]) {
+      expect(decode({ t: 'joined', room: 'ABC234', desk }).ok).toBe(true)
+      expect(decode({ t: 'peer-joined', desk }).ok).toBe(true)
+      expect(decode({ t: 'peer-left', desk }).ok).toBe(true)
+      expect(decode({ ...fleet, to: desk }).ok).toBe(true)
+      expect(decode({ ...state, to: desk }).ok).toBe(true)
+      expect(decode({ ...ok, from: desk }).ok).toBe(true)
+    }
+    for (const desk of [0, -1, MAX_DESKS + 1, 1.5, 1e9, '1', null, true, [1], {}]) {
+      expect(decode({ t: 'joined', room: 'ABC234', desk })).toEqual(malformed)
+      expect(decode({ t: 'peer-joined', desk })).toEqual(malformed)
+      expect(decode({ t: 'peer-joined', desk, name: 'Léa' })).toEqual(malformed)
+      expect(decode({ t: 'peer-left', desk })).toEqual(malformed)
+      expect(decode({ ...fleet, to: desk })).toEqual(malformed)
+      expect(decode({ ...state, to: desk })).toEqual(malformed)
+      expect(decode({ ...state, state: STATE, to: desk })).toEqual(malformed)
+      expect(decode({ ...ok, from: desk })).toEqual(malformed)
+    }
+    // A desk is told its number, and the host which desk arrived: neither may be left out
+    expect(decode({ t: 'joined', room: 'ABC234' })).toEqual(malformed)
+    expect(decode({ t: 'peer-joined' })).toEqual(malformed)
+    expect(decode({ t: 'peer-joined', name: 'Léa' })).toEqual(malformed)
+  })
+
+  it('rejects a driver name that is too long or not a text', () => {
+    const join = { t: 'join', v: PROTOCOL_VERSION, room: 'ABC234', client: 'client-token' }
+    const exact = 'x'.repeat(MAX_DRIVER_NAME_LENGTH)
+    expect(decode({ ...join, name: exact })).toEqual({ ok: true, message: { ...join, name: exact } })
+    // No name is no name: an empty one is not carried
+    expect(decode({ ...join, name: '' })).toEqual({ ok: true, message: join })
+    expect(decode({ t: 'peer-joined', desk: 2, back: true })).toEqual({ ok: true, message: { t: 'peer-joined', desk: 2, back: true } })
+    expect(decode({ t: 'peer-joined', desk: 2, back: false })).toEqual({ ok: true, message: { t: 'peer-joined', desk: 2 } })
+    expect(decode({ t: 'peer-joined', desk: 2, back: 'yes' }).ok).toBe(false)
+    expect(decode({ t: 'peer-joined', desk: 2, name: exact })).toEqual({ ok: true, message: { t: 'peer-joined', desk: 2, name: exact } })
+    for (const name of [exact + 'x', 'x'.repeat(200), 7, null, true, ['Léa'], { name: 'Léa' }]) {
+      expect(decode({ ...join, name })).toEqual(malformed)
+      expect(decode({ t: 'peer-joined', desk: 2, name })).toEqual(malformed)
+    }
+  })
+
+  it('rejects a fleet entry whose driver is not the host, a desk or nobody', () => {
+    const fleet = (patch: object) => decode({ t: 'fleet', fleet: [ENTRY, { ...ENTRY, ...patch }] })
+    for (const driver of ['host', 1, MAX_DESKS, null]) expect(fleet({ driver }).ok).toBe(true)
+    for (const driver of [0, -1, MAX_DESKS + 1, 2.5, 'pc', 'Host', '1', true, {}, [1]]) expect(fleet({ driver })).toEqual(malformed)
+    expect(fleet({ driver: 2, driverName: 'x'.repeat(MAX_LABEL_LENGTH) }).ok).toBe(true)
+    expect(fleet({ driver: 2, driverName: 'x'.repeat(MAX_LABEL_LENGTH + 1) })).toEqual(malformed)
+    expect(fleet({ driver: 2, driverName: 7 })).toEqual(malformed)
+    expect(fleet({ driver: 2, driverName: null })).toEqual(malformed)
   })
 
   it('rejects a state as a whole when one field is wrong', () => {
@@ -392,5 +491,34 @@ describe('protocol: addresses', () => {
     expect(roomFromPageUrl('http://192.168.1.42:8900/open-rails/?pupitre=abc234')).toBe('ABC234')
     expect(roomFromPageUrl('http://192.168.1.42:8900/open-rails/')).toBeNull()
     expect(roomFromPageUrl('http://192.168.1.42:8900/open-rails/?pupitre=nope')).toBeNull()
+  })
+})
+
+describe('protocol: the two ways to the PC', () => {
+  const base = '/open-rails/'
+
+  it('goes through the relay of the server on a page served by the PC, directly from the published site', () => {
+    expect(remoteRoute('http://localhost:8900/open-rails/', base)).toEqual({ transport: 'relay', broker: null })
+    expect(remoteRoute('http://192.168.1.42:8900/open-rails/?pupitre=ABC234', base)).toEqual({ transport: 'relay', broker: null })
+    expect(remoteRoute('https://maximcuynat.github.io/open-rails/', base)).toEqual({ transport: 'direct', broker: null })
+    expect(remoteRoute('https://maximcuynat.github.io/open-rails/?pupitre=ABC234', base)).toEqual({ transport: 'direct', broker: null })
+  })
+
+  it('can be told to go directly, and through which broker', () => {
+    expect(remoteRoute('http://localhost:8900/open-rails/?liaison=webrtc', base)).toEqual({ transport: 'direct', broker: null })
+    expect(remoteRoute('http://localhost:8900/open-rails/?liaison=webrtc&courtier=local', base)).toEqual({ transport: 'direct', broker: 'ws://localhost:8900/open-rails/__broker/peerjs' })
+    expect(remoteRoute('https://example.org/open-rails/?courtier=local', base).broker).toBe('wss://example.org/open-rails/__broker/peerjs')
+    expect(remoteRoute('https://example.org/open-rails/?courtier=wss%3A%2F%2Fbroker.example%2Fpeerjs', base).broker).toBe('wss://broker.example/peerjs')
+    // Not an address of a broker: the public one
+    expect(remoteRoute('https://example.org/open-rails/?courtier=javascript:alert(1)', base).broker).toBeNull()
+    // The broker is only asked for by a direct link
+    expect(remoteRoute('http://localhost:8900/open-rails/?courtier=local', base)).toEqual({ transport: 'relay', broker: null })
+  })
+
+  it('gives the phone the way the PC uses', () => {
+    expect(pairingUrl('http://localhost:8900/open-rails/?liaison=webrtc&courtier=local&x=1#h', base, 'ABC234', '192.168.1.42')).toBe(
+      'http://192.168.1.42:8900/open-rails/?pupitre=ABC234&liaison=webrtc&courtier=local',
+    )
+    expect(pairingUrl('https://maximcuynat.github.io/open-rails/', base, 'ABC234')).toBe('https://maximcuynat.github.io/open-rails/?pupitre=ABC234')
   })
 })

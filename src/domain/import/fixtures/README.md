@@ -36,7 +36,10 @@ What was kept of each answer:
   (`railway:signal:distant`, `:speed_limit`, `:shunting`…), `railway:signal:main:plate`, `:type`,
   `:states`, `:function`, `:deactivated`, and every `railway:signal:train_protection:*` key (added
   from the same answers, « the version with tags wins », without touching anything else);
-- `osm3s.timestamp_osm_base`.
+- `osm3s.timestamp_osm_base`;
+- Clelles only, added on 2026-10-07 from the same answer for the import of the stations: on the
+  `railway=stop` nodes and the standalone `railway=station` node, the tags `railway`,
+  `public_transport`, `train`, `name`, `uic_ref`, `local_ref`, `railway:ref` and `station`.
 
 Everything else — relations, platforms, buildings of the railway, the other tags — was dropped, and
 the files are written on one line.

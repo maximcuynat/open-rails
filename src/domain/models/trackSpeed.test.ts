@@ -523,12 +523,15 @@ describe('what is kept from one frame to the next', () => {
     expect(curveCant(net, layout.pieces[1][0], { lineSpeed: 120, lineType: 'classic' })!.appliedSpeed).toBe(120)
     expect(builds()).toBe(before + 5)
 
-    // A rail added elsewhere
+    // A straight rail added elsewhere: a new profile (the track changed), with the curves and ramps kept
+    const kept = trackProfile(net, { lineSpeed: 120, lineType: 'classic' })
     addSegment(net, addNode(net, { x: 0, y: -50 }).id, addNode(net, { x: 100, y: -50 }).id)
-    trackProfile(net, { lineSpeed: 120, lineType: 'classic' })
-    expect(builds()).toBe(before + 6)
-    for (let i = 0; i < 20; i++) trackProfile(net, { lineSpeed: 120, lineType: 'classic' })
-    expect(builds()).toBe(before + 6)
+    const after = trackProfile(net, { lineSpeed: 120, lineType: 'classic' })
+    expect(after).not.toBe(kept)
+    expect(after.rails).toBe(kept.rails)
+    expect(after.ramps).toBe(kept.ramps)
+    for (let i = 0; i < 20; i++) expect(trackProfile(net, { lineSpeed: 120, lineType: 'classic' })).toBe(after)
+    expect(builds()).toBe(before + 5)
   })
 
   it('the route ahead is walked once per rail entered, not once per frame', () => {

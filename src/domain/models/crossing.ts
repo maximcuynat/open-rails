@@ -5,6 +5,7 @@ import { segmentEnds, shapeBounds, shapePolyline } from '../geometry/segmentGeom
 import { touchingLater } from '../geometry/spatialGrid'
 import { segmentTangentAt } from '../geometry/tangent'
 import { GAUGE } from '../profiles/profiles'
+import { touchNetwork } from './networkWatch'
 
 /**
  * Shallowest angle (degrees) at which two tracks crossing each other are reported as a diamond.
@@ -209,6 +210,7 @@ export function separateLevelsAtNode(
   for (const seg of upper) {
     if (seg.from === nodeId) seg.from = twin.id
     if (seg.to === nodeId) seg.to = twin.id
+    touchNetwork(net, seg.id)
     stay.splice(stay.indexOf(seg.id), 1)
     net.adjacency.get(twin.id)!.push(seg.id)
   }

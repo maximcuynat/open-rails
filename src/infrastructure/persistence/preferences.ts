@@ -74,3 +74,23 @@ export function saveRemoteHostPreference(host: string): void {
     // Storage full or denied: the address still applies for this session
   }
 }
+
+/** How fast the simulated time runs against the real one (×1, ×2…); the host's choice, kept apart from the project */
+export const TIME_FACTOR_PREFERENCE_KEY = 'open-rail:time-factor'
+
+/** The saved value as it was written: the caller validates it */
+export function loadTimeFactorPreference(): string | null {
+  try {
+    return getStorage()?.getItem(TIME_FACTOR_PREFERENCE_KEY) ?? null
+  } catch {
+    return null
+  }
+}
+
+export function saveTimeFactorPreference(factor: number): void {
+  try {
+    getStorage()?.setItem(TIME_FACTOR_PREFERENCE_KEY, String(factor))
+  } catch {
+    // Storage full or denied: the choice still applies for this session
+  }
+}
