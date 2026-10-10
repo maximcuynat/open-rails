@@ -17,6 +17,7 @@ import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
 // The import window brings the whole conversion with it: loaded when it is first opened
 const OsmImportModal = lazy(() => import('./OsmImportModal').then((module) => ({ default: module.OsmImportModal })))
 // The dataset window likewise: its search and route logic come with it
+const SandboxModal = lazy(() => import('./SandboxModal').then((module) => ({ default: module.SandboxModal })))
 const LineBetweenStationsModal = lazy(() => import('./LineBetweenStationsModal').then((module) => ({ default: module.LineBetweenStationsModal })))
 
 const THEME_LABELS: Record<ThemeMode, string> = {
@@ -42,6 +43,8 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showRemoteModal, setShowRemoteModal] = useState(false)
   const [showOsmImport, setShowOsmImport] = useState(false)
   const [showLineBetween, setShowLineBetween] = useState(false)
+  // The game is offered at start on a blank page; with a project to come back to, from the menu
+  const [showSandbox, setShowSandbox] = useState(() => store.network.segments.size === 0 && !store.dataset)
   const [mergeOutcome, setMergeOutcome] = useState<MergeOutcome | null>(null)
 
   const commitName = () => {
@@ -62,6 +65,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
     {
       label: 'Fichier',
       items: [
+        { id: 'sandbox', label: 'Nouvelle partie (bac à sable)…' },
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
         { id: 'merge-json', label: 'Ajouter un JSON au projet…', disabled: !store.canEditNetwork },
@@ -112,6 +116,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'import-osm':
             setShowOsmImport(true)
+            break
+          case 'sandbox':
+            setShowSandbox(true)
             break
           case 'line-between-stations':
             setShowLineBetween(true)
@@ -450,6 +457,18 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       {showOsmImport && (
         <Suspense fallback={null}>
           <OsmImportModal store={store} onClose={() => setShowOsmImport(false)} />
+        </Suspense>
+      )}
+      {showSandbox && (
+        <Suspense fallback={null}>
+          <SandboxModal
+            store={store}
+            onPhoneDesk={() => {
+              if (!remoteDeskUnavailable()) remote.open()
+              setShowRemoteModal(true)
+            }}
+            onClose={() => setShowSandbox(false)}
+          />
         </Suspense>
       )}
       {showLineBetween && (

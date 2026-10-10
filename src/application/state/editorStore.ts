@@ -99,6 +99,8 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import { createRakeAtStation } from '@domain/models/rakePlacement'
+import type { StationId, StationStop } from '@domain/models/types'
 import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
@@ -3422,6 +3424,32 @@ export class EditorStore {
     return true
   }
 
+  /**
+   * Set a complete rake of `model` down at a platform of a station of the network, facing the way
+   * out, select it and put the camera on its head, close enough for its bogies to show. Returns
+   * the stop it stands at; null in play mode, for an unknown station, or when no platform free of
+   * the other trains holds the whole rake.
+   */
+  placeRakeAtStation = (stationId: StationId, model: RollingStockModel): StationStop | null => {
+    if (this.isPlayMode) return null
+    const station = this.network.stations.get(stationId)
+    if (!station) return null
+    const placed = createRakeAtStation(this.network, station, model, this.trains)
+    if (!placed) return null
+    this.trains = [...this.trains, placed.train]
+    this.trainChainId = null
+    this.selectTrainById(placed.train.id)
+    this.refreshCouplerPoints()
+    const head = trainAnchors(this.network, [placed.train]).get(placed.train.id)
+    if (head) {
+      this.camera.x = head.x
+      this.camera.y = head.y
+      this.camera.scale = clampScale(RAKE_START_SCALE)
+    }
+    this.commitTrainChange()
+    return placed.stop
+  }
+
   /** Place a new independent locomotive TrainSet at worldPos */
   placeTrainLoco = (worldPos: Point): boolean => {
     return this.placeTrainItem(worldPos, 'tgv_loco')
@@ -4568,6 +4596,8 @@ export const isTimeFactor = (v: unknown): v is TimeFactor => (TIME_FACTORS as re
 export const DATASET_LOOKAHEAD_M = 5000
 /** How often (s) the trains are checked against the connections */
 const DATASET_CHECK_PERIOD_S = 1
+/** Camera scale (px per metre) a rake set down at a station is shown at: its bogies show from 3.5 */
+const RAKE_START_SCALE = 4
 /** What a dataset project writes in place of its track: nothing (never changed) */
 const EMPTY_NETWORK = createNetwork()
 
