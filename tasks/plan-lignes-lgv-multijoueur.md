@@ -194,24 +194,24 @@ Hypothèses prises faute de réponse (à confirmer) :
 Demandé le 2026-10-07 : importer plusieurs JSON quelconques dans un même projet, conflits,
 jonctions et coordonnées résolus. Le Lot 3 ne réunit que des fichiers du jeu de données (mêmes
 ids, même repère) ; ce lot généralise à tout fichier, sur le même code (`projectSlices.ts`).
-Hypothèses tant que l'utilisateur ne dit pas autrement : **le projet courant gagne** sur un
-conflit (réglages, voie décrite deux fois) ; le placement manuel est le dernier point, séparable.
-- [ ] 25. Renumérotation du fichier entrant (`renumberProject` : nœuds, rails, tables, zones,
+Décisions de l'utilisateur (2026-10-10) : **le projet courant gagne** sur un conflit (réglages,
+voie décrite deux fois) ; **pas de placement manuel dans ce lot** (item 29 reporté).
+- [x] 25. Renumérotation du fichier entrant (`renumberProject` : nœuds, rails, tables, zones,
   signaux, gares, clés de `sectionMeta`, `parentSegmentId`) à partir du compteur courant ;
   identité du résultat avec le fichier d'origine à la renumérotation près (test).
-- [ ] 26. Coordonnées : même repère → rien ; import OSM en repère local → reprojection en
+- [x] 26. Coordonnées : même repère → rien ; import OSM en repère local → reprojection en
   Lambert-93 (inverse de la projection locale à écrire, testé au centimètre contre la
   projection directe) quand le projet courant est en Lambert-93, et l'inverse ; un fichier sans
   géoréférence ni repère commun est posé tel quel et signalé (voir 29).
-- [ ] 27. Dédoublonnage avant soudure : rails identiques (extrémités à moins de la tolérance de
+- [x] 27. Dédoublonnage avant soudure : rails identiques (extrémités à moins de la tolérance de
   réconciliation, même forme) → un seul, le projet courant gagne ; gares par code UIC puis par
   nom ; zones de vitesse et signaux portés par un rail écarté retirés. Sans ce pas, deux imports
   qui se recouvrent fabriquent des croisements fantômes entre les deux copies.
-- [ ] 28. Soudure aux bords : `reconcileNetworkIntersections` sur la zone de contact (boîte des
+- [x] 28. Soudure aux bords : `reconcileNetworkIntersections` sur la zone de contact (boîte des
   rails ajoutés élargie de la tolérance), `syncJunctions` propose les tables des fourches nées de
   la soudure ; bilan dans la fenêtre d'import (rails ajoutés, écartés, nœuds soudés, croisements,
   gares fusionnées, réglages ignorés) ; un pas d'annulation pour toute la fusion.
-- [ ] 29. Placement manuel d'un réseau sans géoréférence : fantôme du fichier déplaçable et
+- [ ] 29. *(reporté, décision du 2026-10-10)* Placement manuel d'un réseau sans géoréférence : fantôme du fichier déplaçable et
   tournable sur le canevas, clic pour poser, puis 27–28. Interface surtout ; à faire si les
   fichiers ne viennent pas tous d'OSM.
 Vérification : deux imports OSM voisins qui se recouvrent (fixtures de Pasilly et Clelles
@@ -459,6 +459,55 @@ alternative : les relations des lignes classiques clippées par une boîte) ; `f
 Reste pour plus tard (noté) : l'à-coup de l'ajout en route (désérialiser la tranche ajoutée seule) ;
 le tas qui grimpe en conduite à vérifier sur un vrai navigateur ; un item « Recharger la ligne »
 dans Fichier pour réessayer sans redémarrer ; mémoire double des fichiers gardés (`datasetFiles`).
+
+### Lot 3 bis — fait le 2026-10-10 (branche `feature/lignes-lgv`, cinq commits)
+
+« Fichier ▸ Ajouter un JSON au projet… » ajoute un fichier au projet courant au lieu de le
+remplacer. Items 25–28 faits, 29 (placement manuel) reporté.
+
+- **Données d'abord** (`src/infrastructure/persistence/projectMerge.ts`, pur) :
+  `renumberProject` donne au fichier des ids à lui (préfixes gardés, références suivies, celles
+  qui nomment un rail absent du fichier retirées : gardées, elles auraient pu nommer un rail du
+  projet courant) ; `mergeProjects(courant, entrant, { tolerance })` reprojette, fond les nœuds
+  à moins de la tolérance de réconciliation (hauteurs à 0,5 près), écarte les rails en double —
+  **y compris les rails longs** (`path`), que `removeDuplicateSegments` ignore : même longueur à
+  1 % et milieux à moins de 2 tolérances —, reporte signaux, zones, arrêts et trains sur le rail
+  gardé (sens retourné s'il le faut), fond les gares (UIC, sinon même nom à moins de 1 500 m).
+- **Le projet courant gagne** : réglages, nom, caméra, table d'aiguillage, nom de gare, réglage
+  de section. Exception voulue : au nœud où les deux réseaux se rejoignent **et** où le fichier
+  apporte un rail à lui, aucune table sauvegardée ne connaît toute la jonction ; les deux sont
+  retirées et l'éditeur en propose une (`junctionsRebuilt`, dit dans le bilan).
+- **Coordonnées** (`osmProjection.ts`) : `inverseProjectionFor` (inverse par approches
+  successives de la projection directe, donc exact à elle : aller-retour < 1 mm sur toute la
+  France), `reprojection(from, to)` point par point (la convergence des méridiens suit ; les
+  pièces des rails longs tournent et s'étirent avec). Les deux en Lambert-93 ou même centre
+  local : rien. Sans `osmSource` des deux côtés : posé tel quel, dit dans le bilan.
+- **Store** (`mergeProjectFile`) : refusé en conduite et sur un projet du jeu de données ;
+  chargement **en place** (`deserializeNetwork(…, into)`), réconciliation rappelée jusqu'à ne
+  plus rien trouver (elle s'arrête après 40 réparations par passe), trains du projet tenus à
+  leur place (`pinTrains` / `realignTrains`), ceux du fichier ajoutés ; caméra et nom intacts ;
+  **une étape d'annulation**.
+- **Bilan** (`application/import/mergeReport.ts`, pur ; fenêtre dans `TopBar.tsx`) : rails
+  ajoutés, nœuds communs, doublons écartés, gares, raccords soudés, phrases (repère, écartement,
+  aiguillages à vérifier, « Ctrl+Z annule la fusion »), bouton « Cadrer l'ajout ».
+
+Vérification : `npm test` 2 641 tests dont 19 nouveaux, `tsc`, `npm run build`. Fixtures de
+Pasilly et Clelles coupées en deux parts qui se recouvrent d'un tiers, la seconde renumérotée
+depuis 1 : la fusion rend les comptes exacts du bloc (nœuds, rails, longueur, signaux, zones,
+gares, arrêts, tables). Fichier fusionné avec lui-même : projet identique. Navigateur sans tête
+(par le vrai menu et le sélecteur de fichier) : LGV Rhône-Alpes ajoutée à la LGV Méditerranée
+(3 892 + 1 401 rails, 2 nœuds communs) en **0,45 s**, Ctrl+Z et Ctrl+Maj+Z justes, même fichier
+une seconde fois → « rien n'a été ajouté » en 0,09 s, `package.json` → « Fichier JSON
+invalide », projet verrouillé → entrée grisée.
+
+Limites connues :
+- **Même zone importée dans deux repères** (Dijon en local et en Lambert-93) : 1 444 nœuds sur
+  1 460 se fondent ; l'import ajuste ses courbes dans le repère où il dessine, 16 joints tombent
+  à plus de 10 cm (jusqu'à 4,5 m) et 35 rails restent en double. Deux imports de zones voisines
+  ne sont pas concernés (ils ne partagent que des nœuds OSM).
+- Recouvrement **partiel** de deux rails longs (l'un A–C, l'autre B–D) : non reconnu.
+- `tools/remote-relay/endToEnd.test.ts` (vrais sockets) a expiré une fois sous la charge de la
+  suite entière, passe seul et aux autres passes : sans lien avec ce lot.
 
 ## Hors périmètre (cette version)
 
