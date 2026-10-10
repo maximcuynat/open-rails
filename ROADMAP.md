@@ -1,381 +1,210 @@
-# Roadmap — open-rails
+# Roadmap — Open Rails
 
-> Éditeur de rails sur canvas infini.
-> Stack : React 18 + TypeScript + Vite 5 + Vitest.
-> Dev server : `http://localhost:8900/`
+> Éditeur de voies ferrées et simulateur de conduite sur canvas infini.
+> React 18 + TypeScript + Vite, rendu Canvas 2D natif, sans bibliothèque de rendu ni d'état.
+> Dernière version publiée : **v0.5.0**. Point d'étape du 2026-10-11, fait en relisant le code.
 
-## État actuel (Release v0.1.0 ✅)
-
-| Composant                                                                     | Statut |
-| ----------------------------------------------------------------------------- | ------ |
-| Scaffolding projet (Vite, TS, React 18, Vitest)                              | Fait   |
-| Architecture Clean / DDD (`domain/`, `application/`, `infrastructure/`, `presentation/`) | Fait |
-| Canvas infini (pan, zoom cursé, auto-panning sur les bords)                   | Fait   |
-| Grille adaptive & barre d'échelle adaptative (mm / m / km)                    | Fait   |
-| Système de cotations CAD en temps réel (longueurs, rayons, angles, entraxes)  | Fait   |
-| Gizmo de translation 2D orthogonal (axes X/Y contraints, déplacement libre)   | Fait   |
-| Modèle de données topologique (Point, Node, Segment, Network, Junction)       | Fait   |
-| Continuité tangentielle G1 stricte (10⁻⁵) entre coupons droits et courbes     | Fait   |
-| Rendu réaliste HO 1:87 (ballast chanfreiné, traverses, tirefonds, cœurs en V) | Fait   |
-| Aiguillages et traversées/croisements avec détection automatique             | Fait   |
-| Rame TGV articulée complète (motrice de tête M1, voitures, motrice queue M2) | Fait   |
-| Cinématique des bogies : retrait de 3.04m, axes tournants, pivot Jacobs      | Fait   |
-| Soufflets d'accordéons flexibles ancrés sur les parois extérieures latérales | Fait   |
-| Atelier Train Builder : palette interactive avec Drag & Drop fluide sur rails| Fait   |
-| Mode Conduite dynamique : jusqu'à 500 km/h, accélération, freinage, caméra    | Fait   |
-| Reversibilité ferroviaire réelle : inversion de sens par transfert de motrice| Fait   |
-| Mode Debug Squelette : inspection filaire fine (pivots, bielles, accordéons)  | Fait   |
-| Détection d'impact et bouton flottant « Prendre le contrôle »                | Fait   |
-| Export SVG vectoriel multicouche, PNG et sauvegarde/restauration JSON         | Fait   |
-| Déploiement continu automatisé GitHub Actions vers GitHub Pages               | Fait   |
-| Suite de tests automatisés (262 tests Vitest, 100% passants)                  | Fait   |
+Ce fichier donne la vue d'ensemble. Le détail de chaque chantier est dans `tasks/plan-*.md`,
+les défauts connus dans `tasks/todo.md`, l'organisation du code dans `CLAUDE.md`.
 
 ---
 
-## Ce que font les logiciels de référence
+## 1. Où en est le projet
 
-Avant de détailler la suite, voici ce que font les outils établis du secteur,
-ça cadre les choix de la phase 3.
+### Ce qui est livré, par version
 
-XTrackCAD traite un aiguillage comme une pièce qui s'aligne automatiquement
-sur les voies existantes pendant le glisser-déposer. Quand les extrémités
-sont assez proches et orientées dans le même axe, le logiciel découpe la voie
-existante et insère la connexion tout seul. Les extrémités non reliées
-restent visibles et un mode d'affichage dédié permet de les repérer d'un
-coup d'œil. Un réglage d'angle minimum évite les jonctions mal alignées, et
-une fonction de recherche par easement lisse la transition entre deux
-rayons différents.
+| Version | Contenu |
+| ------- | ------- |
+| v0.1 | Canvas infini, voies droites et courbes à tangence continue, aiguillages et traversées, recherche de chemin, sections nommées automatiquement, échelles de modélisme et unités, export SVG / PNG / JSON, rame TGV, conduite simple |
+| v0.2 | Flotte de rames (`TrainSet`), attelage et dételage, rames articulées Duplex et TGV M, collisions, verrouillage des aiguilles, barre de contexte, raccourcis réassignables |
+| v0.3 | Traction et freinage réalistes (frein à air, frein électrique), console de conduite adaptative, premier pupitre sur téléphone, zones de vitesse, dévers et déraillement, signalisation à deux niveaux (cantons, réservations, vitesse en cabine), niveaux et rampes (ponts, tunnels), heurtoirs, niveaux de détail au dézoom et vue schéma, menu Exemples |
+| v0.4 | Import OpenStreetMap intégré, longs rails et simplification du réseau, pupitre plein écran à deux pouces, affichages de signalisation refaits |
+| v0.5 | Jeu de données « LGV France » (16 lignes, 57 gares) et fenêtre « Ligne entre gares… » avec chargement des lignes voisines à l'approche, gares lues d'OSM, projection Lambert-93, fusion et découpe de projets, accélération du temps, tableau de l'aiguilleur, salon à huit pupitres en WebRTC avec appairage par QR code |
 
-AnyRail et SCARM suivent une logique voisine avec un retour visuel plus
-direct : dès qu'une pièce en cours de placement s'approche d'une extrémité
-compatible, cette extrémité s'allume en rouge pour indiquer qu'elle va se
-connecter. L'utilisateur garde la main sur la validation du point de
-jonction plutôt que de subir un snap automatique silencieux.
+### Ce que disait l'ancienne roadmap (arrêtée à la v0.1.0), confronté au code
 
-Trois idées reviennent dans tous ces outils et servent de base à la phase 3
-ci-dessous. Le réseau reste un graphe de connexions, jamais juste un dessin.
-Toute pièce déposée sur une voie existante la découpe pour s'y insérer
-proprement. Et les extrémités non connectées doivent toujours être visibles,
-jamais silencieuses.
+Les phases 0 à 3 étaient cochées et le sont toujours. Pour les phases 4 à 9 :
 
----
+| Ancien item | État réel | Remarque |
+| ----------- | --------- | -------- |
+| 4.1 Sections | Fait autrement | Sections déduites du graphe, seules leurs métadonnées sont stockées ; pas d'outil de fusion / scission, pas de type `Portal` |
+| 4.2 Vitesse limite | Fait autrement | Zones de vitesse posées sur la voie, limite en courbe calculée du rayon et du dévers |
+| 4.3 Occupation | Fait | Portée par les cantons de signalisation |
+| 4.4 Signaux | Fait | Deux niveaux (standard, pro), aspect calculé |
+| 4.5 Itinéraires | Partiel | Réservation devant la rame et verrouillage des aiguilles ; **pas d'itinéraire défini par l'utilisateur** → lot F |
+| 5 Annuler / refaire | Fait | Par instantanés, 60 pas |
+| 5 Copier / coller / dupliquer | À faire | Aucun presse-papiers |
+| 6 Sauvegarde automatique et restauration | Fait | |
+| 6 Import JSON | Partiel | Par le menu (remplacer ou ajouter au projet) ; pas de dépôt de fichier par glisser |
+| 7 Raccourcis configurables | Fait | |
+| 7 Tactile sur le canvas | Partiel | Pas de pincement à deux doigts ; le pupitre téléphone, lui, est entièrement tactile |
+| 7 Panneau des aiguillages | Fait | Aiguillage et traversée-jonction double |
+| 8 Simulation de circulation | Fait | Limites, signaux fermés, plusieurs rames |
+| 8 Mesures automatiques | Fait | |
+| 8 Calques | À faire | Seuls les niveaux de voie existent |
+| 8 Bibliothèque de gabarits | Partiel | Gabarits intégrés et Exemples ; pas de gabarit enregistré par l'utilisateur |
+| 8 Règles de validation | Partiel | Diagnostics cinématiques, rayon à la pose, pentes ; pas de moteur de règles unique |
+| 8 Annotations | À faire | |
+| 8 Élévation | Partiel | Niveaux, rampes, ponts et tunnels ; pas de vue en coupe |
+| 9 État vide au premier lancement | À faire | → lot E |
+| 9 Tutoriel | À faire | |
+| 9 Performance sur grands réseaux | Fait | Index spatial, recalcul incrémental, niveaux de détail |
+| 9 Responsive, documentation, favicon, accessibilité | Partiel | |
 
-## Phase 0 — Fondations visuelles ✅
+### Reste à faire hérité (hors programme ci-dessous)
 
-- [x] Initialiser le projet (Vite + React + TS)
-- [x] Configurer le serveur dev sur le port 8900
-- [x] Canvas plein écran avec pan (pointer drag) et zoom (wheel, cursor-anchored)
-- [x] Grille infinie adaptive (espacement logarithmique 1/2/5 × 10^n)
-- [x] Marqueur d'origine (croix au point 0,0)
-- [x] Barre d'échelle en bas à droite (s'adapte au zoom)
-- [x] HUD (niveau de zoom + position caméra)
-- [x] Support light/dark via CSS variables + `prefers-color-scheme`
-- [x] Gestion DPR (Retina) via `setTransform`
-
----
-
-## Phase 1 — Modèle de données et placement de base ✅
-
-**Objectif :** pouvoir dessiner une ligne brisée à la souris, snapée sur la grille.
-
-- [x] Types du domaine (`Point`, `Node`, `Segment`, `Network`)
-- [x] Stockage de l'état du réseau (React ref + redraw à la demande)
-- [x] Outil placer un nœud, avec chaînage automatique
-- [x] Snap sur la grille (toggle `G`)
-- [x] Rendu des nœuds par-dessus la grille
-- [x] Rendu détaillé (double file + traverses + ballast) et simplifié
-- [x] Hit-test et sélection sur nœuds et segments
-- [x] Suppression (`Delete` / `Backspace`)
-- [x] Tests unitaires : `network.test.ts` (18 tests)
-
-**Livrable :** on peut dessiner une ligne brisée snapée, sélectionner et supprimer.
+- Essais sur de vrais téléphones (Wi-Fi puis 4G), relais TURN si la 4G échoue trop souvent — `plan-lignes-lgv-multijoueur.md`, `plan-console-conduite.md`
+- Traversée-jonction double : dessin mécanique, export SVG, essai de conduite — `plan-traversee-jonction.md`
+- Performance : couches statique / dynamique du canvas, cache des visuels de rame — `plan-perf-canvas.md`, `plan-grands-reseaux.md`
+- Édition : copier / coller, calques, annotations, gabarits enregistrés, dépôt de fichier par glisser
+- Contrôles à l'écran jamais faits par un humain et défauts connus — `tasks/todo.md`
 
 ---
 
-## Phase 2 — Courbes et types de rails ✅
+## 2. Programme « Jeu de conduite sur le réseau réel »
 
-**Objectif :** tracer des rails droits et courbes, les mélanger, avec continuité G1.
+Demande du 2026-10-11 : partir d'une gare, conduire sur le réseau réel chargé au fil du trajet,
+avec une destination, des aides, et plus tard un pilote automatique.
 
-- [x] Rail courbe en Bézier quadratique, avec `via` exact tangentiel ($R \tan(\theta/2)$)
-- [x] Outil courbe (preview en direct, accrochage magnétique, fermeture de boucle)
-- [x] Hit-testing et rendu détaillé/simplifié des courbes
-- [x] Profils Kato Unitrack (R430 à R867 mm, angles 15° à 45°)
-- [x] Continuité tangente G1 automatique entre segments chaînés ($10^{-5}$)
-- [x] Mode Voie Libre 100% (`computeFreeformCurve`, flex track continue, décalquage)
-- [x] Palette de sélection interactive (`TrackPalette.tsx`) 100% vectorielle SVG
-- [x] 100 tests unitaires au total (Vitest)
+Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'itinéraire du lot F.
 
-**Livrable :** les rails s'enchaînent avec continuité tangente parfaite, soit au standard rigide Kato, soit en tracé flexible 100% libre.
+| Lot | Sujet | Déjà en place | Taille | Version visée |
+| --- | ----- | ------------- | ------ | ------------- |
+| D | Bogies visibles en conduite | **Fait**, à contrôler à l'écran | Petite | v0.6 |
+| E | Mode bac à sable et écran de lancement | **Fait**, téléphone à essayer en vrai | Moyenne | v0.6 |
+| F | Destination et itinéraire | Trajet ligne à ligne, plus court chemin sur les rails | Grande | v0.6 |
+| G | Niveaux d'aide à la conduite | Tracé devant la rame sur 400 m, aiguilles à la main | Moyenne | v0.7 |
+| A | Catégories de réseau et couleurs | Un booléen « grande vitesse » par ligne dans l'index | Moyenne | v0.7 |
+| C | Vue d'ensemble grossière au dézoom | Quatre paliers de détail, vue schéma | Moyenne | v0.7 |
+| B | Chargement et déchargement par morceaux | Chargement par ligne entière, jamais déchargé | Grande | v0.8 |
+| H | Pilote automatique | Rien | Grande | Non planifié |
 
----
+### Lot D — Bogies visibles en conduite
 
-## Phase 3 — Topologie, jonctions et aiguillages
+- **Constat.** Les bogies sont dessinés au palier Détail, mais la « vue de conduite épurée »
+  (activée par défaut) rabat ce palier sur le palier Rails : en conduite on ne les voit jamais.
+- **Fait le 2026-10-11.** Les bogies sont dessinés en conduite au palier Détail (écartement d'au
+  moins 5 px à l'écran), vue épurée comprise. Les soufflets et l'inclinaison des caisses restent
+  masqués en vue épurée.
+- **Vérifié par.** Test du rendu en vue épurée (`lodTrains.test.ts`). Reste à voir à l'écran.
 
-**Objectif :** transformer le dessin en un vrai graphe ferroviaire. Poser des
-aiguillages, éditer librement n'importe quelle intersection, détecter les
-chemins possibles à travers le réseau.
+### Lot E — Mode bac à sable et écran de lancement
 
-Cette phase remplace l'ancienne phase 3 "Aiguillages" par une version plus
-large, découpée en 5 étapes qui se construisent les unes sur les autres.
+- **Constat.** L'application s'ouvre directement sur l'éditeur. Charger un trajet ne pose aucune
+  rame et n'entre pas en conduite ; il faut poser la rame à la main puis prendre les commandes.
+- **À faire.**
+  1. Écran de lancement avec le premier mode de jeu, « Bac à sable » ; l'éditeur reste accessible.
+  2. Choix de la gare de départ (recherche existante) et du train : TGV seul choix actif,
+     TER affiché « bientôt disponible ».
+  3. Chargement des zones autour de la gare avec progression, pose automatique de la rame à quai.
+  4. Choix du poste : téléphone (QR code du salon existant) ou pupitre PC (bandeau, écran, leviers).
+  5. Entrée directe en conduite.
+- **Fait le 2026-10-11.** Fenêtre « Bac à sable » ouverte au lancement sur une page vierge, et
+  par Fichier ▸ Nouvelle partie : gare de départ, train (TGV Duplex, TGV M, TER annoncé), lignes
+  de la gare chargées, rame complète posée à quai tournée vers la sortie (à un terminus, conduite
+  depuis la cabine opposée aux heurtoirs), puis choix du téléphone ou d'un pupitre de l'écran et
+  entrée en conduite. Code : `application/game/sandbox.ts`, `domain/models/rakePlacement.ts`,
+  `SandboxModal.tsx`.
+- **Reste.** Le chemin « téléphone » n'a pas été essayé avec un vrai téléphone. Après la sortie
+  de gare, les aiguilles se règlent encore à la main (lot G).
+- **Vérifié par.** Parcours complet en navigateur sans tête, d'une page vierge à une rame qui roule
+  à Marseille Saint-Charles ; pose d'une rame qui peut partir contrôlée dans les 57 gares du jeu
+  de données (`tools/perf/measure-sandbox-stations.test.ts`).
 
-### 3.1 — Extension du modèle : le nœud jonction
+### Lot F — Destination et itinéraire
 
-- [x] Nouveau type `Junction` dans `types.ts` :
-  - [x] `id`, `nodeId: NodeId` (nœud de pointe / apex)
-  - [x] `stemNodeId?: NodeId` (branche commune / tronc)
-  - [x] `straightNodeId: NodeId`, `divergingNodeId: NodeId`
-  - [x] `straightSegmentId: SegmentId`, `divergingSegmentId: SegmentId`
-  - [x] `activeBranch: 'straight' | 'diverging'`
-  - [x] `hand: 'left' | 'right'` (sens de la déviation)
-  - [x] `frogNumber?: number` (#4 ou #6)
-- [x] Une jonction reste un nœud du graphe existant : elle ne casse pas
-      `adjacency`, elle ajoute une règle d'orientation et de traversée dessus
-- [x] Catalogue des gabarits d'aiguillage dans `junction.ts` (`TURNOUT_SPECS` :
-      Kato #6 246mm / R867 10°, Kato #4 123mm / R490 15°)
-- [x] Tests : `junction.test.ts` (7 tests unitaires)
+- **Constat.** Une rame n'a pas de destination. Le trajet entre gares est cherché ligne à ligne
+  (`routeThroughStations`), jamais rail à rail ; `findTrackPath` sait le faire entre deux points
+  mais ne sert qu'aux outils de pose. L'ordre des étapes n'est contrôlé que par la connexité.
+- **À faire.**
+  1. Itinéraire d'une rame : départ, étapes, destination, stocké avec la rame.
+  2. Chemin rail à rail de quai à quai sur le réseau chargé, prolongé à mesure qu'il se charge.
+  3. Contrôle de l'ordre des étapes : refus d'un ordre infaisable, signalement d'un détour
+     (étape qui oblige à revenir sur ses pas), proposition de l'ordre le plus court.
+  4. Fenêtre en haut à droite en conduite : gare courante, prochaine étape, destination,
+     distance restante ; ajout et retrait d'étapes en route.
+  5. Champs correspondants dans `ConsoleState` et sa validation, pour le pupitre téléphone.
+- **Vérifié par.** Tests du chemin sur le jeu LGV (Marseille → Paris, avec et sans étape à Lyon),
+  tests de l'ordre des étapes.
 
-### 3.2 — Pose et découpe automatique ✅
+### Lot G — Niveaux d'aide à la conduite
 
-- [x] Outil **aiguillage** dans la barre d'outils (`Y`) et la palette (`TrackPalette`), gabarit et côté sélectionnables
-- [x] Pose sur du vide : place la jonction avec sa branche directe et sa branche déviée exacte
-- [x] Pose sur une voie existante : scission de segment (`splitSegment`) de Casteljau et insertion automatique
-- [x] Alignement assisté : surbrillance magnétique des extrémités compatibles et prolongement tangentiel
-- [x] Découpe automatique de segment droit et courbe au point de clic
+- **Constat.** Le tracé affiché devant la rame suit les aiguilles telles qu'elles sont, sur 400 m.
+  Les aiguilles se manœuvrent à la main.
+- **À faire.** Un réglage d'aide à trois crans : *complète* (itinéraire surligné jusqu'à la
+  prochaine étape, aiguilles orientées automatiquement devant la rame), *guidage* (itinéraire
+  surligné, aiguilles à la main, alerte si l'aiguille devant mène hors de l'itinéraire),
+  *aucune*. L'orientation automatique respecte le verrouillage et les réservations existants.
+- **Dépend de.** Lot F.
+- **Vérifié par.** Tests : une rame en aide complète arrive à destination sans manœuvre manuelle.
 
-### 3.3 — Édition libre des intersections ✅
+### Lot A — Catégories de réseau et couleurs
 
-- [x] Déplacer un nœud partagé par plusieurs segments déplace tous les
-      segments connectés en temps réel (`isDraggingNode`), snapé sur la grille
-- [x] Nettoyage automatique des nœuds orphelins lors de la suppression d'un rail
-- [x] Affichage dédié des extrémités non connectées (anneaux de snap vert/accentué)
-- [x] Fusionner deux nœuds proches en un seul point de jonction (`weldNodes`)
-- [x] Scinder un segment existant en sous-segments (`splitSegment`)
-- [x] Retourner une jonction (flip gauche/droite : `toggleTurnoutHand`) par symétrie axiale
-- [x] Tests : `junction.test.ts` (fusion `weldNodes`, bascule `toggleTurnoutHand`, scission de Casteljau)
+- **Constat.** Le modèle ne connaît qu'un type de ligne pour tout le projet (`lineType`) et l'index
+  un booléen `highSpeed` par ligne. Au dézoom tous les rails ont la même couleur.
+  Le jeu de données ne contient que les LGV et leurs raccordements.
+- **Précision.** TER et Intercités sont des services, pas des voies : la catégorie portée par la
+  voie sera celle de l'infrastructure (grande vitesse, ligne classique principale, ligne
+  régionale, raccordement et voies de service), déduite des attributs OSM (`highspeed`, `usage`,
+  `maxspeed`, `service`).
+- **À faire.**
+  1. Catégorie par ligne dans l'index et par section dans le projet, lue à l'import OSM.
+  2. Une couleur par catégorie aux paliers Ligne et Schéma, avec légende ; aspect inchangé de près.
+  3. Extension du jeu de données aux lignes classiques (régénération hors CI), par régions.
+- **Vérifié par.** Tests de classement sur des extraits OSM, test du rendu par catégorie,
+  mesure d'une image au dézoom avant et après.
 
-### 3.4 — Rendu réaliste, mécanique ferroviaire et bascule des aiguillages ✅
+### Lot C — Vue d'ensemble grossière au dézoom
 
-- [x] Auto-détection automatique des aiguillages dès que 3 voies convergent (`autoDetectJunctions`)
-- [x] Rendu des protections latérales (contre-rails / guard rails) avec extrémités évasées opposées au cœur
-- [x] Cœur d'aiguille (crossing frog point en V) et pattes de lièvre (wing rails)
-- [x] Lames d'aiguilles mobiles (switch blades) dynamiques selon la branche active
-- [x] Tringle de manœuvre (stretcher bar) et moteur d'aiguille latéral sur traverses
-- [x] Rendu des éclisses métalliques (fishplates) avec 4 têtes de boulons aux jonctions à 2 segments
-- [x] Export SVG réaliste multi-calques vectoriel fidèle à l'échelle HO 1:87 (`generateRealisticSVG`)
-- [x] Branche active dessinée pleine, branche inactive atténuée (opacité 40% + tirets)
-- [x] Clic direct sur l'aiguillage ou touche `T` : bascule instantanée `activeBranch`
-- [x] Indicateur visuel de lanterne d'aiguille (vert = voie directe, ambre = voie déviée) avec flèche d'alignement
-- [x] Continuité parfaite des rails aux nœuds (`renderRailJoints`) : les files de rails et le ballast se touchent sans aucun jour
-- [x] Panneau dédié dans le `SidePanel` : statut de l'aiguille, branche active, bouton de bascule et inverseur gauche/droite
+- **Constat.** Un système équivalent existe pour ce qui est chargé : quatre paliers (Détail,
+  Rails, Ligne, Schéma), et au palier Schéma une polyligne par section dont les points à moins
+  d'un pixel sont écartés à chaque image. **Il ne couvre pas la demande sur deux points** : rien
+  n'est dessiné pour le réseau non chargé, et la simplification ne réduit pas la géométrie stockée.
+- **À faire.**
+  1. Tracé simplifié de chaque ligne dans l'index (quelques centaines de points par ligne,
+     calculé à la génération du jeu de données), dessiné pour les lignes non chargées.
+  2. Au plus large, points grossiers pour les gares et trait unique par ligne, voies parallèles
+     confondues.
+  3. Minimap dessinée à partir de ces mêmes tracés.
+- **Vérifié par.** Mesure d'une image France entière ; test du tracé simplifié (écart maximal borné).
 
-### 3.5 — Détection de chemins & pathfinding ✅
+### Lot B — Chargement et déchargement par morceaux
 
-- [x] Algorithme de recherche `findPath(net, fromNodeId, toNodeId, options)` : Dijkstra avec contraintes d'aiguillage
-- [x] Fonction `reachableFrom(net, nodeId)` : ensemble des nœuds et segments atteignables selon l'orientation des aiguilles
-- [x] Détection des voies impasses / heurtoirs (`detectDeadEnds`)
-- [x] Détection des boucles fermées / cycles (`detectLoops`)
-- [x] Détection des voies orphelines et composantes disjointes (`detectConnectedComponents`)
-- [x] Statistiques topologiques en direct dans le `SidePanel` (impasses, boucles, composantes)
-- [x] Tests : `pathfinding.test.ts` (9 tests unitaires)
+- **Constat.** L'unité chargée est une ligne entière (54 ko à 1,1 Mo). Une ligne est chargée
+  quand une rame arrive à 5 km d'un raccordement. **Rien n'est jamais déchargé**, chaque ajout
+  refond tous les fichiers déjà tenus, et il n'y a aucun cache hors mémoire.
+- **À faire.**
+  1. Découpe du jeu de données en dalles sur une grille fixe en Lambert-93 (génération), rails
+     coupés aux bords avec des nœuds de couture stables.
+  2. Gestionnaire de dalles : charge celles qui entourent chaque rame et celles de son
+     itinéraire devant elle ; décharge celles qui sont loin de toute rame, avec une marge pour
+     éviter les allers-retours. Une dalle occupée par une rame n'est jamais déchargée.
+  3. Ajout et retrait d'une dalle en place, sans refondre le reste.
+  4. Cache local des dalles (IndexedDB) avec version du jeu de données.
+  5. Signaux, cantons et réservations aux bords d'une dalle absente : voie fermée, jamais vide.
+- **Vérifié par.** Trajet Marseille → Paris automatisé : mémoire et nombre de rails bornés,
+  aucune rame sur une dalle déchargée ; mesure du temps d'ajout et de retrait d'une dalle.
 
-**Livrable :** Phase 3 100% opérationnelle avec aiguillages Kato, topologie libre, raccordement parfait des rails aux nœuds, accrochage grille en mode Voie Libre, bascule clavier/souris et pathfinding.
+### Lot H — Pilote automatique (non planifié)
 
----
+Inscrit au plan, **affecté à aucune version**. Une rame conduite par le jeu : tenue de la
+vitesse limite, freinage de service vers un signal ou une limite, arrêt à quai, suivi d'un
+itinéraire. S'appuiera sur les lots F et G. Il ouvrira aussi les trains pilotés par le jeu
+(circulation autour du joueur) et le régulateur de vitesse du TGV.
 
-## Phase 4 — Sections, occupation et signalisation
+### Ordre
 
-**Objectif :** découper le réseau en sections avec une limite de vitesse,
-un état d'occupation, et des signaux automatiques.
-
-### 4.1 — Modèle de section
-- [ ] Type `Section` : `id`, `name`, `segmentIds: SegmentId[]`, `speedLimit`, `permissive: boolean`, `color`
-- [ ] Type `Portal` : point de transition entre deux sections, support optionnel d'un signal
-- [ ] Outil "section" et gestion fusion/scission
-- [ ] Tests : `section.test.ts`
-
-### 4.2 — Vitesse limite par section
-- [ ] Champ `speedLimit` par section avec overlay
-- [ ] Suggestion automatique dérivée du rayon minimum de la section
-
-### 4.3 — Occupation
-- [ ] État `occupied: boolean` par section (simulation)
-- [ ] Surbrillance visuelle de l'occupation sur le canvas
-
-### 4.4 — Signaux
-- [ ] Type `Signal` : aspects vert / jaune / rouge
-- [ ] Calcul d'aspect automatique selon occupation et position d'aiguillage
-
-### 4.5 — Itinéraires et verrouillage
-- [ ] Type `Route` et réservation d'itinéraires
-
----
-
-## Phase 5 — Édition riche
-
-**Objectif :** édition confortable, construction d'un réseau complet.
-
-- [x] Multi-sélection : Shift+clic, rectangle de sélection (box select), Ctrl+A
-- [x] Déplacement d'un nœud unique ou d'un groupe à la souris (les voies suivent)
-- [x] Raccourcis complets : `V` select, `N` droite, `C` courbe, `H` pan, `G` snap grille, `F` fit, `M` mode libre/kato, `Tab` côté courbe, `[` `]` rayon, `Suppr`
-- [x] Hit-test tolérant (14px nœuds, 12px segments, 16px snap magnétique)
-- [ ] Annuler / refaire : stack d'états, Ctrl+Z / Ctrl+Shift+Z, limite 50
-- [ ] Copier / coller (Ctrl+C/V), dupliquer (Ctrl+D)
-- [ ] Tests : `history.test.ts`, `selection.test.ts`
-
----
-
-## Phase 6 — Persistance et export
-
-**Objectif :** le travail est sauvegardé et exportable.
-
-- [x] Export SVG (avec boîtes englobantes incluant les points `via`)
-- [x] Export PNG (rendu haute définition canvas)
-- [x] Export JSON du réseau
-- [x] Nom du projet éditable et indicateur de modifications (`dirty`)
-- [ ] Sauvegarde automatique en `localStorage` (debounce 1s)
-- [ ] Restauration automatique au chargement
-- [ ] Import JSON par menu et drag-and-drop de fichier
-- [ ] Tests : `persist.test.ts`
+1. **v0.6 — Bac à sable** : D, puis E, puis F. On peut lancer une partie et savoir où l'on va.
+2. **v0.7 — Lisibilité et aides** : G, A (étapes 1 et 2), C.
+3. **v0.8 — Grand réseau** : B, puis A étape 3 (lignes classiques, qui n'ont de sens qu'une fois
+   le déchargement en place).
 
 ---
 
-## Phase 7 — UI et ergonomie
+## 3. Règles qui ne changent pas
 
-**Objectif :** interface complète, utilisable sur desktop et tactile.
-
-- [x] TopBar avec menu complet (Fichier, Édition, Affichage, Aide)
-- [x] ToolBar verticale avec icônes ferroviaires vectorielles SVG
-- [x] Palette flottante TrackPalette 100% SVG (0 emoji) : bascule Catalogue Kato / Voie Libre, coupons droits et courbes
-- [x] SidePanel avec conversion métrique mm/m et suppression sécurisée
-- [x] StatusBar avec indicateurs d'état et raccourcis
-- [x] MiniMap vectorielle synchronisée avec le viewport
-- [x] Thèmes light / dark / auto
-- [ ] Raccourcis clavier configurables
-- [ ] Support mobile / touch (pinch-to-zoom, pan tactile)
-- [ ] Panneau propriétés pour les jonctions et aiguillages dans SidePanel
-
-**Livrable :** interface desktop professionnelle, utilisable au doigt sur
-tablette.
-
----
-
-## Phase 8 — Fonctions avancées
-
-**Objectif :** aller plus loin, s'appuyer sur la topologie (phase 3) et sur
-les sections/signaux (phase 4).
-
-- [ ] Simulation de circulation : un train suit les rails à vitesse
-      paramétrable, plafonnée par `speedLimit` de la section traversée,
-      respecte la branche active de chaque jonction (réutilise `findPath`
-      et `reachableFrom`), s'arrête sur signal rouge, réserve et libère les
-      sections qu'il occupe, sens bidirectionnel, plusieurs trains
-      simultanés avec verrouillage mutuel des sections non permissives
-- [ ] Mesures automatiques : longueur par segment, angle, rayon, longueur
-      totale du réseau, nombre de jonctions, nombre de sections
-- [ ] Calques (layers) : nommés, visibilité on/off, verrouillage
-- [ ] Bibliothèque de gabarits : sauvegarder un bout de réseau (jonctions
-      et sections incluses) comme gabarit réutilisable par glisser-déposer
-- [ ] Règles de validation : rayon de courbure minimum, pente maximum,
-      conflits de croisement, nœuds orphelins, jonctions mal alignées,
-      sections sans limite de vitesse cohérente
-- [ ] Annotations : texte libre, marqueurs, cotes manuelles
-- [ ] Élévation / terrain (optionnel, gros scope) : axe Z, vue en coupe,
-      heightmap en arrière-plan
-
-**Livrable :** éditeur de rails complet avec simulation.
-
----
-
-## Phase 9 — Finition produit
-
-**Objectif :** passer d'un éditeur fonctionnel à un produit qu'on peut
-livrer et montrer à quelqu'un d'autre sans l'accompagner.
-
-- [ ] État vide soigné au premier lancement (pas un canvas nu et muet)
-- [ ] Tutoriel interactif court ou tour guidé des outils
-- [ ] Messages d'erreur et de blocage compréhensibles (ex : "aiguillage non
-      connecté", "rayon inférieur au minimum")
-- [ ] Performance : redraw incrémental ou index spatial pour le hit-test
-      sur les grands réseaux (mentionné dans les principes techniques)
-- [ ] Responsive complet, y compris tablette
-- [ ] Documentation utilisateur courte (raccourcis, cycle de vie d'un
-      projet, export)
-- [ ] Icône, favicon, métadonnées de page soignées
-- [ ] Revue d'accessibilité de base (contraste, focus clavier sur les menus)
-- [ ] Build de production testé (npm run build) sans warning TypeScript
-
-**Livrable :** un produit fini, prêt à être utilisé ou montré sans réserve.
-
----
-
-## Architecture logicielle
-
-Cette section décrit l'organisation cible, existant et à venir. Le détail
-module par module de l'existant reste dans `DESCRIPTION.md` ; ici, on garde
-la vue d'ensemble et on situe où va chaque nouvelle brique du roadmap.
-
-### Principes
-
-- **Rendu** : Canvas 2D, pas de lib tierce. RAF loop pour la simulation,
-  redraw à la demande pour l'édition.
-- **État** : refs pour la caméra (muté hors React), state React pour la
-  sélection et l'outil actif. Le réseau vit dans un ref + système de
-  subscribe, comme `EditorStore`.
-- **Topologie** : le réseau reste un seul graphe (`Network`). Une jonction
-  est un nœud avec une règle de traversée en plus, pas une structure à part.
-  Le pathfinding de la phase 3 et la simulation de la phase 8 s'appuient
-  sur le même graphe.
-- **Signalisation** : les sections, signaux et itinéraires (phase 4)
-  annotent le graphe, ils ne le dupliquent pas. Une section référence des
-  `segmentIds` existants, un signal référence un `Portal` existant.
-- **Tests** : Vitest, logique pure isolée dans `src/core/`, pas de tests
-  sur le canvas.
-- **Pas de dépendance externe** au-delà de React. Pas de state management lib.
-- **Performance** : redraw incrémental si le réseau devient large (dirty
-  regions ou index spatial pour le hit-test).
-
-### Arborescence cible
-
-```
-src/
-├── core/                     # logique pure, sans dépendance React
-│   ├── types.ts              # Point, RailNode, Segment, Network (existant)
-│   ├── network.ts            # CRUD graphe, snapping, hit-testing (existant)
-│   ├── curve.ts               # géométrie Bezier quadratique (existant)
-│   ├── tangent.ts             # continuité G1, arc ↔ Bezier (existant)
-│   ├── profiles.ts            # catalogue Kato Unitrack HO (existant)
-│   ├── junction.ts            # phase 3.1 — type Junction, branches, gabarits
-│   ├── junction-edit.ts       # phase 3.3 — fusion, scission, déplacement en cascade
-│   ├── pathfinding.ts         # phase 3.5 — findPath, reachableFrom
-│   ├── section.ts             # phase 4.1/4.2 — type Section, Portal, vitesse
-│   ├── occupancy.ts           # phase 4.3 — état occupied, réservation
-│   ├── signal.ts              # phase 4.4 — type Signal, calcul d'aspect
-│   ├── route.ts               # phase 4.5 — type Route, verrouillage
-│   ├── history.ts             # phase 5 — undo/redo
-│   ├── persist.ts             # phase 6 — sauvegarde/restauration JSON
-│   └── *.test.ts              # un fichier de test par module ci-dessus
-├── render/                   # rendu Canvas, sans dépendance React
-│   ├── camera.ts             # caméra + transformations screen ↔ world (existant)
-│   └── renderer.ts           # grille, rails, traverses, ballast (existant)
-│       # + rendu jonctions (3.4), sections (4.1), signaux (4.4)
-└── ui/                        # composants React
-    ├── store.ts               # EditorStore, état mutable + subscribe (existant)
-    ├── Canvas.tsx              # <canvas> + interactions (existant)
-    ├── CanvasOverlay.tsx        # aide contextuelle (existant)
-    ├── SidePanel.tsx            # panneau propriétés (existant, à étendre
-    │                             # avec JunctionPanel, SectionPanel, SignalPanel)
-    ├── ToolBar.tsx, TopBar.tsx, StatusBar.tsx, MiniMap.tsx, Menu.tsx (existant)
-    └── useKeyboardShortcuts.ts  # raccourcis globaux (existant)
-```
-
-**Règle de placement :** toute nouvelle logique de graphe (jonctions,
-sections, chemins, signaux) va dans `src/core/`, testée en isolation, sans
-toucher au rendu. Le rendu de ces nouveaux objets s'ajoute à
-`renderer.ts`, pas dans de nouveaux fichiers de rendu séparés, pour garder
-un seul pipeline de dessin. Les nouveaux panneaux du `SidePanel` suivent le
-même pattern dispatcher que l'existant : un composant par type d'objet
-sélectionné.
-
-- **Pas de dépendance externe** au-delà de React. Pas de state management lib.
-- **Performance** : redraw incrémental si le réseau devient large (dirty
-  regions ou index spatial pour le hit-test).
+- Le réseau reste un seul graphe ; sections, signaux, zones et itinéraires l'annotent.
+- `domain/` sans dépendance ; pas de bibliothèque de rendu ni d'état.
+- Sur le rendu, la performance d'abord : l'aspect de près ne change pas sans demande explicite.
+- Tout ce qui est gardé du réseau d'une image à l'autre se recalcule par différence, avec son oracle en test.
+- Chaque lot se mesure avant et après (`npm run bench`, `tools/perf/`).
