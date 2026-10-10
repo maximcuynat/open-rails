@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createLambert93Projection, createProjection, LAMBERT93_ORIGIN, projectionFor } from './osmProjection'
+import { createLambert93Projection, createProjection, inverseProjectionFor, LAMBERT93_ORIGIN, projectionFor, reprojection, sameFrame } from './osmProjection'
 
 /** Length of the geodesic between two places on the WGS 84 ellipsoid (Vincenty's inverse formula), in metres */
 function geodesic(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -152,5 +152,58 @@ describe('Lambert-93, the national frame', () => {
     expect(projectionFor(undefined, origin)(47.1, 5.1)).toEqual(local)
     expect(projectionFor('local', origin)(47.1, 5.1)).toEqual(local)
     expect(projectionFor('lambert93', origin)(47.1, 5.1)).toEqual(project(47.1, 5.1))
+  })
+})
+
+describe('back from world metres to the globe', () => {
+  it('undoes the national projection to less than a millimetre, all over France', () => {
+    const forward = projectionFor('lambert93', LAMBERT93_ORIGIN)
+    const back = inverseProjectionFor('lambert93', LAMBERT93_ORIGIN)
+    for (let lat = 41.5; lat <= 51; lat += 0.95) {
+      for (let lon = -5; lon <= 9.5; lon += 1.45) {
+        const p = forward(lat, lon)
+        const geo = back(p)
+        const again = forward(geo.lat, geo.lon)
+        expect(Math.hypot(again.x - p.x, again.y - p.y), `${lat}, ${lon}`).toBeLessThan(1e-3)
+        expect(geo.lat).toBeCloseTo(lat, 8)
+        expect(geo.lon).toBeCloseTo(lon, 8)
+      }
+    }
+  })
+
+  it('undoes a local projection to less than a millimetre, 50 km from its centre', () => {
+    const origin = { lat: 47.32, lon: 5.03 }
+    const forward = projectionFor('local', origin)
+    const back = inverseProjectionFor('local', origin)
+    for (const [dx, dy] of [[0, 0], [50_000, 0], [0, -50_000], [-35_000, 35_000], [12.5, -7.25]]) {
+      const geo = back({ x: dx, y: dy })
+      const again = forward(geo.lat, geo.lon)
+      expect(Math.hypot(again.x - dx, again.y - dy)).toBeLessThan(1e-3)
+    }
+  })
+
+  it('moves a point from one frame onto another: the same place, wherever it was drawn', () => {
+    const dijon = { lat: 47.3235, lon: 5.0272 }
+    const local = { lat: 47.3, lon: 5.0 }
+    const national = { ...LAMBERT93_ORIGIN, frame: 'lambert93' as const }
+    const drawnLocally = projectionFor('local', local)(dijon.lat, dijon.lon)
+    const drawnNationally = projectionFor('lambert93', national)(dijon.lat, dijon.lon)
+    const moved = reprojection(local, national)(drawnLocally)
+    expect(Math.hypot(moved.x - drawnNationally.x, moved.y - drawnNationally.y)).toBeLessThan(1e-3)
+    const movedBack = reprojection(national, local)(drawnNationally)
+    expect(Math.hypot(movedBack.x - drawnLocally.x, movedBack.y - drawnLocally.y)).toBeLessThan(1e-3)
+    // Another local frame, 30 km away
+    const other = { lat: 47.5, lon: 5.3 }
+    const there = reprojection(local, other)(drawnLocally)
+    const expected = projectionFor('local', other)(dijon.lat, dijon.lon)
+    expect(Math.hypot(there.x - expected.x, there.y - expected.y)).toBeLessThan(1e-3)
+  })
+
+  it('leaves a point alone between two imports on one map', () => {
+    const p = { x: 123.4, y: -56.7 }
+    expect(reprojection({ lat: 1, lon: 2, frame: 'lambert93' }, { lat: 46.5, lon: 3, frame: 'lambert93' })(p)).toBe(p)
+    expect(reprojection({ lat: 47, lon: 5 }, { lat: 47, lon: 5, frame: 'local' })(p)).toBe(p)
+    expect(sameFrame({ lat: 47, lon: 5 }, { lat: 47, lon: 5.1 })).toBe(false)
+    expect(sameFrame({ lat: 47, lon: 5 }, { lat: 47, lon: 5, frame: 'lambert93' })).toBe(false)
   })
 })

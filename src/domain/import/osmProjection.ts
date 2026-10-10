@@ -108,3 +108,71 @@ export function createLambert93Projection(): (lat: number, lon: number) => Point
 export function projectionFor(frame: OsmFrame | undefined, origin: { lat: number; lon: number }): (lat: number, lon: number) => Point {
   return frame === 'lambert93' ? createLambert93Projection() : createProjection(origin.lat, origin.lon)
 }
+
+// ─────────────────────────────── Back from world metres to the globe ───────────────────────────────
+
+export interface GeoPoint {
+  lat: number
+  lon: number
+}
+
+/**
+ * The inverse of a projection, found by walking to the place whose projection is the point asked
+ * for: both projections are conformal and nearly true to scale, so a miss in metres is a miss in
+ * degrees along the meridian and the parallel, and each step divides the error by ten or more
+ * (the turn of the grid against the north is all that is left). Exact to the forward projection
+ * it is given, which a series written apart would not be.
+ */
+function inverseOf(forward: (lat: number, lon: number) => Point, start: GeoPoint): (p: Point) => GeoPoint {
+  return (p) => {
+    let lat = start.lat
+    let lon = start.lon
+    for (let i = 0; i < 60; i++) {
+      const q = forward(lat, lon)
+      const east = p.x - q.x
+      const north = q.y - p.y
+      if (Math.hypot(east, north) < 1e-7) break
+      const phi = lat * RAD
+      const sin = Math.sin(phi)
+      const w = 1 - E2 * sin * sin
+      const meridian = (SEMI_MAJOR_AXIS * (1 - E2)) / (w * Math.sqrt(w))
+      const parallel = (SEMI_MAJOR_AXIS / Math.sqrt(w)) * Math.cos(phi)
+      lat += north / meridian / RAD
+      lon += east / parallel / RAD
+    }
+    return { lat, lon }
+  }
+}
+
+/** World metres back to latitude and longitude, for the frame `projectionFor` projects in */
+export function inverseProjectionFor(frame: OsmFrame | undefined, origin: GeoPoint): (p: Point) => GeoPoint {
+  return inverseOf(projectionFor(frame, origin), frame === 'lambert93' ? LAMBERT93_ORIGIN : origin)
+}
+
+/** A frame as an import remembers it: where its world (0, 0) is, and in which projection */
+export interface FrameOrigin extends GeoPoint {
+  frame?: OsmFrame
+}
+
+/** True when two imports lie on one map already: both in Lambert-93, or local frames with one centre */
+export function sameFrame(a: FrameOrigin, b: FrameOrigin): boolean {
+  const la = a.frame === 'lambert93'
+  const lb = b.frame === 'lambert93'
+  if (la || lb) return la && lb
+  return a.lat === b.lat && a.lon === b.lon
+}
+
+/**
+ * Moves a point of one import onto the map of another: back to the globe through the frame it was
+ * projected in, then forward through the other. Point by point, so that the turn between the two
+ * grids (the convergence of the meridians) is taken along.
+ */
+export function reprojection(from: FrameOrigin, to: FrameOrigin): (p: Point) => Point {
+  if (sameFrame(from, to)) return (p) => p
+  const back = inverseProjectionFor(from.frame, from)
+  const forward = projectionFor(to.frame, to)
+  return (p) => {
+    const geo = back(p)
+    return forward(geo.lat, geo.lon)
+  }
+}
