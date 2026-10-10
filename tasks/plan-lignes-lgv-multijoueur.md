@@ -230,13 +230,13 @@ projet Lambert-93 se superpose aux gares du registre à moins de 5 m.
 - [ ] 20. *(reporté, 2026-10-10 : le téléphone ne charge aucune ligne, rien à comparer)* Vérification de version du jeu de données entre hôte et pupitres.
 
 ### Lot 5 — Mise en relation publique (essai)
-- [ ] 21. Lien `remoteLink` WebRTC DataChannel, protocole v1 inchangé, STUN public.
-- [ ] 22. Mise en relation par un service public gratuit (choix à faire à ce moment-là :
+- [x] 21. Lien `remoteLink` WebRTC DataChannel, protocole v1 inchangé, STUN public.
+- [x] 22. Mise en relation par un service public gratuit (choix à faire à ce moment-là :
   broker PeerJS, trackers / relais type Trystero, autre) ; code de salon long ; QR code
   existant réutilisé.
-- [ ] 23. Essai réel depuis le site publié : même Wi-Fi, puis 4G. Taux d'échec de connexion
+- [ ] 23. *(fait en navigateur sans tête contre le courtier public ; reste l'essai sur de vrais téléphones, Wi-Fi puis 4G — marche à suivre au § Suivi)* Essai réel depuis le site publié : même Wi-Fi, puis 4G. Taux d'échec de connexion
   noté. Si trop élevé : repli sur le relais hébergé (étapes 21–24 de `plan-console-conduite.md`).
-- [ ] 24. Notes de version : ce qui marche sur le site publié, ce qui exige `npm run dev`.
+- [x] 24. Notes de version : ce qui marche sur le site publié, ce qui exige `npm run dev`.
 
 ## Ordre et jalons
 
@@ -566,6 +566,71 @@ Limites connues :
   pupitre et doit reprendre un train (l'ancien est libéré après 20 s).
 - Le côté `remote` de `BrakeSource` / `brakeHolds` ne sert plus qu'à un ancien test : à retirer.
 - Pas encore de contrôle humain sur de vrais téléphones (Wi-Fi) : seulement en navigateur sans tête.
+
+### Lot 5 — fait le 2026-10-10 (branche `feature/lignes-lgv`, quatre commits), essai sur téléphones à faire
+
+Les pupitres marchent depuis une page servie en HTTPS (le site publié), sans serveur à nous.
+Décision de l'utilisateur (2026-10-10) : courtier public PeerJS, **client écrit par nous**, aucune
+dépendance ajoutée.
+
+- **Le PC est son propre relais** : `RoomRelay` a été déplacé dans `src/application/remote/roomRelay.ts`
+  (réexporté par `tools/remote-relay/rooms.ts`) et tourne dans la page du PC (`rtcHostLink.ts`) ;
+  chaque téléphone y est une connexion portée par un canal de données WebRTC (`rtcDeskLink.ts`).
+  Protocole v2, hôte, pupitre, session et store inchangés.
+- **Courtier** (`peerBroker.ts`) : `wss://0.peerjs.com/peerjs`, identifiants `openrails-<CODE>` (PC)
+  et `openrails-<CODE>-<jeton>` (téléphone) ; le téléphone le quitte dès que son canal est ouvert,
+  le PC y reste pour accueillir les suivants. STUN publics (Google, Cloudflare), **pas de TURN**.
+- **Découverte en essayant** : le courtier public ne suit pas le code source publié de
+  `peerjs-server`. Il **raccroche** sur un message qui n'a pas la forme de ceux de la bibliothèque
+  PeerJS (`payload.type: 'data'`, `connectionId`, un SDP plausible). Nos messages prennent donc
+  cette forme (`rtcPeer.ts`), et le courtier de test (`tools/remote-relay/brokerHub.ts`) applique
+  la même règle pour que les tests la gardent.
+- **Choix du transport** (`remoteRoute`, `remoteLinks.ts`) : relais WebSocket quand la page est
+  servie par le PC en HTTP ; **direct quand elle est en HTTPS**. `?liaison=webrtc` force le direct
+  sous `npm run dev`, `?courtier=local` utilise le courtier que sert le serveur de dev
+  (`<base>__broker/peerjs`, WebRTC sans Internet), `?courtier=wss://…` un autre courtier ; ces
+  paramètres sont repris dans l'adresse donnée au téléphone.
+- **Pupitre parti sans le dire** : un canal de données ne signale pas la fermeture de la page d'en
+  face. En direct, le pupitre bat toutes les secondes et le PC tient 3 s de silence pour un départ
+  (15 s sur le relais) ; la page du téléphone dit aussi qu'elle se ferme (`pagehide`).
+- **Interface** : la fenêtre de liaison n'est plus « indisponible » en HTTPS ; en direct, plus de
+  saisie d'adresse IP, phrase sur l'accès à Internet et sur l'onglet du PC à garder ouvert ; sur le
+  téléphone, « connexion directe impossible » ou « service de mise en relation injoignable »
+  quand le lien sait le dire.
+
+Vérification : `npm test` 2 706 tests (dont 28 nouveaux : client du courtier, liens sur paires
+factices avec le vrai hôte et le vrai pupitre, choix du transport), `tsc`, `npm run build`.
+**Vrai WebRTC** en navigateur sans tête (un PC, deux téléphones, LGV Rhône-Alpes, trois trains) :
+- courtier local : assis en ~0,4 s, trois trains conduits ensemble à 60 images/s, train au repos
+  3,3 s après la fermeture de la page d'un téléphone ;
+- **courtier public réel** : assis en ~1,9 s, mêmes résultats, train au repos en 2,5 s ;
+- relais (mode d'avant, sans paramètre) : inchangé, assis en 0,3 s.
+Le morceau partagé par l'éditeur et le téléphone passe de 145 à 160 ko (liens directs et relais de
+salons) : il n'est **pas** chargé à la demande comme prévu au plan (un lien se crée de façon
+synchrone) ; à reprendre si le poids compte.
+
+Ce que cette vérification ne dit pas : les trois pages tournaient sur **une seule machine**. La
+traversée de deux réseaux différents (box, 4G) n'a pas été essayée.
+
+**Essai à faire sur de vrais téléphones (item 23)** — après publication du site, ou tout de suite
+avec `npm run dev -- --host` et l'adresse `http://<IP du PC>:8900/open-rails/?liaison=webrtc` :
+1. PC : Simulation ▸ « Pupitre sur téléphone… », attendre « En attente d'un téléphone ».
+2. Téléphone sur le **même Wi-Fi** : scanner le QR, noter le temps jusqu'à « Choisir un train »,
+   prendre un train, rouler 2 min, noter les coupures.
+3. Téléphone en **4G** (Wi-Fi coupé) : même chose. Si l'écran reste sur « Connexion au PC… » puis
+   dit « la connexion directe ne passe pas », c'est l'absence de TURN : le noter (opérateur).
+4. Deux téléphones à la fois, l'un en Wi-Fi, l'autre en 4G.
+5. Mettre l'onglet du PC en arrière-plan 30 s : noter si les pupitres se figent.
+À rapporter : réussite ou non par cas, délais, messages affichés. Si la 4G échoue trop souvent :
+repli sur un relais hébergé (étapes 21–24 de `plan-console-conduite.md`).
+
+**Notes de version (brouillon, item 24)**
+- Marche sur le site publié : pupitres sur téléphone (jusqu'à 8), conduite à plusieurs, tableau de
+  l'aiguilleur, « Ligne entre gares… », fusion de projets. Le PC et les téléphones doivent avoir
+  Internet ; la conduite passe ensuite en direct. L'onglet du PC doit rester ouvert.
+- Peut échouer sur le site publié : un téléphone en 4G ou un réseau d'entreprise (pas de relais
+  TURN) ; le service de mise en relation est public et gratuit, il peut être indisponible.
+- Exige `npm run dev` / `npm run preview` : le relais local (sans Internet), `?courtier=local`.
 
 ## Hors périmètre (cette version)
 
