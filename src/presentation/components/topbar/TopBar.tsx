@@ -8,6 +8,8 @@ import type { RemoteSession } from '@application/remote/remoteSession'
 import { exportSVG } from '@infrastructure/export/exportSvg'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
+import { Figures } from '../common/Figures'
+import { mergeReportFigures, mergeReportNotes, type MergeOutcome } from '@application/import/mergeReport'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
 import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
@@ -40,6 +42,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showRemoteModal, setShowRemoteModal] = useState(false)
   const [showOsmImport, setShowOsmImport] = useState(false)
   const [showLineBetween, setShowLineBetween] = useState(false)
+  const [mergeOutcome, setMergeOutcome] = useState<MergeOutcome | null>(null)
 
   const commitName = () => {
     setEditingName(false)
@@ -61,6 +64,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
+        { id: 'merge-json', label: 'Ajouter un JSON au projet…', disabled: !store.canEditNetwork },
         { id: 'import-osm', label: 'Importer depuis OpenStreetMap…' },
         { id: 'line-between-stations', label: 'Ligne entre gares…' },
         {
@@ -102,6 +106,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'import-json':
             importJSON(store)
+            break
+          case 'merge-json':
+            mergeJSON(store, setMergeOutcome)
             break
           case 'import-osm':
             setShowOsmImport(true)
@@ -446,6 +453,26 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
           <LineBetweenStationsModal store={store} onClose={() => setShowLineBetween(false)} />
         </Suspense>
       )}
+      <Modal
+        isOpen={mergeOutcome !== null}
+        title="Bilan de la fusion"
+        onClose={() => setMergeOutcome(null)}
+        closeLabel="Fermer"
+        confirmLabel="Cadrer l’ajout"
+        onConfirm={mergeOutcome?.addedBox ? () => store.frameBox(mergeOutcome.addedBox!) : undefined}
+        dialogClassName="osm-dialog"
+      >
+        {mergeOutcome && (
+          <>
+            <Figures figures={mergeReportFigures(mergeOutcome)} wide />
+            {mergeReportNotes(mergeOutcome).map((note) => (
+              <p className="osm-note" key={note}>
+                {note}
+              </p>
+            ))}
+          </>
+        )}
+      </Modal>
       <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} dataset={store.isNetworkLocked} onClose={() => setShowAboutModal(false)} />
       <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
@@ -490,6 +517,26 @@ function importJSON(store: EditorStore): void {
       const data = JSON.parse(text)
       store.loadFromData(data)
       showToast('Réseau importé', 'success')
+    } catch {
+      showToast('Fichier JSON invalide', 'error')
+    }
+  }
+  input.click()
+}
+
+/** « Ajouter un JSON au projet… »: the file is merged into the current project instead of replacing it */
+function mergeJSON(store: EditorStore, onDone: (outcome: MergeOutcome) => void): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json,application/json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    try {
+      const outcome = store.mergeProjectFile(JSON.parse(text))
+      if (outcome) onDone(outcome)
+      else showToast('Fusion impossible en conduite ou sur un réseau importé', 'error')
     } catch {
       showToast('Fichier JSON invalide', 'error')
     }
