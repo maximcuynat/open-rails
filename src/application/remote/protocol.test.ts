@@ -19,6 +19,7 @@ import {
   normalizeRoomCode,
   pairingUrl,
   relayUrl,
+  remoteRoute,
   roomFromPageUrl,
   type RemoteMessage,
 } from './protocol'
@@ -490,5 +491,34 @@ describe('protocol: addresses', () => {
     expect(roomFromPageUrl('http://192.168.1.42:8900/open-rails/?pupitre=abc234')).toBe('ABC234')
     expect(roomFromPageUrl('http://192.168.1.42:8900/open-rails/')).toBeNull()
     expect(roomFromPageUrl('http://192.168.1.42:8900/open-rails/?pupitre=nope')).toBeNull()
+  })
+})
+
+describe('protocol: the two ways to the PC', () => {
+  const base = '/open-rails/'
+
+  it('goes through the relay of the server on a page served by the PC, directly from the published site', () => {
+    expect(remoteRoute('http://localhost:8900/open-rails/', base)).toEqual({ transport: 'relay', broker: null })
+    expect(remoteRoute('http://192.168.1.42:8900/open-rails/?pupitre=ABC234', base)).toEqual({ transport: 'relay', broker: null })
+    expect(remoteRoute('https://maximcuynat.github.io/open-rails/', base)).toEqual({ transport: 'direct', broker: null })
+    expect(remoteRoute('https://maximcuynat.github.io/open-rails/?pupitre=ABC234', base)).toEqual({ transport: 'direct', broker: null })
+  })
+
+  it('can be told to go directly, and through which broker', () => {
+    expect(remoteRoute('http://localhost:8900/open-rails/?liaison=webrtc', base)).toEqual({ transport: 'direct', broker: null })
+    expect(remoteRoute('http://localhost:8900/open-rails/?liaison=webrtc&courtier=local', base)).toEqual({ transport: 'direct', broker: 'ws://localhost:8900/open-rails/__broker/peerjs' })
+    expect(remoteRoute('https://example.org/open-rails/?courtier=local', base).broker).toBe('wss://example.org/open-rails/__broker/peerjs')
+    expect(remoteRoute('https://example.org/open-rails/?courtier=wss%3A%2F%2Fbroker.example%2Fpeerjs', base).broker).toBe('wss://broker.example/peerjs')
+    // Not an address of a broker: the public one
+    expect(remoteRoute('https://example.org/open-rails/?courtier=javascript:alert(1)', base).broker).toBeNull()
+    // The broker is only asked for by a direct link
+    expect(remoteRoute('http://localhost:8900/open-rails/?courtier=local', base)).toEqual({ transport: 'relay', broker: null })
+  })
+
+  it('gives the phone the way the PC uses', () => {
+    expect(pairingUrl('http://localhost:8900/open-rails/?liaison=webrtc&courtier=local&x=1#h', base, 'ABC234', '192.168.1.42')).toBe(
+      'http://192.168.1.42:8900/open-rails/?pupitre=ABC234&liaison=webrtc&courtier=local',
+    )
+    expect(pairingUrl('https://maximcuynat.github.io/open-rails/', base, 'ABC234')).toBe('https://maximcuynat.github.io/open-rails/?pupitre=ABC234')
   })
 })

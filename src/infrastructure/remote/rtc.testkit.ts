@@ -48,6 +48,9 @@ export function fakeBroker(options: { expireMs?: number } = {}) {
   return { hub, createSocket, state, dropAll }
 }
 
+/** A description that names its peer, in the dress of a real one (the broker looks at it) */
+const fakeSdp = (index: number): string => `v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=peer:${index}\r\nt=0 0\r\n`
+
 class FakeChannel implements RtcChannelLike {
   readyState = 'connecting'
   other: FakeChannel | null = null
@@ -93,11 +96,11 @@ class FakePeer implements RtcPeerLike {
   }
 
   async createOffer(): Promise<RtcPlain> {
-    return { type: 'offer', sdp: `peer:${this.index}` }
+    return { type: 'offer', sdp: fakeSdp(this.index) }
   }
 
   async createAnswer(): Promise<RtcPlain> {
-    return { type: 'answer', sdp: `peer:${this.index}` }
+    return { type: 'answer', sdp: fakeSdp(this.index) }
   }
 
   async setLocalDescription(): Promise<void> {
@@ -105,7 +108,7 @@ class FakePeer implements RtcPeerLike {
   }
 
   async setRemoteDescription(description: RtcPlain): Promise<void> {
-    const remote = this.world.peers[Number(String(description.sdp).split(':')[1])]
+    const remote = this.world.peers[Number(/s=peer:(\d+)/.exec(String(description.sdp))?.[1])]
     if (!remote) throw new Error('unknown peer')
     // The one that receives the answer made the offer: the two can now meet
     if (description.type === 'answer') this.world.meet(this, remote)

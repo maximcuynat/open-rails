@@ -2,6 +2,16 @@
 // at the top of `src/infrastructure/remote/peerBroker.ts`): the tests feed it by hand, and
 // `fakeBroker.ts` puts it behind a real WebSocket to try WebRTC with no Internet.
 
+/** The shape the public broker asks of the messages it carries (found by trying it, see `rtcPeer.ts`) */
+function wellFormed(type: string, payload: unknown): boolean {
+  if (type === 'LEAVE') return true
+  if (!payload || typeof payload !== 'object') return false
+  const p = payload as { type?: unknown; connectionId?: unknown; sdp?: { sdp?: unknown }; candidate?: unknown }
+  if (p.type !== 'data' || typeof p.connectionId !== 'string') return false
+  if (type === 'CANDIDATE') return !!p.candidate && typeof p.candidate === 'object'
+  return typeof p.sdp?.sdp === 'string' && p.sdp.sdp.startsWith('v=0\r\n') && p.sdp.sdp.length > 20
+}
+
 export interface BrokerConnection {
   send(data: string): void
   close(): void
@@ -62,6 +72,12 @@ export class BrokerHub {
       return
     }
     if (message.type === 'HEARTBEAT' || typeof message.type !== 'string' || typeof message.dst !== 'string') return
+    // As the public broker does: what is not shaped like a message of the PeerJS library is not
+    // carried, and its sender is hung up on
+    if (!wellFormed(message.type, message.payload)) {
+      this.disconnect(conn)
+      return conn.close()
+    }
     const dst = message.dst
     const frame = JSON.stringify({ type: message.type, src, dst, payload: message.payload })
     const target = this.clients.get(dst)

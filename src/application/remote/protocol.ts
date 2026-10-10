@@ -628,9 +628,53 @@ export function relayUrl(pageUrl: string, baseUrl: string, override?: string): s
 export function pairingUrl(pageUrl: string, baseUrl: string, room: string, host?: string): string {
   const url = new URL(baseUrl.replace(/\/?$/, '/'), pageUrl)
   if (host) url.hostname = host
-  url.search = `?${DESK_QUERY_PARAM}=${room}`
+  // The way the PC is reached is the phone's too: what forces it on the PC's page is carried over
+  const page = new URL(pageUrl).searchParams
+  const carried = [LINK_QUERY_PARAM, BROKER_QUERY_PARAM].flatMap((name) => {
+    const value = page.get(name)
+    return value === null ? [] : [`&${name}=${encodeURIComponent(value)}`]
+  })
+  url.search = `?${DESK_QUERY_PARAM}=${room}${carried.join('')}`
   url.hash = ''
   return url.toString()
+}
+
+// ─── The two ways to the PC ──────────────────────────────────────────────────
+
+/** `relay`: through the WebSocket relay of the server that serves the page; `direct`: WebRTC, introduced by a broker */
+export type RemoteTransport = 'relay' | 'direct'
+
+/** Path of the broker the dev server serves, under the application base, with the `/peerjs` the protocol adds */
+export const LOCAL_BROKER_PATH = '__broker/peerjs'
+/** `?liaison=webrtc` forces the direct link where the relay would be used (to try it under `npm run dev`) */
+export const LINK_QUERY_PARAM = 'liaison'
+/** `?courtier=local` uses the broker of the dev server; `?courtier=wss://…` another one */
+export const BROKER_QUERY_PARAM = 'courtier'
+
+export interface RemoteRoute {
+  transport: RemoteTransport
+  /** Address of the broker for the direct link; null: the public one */
+  broker: string | null
+}
+
+/**
+ * Which way a page reaches the other side. A page served over HTTPS (the published site) has no
+ * relay to talk to — and a browser forbids it `ws://` on the local network anyway: it goes
+ * direct. A page served by the PC uses the relay of that server, unless told otherwise.
+ */
+export function remoteRoute(pageUrl: string, baseUrl: string): RemoteRoute {
+  const page = new URL(pageUrl)
+  const direct = page.protocol === 'https:' || page.searchParams.get(LINK_QUERY_PARAM) === 'webrtc'
+  if (!direct) return { transport: 'relay', broker: null }
+  const asked = page.searchParams.get(BROKER_QUERY_PARAM)
+  if (asked === 'local') {
+    const url = new URL(baseUrl.replace(/\/?$/, '/') + LOCAL_BROKER_PATH, pageUrl)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.search = ''
+    url.hash = ''
+    return { transport: 'direct', broker: url.toString() }
+  }
+  return { transport: 'direct', broker: asked !== null && /^wss?:\/\//.test(asked) ? asked : null }
 }
 
 /** Room code carried by the page address, when the page was opened as a desk */

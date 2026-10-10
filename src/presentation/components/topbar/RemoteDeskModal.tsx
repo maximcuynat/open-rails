@@ -2,21 +2,22 @@ import { useMemo, useSyncExternalStore } from 'react'
 import type { EditorStore } from '@application/state/editorStore'
 import type { RemoteHostSnapshot } from '@application/remote/remoteHost'
 import type { RemoteSession } from '@application/remote/remoteSession'
-import { isSecurePage, pairingAddress } from '@application/remote/pairingAddress'
+import { pairingAddress } from '@application/remote/pairingAddress'
+import { isDirectLink } from '@infrastructure/remote/remoteLinks'
 import { MAX_DESKS } from '@application/remote/protocol'
 import { encodeQr } from '@domain/qr/encodeQr'
 import { qrSvgPath } from '@domain/qr/qrSvgPath'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
 
-/** True when the page cannot reach a relay on the local network (published site, served over HTTPS) */
+/** Nothing keeps a page from opening a room any more: served over HTTPS, it reaches the desks directly */
 export function remoteDeskUnavailable(): boolean {
-  return isSecurePage(window.location.href)
+  return false
 }
 
 type StatusTone = 'waiting' | 'connected' | 'error'
 
-function sessionStatus(snapshot: RemoteHostSnapshot): { tone: StatusTone; text: string; detail?: string } {
+function sessionStatus(snapshot: RemoteHostSnapshot, direct: boolean): { tone: StatusTone; text: string; detail?: string } {
   if (snapshot.error === 'version') {
     return { tone: 'error', text: 'Le relais et cette page n’ont pas la même version', detail: 'Rechargez la page, puis rouvrez le pupitre.' }
   }
@@ -26,7 +27,11 @@ function sessionStatus(snapshot: RemoteHostSnapshot): { tone: StatusTone; text: 
     return { tone: 'connected', text: `${count} / ${MAX_DESKS} ${count > 1 ? 'pupitres reliés' : 'pupitre relié'}`, detail: count < MAX_DESKS ? 'D’autres téléphones peuvent rejoindre avec le même code.' : undefined }
   }
   if (snapshot.ready) return { tone: 'waiting', text: 'En attente d’un téléphone' }
-  if (snapshot.link === 'open') return { tone: 'waiting', text: 'Ouverture du salon…' }
+  if (snapshot.link === 'open') {
+    return direct
+      ? { tone: 'waiting', text: 'Ouverture du salon…', detail: 'Le service de mise en relation est contacté ; s’il ne répond pas, vérifiez la connexion Internet du PC.' }
+      : { tone: 'waiting', text: 'Ouverture du salon…' }
+  }
   return {
     tone: 'error',
     text: 'Relais injoignable, nouvel essai en cours…',
@@ -82,15 +87,7 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
     return (
       <Modal isOpen title="Pupitre sur téléphone" closeLabel="Fermer" onClose={onClose}>
         <div className="remote-pairing">
-          {remoteDeskUnavailable() ? (
-            <p>
-              Le pupitre sur téléphone ne fonctionne pour l’instant que lorsque l’application est servie par le PC
-              (« npm run dev » ou « npm run preview ») : depuis ce site en HTTPS, le navigateur interdit la liaison
-              vers le réseau local.
-            </p>
-          ) : (
-            <p>La liaison avec le téléphone est coupée. Rouvrez « Pupitre sur téléphone… » pour tirer un nouveau code.</p>
-          )}
+          <p>La liaison avec les téléphones est coupée. Rouvrez « Pupitre sur téléphone… » pour tirer un nouveau code.</p>
         </div>
       </Modal>
     )
@@ -103,7 +100,8 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
     relayHosts: snapshot.hosts,
     typedHost: store.remoteDeskHost,
   })
-  const status = sessionStatus(snapshot)
+  const direct = isDirectLink()
+  const status = sessionStatus(snapshot, direct)
 
   return (
     <Modal
@@ -141,7 +139,11 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
         <div className="remote-main">
           <QrCode text={address.url} />
           <div className="remote-side">
-            <p className="remote-step">Sur le même réseau wifi, scannez le code ou ouvrez l’adresse sur le téléphone.</p>
+            <p className="remote-step">
+              {direct
+                ? 'Scannez le code ou ouvrez l’adresse sur le téléphone. Le PC et le téléphone doivent avoir accès à Internet ; la conduite passe ensuite en direct entre eux.'
+                : 'Sur le même réseau wifi, scannez le code ou ouvrez l’adresse sur le téléphone.'}
+            </p>
             <div className="remote-label">Code du salon</div>
             <div className="remote-code" aria-label={`Code du salon : ${snapshot.room.split('').join(' ')}`}>{snapshot.room}</div>
             <div className="remote-label">Adresse</div>
@@ -160,6 +162,13 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
           </div>
         </div>
 
+        {direct ? (
+          <p className="remote-hint">
+            Cet onglet doit rester ouvert et visible sur le PC : c’est lui qui relie les pupitres. Sans réseau commun, une connexion peut
+            échouer (téléphone en 4G, wifi d’entreprise) : essayez alors sur le même wifi que le PC.
+          </p>
+        ) : (
+          <>
         <div className="remote-host">
           <label className="remote-label" htmlFor="remote-host-input">Adresse IP du PC sur le réseau local</label>
           <input
@@ -227,6 +236,8 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
             </code>
           </p>
         </details>
+          </>
+        )}
       </div>
     </Modal>
   )

@@ -34,7 +34,7 @@ export default function RemoteDesk() {
   const [room, setRoom] = useState<string | null>(() => roomFromPageUrl(window.location.href))
   const [attempt, setAttempt] = useState(0)
   const [name, setName] = useState<string | null>(() => readDriverName())
-  const { snapshot, session, send } = useRemoteDesk(room, attempt, name)
+  const { snapshot, session, send, trouble } = useRemoteDesk(room, attempt, name)
   // The driver asked for the list while the PC still drives a train
   const [browsing, setBrowsing] = useState(false)
   // Train touched in the list, until the PC answers with its state
@@ -133,7 +133,19 @@ export default function RemoteDesk() {
           </StatusScreen>
         )
       case 'connecting':
-        return <StatusScreen busy title="Connexion au PC…" text={`Code ${room}`} />
+        return (
+          <StatusScreen
+            busy
+            title="Connexion au PC…"
+            text={
+              trouble === 'direct'
+                ? 'Le PC répond, mais la connexion directe ne passe pas : l’un des deux réseaux est trop fermé. Essayez sur le même Wi-Fi que le PC.'
+                : trouble === 'broker'
+                  ? 'Le service de mise en relation ne répond pas. Vérifiez la connexion Internet du téléphone ; nouvel essai en cours.'
+                  : `Code ${room}`
+            }
+          />
+        )
       case 'ended':
         return (
           <StatusScreen title={ENDED_TEXT[screen.reason].title} text={ENDED_TEXT[screen.reason].text}>

@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PeerBroker, brokerSocketUrl, type BrokerSignal } from './peerBroker'
 import { fakeBroker } from './rtc.testkit'
+import { candidatePayload, offerPayload } from './rtcPeer'
 
 const URL = 'wss://broker.example/peerjs'
+// Messages in the dress the broker asks for (see `rtcPeer.ts`)
+const OFFER = offerPayload({ type: 'offer', sdp: 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\n' }, 'dc_test')
+const CANDIDATE = candidatePayload({ candidate: 'candidate:1 1 udp 1 x.local 1 typ host' }, 'dc_test')
 
 describe('the client of the broker', () => {
   beforeEach(() => {
@@ -28,11 +32,11 @@ describe('the client of the broker', () => {
     expect(state.opened[0]).toContain('id=a')
     const heard: BrokerSignal[] = []
     b.onSignal((signal) => heard.push(signal))
-    expect(a.send('OFFER', 'b', { sdp: { type: 'offer', sdp: 'x' } })).toBe(true)
-    a.send('CANDIDATE', 'b', { candidate: { candidate: 'c' } })
+    expect(a.send('OFFER', 'b', OFFER)).toBe(true)
+    a.send('CANDIDATE', 'b', CANDIDATE)
     expect(heard).toEqual([
-      { type: 'OFFER', src: 'a', payload: { sdp: { type: 'offer', sdp: 'x' } } },
-      { type: 'CANDIDATE', src: 'a', payload: { candidate: { candidate: 'c' } } },
+      { type: 'OFFER', src: 'a', payload: OFFER },
+      { type: 'CANDIDATE', src: 'a', payload: CANDIDATE },
     ])
   })
 
@@ -42,7 +46,7 @@ describe('the client of the broker', () => {
     await vi.advanceTimersByTimeAsync(0)
     const heard: BrokerSignal[] = []
     a.onSignal((signal) => heard.push(signal))
-    a.send('OFFER', 'nobody', {})
+    a.send('OFFER', 'nobody', OFFER)
     await vi.advanceTimersByTimeAsync(4999)
     expect(heard).toEqual([])
     await vi.advanceTimersByTimeAsync(1)
@@ -53,12 +57,28 @@ describe('the client of the broker', () => {
     const { createSocket } = fakeBroker()
     const a = new PeerBroker({ url: URL, id: 'a', token: 'ta', createSocket })
     await vi.advanceTimersByTimeAsync(0)
-    a.send('OFFER', 'late', { n: 1 })
+    a.send('OFFER', 'late', OFFER)
     const late = new PeerBroker({ url: URL, id: 'late', token: 'tl', createSocket })
     const heard: BrokerSignal[] = []
     late.onSignal((signal) => heard.push(signal))
     await vi.advanceTimersByTimeAsync(0)
-    expect(heard).toEqual([{ type: 'OFFER', src: 'a', payload: { n: 1 } }])
+    expect(heard).toEqual([{ type: 'OFFER', src: 'a', payload: OFFER }])
+  })
+
+  it('is hung up on for a message that is not in the dress the broker asks for, and comes back', async () => {
+    const { createSocket } = fakeBroker()
+    const a = new PeerBroker({ url: URL, id: 'a', token: 'ta', createSocket, minRetryMs: 1000 })
+    const b = new PeerBroker({ url: URL, id: 'b', token: 'tb', createSocket })
+    await vi.advanceTimersByTimeAsync(0)
+    const heard: BrokerSignal[] = []
+    b.onSignal((signal) => heard.push(signal))
+    // As the public broker does with a bare description
+    a.send('OFFER', 'b', { sdp: { type: 'offer', sdp: 'v=0' } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(heard).toEqual([])
+    expect(a.status).toBe('connecting')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(a.status).toBe('open')
   })
 
   it('says so when the id is taken, and does not ask again', async () => {

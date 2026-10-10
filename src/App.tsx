@@ -11,7 +11,7 @@ import { ToastContainer, showToast } from '@presentation/components/common/Toast
 import { DrivingDock } from '@presentation/components/hud/DrivingDock'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
-import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
+import { createHostLink } from '@infrastructure/remote/remoteLinks'
 import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@domain/import/osmTypes'
 import { installLineStreaming, reloadDataset } from '@application/dataset/journeyLoader'
 import { datasetErrorMessage, loadDatasetIndex } from '@application/dataset/datasetClient'
@@ -25,7 +25,7 @@ export default function App() {
 
   // The phone desk belongs to this page: opened from the Simulation menu, gone with the page
   const remoteRef = useRef<RemoteSession | null>(null)
-  if (remoteRef.current === null) remoteRef.current = createRemoteSession({ store, createLink: createWebSocketLink })
+  if (remoteRef.current === null) remoteRef.current = createRemoteSession({ store, createLink: createHostLink })
   const remote = remoteRef.current
 
   // Subscribe so App re-renders on store changes (drives child components).

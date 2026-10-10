@@ -46,6 +46,23 @@ export function plain(value: unknown): RtcPlain {
   return (json ?? value ?? {}) as RtcPlain
 }
 
+// The public broker only carries messages shaped like those of the PeerJS library, and hangs up
+// on the sender of anything else (found by trying: its published source forwards any payload).
+// So ours are dressed the same: a data connection, named by an id the two ends share.
+
+/** The name of one attempt to connect, as the PeerJS library writes them */
+export const newConnectionId = (random: string): string => `dc_${random}`
+
+export const offerPayload = (sdp: RtcPlain, connectionId: string): RtcPlain => ({ sdp, type: 'data', connectionId, label: connectionId, reliable: false, serialization: 'binary' })
+export const answerPayload = (sdp: RtcPlain, connectionId: string): RtcPlain => ({ sdp, type: 'data', connectionId })
+export const candidatePayload = (candidate: RtcPlain, connectionId: string): RtcPlain => ({ candidate, type: 'data', connectionId })
+
+/** What a message of the broker carries for us: a description, a candidate, and the attempt it belongs to */
+export function readPayload(payload: unknown): { sdp?: RtcPlain; candidate?: RtcPlain; connectionId: string | null } {
+  const p = (payload ?? {}) as { sdp?: RtcPlain; candidate?: RtcPlain; connectionId?: unknown }
+  return { sdp: p.sdp, candidate: p.candidate, connectionId: typeof p.connectionId === 'string' ? p.connectionId : null }
+}
+
 /** The id of the PC of a room on the broker, and of a desk of that room */
 export const hostPeerId = (room: string): string => `openrails-${room}`
 export const deskPeerId = (room: string, client: string): string => `openrails-${room}-${client}`

@@ -102,7 +102,7 @@ describe('desks reaching the PC directly (WebRTC)', () => {
     expect(host.getSnapshot().desks).toEqual([{ desk: 1, name: 'Léa' }])
   })
 
-  it('sweeps away a desk gone silent, never the PC itself', async () => {
+  it('takes a desk gone silent as gone within seconds, never the PC itself', async () => {
     const { host, world, desk } = setup()
     await vi.advanceTimersByTimeAsync(0)
     desk('Léa')
@@ -113,7 +113,10 @@ describe('desks reaching the PC directly (WebRTC)', () => {
     there.onmessage = null
     // …and once she is swept away, her phone cannot get back in
     world.blocked = true
-    await vi.advanceTimersByTimeAsync(25_000)
+    // Three seconds of silence on a direct link, not the fifteen of the relay: a train must not run on that long
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(host.getSnapshot().deskConnected).toBe(true)
+    await vi.advanceTimersByTimeAsync(2000)
     expect(host.getSnapshot().desks).toEqual([])
     expect(host.getSnapshot()).toMatchObject({ link: 'open', ready: true })
   })

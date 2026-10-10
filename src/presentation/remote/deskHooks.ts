@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConsoleCommand, ConsoleState } from '@application/console/consoleContract'
 import { createRemoteDesk, type RemoteDesk, type RemoteDeskSnapshot } from '@application/remote/remoteDesk'
-import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
+import type { RemoteLink } from '@application/remote/remoteLink'
+import { createDeskLink } from '@infrastructure/remote/remoteLinks'
+import { RtcDeskLink, type RtcTrouble } from '@infrastructure/remote/rtcDeskLink'
 import { NEW_SESSION, extrapolateAhead, nextSession, type DeskSession } from './deskView'
 
 const IDLE_SNAPSHOT: RemoteDeskSnapshot = {
@@ -47,12 +49,15 @@ export function useAheadDistance(state: ConsoleState | null): number | null {
 export function useRemoteDesk(room: string | null, attempt: number, name?: string | null) {
   const [live, setLive] = useState<LiveDesk>(IDLE)
   const deskRef = useRef<RemoteDesk | null>(null)
+  const linkRef = useRef<RemoteLink | null>(null)
 
   useEffect(() => {
     setLive(IDLE)
     if (room === null) return
     // The name is read when the link opens: changing it takes a new attempt
-    const desk = createRemoteDesk({ link: createWebSocketLink(), room, name: name ?? undefined })
+    const link = createDeskLink(room)
+    linkRef.current = link
+    const desk = createRemoteDesk({ link, room, name: name ?? undefined })
     deskRef.current = desk
     const sync = () => {
       const snapshot = desk.getSnapshot()
@@ -60,15 +65,31 @@ export function useRemoteDesk(room: string | null, attempt: number, name?: strin
     }
     sync()
     const unsubscribe = desk.subscribe(sync)
+    // A page that is closed says so: the PC rests the train now, not when it notices the silence
+    const leave = () => desk.stop()
+    window.addEventListener('pagehide', leave)
     return () => {
+      window.removeEventListener('pagehide', leave)
       unsubscribe()
       desk.stop()
       if (deskRef.current === desk) deskRef.current = null
     }
   }, [room, attempt])
 
+  // A direct link that keeps failing changes what it says is wrong without changing status: look again now and then
+  const waiting = room !== null && !live.snapshot.joined && live.snapshot.ended === null
+  const [, look] = useState(0)
+  useEffect(() => {
+    if (!waiting) return
+    const timer = window.setInterval(() => look((n) => n + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [waiting])
+
   const send = useCallback((command: ConsoleCommand): number => deskRef.current?.send(command) ?? 0, [])
-  return { snapshot: live.snapshot, session: live.session, send }
+  // Why a direct link stays down, as far as it can tell; read at each render, which the retries cause
+  const link = linkRef.current
+  const trouble: RtcTrouble = link instanceof RtcDeskLink ? link.trouble : null
+  return { snapshot: live.snapshot, session: live.session, send, trouble }
 }
 
 /** Size of the window, followed through rotations */

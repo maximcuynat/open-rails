@@ -2,7 +2,7 @@ import { decodeMessage, encodeMessage, generateClientId, type RemoteMessage } fr
 import { systemScheduler, type LinkStatus, type RemoteLink, type Scheduler } from '@application/remote/remoteLink'
 import { RoomRelay, type RelayConnection } from '@application/remote/roomRelay'
 import { PeerBroker, type BrokerSignal } from './peerBroker'
-import { createBrowserPeer, hostPeerId, plain, type RtcChannelLike, type RtcPeerFactory, type RtcPeerLike, type RtcPlain } from './rtcPeer'
+import { answerPayload, candidatePayload, createBrowserPeer, hostPeerId, plain, readPayload, type RtcChannelLike, type RtcPeerFactory, type RtcPeerLike, type RtcPlain } from './rtcPeer'
 import type { WebSocketFactory } from './webSocketLink'
 
 /**
@@ -23,12 +23,22 @@ export interface RtcHostLinkOptions {
   scheduler?: Scheduler
   /** How often the rooms are swept for desks gone silent, ms */
   sweepMs?: number
+  /**
+   * Silence of a desk after which it is taken as gone, ms. A data channel does not say that the
+   * page at its other end closed: without this a train would run on under power for the fifteen
+   * seconds the rooms allow. A desk on a direct link beats every second (`RtcDeskLink`).
+   */
+  silenceMs?: number
 }
 
 interface DeskPeer {
   peer: RtcPeerLike
   channel: RtcChannelLike | null
   conn: RelayConnection | null
+  /** When the desk was last heard on its channel */
+  lastHeard: number
+  /** The name the desk gave this attempt: what is sent back to it carries it */
+  connectionId: string
 }
 
 export class RtcHostLink implements RemoteLink {
@@ -47,12 +57,14 @@ export class RtcHostLink implements RemoteLink {
   private readonly desks = new Map<string, DeskPeer>()
   private readonly token = generateClientId()
   private sweepTimer: unknown = null
+  private readonly silenceMs: number
 
   constructor(private readonly options: RtcHostLinkOptions) {
     this.scheduler = options.scheduler ?? systemScheduler
     this.createPeer = options.createPeer ?? createBrowserPeer
     this.relay = new RoomRelay({ now: () => this.scheduler.now() })
-    this.sweepTimer = this.scheduler.setInterval(() => this.sweep(), options.sweepMs ?? 5000)
+    this.silenceMs = options.silenceMs ?? 3000
+    this.sweepTimer = this.scheduler.setInterval(() => this.sweep(), options.sweepMs ?? 1000)
     this.seatHost()
   }
 
@@ -157,27 +169,29 @@ export class RtcHostLink implements RemoteLink {
   }
 
   private onSignal(signal: BrokerSignal): void {
-    const payload = (signal.payload ?? {}) as { sdp?: RtcPlain; candidate?: RtcPlain }
-    if (signal.type === 'OFFER' && payload.sdp) return void this.answer(signal.src, payload.sdp)
+    const payload = readPayload(signal.payload)
+    if (signal.type === 'OFFER' && payload.sdp && payload.connectionId) return void this.answer(signal.src, payload.sdp, payload.connectionId)
     const desk = this.desks.get(signal.src)
     if (!desk) return
-    if (signal.type === 'CANDIDATE' && payload.candidate) desk.peer.addIceCandidate(payload.candidate).catch(() => {})
+    // A candidate of an attempt the desk gave up is not for this connection
+    if (signal.type === 'CANDIDATE' && payload.candidate && payload.connectionId === desk.connectionId) desk.peer.addIceCandidate(payload.candidate).catch(() => {})
     else if (signal.type === 'LEAVE') this.dropDesk(signal.src)
   }
 
   /** A desk offers a connection: it is answered, and its data channel becomes its seat in the rooms */
-  private async answer(deskId: string, offer: RtcPlain): Promise<void> {
+  private async answer(deskId: string, offer: RtcPlain, connectionId: string): Promise<void> {
     // The same desk again: its former connection is dead to it
     this.dropDesk(deskId)
     const peer = this.createPeer()
-    const desk: DeskPeer = { peer, channel: null, conn: null }
+    const desk: DeskPeer = { peer, channel: null, conn: null, lastHeard: this.scheduler.now(), connectionId }
     this.desks.set(deskId, desk)
     const current = (): boolean => this.desks.get(deskId) === desk
     peer.onicecandidate = (event) => {
-      if (event.candidate && current()) this.broker?.send('CANDIDATE', deskId, { candidate: plain(event.candidate) })
+      if (event.candidate && current()) this.broker?.send('CANDIDATE', deskId, candidatePayload(plain(event.candidate), connectionId))
     }
     peer.onconnectionstatechange = () => {
-      if (current() && (peer.connectionState === 'failed' || peer.connectionState === 'closed')) this.dropDesk(deskId)
+      // `disconnected`: the browser lost the other end; it may come back, and the desk then asks again
+      if (current() && ['failed', 'closed', 'disconnected'].includes(peer.connectionState)) this.dropDesk(deskId)
     }
     peer.ondatachannel = ({ channel }) => {
       if (!current()) return
@@ -195,10 +209,12 @@ export class RtcHostLink implements RemoteLink {
           close: () => this.dropDesk(deskId),
         }
         desk.conn = conn
+        desk.lastHeard = this.scheduler.now()
         this.relay.connect(conn)
       }
       channel.onopen = seat
       channel.onmessage = (event) => {
+        desk.lastHeard = this.scheduler.now()
         if (desk.conn) this.relay.receive(desk.conn, typeof event.data === 'string' ? event.data : null)
       }
       channel.onclose = () => {
@@ -210,7 +226,7 @@ export class RtcHostLink implements RemoteLink {
       await peer.setRemoteDescription(offer)
       const description = await peer.createAnswer()
       await peer.setLocalDescription(description)
-      if (current()) this.broker?.send('ANSWER', deskId, { sdp: plain(description) })
+      if (current()) this.broker?.send('ANSWER', deskId, answerPayload(plain(description), connectionId))
     } catch {
       if (current()) this.dropDesk(deskId)
     }
@@ -234,6 +250,8 @@ export class RtcHostLink implements RemoteLink {
   private sweep(): void {
     // The host never falls silent to itself
     if (this.local) this.relay.receive(this.local, encodeMessage({ t: 'ping' }))
+    const limit = this.scheduler.now() - this.silenceMs
+    for (const [id, desk] of [...this.desks]) if (desk.conn && desk.lastHeard <= limit) this.dropDesk(id)
     this.relay.sweep()
   }
 

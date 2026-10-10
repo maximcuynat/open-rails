@@ -1,7 +1,7 @@
-import { HEARTBEAT_PERIOD_MS, HEARTBEAT_TIMEOUT_MS, decodeMessage, encodeMessage, generateClientId, type RemoteMessage } from '@application/remote/protocol'
+import { HEARTBEAT_TIMEOUT_MS, decodeMessage, encodeMessage, generateClientId, type RemoteMessage } from '@application/remote/protocol'
 import { systemScheduler, type LinkStatus, type RemoteLink, type Scheduler } from '@application/remote/remoteLink'
 import { PeerBroker, type BrokerSignal } from './peerBroker'
-import { createBrowserPeer, deskPeerId, hostPeerId, plain, type RtcChannelLike, type RtcPeerFactory, type RtcPeerLike, type RtcPlain } from './rtcPeer'
+import { candidatePayload, createBrowserPeer, deskPeerId, hostPeerId, newConnectionId, offerPayload, plain, readPayload, type RtcChannelLike, type RtcPeerFactory, type RtcPeerLike } from './rtcPeer'
 import type { WebSocketFactory } from './webSocketLink'
 
 /**
@@ -26,6 +26,14 @@ export interface RtcDeskLinkOptions {
 }
 
 /**
+ * A desk on a direct link beats every second: the PC takes three seconds of silence as a desk
+ * gone (nothing else tells it that the page closed), and the desk takes as long of the PC's — which
+ * speaks ten times a second while it is there — as a PC gone.
+ */
+const DIRECT_HEARTBEAT_MS = 1000
+const DIRECT_SILENCE_MS = Math.min(3000, HEARTBEAT_TIMEOUT_MS)
+
+/**
  * Why the link is not up, when it can tell: `broker` — the broker cannot be reached; `direct` —
  * the PC answered but the two networks do not let a direct connection through.
  */
@@ -45,6 +53,7 @@ export class RtcDeskLink implements RemoteLink {
   private offBroker: (() => void)[] = []
   private peer: RtcPeerLike | null = null
   private channel: RtcChannelLike | null = null
+  private connectionId: string | null = null
   /** The PC answered this attempt: a failure from here on is the networks', not an empty room */
   private answered = false
   private failures = 0
@@ -127,9 +136,11 @@ export class RtcDeskLink implements RemoteLink {
   private async offer(broker: PeerBroker): Promise<void> {
     const peer = this.createPeer()
     this.peer = peer
+    const connectionId = newConnectionId(generateClientId().slice(0, 11))
+    this.connectionId = connectionId
     const current = (): boolean => peer === this.peer
     peer.onicecandidate = (event) => {
-      if (event.candidate && current()) broker.send('CANDIDATE', this.hostId, { candidate: plain(event.candidate) })
+      if (event.candidate && current()) broker.send('CANDIDATE', this.hostId, candidatePayload(plain(event.candidate), connectionId))
     }
     peer.onconnectionstatechange = () => {
       if (current() && (peer.connectionState === 'failed' || peer.connectionState === 'closed')) this.failed()
@@ -145,7 +156,7 @@ export class RtcDeskLink implements RemoteLink {
       this.failures = this.directFailures = 0
       this.troubleNow = null
       this.lastHeard = this.scheduler.now()
-      this.heartbeatTimer = this.scheduler.setInterval(() => this.heartbeat(), HEARTBEAT_PERIOD_MS)
+      this.heartbeatTimer = this.scheduler.setInterval(() => this.heartbeat(), DIRECT_HEARTBEAT_MS)
       this.setStatus('open')
     }
     channel.onmessage = (event) => {
@@ -167,7 +178,7 @@ export class RtcDeskLink implements RemoteLink {
     try {
       const description = await peer.createOffer()
       await peer.setLocalDescription(description)
-      if (current()) broker.send('OFFER', this.hostId, { sdp: plain(description) })
+      if (current()) broker.send('OFFER', this.hostId, offerPayload(plain(description), connectionId))
     } catch {
       if (current()) this.failed()
     }
@@ -175,7 +186,9 @@ export class RtcDeskLink implements RemoteLink {
 
   private onSignal(signal: BrokerSignal): void {
     if (signal.src !== this.hostId || !this.peer) return
-    const payload = (signal.payload ?? {}) as { sdp?: RtcPlain; candidate?: RtcPlain }
+    const payload = readPayload(signal.payload)
+    // What answers an attempt given up is not for this one
+    if (signal.type !== 'EXPIRE' && payload.connectionId !== this.connectionId) return
     if (signal.type === 'ANSWER' && payload.sdp) {
       this.answered = true
       this.peer.setRemoteDescription(payload.sdp).catch(() => this.failed())
@@ -189,7 +202,7 @@ export class RtcDeskLink implements RemoteLink {
   }
 
   private heartbeat(): void {
-    if (this.scheduler.now() - this.lastHeard >= HEARTBEAT_TIMEOUT_MS) {
+    if (this.scheduler.now() - this.lastHeard >= DIRECT_SILENCE_MS) {
       // The PC went mute without closing: give this connection up
       this.failed()
       return
