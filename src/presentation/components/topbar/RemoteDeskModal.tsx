@@ -197,6 +197,13 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
               ))}
             </div>
           )}
+          {address.typedUnknown && (
+            <p className="remote-hint is-warning">
+              L’adresse saisie ({address.host}) n’est pas une de celles que le serveur connaît de ce PC. Si le téléphone affiche « site
+              inaccessible », c’est peut-être une ancienne adresse : choisissez-en une ci-dessus, ou{' '}
+              <button type="button" className="remote-choice" onClick={() => store.setRemoteDeskHost('')}>effacez-la</button>.
+            </p>
+          )}
           {address.typedInvalid && <p className="remote-hint is-warning">Ce n’est pas une adresse : elle est ignorée.</p>}
           {address.localOnly && (
             <p className="remote-hint is-warning">

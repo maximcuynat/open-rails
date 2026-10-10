@@ -32,6 +32,7 @@ describe('pairingAddress', () => {
       host: '192.168.1.42',
       choices: ['192.168.1.42', '10.0.0.3'],
       typedInvalid: false,
+      typedUnknown: false,
       localOnly: false,
     })
   })
@@ -44,6 +45,16 @@ describe('pairingAddress', () => {
     // Half typed: ignored, and said so
     expect(typed('192.168.')).toMatchObject({ host: '172.20.0.5', typedInvalid: true })
     expect(typed('  ')).toMatchObject({ host: '172.20.0.5', typedInvalid: false })
+  })
+
+  it('says when the address typed is none of those the server knows of its machine', () => {
+    const typed = (typedHost: string) => pairingAddress({ ...base, relayHosts: ['192.168.1.103', '172.18.0.1'], typedHost })
+    // An address of another day, kept: it still wins, and it is said
+    expect(typed('192.168.1.82')).toMatchObject({ host: '192.168.1.82', typedUnknown: true })
+    expect(typed('192.168.1.103')).toMatchObject({ host: '192.168.1.103', typedUnknown: false })
+    expect(typed('')).toMatchObject({ host: '192.168.1.103', typedUnknown: false })
+    // Nothing to compare it with: nothing to say
+    expect(pairingAddress({ ...base, typedHost: '192.168.1.82' }).typedUnknown).toBe(false)
   })
 
   it('offers the host of the page first when the page is already opened on the network', () => {
@@ -62,6 +73,7 @@ describe('pairingAddress', () => {
       host: 'localhost',
       choices: [],
       typedInvalid: false,
+      typedUnknown: false,
       localOnly: true,
     })
     expect(pairingAddress({ ...base, relayHosts: ['127.0.0.1'] }).choices).toEqual([])
