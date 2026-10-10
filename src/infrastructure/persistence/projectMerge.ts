@@ -55,6 +55,17 @@ export interface MergeReport {
   addedBox: { minX: number; minY: number; maxX: number; maxY: number } | null
 }
 
+/** True when `data` has the shape of a project file: nodes with a place, rails between two nodes */
+export function isProjectFile(data: unknown): data is SerializedProject {
+  if (!data || typeof data !== 'object') return false
+  const { nodes, segments } = data as { nodes?: unknown; segments?: unknown }
+  if (!Array.isArray(nodes) || !Array.isArray(segments)) return false
+  const isNode = (n: unknown): boolean => !!n && typeof n === 'object' && typeof (n as SerializedNode).id === 'string' && Number.isFinite((n as SerializedNode).x) && Number.isFinite((n as SerializedNode).y)
+  const isRail = (s: unknown): boolean =>
+    !!s && typeof s === 'object' && typeof (s as SerializedSegment).id === 'string' && typeof (s as SerializedSegment).from === 'string' && typeof (s as SerializedSegment).to === 'string'
+  return nodes.every(isNode) && segments.every(isRail)
+}
+
 /** The number an id ends with (`s_40` → 40), 0 when it has none */
 function idNumber(id: string): number {
   const at = id.lastIndexOf('_')

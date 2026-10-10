@@ -53,6 +53,8 @@ import { placementThresholds, type PlacementThresholds } from '@domain/geometry/
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
 import { connectionsToward } from '@domain/dataset/lineRoute'
+import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
+import type { MergeOutcome } from '@application/import/mergeReport'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
 import {
   saveNetworkToStorage,
@@ -1038,6 +1040,50 @@ export class EditorStore {
     }
     this.markDirty()
     this.notify()
+  }
+
+  /**
+   * Add a project file to the current project instead of replacing it (« Ajouter un JSON au
+   * projet… »): the file takes ids of its own, is moved onto the map of the current project when
+   * both say where they are, and what the two have in common is taken once (`mergeProjects`).
+   * The network is brought to the result in place, then welded and cut where the two meet. The
+   * view, the name and the settings stay those of the current project; one step of the history.
+   * Returns what was done (`repairs`: the rails and nodes the welding made or took away), null when the network cannot be edited (driving, dataset project);
+   * throws « Fichier JSON invalide » when the data is not a project.
+   */
+  mergeProjectFile = (data: unknown): MergeOutcome | null => {
+    if (!this.canEditNetwork) return null
+    if (!isProjectFile(data)) throw new Error('Fichier JSON invalide')
+    const tolerance = this.getPlacementThresholds().reconcileTolerance
+    const current = this.exportProject()
+    const { project, report } = mergeProjects(current, data, { tolerance })
+    // The trains of the current project stay the objects they are, held where they stand while
+    // the rails are welded under them; only those the file brings are taken from what is read
+    const mine = new Set(this.trains.map((train) => train.id))
+    this.pinTrains()
+    const res = deserializeNetwork(project, undefined, this.network)
+    this.network = res.network
+    // Loading welds and cuts where the two meet, and a pass stops after a number of repairs:
+    // again until one finds nothing. What it did shows in the rails it made
+    for (let pass = 0; pass < 50; pass++) {
+      const { splitCount, weldedCount } = reconcileNetworkIntersections(this.network, tolerance)
+      if (splitCount + weldedCount === 0) break
+    }
+    const repairs = Math.abs(this.network.segments.size - project.segments.length) + Math.abs(this.network.nodes.size - project.nodes.length)
+    this.realignTrains()
+    this.unpinTrains()
+    const brought = pruneTrainsToNetwork(this.network, res.trains.filter((train) => !mine.has(train.id)))
+    if (brought.length > 0) {
+      this.trains = [...this.trains, ...brought]
+      this.refreshCouplerPoints()
+    }
+    this.syncTrainsWithNetwork()
+    applySectionMeta(this.sectionMeta, res.sectionMeta ?? {})
+    if (!this.osmSource && res.osmSource) this.osmSource = res.osmSource
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.resetPendingToolState()
+    this.markDirty()
+    return { ...report, repairs }
   }
 
   /** The trains, settings and provenance a loaded file brings; its network is already in place */
