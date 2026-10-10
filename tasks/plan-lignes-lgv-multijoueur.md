@@ -220,14 +220,14 @@ d'un bloc (idiome `parts` de `projectSlices.test.ts`) ; un fichier en repère lo
 projet Lambert-93 se superpose aux gares du registre à moins de 5 m.
 
 ### Lot 4 — Salon à N pupitres et état du monde
-- [ ] 17. `rooms.ts` et `remoteHost.ts` : N pupitres, un train par pupitre, prise et rendu des
+- [x] 17. `rooms.ts` et `remoteHost.ts` : N pupitres, un train par pupitre, prise et rendu des
   commandes par train, pastilles « conducteur » sur le PC.
-- [ ] 18. Message `world` (positions, aiguillages, signaux changés) à 10 Hz, validé dans
+- [x] 18. Message `world` (positions, aiguillages, signaux changés) à 10 Hz, validé dans
   `protocol.ts` ; extrapolation le long de la voie côté pupitre ; test sur `fakeLink` avec
   latence simulée.
-- [ ] 19. Vue aiguilleur sur le PC : tableau de contrôle au-dessus du mode pilotage épuré
+- [x] 19. Vue aiguilleur sur le PC : tableau de contrôle au-dessus du mode pilotage épuré
   (aiguillages cliquables, cantons, signaux, trains nommés par conducteur).
-- [ ] 20. Vérification de version du jeu de données entre hôte et pupitres.
+- [ ] 20. *(reporté, 2026-10-10 : le téléphone ne charge aucune ligne, rien à comparer)* Vérification de version du jeu de données entre hôte et pupitres.
 
 ### Lot 5 — Mise en relation publique (essai)
 - [ ] 21. Lien `remoteLink` WebRTC DataChannel, protocole v1 inchangé, STUN public.
@@ -508,6 +508,64 @@ Limites connues :
 - Recouvrement **partiel** de deux rails longs (l'un A–C, l'autre B–D) : non reconnu.
 - `tools/remote-relay/endToEnd.test.ts` (vrais sockets) a expiré une fois sous la charge de la
   suite entière, passe seul et aux autres passes : sans lien avec ce lot.
+
+### Lot 4 — fait le 2026-10-10 (branche `feature/lignes-lgv`, deux commits)
+
+Plusieurs téléphones conduisent chacun un train, le PC aiguille et peut conduire aussi. Items
+17–19 faits ; 20 reporté. Décisions de l'utilisateur (2026-10-10) : les autres trains sont
+montrés sur le téléphone par des **chiffres calculés par le PC** (pas de voie sur le téléphone) ;
+**le PC peut conduire un train libre**.
+
+Écarts au plan d'origine, voulus par ces décisions :
+- **Pas de message `world`** : sans voie, le téléphone n'a rien à extrapoler le long d'un rail.
+  À la place, `ConsoleState.ahead` (train devant sur l'itinéraire ouvert, jusqu'à 10 km :
+  distance, vitesse le long de l'itinéraire, conducteur) et `FleetEntry.driver` / `driverName` ;
+  le téléphone extrapole la **distance** entre deux états (`extrapolateAhead`).
+- **Item 20 reporté** : il reviendra avec une carte de ligne sur le téléphone.
+
+Ce qui a été fait :
+- **Store** : un conducteur par train (`trainDrivers`, `driverOf`, `takeTrain`, `releaseTrain`,
+  API de conduite par train) ; `tickAllTrains` ne met au neutre que les trains sans conducteur ;
+  dynamique précise pour chaque train conduit. Le mode spectateur tout-ou-rien a disparu :
+  `isSpectating` = le train regardé par le PC est tenu par un pupitre. Un pupitre peut prendre
+  le train du PC ; « Rendre » libère son train sans arrêter la simulation des autres.
+- **Protocole v2** (`PROTOCOL_VERSION = 2`) et **relais** : jusqu'à 8 pupitres numérotés,
+  `state` adressé (`to`), `fleet` diffusée, `command` estampillée par le relais (`from`), nom
+  du conducteur dans `join`. Relancer `npm run dev` après mise à jour (le relais est chargé au
+  démarrage) ; une page restée en v1 voit « Versions différentes ».
+- **Hôte** : séquence, frein tenu et repli sur `hold` (600 ms) **par pupitre**.
+- **Coupure de réseau d'un téléphone** : son train est mis au repos tout de suite et lui reste
+  réservé 20 s (`DESK_RETURN_GRACE_MS`) ; le même téléphone qui revient le retrouve (le relais
+  lui rend son numéro et le dit, `back`), un autre téléphone sous ce numéro n'en hérite pas.
+- **Téléphone** : champ « Votre nom », liste « Aux commandes / Conduire / Pris par … / Conduit
+  par le PC · prendre », ligne « Train devant 6,8 km · 9 km/h · PC ».
+- **PC** : liste des pupitres dans la fenêtre de liaison (« 2 / 8 pupitres reliés ») ; pastille
+  du conducteur au-dessus de chaque train ; **tableau de l'aiguilleur** (Affichage ▸ « Tableau de
+  l'aiguilleur », ouvert d'office dès qu'un pupitre est relié) : trains et conducteurs,
+  aiguillages à venir des trains conduits avec position, verrou et « Basculer » ; **un clic sur
+  le repère d'un aiguillage le manœuvre à tous les zooms**. L'aiguilleur ne force pas un
+  itinéraire réservé (refus existants gardés).
+- **Horloges monotones** (`performance.now`) pour le relais et les liens : sur cette machine
+  (WSL2) `Date.now()` saute de ~10 h pendant ~300 ms toutes les 5 s, ce qui faisait croire à 15 s
+  de silence — la cause de l'échec intermittent de `endToEnd.test.ts` noté au lot 3 bis.
+
+Vérification : `npm test` 2 685 tests (suite entière verte trois fois de suite), `tsc`,
+`npm run build` ; lot du téléphone 20,3 ko (18 avant), sans l'éditeur. Test de liaison dégradée
+sur le vrai relais (`lossyRoom.testkit.ts` : 200 ms de latence aller-retour, 5 % de perte, 22
+trames perdues sur 480) : écart de la distance extrapolée **1,3 m au pire** à 300 km/h derrière
+280 km/h ; repli sur frein `hold` atteint. Navigateur sans tête, un PC et **deux téléphones**
+par le vrai relais, LGV Rhône-Alpes, trois trains : deux pupitres et le PC conduisent ensemble
+à **57–60 images/s**, « Pris par Léa » sur l'autre téléphone, « Train devant » affiché,
+« Basculer » et clic sur le canevas à l'échelle 0,05 changent la position, téléphone fermé → son
+train seul au repos, « Rendre » → la conduite continue. Un état de console pèse ~0,7 ko, soit
+~7 ko/s par pupitre.
+
+Limites connues :
+- Les deux commits ne sont verts qu'ensemble (le second porte l'interface du premier).
+- Un téléphone qui **recharge sa page** tire un nouveau jeton : il revient comme un nouveau
+  pupitre et doit reprendre un train (l'ancien est libéré après 20 s).
+- Le côté `remote` de `BrakeSource` / `brakeHolds` ne sert plus qu'à un ancien test : à retirer.
+- Pas encore de contrôle humain sur de vrais téléphones (Wi-Fi) : seulement en navigateur sans tête.
 
 ## Hors périmètre (cette version)
 

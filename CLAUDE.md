@@ -84,8 +84,10 @@ A driving console never reads the store. It receives a `ConsoleState` and emits 
 
 - `presentation/components/console/` — the shared instruments and the three layouts (`band`, `screen`, `levers`); `chooseConsoleLayout` picks one from the canvas size unless the `consolePreference` setting forces one. `hud/DrivingDock.tsx` is the PC container and the only part that touches the store.
 - `application/remote/` — the phone link: `protocol.ts` (messages, strict validation of everything received), `remoteHost.ts` (PC side, sends the fleet and the state, falls back to brake `hold` when the phone goes silent), `remoteDesk.ts` (phone side), `remoteSession.ts` (opens and closes a session on the PC). `infrastructure/remote/webSocketLink.ts` is the browser transport.
-- `tools/remote-relay/` — a WebSocket relay that pairs one PC and one phone per room code. It is a Vite plugin (`vite.config.ts`), so it only exists under `npm run dev` / `npm run preview`: the phone desk does not work on the static GitHub Pages build. `ws` is a dev dependency.
+- `tools/remote-relay/` — a WebSocket relay that seats one PC and up to eight phone desks per room code, each desk known by a number (`rooms.ts`). It is a Vite plugin (`vite.config.ts`), so it only exists under `npm run dev` / `npm run preview`: the phone desk does not work on the static GitHub Pages build. `ws` is a dev dependency.
 - `presentation/remote/` — the page a phone gets when the URL carries `?pupitre=CODE` (`main.tsx` loads it instead of `App`, without the editor bundle).
+
+Each train has one driver: this screen for its selected train, or a desk (`store.trainDrivers`, `driverOf`, `takeTrain` / `releaseTrain`); a desk acts through `applyDeskCommand(store, desk, command)` on the train it holds and no other, and `tickAllTrains` neutralises only the trains nobody drives. The dispatcher's board (`hud/DispatcherPanel.tsx`, readers in `application/console/dispatcher.ts`) lists who drives what and the points ahead; while it is up a click on the mark of a set of points throws it at any zoom.
 
 A field added to `ConsoleState` must also be added to the validation in `protocol.ts`, or it is dropped on the way to the phone. The plan and what is left to do are in `tasks/plan-console-conduite.md`.
 
