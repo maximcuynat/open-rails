@@ -143,6 +143,26 @@ describe('train level of detail', () => {
       expect(fills.filter(f => f === BOGIE_FILL)).toHaveLength(2)
     })
 
+    it('the plain driving view keeps the bogies close up, not the gangways', () => {
+      const { net, ts } = straightWithTrain()
+      const fillsOf = (cam: typeof DETAIL, plain: boolean): unknown[] => {
+        const ctx = createMockContext()
+        const fills: unknown[] = []
+        vi.mocked(ctx.fill).mockImplementation(() => { fills.push(ctx.fillStyle) })
+        renderTrainSet(ctx, cam, 800, 600, net, ts, false, false, false, undefined, null, null, undefined, undefined, plain)
+        return fills
+      }
+      // Side beams of the bogies; a gangway has one fill of the same colour
+      const dark = (fills: unknown[]) => fills.filter(f => f === BOGIE_FILL).length
+      const gangways = ts.vehicles.length - 1
+      const full = fillsOf(DETAIL, false)
+      const plain = fillsOf(DETAIL, true)
+      expect(dark(plain)).toBeGreaterThan(0)
+      expect(dark(plain)).toBe(dark(full) - gangways)
+      // Further out the bogies go, as in the editor
+      expect(dark(fillsOf({ ...DETAIL, scale: 2.5 }, true))).toBe(0)
+    })
+
     it('still draws the debug overlay of a train out of view (it reaches beyond the train)', () => {
       const { net, ts } = straightWithTrain()
       const ctx = createMockContext()

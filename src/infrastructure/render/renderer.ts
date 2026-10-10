@@ -4761,7 +4761,7 @@ export function renderTrainSet(
   deleteVehicleId?: string | null,
   band?: LevelBand,
   line?: LineSettings,
-  /** Plain driving view: bodies only, never the bogies nor the gangways, however close the view */
+  /** Plain driving view: bodies and bogies, never the gangways nor the lean, however close the view */
   plain = false,
 ): void {
   // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
@@ -4891,10 +4891,11 @@ export function renderTrainSet(
 
   // 1. Bogies: each physical bogie once (two trailers share one), the first is the lead bogie
   // A bogie is at the level of its own rail
-  // Bogies and gangways are close-up detail: below it a vehicle is its plain silhouette
+  // Bogies and gangways are close-up detail: below it a vehicle is its plain silhouette.
+  // The plain driving view keeps the bogies (asked for), not the gangways
   for (let i = 0; i < visuals.bogies.length; i++) {
     const bogie = visuals.bogies[i]
-    if (lod !== 'detail' || !inView(bogie.polygon)) continue
+    if (tier !== 'detail' || !inView(bogie.polygon)) continue
     atLevel(bogie.pos ? trackPositionLevel(net, bogie.pos) : topLevel, () => {
       drawTrainSetBogie(ctx, cam, toSx, toSy, bogie, i === 0, isGhost)
     })
