@@ -13,7 +13,7 @@ import { compactKeyLabel, newDerailment } from '../console/consoleModel'
 import type { ConsoleArrangement } from '../console/consoleLayout'
 import type { ConsoleKeys } from '../console/consoleParts'
 import { TrainDebugPanel } from './TrainDebugPanel'
-import { SpectatorPanel } from './SpectatorPanel'
+import { DispatcherPanel } from './DispatcherPanel'
 
 const KEY_ACTIONS: Record<keyof ConsoleKeys, ActionId> = {
   notchUp: 'drive.notchUp',
@@ -115,13 +115,14 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
     <>
       <div className="hud-dock">
         <TrainDebugPanel store={store} />
-        {/* A phone holds the desk: this screen shows who runs where, not a second console */}
-        {store.isSpectating && (
-          <SpectatorPanel
+        {/* Who runs where and how the points lie: up when asked for, and whenever a desk is in the room */}
+        {(store.dispatcherVisible || store.isSpectating) && (
+          <DispatcherPanel
             store={store}
+            linked={phoneConnected}
             onCutLink={() => {
               remote.close()
-              showToast('Liaison avec le téléphone coupée : le poste de conduite revient sur cet écran', 'info')
+              showToast('Liaison coupée : les pupitres sont renvoyés', 'info')
             }}
           />
         )}

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ConsoleCommand } from '@application/console/consoleContract'
+import type { ConsoleCommand, ConsoleState } from '@application/console/consoleContract'
 import { createRemoteDesk, type RemoteDesk, type RemoteDeskSnapshot } from '@application/remote/remoteDesk'
 import { createWebSocketLink } from '@infrastructure/remote/webSocketLink'
-import { NEW_SESSION, nextSession, type DeskSession } from './deskView'
+import { NEW_SESSION, extrapolateAhead, nextSession, type DeskSession } from './deskView'
 
 const IDLE_SNAPSHOT: RemoteDeskSnapshot = {
   link: 'connecting',
   joined: false,
+  desk: null,
   fleet: [],
   state: null,
   ack: 0,
@@ -21,17 +22,37 @@ interface LiveDesk {
 const IDLE: LiveDesk = { snapshot: IDLE_SNAPSHOT, session: NEW_SESSION }
 
 /**
+ * The distance to the train ahead as it is now: what the PC last said, carried forward at the
+ * speeds it gave until the next state comes. Null when the PC names no train ahead.
+ */
+export function useAheadDistance(state: ConsoleState | null): number | null {
+  const ahead = state?.ahead ?? null
+  const received = useRef({ state, at: 0 })
+  const [, redraw] = useState(0)
+  if (received.current.state !== state) received.current = { state, at: performance.now() }
+  useEffect(() => {
+    if (!ahead) return
+    // The PC speaks ten times a second: twice that keeps the figure moving through a lost state
+    const timer = window.setInterval(() => redraw((n) => n + 1), 50)
+    return () => window.clearInterval(timer)
+  }, [ahead !== null])
+  if (!ahead || !state) return null
+  return extrapolateAhead(ahead, state.speed, (performance.now() - received.current.at) / 1000)
+}
+
+/**
  * The link to the PC for a room code. A new code, or a new `attempt` with the same code, drops
  * the link and opens another; nothing else does, so turning the phone keeps it.
  */
-export function useRemoteDesk(room: string | null, attempt: number) {
+export function useRemoteDesk(room: string | null, attempt: number, name?: string | null) {
   const [live, setLive] = useState<LiveDesk>(IDLE)
   const deskRef = useRef<RemoteDesk | null>(null)
 
   useEffect(() => {
     setLive(IDLE)
     if (room === null) return
-    const desk = createRemoteDesk({ link: createWebSocketLink(), room })
+    // The name is read when the link opens: changing it takes a new attempt
+    const desk = createRemoteDesk({ link: createWebSocketLink(), room, name: name ?? undefined })
     deskRef.current = desk
     const sync = () => {
       const snapshot = desk.getSnapshot()

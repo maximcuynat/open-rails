@@ -52,6 +52,7 @@ import {
   projectOnSegment,
 } from './locomotive'
 import { generateId } from './network'
+import { findJunctionAtNode } from './routing'
 import { rakeOccupancy } from './occupancy'
 import type { RollingStockModel, StockVehicle } from './rollingStock'
 import {
@@ -399,20 +400,36 @@ function freeDistanceAhead(
   obstacles: TrainSet[],
   occupancy?: TrainOccupancyCache,
 ): number | null {
+  return trainAhead(net, train, reach, obstacles, occupancy)?.distance ?? null
+}
+
+/**
+ * The first of `others` met on the route ahead of the leading end of the train, as the points
+ * lie, looking `reach` metres ahead: which train, and how far its nearest end is (0 or less:
+ * touching). Null when the route is clear that far, ends, or runs against closed points first.
+ */
+export function trainAhead(
+  net: Network,
+  train: TrainSet,
+  reach: number,
+  others: readonly TrainSet[],
+  occupancy?: TrainOccupancyCache,
+): { train: TrainSet; distance: number } | null {
   const { ahead, overhang } = traceAhead(net, train, reach)
 
-  const occupied = obstacles.flatMap((other) => {
+  const occupied = others.flatMap((other) => {
     let trace = occupancy?.get(other.id)
     if (!trace) {
       trace = trainOccupancy(net, other)
       occupancy?.set(other.id, trace)
     }
-    return trace.spans
+    return trace.spans.map((span) => ({ span, other }))
   })
   let travelled = 0
   for (const span of ahead.spans) {
     let nearest: number | null = null
-    for (const occ of occupied) {
+    let found: TrainSet | null = null
+    for (const { span: occ, other } of occupied) {
       if (occ.segId !== span.segId) continue
       const occLo = Math.min(occ.t0, occ.t1)
       const occHi = Math.max(occ.t0, occ.t1)
@@ -420,12 +437,34 @@ function freeDistanceAhead(
       // First occupied point met when running from span.t0 towards span.t1
       const hit = span.t1 >= span.t0 ? Math.max(occLo, span.t0) : Math.min(occHi, span.t0)
       const d = segmentPartialLength(net, span.segId, span.t0, hit)
-      if (nearest === null || d < nearest) nearest = d
+      if (nearest === null || d < nearest) {
+        nearest = d
+        found = other
+      }
     }
-    if (nearest !== null) return travelled + nearest - overhang
+    if (nearest !== null && found) return { train: found, distance: travelled + nearest - overhang }
     travelled += segmentPartialLength(net, span.segId, span.t0, span.t1)
   }
   return null
+}
+
+/**
+ * The route tables met on the route ahead of the leading end of the train, as the points lie, in
+ * order, each with its distance from that end: what a dispatcher may want to set before the train
+ * gets there. Looks `reach` metres ahead and stops where the route does.
+ */
+export function junctionsAhead(net: Network, train: TrainSet, reach: number): { junction: Junction; distance: number }[] {
+  if (train.vehicles.length === 0) return []
+  const { ahead, overhang } = traceAhead(net, train, reach)
+  const found: { junction: Junction; distance: number }[] = []
+  let travelled = 0
+  ahead.spans.forEach((span, i) => {
+    travelled += segmentPartialLength(net, span.segId, span.t0, span.t1)
+    const nodeId = ahead.nodes[i]
+    const junction = nodeId === undefined ? undefined : findJunctionAtNode(net, nodeId)
+    if (junction && !found.some((f) => f.junction === junction)) found.push({ junction, distance: Math.max(0, travelled - overhang) })
+  })
+  return found
 }
 
 /**

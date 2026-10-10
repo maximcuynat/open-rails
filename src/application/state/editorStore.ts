@@ -376,8 +376,10 @@ export class EditorStore {
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
-  /** A phone holds the driving desk (set by the remote session): this screen then only watches */
-  remoteDeskConnected = false
+  /** The trains held by a phone desk, by desk number (set by the remote session); empty outside driving */
+  trainDrivers = new Map<string, number>()
+  /** The desks seated in the room and the name each driver gave, by desk number */
+  deskNames = new Map<number, string>()
 
   // --- Dataset: a project built from the published « LGV France » lines ---
   /** Recipe of the dataset the project is built from; null for a hand-drawn or free-imported project */
@@ -412,40 +414,141 @@ export class EditorStore {
   get canEditNetwork(): boolean {
     return !this.isPlayMode && !this.isNetworkLocked
   }
-  /** Train the camera follows while spectating; null = the train the phone drives */
-  spectatedTrainId: string | null = null
+  /** The dispatcher's board was asked for (Affichage ▸ « Tableau de l'aiguilleur ») */
+  showDispatcher = false
 
-  /** True while a phone drives and this screen watches: no console here, no driving from this keyboard */
-  get isSpectating(): boolean {
-    return this.isPlayMode && this.remoteDeskConnected
+  /** The board is up: while driving, when asked for or as soon as a desk sits in the room */
+  get dispatcherVisible(): boolean {
+    return this.isPlayMode && (this.showDispatcher || this.deskNames.size > 0)
   }
 
-  /** The train the camera follows in driving mode: the spectated one while spectating, else the driven one */
-  get cameraTrain(): TrainSet | null {
-    if (this.isSpectating && this.spectatedTrainId) {
-      const spectated = this.trains.find((t) => t.id === this.spectatedTrainId)
-      if (spectated) return spectated
-    }
-    return this.selectedTrain
-  }
-
-  /** Called by the remote session when a phone takes or leaves the desk */
-  setRemoteDeskConnected = (connected: boolean): void => {
-    if (this.remoteDeskConnected === connected) return
-    this.remoteDeskConnected = connected
-    this.spectatedTrainId = null
+  toggleDispatcher = (): void => {
+    this.showDispatcher = !this.showDispatcher
     this.notify()
   }
 
-  /** While spectating: follow this train with the camera (null = the train the phone drives) */
+  /** Show a place: the view stops following a train and centres there */
+  showPlace = (x: number, y: number): void => {
+    this.followLocomotiveCamera = false
+    this.camera.x = x
+    this.camera.y = y
+    this.notify()
+  }
+
+  /** Who drives a train: a desk (its number), this screen (`host`: its selected train while driving), or nobody */
+  driverOf = (trainId: string): 'host' | number | null => {
+    const desk = this.trainDrivers.get(trainId)
+    if (desk !== undefined) return desk
+    return this.isPlayMode && trainId === this.selectedTrainId ? 'host' : null
+  }
+
+  /** What a driver is called on screen: the name the desk gave, « Pupitre 3 » without one, « PC » for this screen */
+  driverName = (driver: 'host' | number | null): string | null => {
+    if (driver === null) return null
+    if (driver === 'host') return 'PC'
+    return this.deskNames.get(driver) || `Pupitre ${driver}`
+  }
+
+  /** The train a desk holds */
+  deskTrain = (desk: number): TrainSet | null => {
+    for (const [trainId, holder] of this.trainDrivers) if (holder === desk) return this.trains.find((t) => t.id === trainId) ?? null
+    return null
+  }
+
+  /** True while this screen watches its selected train, a desk at its controls: no console here, no driving from this keyboard */
+  get isSpectating(): boolean {
+    return this.isPlayMode && this.selectedTrainId !== null && this.trainDrivers.has(this.selectedTrainId)
+  }
+
+  /** The train this screen drives: its selected one, unless a desk holds it */
+  private get hostTrain(): TrainSet | null {
+    const train = this.selectedTrain
+    return train && !this.trainDrivers.has(train.id) ? train : null
+  }
+
+  /** The train the camera follows in driving mode */
+  get cameraTrain(): TrainSet | null {
+    return this.selectedTrain
+  }
+
+  /** A desk sat down in the room (or gave its name again) */
+  seatDesk = (desk: number, name?: string): void => {
+    const given = name?.trim() ?? ''
+    if (this.deskNames.get(desk) === given) return
+    this.deskNames.set(desk, given)
+    this.notify()
+  }
+
+  /**
+   * A desk fell silent or lost its link: the handles of its train go to rest, and the train stays
+   * its own for the time it may take to come back (see `DESK_RETURN_GRACE_MS` in the session)
+   */
+  restDesk = (desk: number): void => {
+    const train = this.deskTrain(desk)
+    if (!train) return
+    if (train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
+    if (train.notch > 0) setNotch(train, 0)
+    this.notify()
+  }
+
+  /** A desk left the room: the train it held is nobody's */
+  unseatDesk = (desk: number): void => {
+    this.releaseTrain(desk)
+    if (this.deskNames.delete(desk)) this.notify()
+  }
+
+  /** The room closed: every desk is gone */
+  unseatAllDesks = (): void => {
+    for (const desk of [...this.deskNames.keys()]) this.unseatDesk(desk)
+  }
+
+  /**
+   * A desk takes the controls of a train (driving starts if it had not). Refused when another
+   * desk holds it. The train the desk held before is let go. This screen's own train may be
+   * taken: the screen then watches it, and is free to pick another one.
+   */
+  takeTrain = (trainId: string, desk: number): boolean => {
+    const train = this.trains.find((t) => t.id === trainId)
+    if (!train) return false
+    const holder = this.trainDrivers.get(trainId)
+    if (holder === desk) return true
+    if (holder !== undefined) return false
+    if (!this.isPlayMode) {
+      if (!this.selectedTrain) this.selectTrainById(trainId)
+      this.togglePlayMode()
+      if (!this.isPlayMode) return false
+    }
+    this.releaseTrain(desk)
+    // What this screen held on the handle of that train is not the desk's
+    if (trainId === this.selectedTrainId) this.centreSelectedTrainBrake()
+    this.trainDrivers.set(trainId, desk)
+    this.notify()
+    return true
+  }
+
+  /** A desk lets go of its train: handles at rest, the train is nobody's (the simulation goes on) */
+  releaseTrain = (desk: number): void => {
+    const train = this.deskTrain(desk)
+    if (!train) return
+    this.trainDrivers.delete(train.id)
+    if (train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
+    if (train.notch > 0) setNotch(train, 0)
+    this.notify()
+  }
+
+  /** Follow this train with the camera: it becomes the one this screen looks at, and drives when no desk holds it */
   spectateTrain = (trainId: string | null): void => {
-    this.spectatedTrainId = trainId !== null && this.trains.some((t) => t.id === trainId) ? trainId : null
+    if (trainId !== null && trainId !== this.selectedTrainId && this.trains.some((t) => t.id === trainId)) {
+      // The train left behind keeps its brake where it is: nobody holds its handle any more
+      this.centreSelectedTrainBrake()
+      this.selectTrainById(trainId)
+    }
     this.followLocomotiveCamera = true
     this.centreCameraOnTrain(this.cameraTrain)
     this.notify()
   }
 
-  /** While spectating: stop following any train, the view moves freely */
+  /** Stop following any train, the view moves freely */
   setSpectatorFreeView = (): void => {
     this.followLocomotiveCamera = false
     this.notify()
@@ -2968,6 +3071,7 @@ export class EditorStore {
       }
       this.startSimulationLoop()
     } else {
+      this.trainDrivers.clear()
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       resetSignalling(this.signalling)
@@ -3096,13 +3200,18 @@ export class EditorStore {
     this.notify()
   }
 
-  /** Steer the upcoming junction left or right relative to the locomotive */
+  /** Steer the next facing turnout of a train left or right */
+  steerTrainTurnout = (train: TrainSet, steerDirection: 'left' | 'right'): void => {
+    // Points held for another train stay as they are; the driver may still set those held for his own
+    const heldForAnother = (junc: Junction): boolean => isNodeReserved(this.signalling, junc.nodeId, train.id)
+    if (steerTrainSetJunction(this.network, train, steerDirection, this.trains, heldForAnother)) this.notify()
+  }
+
+  /** Steer the upcoming junction left or right relative to the train this screen drives */
   steerUpcomingTurnout = (steerDirection: 'left' | 'right'): void => {
-    const train = this.selectedTrain
-    if (train) {
-      // Points held for another train stay as they are; the driver may still set those held for his own
-      const heldForAnother = (junc: Junction): boolean => isNodeReserved(this.signalling, junc.nodeId, train.id)
-      if (steerTrainSetJunction(this.network, train, steerDirection, this.trains, heldForAnother)) this.notify()
+    if (this.selectedTrain) {
+      const train = this.hostTrain
+      if (train) this.steerTrainTurnout(train, steerDirection)
       return
     }
     if (!this.locomotive) return
@@ -3117,20 +3226,19 @@ export class EditorStore {
    * Returns false when there is no power car at the other end or the train is moving.
    */
   switchSelectedTrainCab = (): boolean => {
-    const train = this.selectedTrain
-    const switched = train && switchDrivingCab(train)
-    if (!train || !switched) return false
+    const train = this.hostTrain
+    return !!train && this.switchTrainCab(train)
+  }
+
+  /** Take the controls of a train from the cab at its other end (see `switchSelectedTrainCab`) */
+  switchTrainCab = (train: TrainSet): boolean => {
+    const switched = switchDrivingCab(train)
+    if (!switched) return false
     this.trains = this.trains.map((t) => (t === train ? switched : t))
-    this.selectedTrainVehicleId = switched.vehicles[0].id
+    const selected = switched.id === this.selectedTrainId
+    if (selected) this.selectedTrainVehicleId = switched.vehicles[0].id
     this.refreshCouplerPoints()
-    if (this.isPlayMode && this.followLocomotiveCamera) {
-      const lead = switched.vehicles[0].front
-      const pos = positionOnSegment(this.network, lead.segId, lead.t)
-      if (pos) {
-        this.camera.x = pos.x
-        this.camera.y = pos.y
-      }
-    }
+    if (selected && this.isPlayMode && this.followLocomotiveCamera) this.centreCameraOnTrain(switched)
     this.notify()
     return true
   }
@@ -3580,8 +3688,13 @@ export class EditorStore {
 
   /** Put the driven train back on the track after a derailment. Returns false when it is not derailed. */
   rerailSelectedTrain = (): boolean => {
-    const train = this.selectedTrain
-    if (!train || !rerailTrain(train)) return false
+    const train = this.hostTrain
+    return !!train && this.rerail(train)
+  }
+
+  /** Put a train back on the track after a derailment. Returns false when it is not derailed. */
+  rerail = (train: TrainSet): boolean => {
+    if (!rerailTrain(train)) return false
     this.notify()
     return true
   }
@@ -3589,25 +3702,53 @@ export class EditorStore {
   /** Forces, pressures and stopping distance of the selected train, as the physics sees them now */
   get selectedTrainDynamics(): TrainDynamics | null {
     const train = this.selectedTrain
-    if (!train) return null
-    // The simulation step has just worked them out for this very state of the train: the stopping
-    // distance alone is a whole braking run integrated, not to be done twice per frame
-    if (this.drivenDynamics?.train === train) return this.drivenDynamics.dynamics
-    return trainDynamics(this.network, train, this.drivingEnvironment)
+    return train ? this.dynamicsOf(train) : null
   }
 
-  /** Dynamics of the driven train as of the last simulation step; dropped by any notification */
-  private drivenDynamics: { train: TrainSet; dynamics: TrainDynamics } | null = null
+  /** Forces, pressures and stopping distance of a train, as the physics sees them now */
+  dynamicsOf = (train: TrainSet): TrainDynamics => {
+    // The simulation step has just worked them out for this very state of a driven train: the
+    // stopping distance alone is a whole braking run integrated, not to be done twice per frame
+    return this.drivenDynamics?.get(train) ?? trainDynamics(this.network, train, this.drivingEnvironment)
+  }
+
+  /** Dynamics of the driven trains as of the last simulation step; dropped by any notification */
+  private drivenDynamics: Map<TrainSet, TrainDynamics> | null = null
+
+  /** Put a train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
+  setTrainNotch = (train: TrainSet, notch: number): void => {
+    if (setNotch(train, Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, notch)))) this.notify()
+  }
+
+  /** Move a train's brake handle: `apply` and `release` act for as long as they are held, `hold` keeps the pressure where it is */
+  setTrainBrakeCommand = (train: TrainSet, command: BrakeCommand): void => {
+    if (train.brakeCommand === command) return
+    setBrakeCommand(train, command)
+    // The domain refuses the handle while the emergency brake is latched
+    if (train.brakeCommand === command) this.notify()
+  }
+
+  /** Set a train's reverser (refused while moving or in traction) */
+  setTrainReverser = (train: TrainSet, reverser: Reverser): void => {
+    if (setReverser(train, reverser)) this.notify()
+  }
+
+  /** Trigger a train's emergency brake, or release it once the train has stopped */
+  toggleTrainEmergencyBrake = (train: TrainSet): void => {
+    if (!train.emergencyBrake) triggerEmergencyBrake(train)
+    else if (!releaseEmergencyBrake(train)) return
+    this.notify()
+  }
 
   /** Put the selected train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
   setSelectedTrainNotch = (notch: number): void => {
-    const train = this.selectedTrain
-    if (train && setNotch(train, Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, notch)))) this.notify()
+    const train = this.hostTrain
+    if (train) this.setTrainNotch(train, notch)
   }
 
   /** Move the selected train's handle by one notch; it stops at B5 and at P5 */
   stepSelectedTrainNotch = (step: 1 | -1): void => {
-    const train = this.selectedTrain
+    const train = this.hostTrain
     if (train) this.setSelectedTrainNotch(train.notch + step)
   }
 
@@ -3620,7 +3761,7 @@ export class EditorStore {
    * handle when the other is not still holding it.
    */
   setSelectedTrainBrakeCommand = (command: BrakeCommand, source: BrakeSource = 'local'): void => {
-    const train = this.selectedTrain
+    const train = this.hostTrain
     if (!train) return
     // What was held on another train, or before this driving session, is forgotten
     if (this.brakeHoldTrainId !== train.id) this.forgetBrakeHolds(train.id)
@@ -3639,7 +3780,7 @@ export class EditorStore {
   /** Nobody holds the brake handle of the selected train any more: it goes back to `hold` */
   centreSelectedTrainBrake = (): void => {
     this.forgetBrakeHolds(null)
-    const train = this.selectedTrain
+    const train = this.hostTrain
     const held = train?.brakeCommand ?? 'hold'
     if (!train || held === 'hold') return
     setBrakeCommand(train, 'hold')
@@ -3653,23 +3794,20 @@ export class EditorStore {
 
   /** Set the selected train's reverser (refused while moving or in traction) */
   setSelectedTrainReverser = (reverser: Reverser): void => {
-    const train = this.selectedTrain
+    const train = this.hostTrain
     if (train && setReverser(train, reverser)) this.notify()
   }
 
   /** Move the selected train's reverser one position towards forward (1) or reverse (-1) */
   shiftSelectedTrainReverser = (step: 1 | -1): void => {
-    const train = this.selectedTrain
+    const train = this.hostTrain
     if (train && shiftReverser(train, step)) this.notify()
   }
 
   /** Trigger the selected train's emergency brake, or release it once the train has stopped */
   toggleSelectedTrainEmergencyBrake = (): void => {
-    const train = this.selectedTrain
-    if (!train) return
-    if (!train.emergencyBrake) triggerEmergencyBrake(train)
-    else if (!releaseEmergencyBrake(train)) return
-    this.notify()
+    const train = this.hostTrain
+    if (train) this.toggleTrainEmergencyBrake(train)
   }
 
   // ─────────────────── Signalling mode: speed zones ───────────────────
@@ -4352,33 +4490,42 @@ export class EditorStore {
     this.drivenDynamics = null
     const occupancy: TrainOccupancyCache = new Map()
     const env = this.drivingEnvironment
+    // Driven: held by a desk, or the train of this screen
+    const isDriven = (train: TrainSet): boolean => train.id === this.selectedTrainId || this.trainDrivers.has(train.id)
     for (const train of this.trains) {
-      // Nobody holds the brake handle of a train that is not driven
-      if (train.id !== this.selectedTrainId && train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
-      // Nor its traction handle: a train left under power coasts, it does not keep pulling by itself
-      if (train.id !== this.selectedTrainId && train.notch > 0) setNotch(train, 0)
+      if (!isDriven(train)) {
+        // Nobody holds the brake handle of a train that is not driven
+        if (train.brakeCommand !== 'hold') setBrakeCommand(train, 'hold')
+        // Nor its traction handle: a train left under power coasts, it does not keep pulling by itself
+        if (train.notch > 0) setNotch(train, 0)
+      }
       // Stopping against an obstacle, holding at rest and rolling back are the domain's business
       tickTrainSet(this.network, train, dt, this.trains, occupancy, env)
       this.reportImpact(train)
     }
+    // A desk whose train is gone (uncoupled into another, deleted) holds nothing
+    for (const trainId of [...this.trainDrivers.keys()]) if (!this.trains.some((t) => t.id === trainId)) this.trainDrivers.delete(trainId)
     // A train nearing a line of the dataset that is not loaded: its file is asked for now
     this.checkDatasetLines(dt)
     // Once every train has moved: what each one holds, what the signals show, the signals passed
     // (nothing at all on a network without signal)
-    // The driven train holds the track over the stopping distance its physics works out; the
+    // A driven train holds the track over the stopping distance its physics works out; the
     // others over the simple estimate, on the slope they stand on
-    const drivenId = this.selectedTrainId
-    let drivenDynamics: TrainDynamics | null = null
-    const dynamicsOfDriven = (train: TrainSet): TrainDynamics => (drivenDynamics ??= trainDynamics(this.network, train, env))
+    const dynamics = new Map<TrainSet, TrainDynamics>()
+    const dynamicsOfDriven = (train: TrainSet): TrainDynamics => {
+      let known = dynamics.get(train)
+      if (!known) dynamics.set(train, (known = trainDynamics(this.network, train, env)))
+      return known
+    }
     const stoppingOf = (train: TrainSet): number | null => {
-      if (train.id === drivenId) return dynamicsOfDriven(train).stoppingDistance
+      if (isDriven(train)) return dynamicsOfDriven(train).stoppingDistance
       if (!(train.currentSpeed > 0)) return null
       return estimatedStoppingDistance(train.currentSpeed, train.direction * trainSlope(this.network, train, env))
     }
     const passings = tickSignalling(this.network, this.trains, this.signalling, this.signallingSettings, stoppingOf, {
       line: env.line,
-      // The limit of the driven train is already worked out: the overspeed check does not look for it again
-      speedLimitOf: (train) => (train.id === drivenId ? dynamicsOfDriven(train).speedLimit * 3.6 : null),
+      // The limit of a driven train is already worked out: the overspeed check does not look for it again
+      speedLimitOf: (train) => (isDriven(train) ? dynamicsOfDriven(train).speedLimit * 3.6 : null),
       onOverspeed: (train, overspeed) => this.onOverspeed?.(train, overspeed),
     })
     for (const passing of passings) {
@@ -4390,11 +4537,11 @@ export class EditorStore {
     if (this.selectedTrain) {
       this.locomotiveCurrentSpeed = this.selectedTrain.currentSpeed
     }
-    // Sync camera to the lead vehicle of the followed train (the driven one, or the spectated one)
+    // Sync camera to the lead vehicle of the followed train
     if (this.followLocomotiveCamera) this.centreCameraOnTrain(this.cameraTrain)
-    // Kept for the console, which shows the same figures: worked out now if the step did not need them
-    const driven = this.selectedTrain
-    this.drivenDynamics = driven ? { train: driven, dynamics: dynamicsOfDriven(driven) } : null
+    // Kept for the consoles, which show the same figures: worked out now if the step did not need them
+    for (const train of this.trains) if (isDriven(train)) dynamicsOfDriven(train)
+    this.drivenDynamics = dynamics
     this.notifyFrame(this.trains.some((train) => train.currentSpeed !== 0))
   }
 }

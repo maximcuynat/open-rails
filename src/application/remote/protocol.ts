@@ -24,7 +24,7 @@ import type {
  */
 
 /** Bumped on any change a peer of another version could misread */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 /** Largest frame anyone accepts, in UTF-8 bytes */
 export const MAX_MESSAGE_BYTES = 32 * 1024
@@ -46,6 +46,10 @@ export const MAX_ID_LENGTH = 64
 export const MAX_LABEL_LENGTH = 80
 export const MIN_CLIENT_ID_LENGTH = 8
 export const MAX_CLIENT_ID_LENGTH = 32
+/** Desks a room seats at most; a desk is known by its number, 1 … MAX_DESKS */
+export const MAX_DESKS = 8
+/** The name a driver gives is at most this long */
+export const MAX_DRIVER_NAME_LENGTH = 20
 export const MAX_ADVERTISED_HOSTS = 8
 
 /** The desk repeats a held brake command at this period… */
@@ -64,7 +68,7 @@ export const HEARTBEAT_TIMEOUT_MS = 15000
 export type RoomErrorCode =
   /** No host holds this room (wrong code, or the PC closed it) */
   | 'unknown-room'
-  /** The room already has its one desk */
+  /** The room already seats its MAX_DESKS desks */
   | 'room-full'
   /** Another host already holds this code */
   | 'room-taken'
@@ -88,29 +92,29 @@ export const ROOM_ERROR_CODES = [
 export type RoomRequest =
   /** Open a room as the host, under a code the host drew */
   | { t: 'host'; v: number; room: string; client: string }
-  /** Join a room as its desk */
-  | { t: 'join'; v: number; room: string; client: string }
+  /** Join a room as a desk; `name` is what the driver wants to be called */
+  | { t: 'join'; v: number; room: string; client: string; name?: string }
 
 /** Relay → client */
 export type RoomEvent =
   /** To the host: the room exists. `hosts` lists the LAN addresses the relay can be reached at. */
   | { t: 'opened'; room: string; hosts: string[] }
-  /** To the desk: it sits in the room, the host is there */
-  | { t: 'joined'; room: string }
-  /** The other side arrived (only ever sent to the host: a desk joins a room that has its host) */
-  | { t: 'peer-joined' }
-  /** The other side left. For a desk this means the room is gone. */
-  | { t: 'peer-left' }
+  /** To the desk: it sits in the room under this number, the host is there */
+  | { t: 'joined'; room: string; desk: number }
+  /** A desk arrived (only ever sent to the host: a desk joins a room that has its host); `back`: the one that had this number */
+  | { t: 'peer-joined'; desk: number; name?: string; back?: boolean }
+  /** To the host: that desk left. To a desk, without a number: the host left, the room is gone. */
+  | { t: 'peer-left'; desk?: number }
   /** The relay closes the connection right after an error */
   | { t: 'error'; code: RoomErrorCode }
 
 export type Heartbeat = { t: 'ping' } | { t: 'pong' }
 
-/** Host → desk, forwarded by the relay */
+/** Host → desks, forwarded by the relay: to the desk `to` names, to every desk without it */
 export type HostMessage =
-  | { t: 'fleet'; fleet: FleetEntry[] }
-  /** `state` is null while the PC drives nothing; `ack` is the last command sequence applied or dropped */
-  | { t: 'state'; state: ConsoleState | null; ack: number }
+  | { t: 'fleet'; fleet: FleetEntry[]; to?: number }
+  /** `state` is null while that desk holds no train; `ack` is its last command sequence applied or dropped */
+  | { t: 'state'; state: ConsoleState | null; ack: number; to?: number }
   /** The PC cuts the link on purpose */
   | { t: 'bye' }
 
@@ -122,6 +126,8 @@ export type DeskMessage = {
   /** Train the desk believed it was driving (`ConsoleState.trainId`) when the command was issued */
   trainId: string | null
   command: ConsoleCommand
+  /** The desk it comes from: written by the relay, whatever the desk put there */
+  from?: number
 }
 
 export type RemoteMessage = RoomRequest | RoomEvent | Heartbeat | HostMessage | DeskMessage
@@ -465,6 +471,16 @@ function readState(value: unknown): ConsoleState | null {
     if (!signals) return null
     state.signals = signals
   }
+  // Optional too: absent from an older PC; null when the route ahead is clear
+  if (v.ahead !== undefined) {
+    if (v.ahead === null) state.ahead = null
+    else {
+      const ahead = v.ahead
+      if (!isObject(ahead) || !isFiniteNumber(ahead.distance) || !isFiniteNumber(ahead.speed)) return null
+      if (ahead.driver !== null && !isText(ahead.driver, MAX_LABEL_LENGTH)) return null
+      state.ahead = { distance: ahead.distance, speed: ahead.speed, driver: ahead.driver }
+    }
+  }
   return state
 }
 
@@ -475,7 +491,7 @@ function readFleetEntry(value: unknown): FleetEntry | null {
   if (!isCount(value.locoCount) || !isCount(value.wagonCount)) return null
   if (!isFiniteNumber(value.speed)) return null
   if (typeof value.driven !== 'boolean') return null
-  return {
+  const entry: FleetEntry = {
     id: value.id,
     rank: value.rank,
     model: value.model,
@@ -484,6 +500,15 @@ function readFleetEntry(value: unknown): FleetEntry | null {
     speed: value.speed,
     driven: value.driven,
   }
+  if (value.driver !== undefined) {
+    if (value.driver !== null && value.driver !== 'host' && !isIntIn(value.driver, 1, MAX_DESKS)) return null
+    entry.driver = value.driver
+  }
+  if (value.driverName !== undefined) {
+    if (!isText(value.driverName, MAX_LABEL_LENGTH)) return null
+    entry.driverName = value.driverName
+  }
+  return entry
 }
 
 function readFleet(value: unknown): FleetEntry[] | null {
@@ -496,6 +521,8 @@ function readFleet(value: unknown): FleetEntry[] | null {
   }
   return fleet
 }
+
+const isDesk = (value: unknown): value is number => isIntIn(value, 1, MAX_DESKS)
 
 function readHosts(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length > MAX_ADVERTISED_HOSTS) return null
@@ -516,18 +543,33 @@ function readMessage(value: unknown): RemoteMessage | null {
       // version that it is one is the relay's job, and it needs to read the request to do so.
       if (!isIntIn(value.v, 0, 1_000_000) || !isRoomCode(value.room)) return null
       if (!isText(value.client, MAX_CLIENT_ID_LENGTH, MIN_CLIENT_ID_LENGTH)) return null
-      return { t: value.t, v: value.v, room: value.room, client: value.client }
+      const request: RoomRequest = { t: value.t, v: value.v, room: value.room, client: value.client }
+      if (request.t === 'join' && value.name !== undefined) {
+        if (!isText(value.name, MAX_DRIVER_NAME_LENGTH)) return null
+        // No name is no name: an empty one is not carried
+        if (value.name !== '') request.name = value.name
+      }
+      return request
     }
     case 'opened': {
       const hosts = readHosts(value.hosts)
       return isRoomCode(value.room) && hosts ? { t: 'opened', room: value.room, hosts } : null
     }
     case 'joined':
-      return isRoomCode(value.room) ? { t: 'joined', room: value.room } : null
-    case 'peer-joined':
-      return { t: 'peer-joined' }
+      return isRoomCode(value.room) && isDesk(value.desk) ? { t: 'joined', room: value.room, desk: value.desk } : null
+    case 'peer-joined': {
+      if (!isDesk(value.desk)) return null
+      if (value.name !== undefined && !isText(value.name, MAX_DRIVER_NAME_LENGTH)) return null
+      if (value.back !== undefined && typeof value.back !== 'boolean') return null
+      const arrival: Extract<RoomEvent, { t: 'peer-joined' }> = { t: 'peer-joined', desk: value.desk }
+      if (value.name !== undefined) arrival.name = value.name
+      // Only said when true: the desk that had this number is back
+      if (value.back === true) arrival.back = true
+      return arrival
+    }
     case 'peer-left':
-      return { t: 'peer-left' }
+      if (value.desk === undefined) return { t: 'peer-left' }
+      return isDesk(value.desk) ? { t: 'peer-left', desk: value.desk } : null
     case 'error':
       return isOneOf(value.code, ROOM_ERROR_CODES) ? { t: 'error', code: value.code } : null
     case 'ping':
@@ -536,13 +578,15 @@ function readMessage(value: unknown): RemoteMessage | null {
       return { t: 'pong' }
     case 'fleet': {
       const fleet = readFleet(value.fleet)
-      return fleet ? { t: 'fleet', fleet } : null
+      if (!fleet || (value.to !== undefined && !isDesk(value.to))) return null
+      return value.to === undefined ? { t: 'fleet', fleet } : { t: 'fleet', fleet, to: value.to }
     }
     case 'state': {
       if (!isIntIn(value.ack, 0, Number.MAX_SAFE_INTEGER)) return null
-      if (value.state === null) return { t: 'state', state: null, ack: value.ack }
-      const state = readState(value.state)
-      return state ? { t: 'state', state, ack: value.ack } : null
+      if (value.to !== undefined && !isDesk(value.to)) return null
+      const state = value.state === null ? null : readState(value.state)
+      if (value.state !== null && !state) return null
+      return value.to === undefined ? { t: 'state', state, ack: value.ack } : { t: 'state', state, ack: value.ack, to: value.to }
     }
     case 'bye':
       return { t: 'bye' }
@@ -550,7 +594,10 @@ function readMessage(value: unknown): RemoteMessage | null {
       if (!isIntIn(value.seq, 1, Number.MAX_SAFE_INTEGER)) return null
       if (value.trainId !== null && !isText(value.trainId, MAX_ID_LENGTH, 1)) return null
       const command = readCommand(value.command)
-      return command ? { t: 'command', seq: value.seq, trainId: value.trainId, command } : null
+      if (!command || (value.from !== undefined && !isDesk(value.from))) return null
+      const message: DeskMessage = { t: 'command', seq: value.seq, trainId: value.trainId, command }
+      if (value.from !== undefined) message.from = value.from
+      return message
     }
     default:
       return null

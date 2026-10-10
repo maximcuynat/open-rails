@@ -11,10 +11,63 @@ function driveTrain(store: EditorStore, trainId: string): void {
     store.togglePlayMode()
     return
   }
-  if (trainId === store.selectedTrainId) return
   // The train left behind keeps its brake where it is: nobody holds its handle any more
-  store.centreSelectedTrainBrake()
-  store.selectTrainById(trainId)
+  store.spectateTrain(trainId)
+}
+
+/**
+ * The way from the console of a phone desk into the store. A desk drives the train it holds and
+ * no other: `selectTrain` takes one that is free, `releaseControls` lets go of it (the simulation
+ * goes on for the others), and everything else moves the handles of that train.
+ */
+export function applyDeskCommand(store: EditorStore, desk: number, command: ConsoleCommand): void {
+  if (command.type === 'selectTrain') {
+    store.takeTrain(command.trainId, desk)
+    return
+  }
+  if (!store.isPlayMode) return
+  const train = store.deskTrain(desk)
+  if (command.type === 'selectTrainByOffset') {
+    // The next train nobody else holds, round the fleet
+    const count = store.trains.length
+    const from = train ? store.trains.indexOf(train) : -1
+    for (let step = 1; step <= count; step++) {
+      const next = store.trains[(((from + command.offset * step) % count) + count) % count]
+      if (next === train) return
+      if (store.takeTrain(next.id, desk)) return
+    }
+    return
+  }
+  if (!train) return
+  switch (command.type) {
+    case 'notchStep':
+      store.setTrainNotch(train, train.notch + command.step)
+      return
+    case 'notchSet':
+      if (Number.isFinite(command.notch)) store.setTrainNotch(train, Math.round(command.notch))
+      return
+    case 'brake':
+      store.setTrainBrakeCommand(train, command.command)
+      return
+    case 'reverser':
+      store.setTrainReverser(train, command.reverser)
+      return
+    case 'emergencyBrake':
+      store.toggleTrainEmergencyBrake(train)
+      return
+    case 'steer':
+      store.steerTrainTurnout(train, command.side)
+      return
+    case 'switchCab':
+      store.switchTrainCab(train)
+      return
+    case 'releaseControls':
+      store.releaseTrain(desk)
+      return
+    case 'rerail':
+      store.rerail(train)
+      return
+  }
 }
 
 /**
@@ -25,17 +78,13 @@ function driveTrain(store: EditorStore, trainId: string): void {
  * take the handle out of the hand that holds it on the PC.
  */
 export function applyConsoleCommand(store: EditorStore, command: ConsoleCommand, source: BrakeSource = 'local'): void {
-  // A phone at the desk holds the controls: this screen only watches
-  const watching = store.isSpectating && source !== 'remote'
   if (command.type === 'selectTrain') {
-    // Picking a train while watching chooses the one to follow, not the one the phone drives
-    if (watching) store.spectateTrain(command.trainId)
-    else driveTrain(store, command.trainId)
+    driveTrain(store, command.trainId)
     return
   }
   if (!store.isPlayMode) return
-  // The only thing a spectator can do to the drive is to end it
-  if (watching && command.type !== 'releaseControls') return
+  // A desk holds the train this screen looks at: it can pick another train or end the drive, nothing else
+  if (store.isSpectating && command.type !== 'releaseControls' && command.type !== 'selectTrainByOffset') return
   const train = store.selectedTrain
 
   switch (command.type) {

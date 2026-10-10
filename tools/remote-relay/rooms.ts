@@ -1,5 +1,6 @@
 import {
   HEARTBEAT_TIMEOUT_MS,
+  MAX_DESKS,
   PROTOCOL_VERSION,
   decodeMessage,
   encodeMessage,
@@ -11,7 +12,7 @@ import {
  * The rooms of the relay, with no socket in sight: connections are whatever can `send` a text
  * frame and `close`. The `ws` layer (`server.ts`) feeds it; the tests feed it by hand.
  *
- * Rules: a room is opened by its host under a code the host drew, holds one desk at most, and
+ * Rules: a room is opened by its host under a code the host drew, seats up to MAX_DESKS desks, each known to the host by a number, and
  * dies with its host. Nothing is kept once a connection is gone — no account, no history.
  */
 
@@ -29,18 +30,29 @@ export interface RoomRelayOptions {
   hosts?: () => string[]
 }
 
+/** A desk seated in a room, known to the host by its number */
+interface Desk {
+  conn: RelayConnection
+  client: string
+  name: string | undefined
+}
+
 interface Room {
   code: string
   host: RelayConnection
   hostClient: string
-  desk: RelayConnection | null
-  deskClient: string | null
+  /** The desks seated, by number (1 … MAX_DESKS) */
+  desks: Map<number, Desk>
+  /** The number each desk that sat here had, by its token: a desk that comes back finds its seat, and its train */
+  numbers: Map<string, number>
 }
 
 interface Seat {
   lastSeen: number
   room: Room | null
   role: 'host' | 'desk' | null
+  /** The number of a desk in its room */
+  desk: number | null
 }
 
 export class RoomRelay {
@@ -51,7 +63,8 @@ export class RoomRelay {
   private readonly hosts: () => string[]
 
   constructor(options: RoomRelayOptions = {}) {
-    this.now = options.now ?? Date.now
+    // Monotonic: a jump of the wall clock must not sweep every connection away
+    this.now = options.now ?? (() => performance.now())
     this.timeoutMs = options.timeoutMs ?? HEARTBEAT_TIMEOUT_MS
     this.hosts = options.hosts ?? (() => [])
   }
@@ -66,7 +79,7 @@ export class RoomRelay {
 
   /** A connection arrived. It has `timeoutMs` to say something. */
   connect(conn: RelayConnection): void {
-    this.seats.set(conn, { lastSeen: this.now(), room: null, role: null })
+    this.seats.set(conn, { lastSeen: this.now(), room: null, role: null, desk: null })
   }
 
   /** One text frame from a connection. Pass `null` for anything that is not text. */
@@ -88,17 +101,23 @@ export class RoomRelay {
         if (message.v !== PROTOCOL_VERSION) return this.fail(conn, 'version')
         return message.t === 'host'
           ? this.openRoom(conn, seat, message.room, message.client)
-          : this.joinRoom(conn, seat, message.room, message.client)
+          : this.joinRoom(conn, seat, message.room, message.client, message.name)
       case 'fleet':
       case 'state':
       case 'bye':
         if (seat.role !== 'host' || !seat.room) return this.fail(conn, 'bad-message')
-        // Already validated: the frame is forwarded as it came
-        if (seat.room.desk) this.sendRaw(seat.room.desk, raw as string)
+        // Already validated: the frame is forwarded as it came, to the desk it names or to all
+        if (message.t !== 'bye' && message.to !== undefined) {
+          const desk = seat.room.desks.get(message.to)
+          if (desk) this.sendRaw(desk.conn, raw as string)
+          return
+        }
+        for (const desk of seat.room.desks.values()) this.sendRaw(desk.conn, raw as string)
         return
       case 'command':
-        if (seat.role !== 'desk' || !seat.room) return this.fail(conn, 'bad-message')
-        return this.sendRaw(seat.room.host, raw as string)
+        if (seat.role !== 'desk' || !seat.room || seat.desk === null) return this.fail(conn, 'bad-message')
+        // The host is told which desk speaks: by the relay, not by the desk
+        return this.sendTo(seat.room.host, { ...message, from: seat.desk })
       default:
         // Messages only the relay itself may emit
         return this.fail(conn, 'bad-message')
@@ -114,16 +133,15 @@ export class RoomRelay {
     if (!room) return
     if (seat.role === 'host') {
       this.rooms.delete(room.code)
-      const desk = room.desk
-      if (desk) {
-        this.seats.delete(desk)
-        this.sendTo(desk, { t: 'peer-left' })
-        this.closeQuietly(desk)
+      for (const desk of room.desks.values()) {
+        this.seats.delete(desk.conn)
+        this.sendTo(desk.conn, { t: 'peer-left' })
+        this.closeQuietly(desk.conn)
       }
-    } else if (room.desk === conn) {
-      room.desk = null
-      room.deskClient = null
-      this.sendTo(room.host, { t: 'peer-left' })
+      room.desks.clear()
+    } else if (seat.desk !== null && room.desks.get(seat.desk)?.conn === conn) {
+      room.desks.delete(seat.desk)
+      this.sendTo(room.host, { t: 'peer-left', desk: seat.desk })
     }
   }
 
@@ -156,32 +174,51 @@ export class RoomRelay {
       this.closeQuietly(ghost)
       existing.host = conn
     }
-    const room: Room =
-      existing ?? { code, host: conn, hostClient: client, desk: null, deskClient: null }
+    const room: Room = existing ?? { code, host: conn, hostClient: client, desks: new Map(), numbers: new Map() }
     this.rooms.set(code, room)
     seat.room = room
     seat.role = 'host'
     this.sendTo(conn, { t: 'opened', room: code, hosts: this.hosts() })
-    if (room.desk) this.sendTo(conn, { t: 'peer-joined' })
+    for (const [desk, seated] of room.desks) this.sendTo(conn, this.arrival(desk, seated.name, true))
   }
 
-  private joinRoom(conn: RelayConnection, seat: Seat, code: string, client: string): void {
+  private joinRoom(conn: RelayConnection, seat: Seat, code: string, client: string, name: string | undefined): void {
     const room = this.rooms.get(code)
     if (!room) return this.fail(conn, 'unknown-room')
-    if (room.desk) {
-      if (room.deskClient !== client) return this.fail(conn, 'room-full')
-      // The same desk is back before its dead connection was noticed
-      const ghost = room.desk
-      this.seats.delete(ghost)
-      this.closeQuietly(ghost)
-      this.sendTo(room.host, { t: 'peer-left' })
+    let desk: number | null = null
+    for (const [number, seated] of room.desks) {
+      if (seated.client !== client) continue
+      // The same desk is back before its dead connection was noticed: it keeps its number
+      desk = number
+      this.seats.delete(seated.conn)
+      this.closeQuietly(seated.conn)
+      this.sendTo(room.host, { t: 'peer-left', desk })
     }
-    room.desk = conn
-    room.deskClient = client
+    if (desk === null) {
+      // The number it had, when it is back after a cut and nobody took it
+      const had = room.numbers.get(client)
+      if (had !== undefined && !room.desks.has(had)) desk = had
+    }
+    const back = desk !== null
+    if (desk === null) {
+      // Else the lowest number free
+      for (let number = 1; number <= MAX_DESKS && desk === null; number++) if (!room.desks.has(number)) desk = number
+      if (desk === null) return this.fail(conn, 'room-full')
+      // The number is this desk's now, whoever had it
+      for (const [token, number] of room.numbers) if (number === desk) room.numbers.delete(token)
+    }
+    room.numbers.set(client, desk)
+    room.desks.set(desk, { conn, client, name })
     seat.room = room
     seat.role = 'desk'
-    this.sendTo(conn, { t: 'joined', room: code })
-    this.sendTo(room.host, { t: 'peer-joined' })
+    seat.desk = desk
+    this.sendTo(conn, { t: 'joined', room: code, desk })
+    this.sendTo(room.host, this.arrival(desk, name, back))
+  }
+
+  /** `back`: the desk that had this number, come back; else a desk the host has not seen under it */
+  private arrival(desk: number, name: string | undefined, back: boolean): RemoteMessage {
+    return { t: 'peer-joined', desk, ...(name === undefined ? {} : { name }), ...(back ? { back: true } : {}) }
   }
 
   private fail(conn: RelayConnection, code: RoomErrorCode): void {

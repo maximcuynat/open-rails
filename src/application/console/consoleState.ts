@@ -1,4 +1,6 @@
 import type { EditorStore } from '@application/state/editorStore'
+import { trainAhead } from '@domain/models/train'
+import { TRAIN_AHEAD_REACH, type ConsoleTrainAhead } from './consoleContract'
 import {
   MAX_NOTCH,
   MIN_NOTCH,
@@ -240,30 +242,66 @@ function legacyConsoleState(store: EditorStore, upcomingTurnout: ConsoleTurnout 
 export function buildConsoleState(store: EditorStore): ConsoleState | null {
   if (!store.isPlayMode) return null
   const train = store.selectedTrain
-  const dynamics = store.selectedTrainDynamics
-  if (train && dynamics) {
-    // Points held for another train are locked too; the driver may still set those held for his own
-    const heldForAnother = (junction: { nodeId: string }): boolean => isNodeReserved(store.signalling, junction.nodeId, train.id)
-    return trainConsoleState(
-      train,
-      dynamics,
-      trainTurnoutAhead(store.network, train, store.trains, heldForAnother),
-      drivenTrainSignals(store, train, dynamics),
-    )
-  }
+  if (train) return buildTrainConsoleState(store, train)
   const loco = store.locomotive
   // Same end and direction as the steering of the legacy locomotive
   return loco ? legacyConsoleState(store, turnoutAhead(store.network, loco.front, loco.direction, store.trains)) : null
 }
 
+/** The state of the console of one train, whoever drives it */
+export function buildTrainConsoleState(store: EditorStore, train: TrainSet): ConsoleState {
+  const dynamics = store.dynamicsOf(train)
+  // Points held for another train are locked too; the driver may still set those held for his own
+  const heldForAnother = (junction: { nodeId: string }): boolean => isNodeReserved(store.signalling, junction.nodeId, train.id)
+  const state = trainConsoleState(
+    train,
+    dynamics,
+    trainTurnoutAhead(store.network, train, store.trains, heldForAnother),
+    drivenTrainSignals(store, train, dynamics),
+  )
+  // Only worth a walk where there is another train to meet
+  if (store.trains.length > 1) state.ahead = trainAheadState(store, train)
+  return state
+}
+
+/**
+ * The train met first on the route ahead of a train, with the speed it has along that route:
+ * away from the train when it runs the same way, towards it when its own route leads back to it.
+ */
+export function trainAheadState(store: EditorStore, train: TrainSet): ConsoleTrainAhead | null {
+  const net = store.network
+  const others = store.trains.filter((other) => other !== train)
+  const found = trainAhead(net, train, TRAIN_AHEAD_REACH, others)
+  if (!found) return null
+  const other = found.train
+  let speed = other.currentSpeed
+  // Coming this way: its own route ahead meets this train
+  if (speed > 0 && trainAhead(net, other, Math.max(0, found.distance) + 50, [train])) speed = -speed
+  return { distance: found.distance, speed, driver: store.driverName(store.driverOf(other.id)) }
+}
+
+/** The state of the console of a phone desk: that of the train it holds, `null` while it holds none */
+export function buildDeskConsoleState(store: EditorStore, desk: number): ConsoleState | null {
+  if (!store.isPlayMode) return null
+  const train = store.deskTrain(desk)
+  return train ? buildTrainConsoleState(store, train) : null
+}
+
 /** Every train of the layout, in fleet order, for a list to pick from */
 export function buildFleet(store: EditorStore): FleetEntry[] {
-  return store.trains.map((train, index) => ({
-    id: train.id,
-    rank: index + 1,
-    model: ROLLING_STOCK[train.vehicles[0]?.model ?? DEFAULT_ROLLING_STOCK].label,
-    ...countVehicles(train),
-    speed: train.currentSpeed,
-    driven: store.isPlayMode && train.id === store.selectedTrainId,
-  }))
+  return store.trains.map((train, index) => {
+    const driver = store.driverOf(train.id)
+    const entry: FleetEntry = {
+      id: train.id,
+      rank: index + 1,
+      model: ROLLING_STOCK[train.vehicles[0]?.model ?? DEFAULT_ROLLING_STOCK].label,
+      ...countVehicles(train),
+      speed: train.currentSpeed,
+      driven: driver !== null,
+      driver,
+    }
+    const name = store.driverName(driver)
+    if (name) entry.driverName = name
+    return entry
+  })
 }

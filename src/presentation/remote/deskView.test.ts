@@ -3,9 +3,11 @@ import type { ConsoleState, FleetEntry } from '@application/console/consoleContr
 import type { RemoteDeskSnapshot } from '@application/remote/remoteDesk'
 import {
   NEW_SESSION,
+  cleanDriverName,
   compositionLabel,
   deskOrientation,
   deskScreen,
+  fleetChoice,
   fleetSpeedLabel,
   hapticFor,
   idleState,
@@ -41,6 +43,7 @@ const state = (patch: Partial<ConsoleState> = {}): ConsoleState => ({
 const snapshot = (patch: Partial<RemoteDeskSnapshot> = {}): RemoteDeskSnapshot => ({
   link: 'open',
   joined: true,
+  desk: 1,
   fleet: [],
   state: null,
   ack: 0,
@@ -199,6 +202,42 @@ describe('labels', () => {
     expect(fleetSpeedLabel({ speed: 0 })).toBe('À l’arrêt')
     expect(fleetSpeedLabel({ speed: 0.1 })).toBe('À l’arrêt')
     expect(fleetSpeedLabel({ speed: 25 })).toBe('90 km/h')
+  })
+
+  it('tells what a train of the list is to this desk: its own, free, the PC\'s to take, or held by another desk', () => {
+    expect(fleetChoice(entry({ driver: null }), 2, null)).toEqual({ label: 'Conduire', mine: false, taken: false })
+    expect(fleetChoice(entry({ driven: true, driver: 2, driverName: 'Léa' }), 2, null)).toEqual({ label: 'Aux commandes', mine: true, taken: false })
+    // The train of the PC can be taken: the PC then watches it
+    expect(fleetChoice(entry({ driven: true, driver: 'host', driverName: 'PC' }), 2, null)).toEqual({
+      label: 'Conduit par le PC · prendre',
+      mine: false,
+      taken: false,
+    })
+    // That of another desk cannot
+    expect(fleetChoice(entry({ driven: true, driver: 3, driverName: 'Zoé' }), 2, null)).toEqual({ label: 'Pris par Zoé', mine: false, taken: true })
+    expect(fleetChoice(entry({ driven: true, driver: 3 }), 2, null)).toEqual({ label: 'Pris par Pupitre 3', mine: false, taken: true })
+    // Before it knows its own number, a desk holds nothing: every held train is another's
+    expect(fleetChoice(entry({ driven: true, driver: 2, driverName: 'Léa' }), null, null)).toEqual({ label: 'Pris par Léa', mine: false, taken: true })
+    // The one just asked for, until the PC answers
+    expect(fleetChoice(entry({ driver: null }), 2, 't_1')).toEqual({ label: 'Prise des commandes…', mine: false, taken: false })
+    expect(fleetChoice(entry({ driver: null }), 2, 't_2')).toEqual({ label: 'Conduire', mine: false, taken: false })
+  })
+
+  it('reads the list of a PC that does not say who drives as it always did', () => {
+    expect(fleetChoice(entry({ driven: true }), 1, null)).toEqual({ label: 'Aux commandes', mine: true, taken: false })
+    expect(fleetChoice(entry({ driven: false }), 1, null)).toEqual({ label: 'Conduire', mine: false, taken: false })
+  })
+
+  it('cleans the name a driver types: one line, no edge spaces, cut to the length the protocol takes', () => {
+    expect(cleanDriverName('  Léa  ', 20)).toBe('Léa')
+    expect(cleanDriverName('Jean \n\t  Marc', 20)).toBe('Jean Marc')
+    expect(cleanDriverName('x'.repeat(30), 20)).toBe('x'.repeat(20))
+    // Cut on a space: nothing left hanging at the end
+    expect(cleanDriverName('abcd efgh', 5)).toBe('abcd')
+    expect(cleanDriverName('', 20)).toBeNull()
+    expect(cleanDriverName('   ', 20)).toBeNull()
+    expect(cleanDriverName(null, 20)).toBeNull()
+    expect(cleanDriverName(undefined, 20)).toBeNull()
   })
 
   it('names the driven train', () => {

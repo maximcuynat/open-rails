@@ -278,6 +278,29 @@ html.phone-desk-page body {
 .phone-train:active:not(:disabled) { background: var(--hud-2); }
 .phone-train.is-driven { border-color: var(--hud-blue); background: rgba(56, 189, 248, 0.1); }
 .phone-train.is-pending { border-color: var(--hud-green); }
+.phone-train.is-taken { opacity: 0.55; }
+
+.phone-driver {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--hud-dim);
+}
+.phone-driver input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 16px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+}
 
 .phone-train-rank {
   width: 40px;
@@ -460,6 +483,17 @@ html.phone-desk-page body {
 }
 
 .phone-info-stats b { color: var(--hud-fg); }
+
+.phone-ahead {
+  flex: none;
+  margin: 0;
+  font-size: 13px;
+  color: var(--hud-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.phone-ahead b { color: var(--hud-amber); }
 
 .phone-info-row {
   flex: none;
