@@ -632,6 +632,21 @@ repli sur un relais hébergé (étapes 21–24 de `plan-console-conduite.md`).
   TURN) ; le service de mise en relation est public et gratuit, il peut être indisponible.
 - Exige `npm run dev` / `npm run preview` : le relais local (sans Internet), `?courtier=local`.
 
+## À faire plus tard (noté le 2026-10-10)
+
+- [ ] **Essai sur de vrais téléphones** (item 23) : même Wi-Fi, puis 4G, puis deux téléphones,
+  puis onglet du PC en arrière-plan — marche à suivre au § Suivi du lot 5. À rapporter :
+  réussite par cas, délais, messages affichés.
+- [ ] **Item 20** — version du jeu de données entre PC et téléphones : reviendra avec une carte
+  de ligne sur le téléphone (aujourd'hui le téléphone ne charge aucune ligne).
+- [ ] **Item 29** — placement manuel d'un réseau sans repère géographique lors d'une fusion.
+- [ ] Charger le code WebRTC à la demande (le morceau partagé est passé de 145 à 160 ko).
+- [ ] Retirer le côté `remote` de `BrakeSource` / `brakeHolds`, qui ne sert plus qu'à un ancien test.
+- [ ] Un téléphone qui recharge sa page revient comme un nouveau pupitre : garder son jeton
+  (`sessionStorage`) pour qu'il retrouve son siège et son train.
+- [ ] Même zone importée dans deux repères : 35 rails restent en double sur Dijon (fusion).
+- [ ] Relais TURN ou relais hébergé si l'essai 4G échoue trop souvent.
+
 ## Hors périmètre (cette version)
 
 - Lignes classiques en dehors des raccordements ; tuiles ; serveur autoritaire hébergé.
