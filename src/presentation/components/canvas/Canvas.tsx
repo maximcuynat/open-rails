@@ -78,6 +78,8 @@ import {
 } from './placementPreview'
 import { TRAIN_PLACEMENT_REFUSED, type EditorStore } from '@application/state/editorStore'
 import { showToast } from '../common/Toast'
+import { driverPlaces, pointsNear, pointsPlaces } from '@application/console/dispatcher'
+import { POINTS_HIT_RADIUS_PX, renderDispatchOverlay } from '@infrastructure/render/dispatchRender'
 import { clickSpeedZoneTool, zoneSpeedLabel } from '../common/speedZoneActions'
 import { positionOnSegment } from '@domain/models/locomotive'
 import { SPEED_ZONE_COLOR, traceTrackSpans } from '@infrastructure/render/speedZoneRender'
@@ -532,6 +534,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.strokeRect(x, y, w, h)
       ctx.setLineDash([])
       ctx.restore()
+    }
+
+    // While trains run: a mark on every set of points, whatever the zoom, and the driver above each driven train
+    if (store.isPlayMode) {
+      renderDispatchOverlay(ctx, cam, rect.width, rect.height, store.dispatcherVisible ? pointsPlaces(store) : [], driverPlaces(store).filter((d) => store.deskNames.size > 0 || !d.host))
     }
 
     // Snap indicator (all construction tools)
@@ -1190,6 +1197,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const rect = canvas.getBoundingClientRect()
       const px = e.clientX - rect.left
       const py = e.clientY - rect.top
+
+      // While trains run, with the dispatcher's board up: a click on the mark of a set of points throws it
+      if (e.button === 0 && store.dispatcherVisible && !isSpaceDown && store.tool !== 'pan') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        const junction = pointsNear(store, world, POINTS_HIT_RADIUS_PX / store.camera.scale)
+        if (junction) {
+          if (!store.toggleActiveJunction(junction.id, world)) showToast(store.junctionRefusalMessage, 'warning')
+          redraw()
+          return
+        }
+      }
 
       // Priority 0: Check if click hit a 2D Gizmo translation/rotation handle on selected node or section
       if (e.button === 0 && store.tool === 'select' && store.canEditNetwork) {

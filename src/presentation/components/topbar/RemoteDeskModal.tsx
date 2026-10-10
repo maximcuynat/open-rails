@@ -3,6 +3,7 @@ import type { EditorStore } from '@application/state/editorStore'
 import type { RemoteHostSnapshot } from '@application/remote/remoteHost'
 import type { RemoteSession } from '@application/remote/remoteSession'
 import { isSecurePage, pairingAddress } from '@application/remote/pairingAddress'
+import { MAX_DESKS } from '@application/remote/protocol'
 import { encodeQr } from '@domain/qr/encodeQr'
 import { qrSvgPath } from '@domain/qr/qrSvgPath'
 import { showToast } from '../common/Toast'
@@ -20,8 +21,11 @@ function sessionStatus(snapshot: RemoteHostSnapshot): { tone: StatusTone; text: 
     return { tone: 'error', text: 'Le relais et cette page n’ont pas la même version', detail: 'Rechargez la page, puis rouvrez le pupitre.' }
   }
   if (snapshot.error) return { tone: 'error', text: 'Le relais a refusé d’ouvrir le salon', detail: 'Coupez, puis rouvrez le pupitre.' }
-  if (snapshot.deskConnected) return { tone: 'connected', text: 'Téléphone connecté' }
-  if (snapshot.ready) return { tone: 'waiting', text: 'En attente du téléphone' }
+  if (snapshot.deskConnected) {
+    const count = snapshot.desks.length
+    return { tone: 'connected', text: `${count} / ${MAX_DESKS} ${count > 1 ? 'pupitres reliés' : 'pupitre relié'}`, detail: count < MAX_DESKS ? 'D’autres téléphones peuvent rejoindre avec le même code.' : undefined }
+  }
+  if (snapshot.ready) return { tone: 'waiting', text: 'En attente d’un téléphone' }
   if (snapshot.link === 'open') return { tone: 'waiting', text: 'Ouverture du salon…' }
   return {
     tone: 'error',
@@ -118,6 +122,21 @@ export function RemoteDeskModal({ store, remote, isOpen, onClose }: RemoteDeskMo
           <b>{status.text}</b>
           {status.detail && <span className="remote-status-detail">{status.detail}</span>}
         </div>
+
+        {snapshot.desks.length > 0 && (
+          <ul className="remote-desks" aria-label="Pupitres reliés">
+            {snapshot.desks.map((seat) => {
+              const train = store.deskTrain(seat.desk)
+              const rank = train ? store.trains.indexOf(train) + 1 : 0
+              return (
+                <li key={seat.desk}>
+                  <b>{store.driverName(seat.desk)}</b>
+                  <span>{train ? `Train ${rank}` : 'Aucun train'}</span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
 
         <div className="remote-main">
           <QrCode text={address.url} />
