@@ -150,7 +150,22 @@ export interface ConsoleState {
   guidance?: ConsoleGuidance
   /** Absent on a network without signal, for the legacy locomotive, and from a PC of an older version */
   signals?: ConsoleSignals
+  /** The train met first on the route ahead; null when the route is clear as far as it is looked at. Absent from an older PC */
+  ahead?: ConsoleTrainAhead | null
 }
+
+/** The train ahead of the driven one on its route, as the points lie */
+export interface ConsoleTrainAhead {
+  /** Metres from the leading end of the driven train to the nearest end of that train */
+  distance: number
+  /** Its speed along the route, m/s: positive when it runs away from the driven train, negative when it comes towards it */
+  speed: number
+  /** Who drives it (« PC », the name of a desk); null when nobody does */
+  driver: string | null
+}
+
+/** How far ahead of a driven train another train is looked for, metres */
+export const TRAIN_AHEAD_REACH = 10_000
 
 /** One train of the layout, for the list a phone picks its train from */
 export interface FleetEntry {
@@ -163,8 +178,12 @@ export interface FleetEntry {
   wagonCount: number
   /** m/s */
   speed: number
-  /** True for the train currently driven on the PC */
+  /** True for a train someone drives: this PC or a desk */
   driven: boolean
+  /** Who drives it: `host` (the PC), the number of a desk, null for nobody. Absent from a PC of an older version */
+  driver?: 'host' | number | null
+  /** What that driver is called (« PC », the name a desk gave, « Pupitre 3 ») */
+  driverName?: string
 }
 
 export type ConsoleCommand =

@@ -12,7 +12,7 @@ import { chain, drive, setPoints, signalAt, trainAt } from '@domain/models/signa
 import { decodeMessage, encodeMessage } from '@application/remote/protocol'
 import { newSignalPassed, signalPassedLabel } from '@presentation/components/console/consoleModel'
 import { signalPassedMessage } from '@application/state/editorStore'
-import { brakeTone, buildConsoleState, buildFleet, trainConsoleState } from './consoleState'
+import { brakeTone, buildConsoleState, buildDeskConsoleState, buildFleet, buildTrainConsoleState, trainConsoleState } from './consoleState'
 
 function makeStore(): EditorStore {
   const store = new EditorStore()
@@ -347,13 +347,86 @@ describe('fleet list', () => {
     store.placeTrainLoco({ x: 2500, y: 0 })
     expect(store.trains).toHaveLength(2)
     expect(buildFleet(store).map((f) => f.driven)).toEqual([false, false])
+    // Selected in the editor is not driven: nobody drives outside driving mode
+    expect(buildFleet(store).map((f) => f.driver)).toEqual([null, null])
 
     store.selectTrainById(store.trains[1].id)
     store.togglePlayMode()
     expect(buildFleet(store)).toEqual([
-      { id: store.trains[0].id, rank: 1, model: 'TGV Duplex', locoCount: 1, wagonCount: 0, speed: 0, driven: false },
-      { id: store.trains[1].id, rank: 2, model: 'TGV Duplex', locoCount: 1, wagonCount: 0, speed: 0, driven: true },
+      { id: store.trains[0].id, rank: 1, model: 'TGV Duplex', locoCount: 1, wagonCount: 0, speed: 0, driven: false, driver: null },
+      { id: store.trains[1].id, rank: 2, model: 'TGV Duplex', locoCount: 1, wagonCount: 0, speed: 0, driven: true, driver: 'host', driverName: 'PC' },
     ])
+    store.togglePlayMode()
+  })
+
+  it('tells who drives each train, and gets it through the wire', () => {
+    const store = makeStore()
+    for (const x of [500, 1500, 2500]) expect(store.placeTrainLoco({ x, y: 0 })).toBe(true)
+    const [a, b, c] = store.trains
+    store.seatDesk(1, ' Léa ')
+    store.seatDesk(2)
+    expect(store.takeTrain(a.id, 1)).toBe(true)
+    expect(store.takeTrain(b.id, 2)).toBe(true)
+    const fleet = buildFleet(store)
+    expect(fleet.map((f) => [f.id, f.driven, f.driver, f.driverName])).toEqual([
+      [a.id, true, 1, 'Léa'],
+      [b.id, true, 2, 'Pupitre 2'],
+      [c.id, true, 'host', 'PC'],
+    ])
+    const decoded = decodeMessage(encodeMessage({ t: 'fleet', fleet }))
+    expect(decoded).toEqual({ ok: true, message: { t: 'fleet', fleet } })
+
+    // A desk on the train of the PC: the PC drives nothing, one train is nobody's
+    expect(store.takeTrain(c.id, 2)).toBe(true)
+    const after = buildFleet(store)
+    expect(after.map((f) => [f.driven, f.driver, f.driverName])).toEqual([
+      [true, 1, 'Léa'],
+      [false, null, undefined],
+      [true, 2, 'Pupitre 2'],
+    ])
+    expect(decodeMessage(encodeMessage({ t: 'fleet', fleet: after }))).toEqual({ ok: true, message: { t: 'fleet', fleet: after } })
+    store.togglePlayMode()
+  })
+})
+
+describe('console state of a desk', () => {
+  beforeEach(() => {
+    resetIdCounter(0)
+    resetMemoryStorage()
+  })
+
+  it('is that of the train the desk holds, whatever the PC looks at, and null while it holds none', () => {
+    const store = makeStore()
+    for (const x of [500, 1500, 2500]) expect(store.placeTrainLoco({ x, y: 0 })).toBe(true)
+    const [a, b, c] = store.trains
+    expect(buildDeskConsoleState(store, 1)).toBeNull()
+    expect(store.takeTrain(a.id, 1)).toBe(true)
+    expect(store.takeTrain(b.id, 2)).toBe(true)
+    store.setTrainNotch(a, 3)
+    store.setTrainNotch(b, -2)
+    store.setSelectedTrainNotch(1)
+
+    expect(buildDeskConsoleState(store, 1)).toMatchObject({ trainId: a.id, notch: 3 })
+    expect(buildDeskConsoleState(store, 2)).toMatchObject({ trainId: b.id, notch: -2 })
+    expect(buildDeskConsoleState(store, 3)).toBeNull()
+    expect(buildConsoleState(store)).toMatchObject({ trainId: c.id, notch: 1 })
+    // The same figures as any console of that train
+    expect(buildDeskConsoleState(store, 1)).toEqual(buildTrainConsoleState(store, a))
+
+    // After a step of the simulation: each its own speed and pressures, read once
+    run(store, 1)
+    const one = buildDeskConsoleState(store, 1)!
+    expect(one).toEqual(buildTrainConsoleState(store, a))
+    expect(one).toMatchObject(trainConsoleState(a, store.dynamicsOf(a), one.upcomingTurnout))
+    expect(buildDeskConsoleState(store, 2)!.trainId).toBe(b.id)
+    expect(store.dynamicsOf(a)).not.toBe(store.dynamicsOf(b))
+
+    store.releaseTrain(1)
+    expect(buildDeskConsoleState(store, 1)).toBeNull()
+    expect(buildDeskConsoleState(store, 2)).not.toBeNull()
+    // Outside driving mode no desk has a console
+    store.togglePlayMode()
+    expect(buildDeskConsoleState(store, 2)).toBeNull()
   })
 })
 

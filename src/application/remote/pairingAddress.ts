@@ -58,6 +58,11 @@ export interface PairingAddress {
   choices: string[]
   /** Something was typed that is not a host: it is ignored */
   typedInvalid: boolean
+  /**
+   * An address was typed that is none of those the server knows of its machine: right under WSL2
+   * without mirroring, wrong when it is a former address of the PC kept from another day
+   */
+  typedUnknown: boolean
   /** No reachable host is known: the address only works on the PC itself */
   localOnly: boolean
 }
@@ -75,6 +80,7 @@ export function pairingAddress(input: PairingAddressInput): PairingAddress {
     host,
     choices,
     typedInvalid: typed === null && input.typedHost.trim().length > 0,
+    typedUnknown: typed !== null && choices.length > 0 && !choices.includes(typed),
     localOnly: isLoopbackHost(host),
   }
 }

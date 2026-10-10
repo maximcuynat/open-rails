@@ -159,6 +159,7 @@ describe('gizmo module', () => {
         junctions: new Map(),
         speedZones: new Map(),
         signals: new Map(),
+        stations: new Map(),
       }
 
       const selection = {
@@ -189,6 +190,7 @@ describe('gizmo module', () => {
         junctions: new Map(),
         speedZones: new Map(),
         signals: new Map(),
+        stations: new Map(),
       }
 
       const selection = {
@@ -225,6 +227,7 @@ describe('gizmo module', () => {
         junctions: new Map(),
         speedZones: new Map(),
         signals: new Map(),
+        stations: new Map(),
       }
 
       // Single node
@@ -253,6 +256,7 @@ describe('gizmo module', () => {
         junctions: new Map(),
         speedZones: new Map(),
         signals: new Map(),
+        stations: new Map(),
       }
       const selection = {
         nodes: new Set<string>(),

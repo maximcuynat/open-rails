@@ -156,7 +156,7 @@ export class NetworkFollower {
     const reAddedNodes = new Set<NodeId>()
     const reAddedRails = new Set<SegmentId>()
     for (const { op, map, id } of entries) {
-      if (map === 'junctions' || map === 'speedZones' || map === 'signals') continue
+      if (map === 'junctions' || map === 'speedZones' || map === 'signals' || map === 'stations') continue
       if (id === null) return null
       if (map !== 'segments') {
         // `nodes`, `adjacency` (keyed by node), or a touch of something

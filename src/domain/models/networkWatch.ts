@@ -96,6 +96,7 @@ export function createCountedNetwork(): Network {
     junctions: new CountingMap(counter, 'junctions'),
     speedZones: new CountingMap(counter, 'speedZones'),
     signals: new CountingMap(counter, 'signals'),
+    stations: new CountingMap(counter, 'stations'),
   }
   counters.set(net, counter)
   return net
@@ -224,6 +225,21 @@ class ContentRecord {
       put(signal.role)
       put(signal.cabMarker)
       put(signal.oneWay)
+    }
+    for (const station of net.stations.values()) {
+      label = `station ${station.id}`
+      put(station.id)
+      put(station.name)
+      put(station.uic)
+      put(station.code)
+      put(station.pos.x)
+      put(station.pos.y)
+      put(station.stops.length)
+      for (const stop of station.stops) {
+        put(stop.segId)
+        put(stop.t)
+        put(stop.ref)
+      }
     }
     if (values.length !== at) {
       values.length = at

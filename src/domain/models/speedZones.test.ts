@@ -18,21 +18,7 @@ import { placeTurnout, splitSegment, weldNodes } from './junction'
 import { separateLevelsAtNode } from './crossing'
 import { reconcileNetworkIntersections, splitSegmentAtNode } from '../geometry/reconcile'
 import { performTrackCut } from '../geometry/constructionTemplates'
-import {
-  addSpeedZone,
-  cleanSpeedZones,
-  invalidateSpeedZones,
-  isValidZoneSpeed,
-  normalizeZoneSpeed,
-  removeSpeedZone,
-  restoreSpeedZone,
-  setSpeedZoneSpeed,
-  speedZoneIndex,
-  speedZonesAt,
-  speedZonesOnRail,
-  speedZonesRevision,
-  tidyTrackSpans,
-} from './speedZones'
+import { addSpeedZone, cleanSpeedZones, invalidateSpeedZones, isValidZoneSpeed, normalizeZoneSpeed, removeSpeedZone, restoreSpeedZone, setSpeedZoneSpeed, speedZoneIndex, speedZonesAt, speedZonesOnRail, speedZonesRevision, splitSpeedZonesBy, tidyTrackSpans } from './speedZones'
 import {
   duplicateReplacement,
   mergeReplacements,
@@ -644,5 +630,23 @@ describe('speed zones', () => {
     restoreSpeedZone(net, 'z_500', 60, [{ segId: rails[0].id, t0: 0, t1: 1 }])
     syncIdCounter(net)
     expect(generateId('n')).toBe('n_501')
+  })
+})
+
+describe('splitSpeedZonesBy', () => {
+  it('cuts a zone where the group of its rails changes, same speed, stretches in order, and leaves the others alone', () => {
+    const net = createNetwork()
+    const nodes = [0, 100, 200, 300, 400].map((x) => addNode(net, { x, y: 0 }))
+    const rails = nodes.slice(1).map((n, i) => addSegment(net, nodes[i].id, n.id)!)
+    const across = addSpeedZone(net, rails.map((r) => ({ segId: r.id, t0: 0, t1: 1 })), 160)!
+    const within = addSpeedZone(net, [{ segId: rails[0].id, t0: 0.2, t1: 0.4 }], 60)!
+    const group = (segId: string): string => (rails.slice(0, 2).some((r) => r.id === segId) ? 'a' : 'b')
+    expect(splitSpeedZonesBy(net, group)).toBe(1)
+    expect(net.speedZones.has(across.id)).toBe(false)
+    expect(net.speedZones.get(within.id)).toBe(within)
+    const pieces = [...net.speedZones.values()].filter((z) => z.id !== within.id).sort((x, y) => x.spans[0].segId.localeCompare(y.spans[0].segId, 'en', { numeric: true }))
+    expect(pieces.map((z) => z.speed)).toEqual([160, 160])
+    expect(pieces.map((z) => z.spans.map((s) => s.segId))).toEqual([[rails[0].id, rails[1].id], [rails[2].id, rails[3].id]])
+    expect(splitSpeedZonesBy(net, group)).toBe(0)
   })
 })

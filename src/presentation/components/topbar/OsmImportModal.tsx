@@ -10,6 +10,7 @@ import {
   groupIssues,
   osmSizeWarning,
   realSignalsInArea,
+  stationsInArea,
   reportFigures,
   reportNotes,
   signalModeHint,
@@ -18,10 +19,12 @@ import {
   surveyFigures,
   usesAutomaticSignals,
   usesRealSignals,
-  type Figure,
   type OsmIssueGroup,
 } from '@application/import/osmReport'
 import { convertOsm, surveyOsm } from '@domain/import/osmImport'
+import { projectionFor } from '@domain/import/osmProjection'
+import { matchStationRegistry } from '@domain/models/stationRegistry'
+import { loadStationRegistry } from '@application/import/stationRegistry'
 import {
   DEFAULT_OSM_IMPORT_OPTIONS,
   OSM_ATTRIBUTION,
@@ -50,6 +53,7 @@ import {
 import { readOverpassFile } from '@infrastructure/osm/overpassFile'
 import { searchPlaces, type PlaceResult } from '@infrastructure/osm/placeSearch'
 import { SIGNALLING_LEVEL_CHOICES } from '../settings/signallingSettingsModel'
+import { Figures } from '../common/Figures'
 
 /** Speeds offered for the service tracks, km/h: always picked in a list, by tens */
 const SERVICE_SPEEDS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
@@ -118,19 +122,6 @@ function nextPaint(): Promise<void> {
   })
 }
 
-function Figures({ figures, wide }: { figures: Figure[]; wide?: boolean }) {
-  return (
-    <dl className={`osm-figures${wide ? ' is-wide' : ''}`}>
-      {figures.map((figure) => (
-        <div className="osm-figure" key={figure.label}>
-          <dd>{figure.value}</dd>
-          <dt>{figure.label}</dt>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
 function Option({ checked, disabled, onChange, children }: { checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; children: ReactNode }) {
   return (
     <label className={`settings-checkbox-row${disabled ? ' is-disabled' : ''}`}>
@@ -183,6 +174,8 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
 
   useEffect(() => {
     placeInput.current?.focus()
+    // The official names of the stations are fetched now, to be there when the import runs
+    void loadStationRegistry()
     // Closing the window drops whatever request is still out
     return () => abort.current?.abort()
   }, [])
@@ -309,6 +302,8 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
     await nextPaint()
     try {
       const result = convertOsm(dataset.response, options)
+      // The official names and codes of the stations; without the list, the names of the data
+      if (result.network.stations.size > 0) matchStationRegistry(result.network, await loadStationRegistry(), projectionFor(result.frame, result.origin))
       loadOsmImport(store, result, { levels: options.levels, placeName: dataset.placeName, signallingLevel: level })
       const control = controlNote(signalReport(store.network, { level, line: store.lineSettings }), level, store.network.signals.size)
       setOutcome({
@@ -642,6 +637,10 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
                   <Option checked={options.disusedTracks} onChange={(on) => set('disusedTracks', on)}>
                     Voies désaffectées
                   </Option>
+                  <Option checked={options.stations !== false} onChange={(on) => set('stations', on)}>
+                    Gares et voies à quai
+                    {dataset && survey.value && <span className="osm-option-count"> · {stationsInArea(survey.value)}</span>}
+                  </Option>
                   {EXTRA_KINDS.map(({ kind, label }) => {
                     const present = survey.value?.extraKinds[kind] ?? 0
                     return (
@@ -670,6 +669,20 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* --- Frame --- */}
+              <div className="settings-section">
+                <div className="settings-label">
+                  Repère
+                  <span className="settings-hint">Où les coordonnées du réseau prennent leur origine</span>
+                </div>
+                <fieldset className="osm-options" disabled={phase === 'converting'}>
+                  <Option checked={options.frame === 'lambert93'} onChange={(on) => set('frame', on ? 'lambert93' : 'local')}>
+                    Repère national Lambert-93
+                    <span className="osm-option-count"> · les imports se superposent ; les longueurs s’écartent de 1 m par km, 3 m en Corse</span>
+                  </Option>
+                </fieldset>
               </div>
 
               {/* --- Signals --- */}

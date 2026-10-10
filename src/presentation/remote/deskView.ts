@@ -1,6 +1,7 @@
 import type {
   ConsoleCommand,
   ConsoleState,
+  ConsoleTrainAhead,
   ConsoleTurnout,
   FleetEntry,
 } from '@application/console/consoleContract'
@@ -117,6 +118,55 @@ export function compositionLabel(locoCount: number, wagonCount: number): string 
 export function fleetSpeedLabel(entry: Pick<FleetEntry, 'speed'>): string {
   const kmh = Math.round(Math.abs(entry.speed) * 3.6)
   return kmh === 0 ? 'À l’arrêt' : `${kmh} km/h`
+}
+
+export interface FleetChoice {
+  /** What the row says under the speed */
+  label: string
+  /** This desk holds the train */
+  mine: boolean
+  /** Another desk holds it: it cannot be picked */
+  taken: boolean
+}
+
+/**
+ * What a train of the list is to this desk: its own, free to take (the PC lets go of the one it
+ * drives when a desk takes it), or held by another desk. A PC of an older version does not say
+ * who drives: its one driven train is this desk's.
+ */
+export function fleetChoice(entry: Pick<FleetEntry, 'id' | 'driven' | 'driver' | 'driverName'>, desk: number | null, pending: string | null): FleetChoice {
+  if (pending === entry.id) return { label: 'Prise des commandes…', mine: false, taken: false }
+  if (entry.driver === undefined) return { label: entry.driven ? 'Aux commandes' : 'Conduire', mine: entry.driven, taken: false }
+  if (entry.driver === null) return { label: 'Conduire', mine: false, taken: false }
+  if (entry.driver === 'host') return { label: 'Conduit par le PC · prendre', mine: false, taken: false }
+  if (entry.driver === desk) return { label: 'Aux commandes', mine: true, taken: false }
+  return { label: `Pris par ${entry.driverName ?? `Pupitre ${entry.driver}`}`, mine: false, taken: true }
+}
+
+/**
+ * Where the train ahead is `elapsed` seconds after the PC said so: both trains are taken to have
+ * kept their speed. What the desk shows between two states, and while one is late or lost.
+ */
+export function extrapolateAhead(ahead: ConsoleTrainAhead, ownSpeed: number, elapsed: number): number {
+  return ahead.distance - (ownSpeed - ahead.speed) * Math.max(0, elapsed)
+}
+
+/** « 1,2 km · 240 km/h · Léa » — the train ahead as the desk writes it */
+export function aheadLabel(distance: number, ahead: Pick<ConsoleTrainAhead, 'speed' | 'driver'>): string {
+  const d = Math.max(0, distance)
+  const where = d >= 1000 ? `${(d / 1000).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km` : `${Math.round(d / 10) * 10} m`
+  const kmh = Math.round(Math.abs(ahead.speed) * 3.6)
+  const how = kmh === 0 ? 'à l’arrêt' : ahead.speed < 0 ? `${kmh} km/h, vient vers vous` : `${kmh} km/h`
+  return [where, how, ahead.driver].filter(Boolean).join(' · ')
+}
+
+/** The key the name of the driver is kept under on the phone */
+export const DRIVER_NAME_KEY = 'open-rail:driver-name'
+
+/** A name as it is sent: trimmed, at most `max` characters, null when empty */
+export function cleanDriverName(raw: string | null | undefined, max: number): string | null {
+  const name = (raw ?? '').replace(/\s+/g, ' ').trim().slice(0, max).trim()
+  return name === '' ? null : name
 }
 
 /** « Train 2/3 · TGV Duplex », or what is known of it */

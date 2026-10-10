@@ -9,6 +9,7 @@ const SURVEY: OsmSurvey = {
   switches: 700,
   bridges: 23,
   tunnels: 319,
+  stations: 2,
   extraKinds: { subway: 99, tram: 57 },
   signals: 256,
   typedMainSignals: 161,
@@ -45,13 +46,14 @@ describe('the count shown before an import', () => {
       '700 aiguillages',
       '23 ponts',
       '319 tunnels',
+      '2 gares',
       '≈ 5 400 rails estimés',
     ])
   })
 
   it('writes one of each in the singular', () => {
-    const one = surveyFigures({ ...SURVEY, ways: 1, switches: 1, bridges: 1, tunnels: 0 })
-    expect(one.map((f) => f.label)).toEqual(['voie', 'de voies', 'aiguillage', 'pont', 'tunnel', 'rails estimés'])
+    const one = surveyFigures({ ...SURVEY, ways: 1, switches: 1, bridges: 1, tunnels: 0, stations: 1 })
+    expect(one.map((f) => f.label)).toEqual(['voie', 'de voies', 'aiguillage', 'pont', 'tunnel', 'gare', 'rails estimés'])
   })
 
   it('says nothing up to 2 000 rails', () => {

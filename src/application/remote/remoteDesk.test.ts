@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConsoleCommand, ConsoleState, FleetEntry } from '../console/consoleContract'
 import { FakeLink } from './fakeLink'
-import { PROTOCOL_VERSION } from './protocol'
+import { MAX_DRIVER_NAME_LENGTH, PROTOCOL_VERSION } from './protocol'
 import { createRemoteDesk } from './remoteDesk'
 
 const STATE: ConsoleState = {
@@ -39,7 +39,7 @@ function setup(linkStatus: 'open' | 'connecting' = 'open') {
   const link = new FakeLink(linkStatus)
   const desk = createRemoteDesk({ link, room: 'ABC234', clientId: 'desk-token', rejoinGraceMs: 20000 })
   const seat = () => {
-    link.receive({ t: 'joined', room: 'ABC234' })
+    link.receive({ t: 'joined', room: 'ABC234', desk: 1 })
     link.receive({ t: 'fleet', fleet: FLEET })
     link.receive({ t: 'state', state: STATE, ack: 0 })
     link.take()
@@ -57,22 +57,74 @@ describe('remoteDesk', () => {
 
   it('joins its room when the link opens, and again after a reconnection', () => {
     const { link, desk } = setup('connecting')
-    expect(desk.getSnapshot()).toMatchObject({ link: 'connecting', joined: false })
+    expect(desk.getSnapshot()).toMatchObject({ link: 'connecting', joined: false, desk: null })
     link.setStatus('open')
     expect(link.take()).toEqual([JOIN])
-    link.receive({ t: 'joined', room: 'ABC234' })
-    expect(desk.getSnapshot()).toMatchObject({ link: 'open', joined: true, ended: null })
+    link.receive({ t: 'joined', room: 'ABC234', desk: 1 })
+    expect(desk.getSnapshot()).toMatchObject({ link: 'open', joined: true, desk: 1, ended: null })
     link.setStatus('connecting')
     expect(desk.getSnapshot()).toMatchObject({ link: 'connecting', joined: false, state: null })
     link.setStatus('open')
     expect(link.take()).toEqual([JOIN])
   })
 
+  it('knows the number it sits under, and takes the one it is given when it comes back', () => {
+    const { link, desk } = setup()
+    expect(desk.getSnapshot().desk).toBeNull()
+    link.receive({ t: 'joined', room: 'ABC234', desk: 3 })
+    expect(desk.getSnapshot()).toMatchObject({ joined: true, desk: 3 })
+    // What the PC sends it is its own, whatever `to` says: the relay did the sorting
+    link.receive({ t: 'fleet', fleet: FLEET })
+    link.receive({ t: 'state', state: STATE, ack: 2, to: 3 })
+    expect(desk.getSnapshot()).toMatchObject({ desk: 3, fleet: FLEET, state: STATE, ack: 2 })
+    // The room reopened and another desk got there first
+    link.setStatus('connecting')
+    link.setStatus('open')
+    link.receive({ t: 'joined', room: 'ABC234', desk: 5 })
+    expect(desk.getSnapshot()).toMatchObject({ joined: true, desk: 5 })
+  })
+
+  it('gives the name of its driver when it joins, trimmed and cut to what the protocol takes', () => {
+    const joinOf = (name: string | undefined) => {
+      const link = new FakeLink('connecting')
+      createRemoteDesk({ link, room: 'ABC234', clientId: 'desk-token', name })
+      link.setStatus('open')
+      const first = link.take()
+      // The same again after a reconnection
+      link.setStatus('connecting')
+      link.setStatus('open')
+      expect(link.take()).toEqual(first)
+      return first
+    }
+    expect(joinOf('Léa')).toEqual([{ ...JOIN, name: 'Léa' }])
+    expect(joinOf('  Léa  ')).toEqual([{ ...JOIN, name: 'Léa' }])
+    expect(joinOf('x'.repeat(50))).toEqual([{ ...JOIN, name: 'x'.repeat(MAX_DRIVER_NAME_LENGTH) }])
+    // No name, or nothing but spaces: no `name` at all, the PC then says « Pupitre N »
+    expect(joinOf(undefined)).toEqual([JOIN])
+    expect(joinOf('')).toEqual([JOIN])
+    expect(joinOf('   ')).toEqual([JOIN])
+    // A link already open joins at once, name included
+    const link = new FakeLink()
+    createRemoteDesk({ link, room: 'ABC234', clientId: 'desk-token', name: 'Léa' })
+    expect(link.take()).toEqual([{ ...JOIN, name: 'Léa' }])
+  })
+
+  it('never says which desk it is: the relay does', () => {
+    const { link, desk, seat } = setup()
+    seat()
+    desk.send({ type: 'notchStep', step: 1 })
+    desk.send(APPLY)
+    vi.advanceTimersByTime(400)
+    const sent = link.take()
+    expect(sent).toHaveLength(4)
+    for (const message of sent) expect(message).not.toHaveProperty('from')
+  })
+
   it('exposes the fleet and the state to its subscribers', () => {
     const { link, desk } = setup()
     const listener = vi.fn()
     const unsubscribe = desk.subscribe(listener)
-    link.receive({ t: 'joined', room: 'ABC234' })
+    link.receive({ t: 'joined', room: 'ABC234', desk: 1 })
     link.receive({ t: 'fleet', fleet: FLEET })
     link.receive({ t: 'state', state: STATE, ack: 4 })
     expect(listener).toHaveBeenCalledTimes(3)
@@ -141,7 +193,7 @@ describe('remoteDesk', () => {
     link.setStatus('connecting')
     vi.advanceTimersByTime(1000)
     link.setStatus('open')
-    link.receive({ t: 'joined', room: 'ABC234' })
+    link.receive({ t: 'joined', room: 'ABC234', desk: 1 })
     link.take()
     vi.advanceTimersByTime(1000)
     expect(link.take()).toEqual([])
@@ -168,7 +220,8 @@ describe('remoteDesk', () => {
   it('keeps trying for a while when the room it sat in disappears', () => {
     const { link, desk, seat } = setup()
     seat()
-    // The PC's connection dropped: the relay closed the room and our socket
+    // The PC's connection dropped: the relay closed the room and our socket. No number: it is the
+    // room that is gone, not a desk
     link.receive({ t: 'peer-left' })
     expect(desk.getSnapshot()).toMatchObject({ joined: false, state: null, ended: null })
     link.setStatus('connecting')
@@ -181,7 +234,7 @@ describe('remoteDesk', () => {
     link.setStatus('connecting')
     vi.advanceTimersByTime(2000)
     link.setStatus('open')
-    link.receive({ t: 'joined', room: 'ABC234' })
+    link.receive({ t: 'joined', room: 'ABC234', desk: 1 })
     expect(desk.getSnapshot()).toMatchObject({ joined: true, ended: null })
   })
 

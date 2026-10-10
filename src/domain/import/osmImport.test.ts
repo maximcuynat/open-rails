@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { convertOsm, surveyOsm } from './osmImport'
 import type { OsmImportResult, OverpassElement, OverpassResponse } from './osmTypes'
-import { along, answer, levelCounts, nodeNear, nodesWithRails, openInEditor, options, osmNode, osmTrack, osmWay, placeIn } from './osmImport.testkit'
+import { along, answer, levelCounts, nodeNear, nodesWithRails, openInEditor, options, osmNode, osmTrack, osmWay, placeIn, readFixture } from './osmImport.testkit'
 import { segmentShapeLengthBetween } from '../geometry/segmentGeometry'
 import { findJunctionAtNode } from '../models/junction'
 import { walkForward } from '../models/locomotive'
@@ -539,5 +539,49 @@ describe('survey before the import', () => {
     expect(survey).toMatchObject({ ways: 4, serviceWays: 0, switches: 0, bridges: 1, tunnels: 0, signals: 2, typedMainSignals: 1, extraKinds: {}, detachedKm: 0 })
     expect(survey.lengthKm).toBeCloseTo(1.2, 2)
     expect(convertOsm(data, options()).dataDate).toBe('2026-10-06T07:14:21Z')
+  })
+})
+
+describe('the frame of an import', () => {
+  const line = osmTrack(10, 1, along([0, 0], [1200, 0]))
+
+  it('is the local one by default: centred on the data, remembered in the result', () => {
+    const result = convertOsm(answer(line.elements), options())
+    expect(result.frame).toBe('local')
+    expect(result.origin.lat).toBeCloseTo(47, 3)
+    expect(result.origin.lon).toBeGreaterThan(5)
+  })
+
+  it('in Lambert-93 the origin is the national one and the same place lands at the same point in every import', () => {
+    const first = convertOsm(answer(line.elements), options({ frame: 'lambert93' }))
+    expect(first.frame).toBe('lambert93')
+    expect(first.origin).toEqual({ lat: 46.5, lon: 3 })
+    // A second answer that covers more track: the shared node must not move
+    const longer = osmTrack(20, 100, along([-3000, 400], [1200, 400]))
+    const second = convertOsm(answer(line.elements, longer.elements), options({ frame: 'lambert93' }))
+    const placeFirst = placeIn(first, 600, 0)
+    const placeSecond = placeIn(second, 600, 0)
+    expect(placeFirst.x).toBeCloseTo(placeSecond.x, 6)
+    expect(placeFirst.y).toBeCloseTo(placeSecond.y, 6)
+    // Far from the origin, as the real Lambert-93 coordinates of the kit's place are
+    expect(Math.hypot(placeFirst.x, placeFirst.y)).toBeGreaterThan(100_000)
+    // The track is the same track, within the 0.1 % of scale the projection trades for a common map
+    const lengthOf = (net: Network): number => [...net.segments.values()].reduce((sum, seg) => sum + segmentShapeLengthBetween(net, seg, 0, 1), 0)
+    const local = convertOsm(answer(line.elements), options())
+    expect(Math.abs(lengthOf(first.network) / lengthOf(local.network) - 1)).toBeLessThan(0.003)
+  })
+})
+
+describe('the way each rail was laid from', () => {
+  it('is remembered on request, for every rail, and a rail cut since answers for its parent', () => {
+    const data = readFixture('lgv-pasilly')
+    const ways = new Set(data.elements.filter((el) => el.type === 'way').map((el) => el.id))
+    const result = convertOsm(data, options({ traceWays: true }))
+    expect(result.wayOfRail!.size).toBe(result.network.segments.size)
+    for (const [segId, way] of result.wayOfRail!) {
+      expect(result.network.segments.has(segId)).toBe(true)
+      expect(ways.has(way)).toBe(true)
+    }
+    expect(convertOsm(data, options()).wayOfRail).toBeUndefined()
   })
 })

@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import {
+  MAX_DESKS,
   MAX_MESSAGE_BYTES,
   PROTOCOL_VERSION,
   type RemoteMessage,
@@ -77,13 +78,21 @@ describe('relay server (real sockets)', () => {
     c.send({ t: 'host', v: PROTOCOL_VERSION, room, client: 'host-token' })
     return c
   }
-  const desk = async (room = 'ABC234', token = 'desk-token') => {
+  const desk = async (room = 'ABC234', token = 'desk-token', name?: string) => {
     const c = await client()
-    c.send({ t: 'join', v: PROTOCOL_VERSION, room, client: token })
+    c.send(name === undefined ? { t: 'join', v: PROTOCOL_VERSION, room, client: token } : { t: 'join', v: PROTOCOL_VERSION, room, client: token, name })
     return c
   }
 
+  beforeEach(() => {
+    // The relay times the silence of a connection on `Date.now`. A wall clock that is set while
+    // the test runs (a time sync, a virtual machine catching up) would close everybody at once,
+    // or nobody ever: here time only moves forward, at its own pace.
+    vi.spyOn(Date, 'now').mockImplementation(() => performance.timeOrigin + performance.now())
+  })
+
   afterEach(async () => {
+    vi.restoreAllMocks()
     for (const c of clients.splice(0)) c.socket.terminate()
     await running?.close()
     running = null
@@ -94,8 +103,8 @@ describe('relay server (real sockets)', () => {
     const pc = await host()
     expect(await pc.next()).toEqual({ t: 'opened', room: 'ABC234', hosts: ['192.168.1.42'] })
     const phone = await desk()
-    expect(await phone.next()).toEqual({ t: 'joined', room: 'ABC234' })
-    expect(await pc.next()).toEqual({ t: 'peer-joined' })
+    expect(await phone.next()).toEqual({ t: 'joined', room: 'ABC234', desk: 1 })
+    expect(await pc.next()).toEqual({ t: 'peer-joined', desk: 1 })
 
     pc.send({ t: 'fleet', fleet: [] })
     pc.send(STATE)
@@ -103,23 +112,62 @@ describe('relay server (real sockets)', () => {
     expect(await phone.next()).toEqual(STATE)
 
     phone.send(COMMAND)
-    expect(await pc.next()).toEqual(COMMAND)
+    // Stamped by the relay with the number of the desk
+    expect(await pc.next()).toEqual({ ...COMMAND, from: 1 })
 
     phone.send({ t: 'ping' })
     expect(await phone.next()).toEqual({ t: 'pong' })
   })
 
-  it('refuses a second desk, an unknown room and another version', async () => {
+  it('seats several desks, each under its number, and sorts what goes to which', async () => {
+    await start()
+    const pc = await host()
+    await pc.next()
+    const first = await desk('ABC234', 'first-desk-token')
+    expect(await first.next()).toEqual({ t: 'joined', room: 'ABC234', desk: 1 })
+    expect(await pc.next()).toEqual({ t: 'peer-joined', desk: 1 })
+    const second = await desk('ABC234', 'second-desk-token', 'Léa')
+    expect(await second.next()).toEqual({ t: 'joined', room: 'ABC234', desk: 2 })
+    expect(await pc.next()).toEqual({ t: 'peer-joined', desk: 2, name: 'Léa' })
+
+    // To the desk it names only; without a name, to both
+    pc.send({ ...STATE, to: 2 })
+    pc.send({ t: 'fleet', fleet: [] })
+    pc.send({ ...STATE, to: 1 })
+    expect(await second.next()).toEqual({ ...STATE, to: 2 })
+    expect(await second.next()).toEqual({ t: 'fleet', fleet: [] })
+    expect(await first.next()).toEqual({ t: 'fleet', fleet: [] })
+    expect(await first.next()).toEqual({ ...STATE, to: 1 })
+
+    // Each command reaches the host under the number of its desk, whatever the desk wrote
+    second.send({ ...COMMAND, from: 1 })
+    expect(await pc.next()).toEqual({ ...COMMAND, from: 2 })
+    first.send(COMMAND)
+    expect(await pc.next()).toEqual({ ...COMMAND, from: 1 })
+
+    // One leaves: the host is told which, the other is untouched
+    first.socket.terminate()
+    expect(await pc.next()).toEqual({ t: 'peer-left', desk: 1 })
+    second.send(COMMAND)
+    expect(await pc.next()).toEqual({ ...COMMAND, from: 2 })
+  })
+
+  it('refuses the desk one too many, an unknown room and another version', async () => {
     await start()
     const pc = await host()
     await pc.next()
     const phone = await desk()
     await phone.next()
     await pc.next()
+    for (let number = 2; number <= MAX_DESKS; number++) {
+      const other = await desk('ABC234', `desk-token-${number}`)
+      expect(await other.next()).toEqual({ t: 'joined', room: 'ABC234', desk: number })
+      expect(await pc.next()).toEqual({ t: 'peer-joined', desk: number })
+    }
 
-    const second = await desk('ABC234', 'second-desk-token')
-    expect(await second.next()).toEqual({ t: 'error', code: 'room-full' })
-    expect(await second.closed).toBe(1000)
+    const ninth = await desk('ABC234', 'ninth-desk-token')
+    expect(await ninth.next()).toEqual({ t: 'error', code: 'room-full' })
+    expect(await ninth.closed).toBe(1000)
 
     const lost = await desk('ZZZZZZ')
     expect(await lost.next()).toEqual({ t: 'error', code: 'unknown-room' })
@@ -130,9 +178,9 @@ describe('relay server (real sockets)', () => {
     expect(await old.next()).toEqual({ t: 'error', code: 'version' })
     await old.closed
 
-    // The seated desk is untouched by all that
+    // The seated desks are untouched by all that
     phone.send(COMMAND)
-    expect(await pc.next()).toEqual(COMMAND)
+    expect(await pc.next()).toEqual({ ...COMMAND, from: 1 })
   })
 
   it('closes the room when the host leaves', async () => {
@@ -143,9 +191,16 @@ describe('relay server (real sockets)', () => {
     await phone.next()
     await pc.next()
 
+    const other = await desk('ABC234', 'other-desk-token')
+    await other.next()
+    await pc.next()
+
     pc.socket.close()
+    // Every desk is told the room is gone (no number), and is closed
     expect(await phone.next()).toEqual({ t: 'peer-left' })
+    expect(await other.next()).toEqual({ t: 'peer-left' })
     await phone.closed
+    await other.closed
     expect(relay.relay.roomCount).toBe(0)
     expect(relay.relay.connectionCount).toBe(0)
 
@@ -161,7 +216,7 @@ describe('relay server (real sockets)', () => {
     await phone.next()
     await pc.next()
     phone.socket.terminate()
-    expect(await pc.next()).toEqual({ t: 'peer-left' })
+    expect(await pc.next()).toEqual({ t: 'peer-left', desk: 1 })
   })
 
   it('closes a connection that sends garbage or too much', async () => {

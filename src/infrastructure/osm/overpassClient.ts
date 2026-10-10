@@ -111,9 +111,11 @@ function degrees(value: number): string {
 }
 
 /**
- * The Overpass QL query for the tracks of an area. Ways first, then their nodes by recursion, in
- * one `out body`: every node comes once, with its tags (switches, signals, buffer stops are tags
- * of the nodes of a track). No relation: a line relation runs for hundreds of kilometres.
+ * The Overpass QL query for the tracks of an area. Ways and the station nodes first, then the
+ * nodes of the ways by recursion, in one `out body`: every node comes once, with its tags
+ * (switches, signals, buffer stops and stop positions are tags of the nodes of a track; a station
+ * is often a node of its own, beside the track). No relation: a line relation runs for hundreds of
+ * kilometres.
  */
 export function buildOverpassQuery(area: OsmArea, kinds: OsmQueryKinds = ALL_QUERY_KINDS): string {
   const values = ['rail', ...ALL_EXTRA_KINDS.filter((kind) => kinds.extraKinds.includes(kind))]
@@ -124,7 +126,7 @@ export function buildOverpassQuery(area: OsmArea, kinds: OsmQueryKinds = ALL_QUE
       : `(${degrees(area.south)},${degrees(area.west)},${degrees(area.north)},${degrees(area.east)})`
   return [
     `[out:json][timeout:${OVERPASS_SERVER_TIMEOUT_S}];`,
-    `way[railway~"^(${values.join('|')})$"]${where};`,
+    `(way[railway~"^(${values.join('|')})$"]${where};node[railway~"^(station|halt)$"]${where};);`,
     '(._;>;);',
     'out body qt;',
   ].join('\n')
@@ -271,14 +273,24 @@ export async function fetchOverpass(
 ): Promise<OverpassResponse> {
   const problem = areaProblem(area)
   if (problem) throw new OsmError('too-large', problem)
+  const answer = await askOverpass(buildOverpassQuery(area, kinds), options)
+  if (!hasRailwayWay(answer)) throw new OsmError('empty', OSM_ERROR_MESSAGES.empty)
+  return answer
+}
 
+/**
+ * Run one Overpass query, whatever it asks for: each server is asked in turn until one answers;
+ * when all of them are busy the list is gone through once more after a pause. The first answer is
+ * taken as it is, empty or not (the caller knows what it asked for). Throws an `OsmError`:
+ * `aborted`, `too-large`, `busy`, `offline` or `invalid`.
+ */
+export async function askOverpass(query: string, options: OverpassRequestOptions = {}): Promise<OverpassResponse> {
   const doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
   const servers = options.servers ?? OVERPASS_SERVERS
   const rounds = options.rounds ?? OVERPASS_ROUNDS
   const pauseMs = options.pauseMs ?? OVERPASS_RETRY_PAUSE_MS
   const timeoutMs = options.timeoutMs ?? OVERPASS_REQUEST_TIMEOUT_MS
   const sleep = options.sleep ?? abortableSleep
-  const query = buildOverpassQuery(area, kinds)
   const attempts = servers.length * rounds
   const failures: Failure[] = []
   let attempt = 0
@@ -300,10 +312,7 @@ export async function fetchOverpass(
         timeoutMs,
         onBytes: (receivedBytes) => options.onProgress?.({ phase: 'receiving', server, attempt, attempts, receivedBytes }),
       })
-      if (typeof answer !== 'string') {
-        if (!hasRailwayWay(answer)) throw new OsmError('empty', OSM_ERROR_MESSAGES.empty)
-        return answer
-      }
+      if (typeof answer !== 'string') return answer
       roundFailures.push(answer)
     }
     failures.push(...roundFailures)

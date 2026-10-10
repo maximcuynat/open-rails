@@ -1,6 +1,7 @@
 import type { ConsoleCommand, ConsoleState, FleetEntry } from '../console/consoleContract'
 import {
   BRAKE_REPEAT_MS,
+  MAX_DRIVER_NAME_LENGTH,
   PROTOCOL_VERSION,
   generateClientId,
   type RoomErrorCode,
@@ -19,6 +20,8 @@ export interface RemoteDeskDeps {
   link: RemoteLink
   /** Code of the room to join (see `roomFromPageUrl`) */
   room: string
+  /** What the driver wants to be called on the PC and on the other desks; none: « Pupitre N » */
+  name?: string
   scheduler?: Scheduler
   /** Token that lets this desk take its seat back after a reconnection (default: random) */
   clientId?: string
@@ -33,8 +36,10 @@ export interface RemoteDeskSnapshot {
   link: LinkStatus
   /** Seated in the room, the PC is there */
   joined: boolean
+  /** The number this desk sits under in the room; null before it is seated */
+  desk: number | null
   fleet: FleetEntry[]
-  /** State of the train driven on the PC; null while it drives nothing, or before the first state */
+  /** State of the train this desk holds; null while it holds none, or before the first state */
   state: ConsoleState | null
   /** Sequence of the last command the PC took into account */
   ack: number
@@ -65,6 +70,7 @@ export function createRemoteDesk(deps: RemoteDeskDeps): RemoteDesk {
   let snapshot: RemoteDeskSnapshot = {
     link: link.status,
     joined: false,
+    desk: null,
     fleet: [],
     state: null,
     ack: 0,
@@ -112,7 +118,8 @@ export function createRemoteDesk(deps: RemoteDeskDeps): RemoteDesk {
   }
 
   const join = () => {
-    link.send({ t: 'join', v: PROTOCOL_VERSION, room, client: clientId })
+    const name = deps.name?.trim().slice(0, MAX_DRIVER_NAME_LENGTH)
+    link.send(name ? { t: 'join', v: PROTOCOL_VERSION, room, client: clientId, name } : { t: 'join', v: PROTOCOL_VERSION, room, client: clientId })
   }
 
   const offMessage = link.onMessage((message) => {
@@ -120,7 +127,7 @@ export function createRemoteDesk(deps: RemoteDeskDeps): RemoteDesk {
       case 'joined':
         everJoined = true
         lostAt = null
-        update({ joined: true })
+        update({ joined: true, desk: message.desk })
         return
       case 'fleet':
         update({ fleet: message.fleet })

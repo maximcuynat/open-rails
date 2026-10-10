@@ -1,15 +1,16 @@
 import type { Network, Point, Segment, SegmentId, Signal, SignalRole } from '../models/types'
 import type { OsmImportIssue, OsmSignalCount, OsmSignalIgnored, OsmSignalMode, OsmSignalReport, OsmSignalSkip } from './osmTypes'
 import type { OsmRead } from './osmRead'
-import type { Chain, TrackGraph } from './osmGraph'
+import type { TrackGraph } from './osmGraph'
 import type { BuiltNetwork } from './osmBuild'
-import { projectOnSegment, segmentArcLength } from '../models/locomotive'
+import { segmentArcLength } from '../models/locomotive'
 import { signalBlock } from '../models/signalBlocks'
 import { SIGNAL_SWITCH_CLEARANCE, addSignal, isSwitchNode, setSignalRole, type SignalRefusal } from '../models/signals'
 import { DEFAULT_LINE_SETTINGS, LINE_SPEED_RANGE, type LineSettings } from '../models/speedLimits'
 import { layAutomaticSignals } from '../services/signalAutoLayout'
 import { signalForwardFor } from '../services/signalLayout'
 import { trackAt } from './osmLevels'
+import { chainOfRail, type TrackPlacer } from './osmPlace'
 import {
   CAB_MARKER_KIND_KEY,
   CAB_MARKER_PLATE_KEYS,
@@ -134,14 +135,8 @@ export function importLine(lineSpeed: number | undefined, highSpeed: boolean): L
   return { lineSpeed: Math.max(LINE_SPEED_RANGE.min, Math.min(LINE_SPEED_RANGE.max, speed)), lineType: highSpeed ? 'highSpeed' : 'classic' }
 }
 
-// ─────────────────── Where a node stands on the laid track ───────────────────
+// ─────────────────── Laying a signal clear of the points ───────────────────
 
-/** A signal node is looked for on the rails of its own track within this distance (m)… */
-const OWN_TRACK_REACH = 5
-/** …and, when those cannot be told (rails cut since they were laid), on any rail within this one */
-const ANY_TRACK_REACH = 1.5
-/** Side (m) of the cells the rails are sorted into */
-const CELL = 100
 /** A signal moved clear of points stands this much further than the clearance asks; tried in turn */
 const CLEARANCE_MARGINS = [1.05, 1.5]
 
@@ -151,35 +146,6 @@ const SKIP_TEXT: Record<Exclude<OsmSignalSkip, 'track-not-imported'>, string> = 
   'off-track': 'Signal trop loin de la voie une fois tracée : non posé.',
   'on-switch': 'Signal sur un aiguillage ou un croisement, sans place pour l’en écarter : non posé.',
   duplicate: 'Un signal de même sens se trouve déjà à cet endroit : non posé.',
-}
-
-function railIndex(net: Network): Map<string, Segment[]> {
-  const cells = new Map<string, Segment[]>()
-  for (const seg of net.segments.values()) {
-    const a = net.nodes.get(seg.from)?.pos
-    const b = net.nodes.get(seg.to)?.pos
-    if (!a || !b) continue
-    const xs = seg.via ? [a.x, b.x, seg.via.x] : [a.x, b.x]
-    const ys = seg.via ? [a.y, b.y, seg.via.y] : [a.y, b.y]
-    const x0 = Math.floor((Math.min(...xs) - OWN_TRACK_REACH) / CELL)
-    const x1 = Math.floor((Math.max(...xs) + OWN_TRACK_REACH) / CELL)
-    const y0 = Math.floor((Math.min(...ys) - OWN_TRACK_REACH) / CELL)
-    const y1 = Math.floor((Math.max(...ys) + OWN_TRACK_REACH) / CELL)
-    for (let cx = x0; cx <= x1; cx++) {
-      for (let cy = y0; cy <= y1; cy++) {
-        const key = `${cx},${cy}`
-        const list = cells.get(key)
-        if (list) list.push(seg)
-        else cells.set(key, [seg])
-      }
-    }
-  }
-  return cells
-}
-
-/** The chain a rail was laid from; a rail cut since then answers for the one it was cut from */
-function chainOfRail(built: BuiltNetwork, seg: Segment): Chain | undefined {
-  return built.railChain.get(seg.id) ?? (seg.parentSegmentId ? built.railChain.get(seg.parentSegmentId) : undefined)
 }
 
 /** True for a rail laid from a high-speed track: its signals are marker boards */
@@ -217,10 +183,11 @@ export interface SignalLayInput {
   net: Network
   read: OsmRead
   graph: TrackGraph
-  chains: Chain[]
   built: BuiltNetwork
   /** World position of a place, for the nodes that are on no imported track */
   project: (lat: number, lon: number) => Point
+  /** Where a node stands on the laid track */
+  placer: TrackPlacer
   mode: OsmSignalMode
   line: LineSettings
 }
@@ -231,49 +198,13 @@ export interface SignalLayInput {
  * in place: the blocks are read to tell what an untyped marker board guards).
  */
 export function laySignals(input: SignalLayInput): { report: OsmSignalReport; issues: OsmImportIssue[] } {
-  const { net, read, graph, chains, built, mode } = input
+  const { net, read, graph, built, mode } = input
   const count = (): OsmSignalCount => ({ protection: 0, spacing: 0, cabMarkers: 0 })
   const report: OsmSignalReport = { mode, found: 0, real: count(), realMoved: 0, skipped: {}, ignored: {}, generated: count(), stretchesLeftToReal: 0 }
   const issues: OsmImportIssue[] = []
 
   const withReal = mode === 'real' || mode === 'mixed'
-  const chainsAt = new Map<number, Set<Chain>>()
-  let rails: Map<string, Segment[]> | null = null
-  if (withReal) {
-    for (const chain of chains) {
-      for (const id of chain.nodes) {
-        const set = chainsAt.get(id)
-        if (set) set.add(chain)
-        else chainsAt.set(id, new Set([chain]))
-      }
-    }
-    rails = railIndex(net)
-  }
-
-  /** The place of a node on the laid track: the nearest rail of its own track, else any rail right under it */
-  const placeOf = (id: number, at: Point): { segId: SegmentId; t: number } | null => {
-    const mine = chainsAt.get(id)
-    let own: { segId: SegmentId; t: number } | null = null
-    let ownDist = OWN_TRACK_REACH
-    let any: { segId: SegmentId; t: number } | null = null
-    let anyDist = ANY_TRACK_REACH
-    for (const seg of rails!.get(`${Math.floor(at.x / CELL)},${Math.floor(at.y / CELL)}`) ?? []) {
-      const found = projectOnSegment(net, seg, at)
-      if (!found) continue
-      const dist = Math.hypot(found.point.x - at.x, found.point.y - at.y)
-      const chain = chainOfRail(built, seg)
-      if (chain && mine?.has(chain)) {
-        if (dist < ownDist) {
-          ownDist = dist
-          own = { segId: seg.id, t: found.t }
-        }
-      } else if (!chain && dist < anyDist) {
-        anyDist = dist
-        any = { segId: seg.id, t: found.t }
-      }
-    }
-    return own ?? any
-  }
+  const { placeOf } = input.placer
 
   /** Lay a signal, moved along its rail just clear of the points when it stands too near them */
   const layReal = (place: { segId: SegmentId; t: number }, forward: boolean, role: SignalRole, cabMarker: boolean): { signal: Signal; moved: boolean } | SignalRefusal => {

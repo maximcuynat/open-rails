@@ -8,12 +8,16 @@ import type { RemoteSession } from '@application/remote/remoteSession'
 import { exportSVG } from '@infrastructure/export/exportSvg'
 import { showToast } from '../common/Toast'
 import { Modal } from '../common/Modal'
+import { Figures } from '../common/Figures'
+import { mergeReportFigures, mergeReportNotes, type MergeOutcome } from '@application/import/mergeReport'
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
 import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
 
 // The import window brings the whole conversion with it: loaded when it is first opened
 const OsmImportModal = lazy(() => import('./OsmImportModal').then((module) => ({ default: module.OsmImportModal })))
+// The dataset window likewise: its search and route logic come with it
+const LineBetweenStationsModal = lazy(() => import('./LineBetweenStationsModal').then((module) => ({ default: module.LineBetweenStationsModal })))
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   auto: 'automatique (système)',
@@ -37,6 +41,8 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showAboutModal, setShowAboutModal] = useState(false)
   const [showRemoteModal, setShowRemoteModal] = useState(false)
   const [showOsmImport, setShowOsmImport] = useState(false)
+  const [showLineBetween, setShowLineBetween] = useState(false)
+  const [mergeOutcome, setMergeOutcome] = useState<MergeOutcome | null>(null)
 
   const commitName = () => {
     setEditingName(false)
@@ -58,7 +64,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
+        { id: 'merge-json', label: 'Ajouter un JSON au projet…', disabled: !store.canEditNetwork },
         { id: 'import-osm', label: 'Importer depuis OpenStreetMap…' },
+        { id: 'line-between-stations', label: 'Ligne entre gares…' },
         {
           id: 'examples',
           label: 'Exemples',
@@ -99,8 +107,14 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
           case 'import-json':
             importJSON(store)
             break
+          case 'merge-json':
+            mergeJSON(store, setMergeOutcome)
+            break
           case 'import-osm':
             setShowOsmImport(true)
+            break
+          case 'line-between-stations':
+            setShowLineBetween(true)
             break
           case 'export-json':
             exportJSON(store)
@@ -125,12 +139,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         { id: 'undo', label: 'Annuler', shortcut: 'Ctrl+Z', disabled: !store.canUndo },
         { id: 'redo', label: 'Rétablir', shortcut: 'Ctrl+Maj+Z', disabled: !store.canRedo, separatorAfter: true },
-        { id: 'delete', label: 'Supprimer', shortcut: 'Suppr', disabled: !hasSelection || store.hasPendingPlacement },
-        { id: 'parallel', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack, separatorAfter: true },
+        { id: 'delete', label: 'Supprimer', shortcut: 'Suppr', disabled: !hasSelection || store.hasPendingPlacement || store.isNetworkLocked },
+        { id: 'parallel', label: 'Créer une voie parallèle', shortcut: store.shortcutLabel('edit.parallelTrack'), disabled: !store.canCreateParallelTrack || store.isNetworkLocked, separatorAfter: true },
         { id: 'select-all', label: 'Tout sélectionner', shortcut: 'Ctrl+A' },
         { id: 'clear', label: 'Tout désélectionner', separatorAfter: true },
-        { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R' },
-        { id: 'long-rails', label: 'Simplifier en rails longs', disabled: store.isPlayMode || store.network.segments.size === 0 },
+        { id: 'reconcile', label: 'Réconcilier les jonctions et aiguillages', shortcut: 'R', disabled: store.isNetworkLocked },
+        { id: 'long-rails', label: 'Simplifier en rails longs', disabled: store.isPlayMode || store.isNetworkLocked || store.network.segments.size === 0 },
       ],
       onSelect: (id) => {
         switch (id) {
@@ -186,6 +200,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'toggle-signal-reservations', label: 'Réservations (en conduite)', checked: store.showSignalReservations },
         { id: 'toggle-inclination', label: 'Dévers et pentes', checked: store.showInclination },
         { id: 'toggle-driving-view', label: 'Vue de conduite épurée', checked: store.minimalDrivingView },
+        { id: 'toggle-dispatcher', label: 'Tableau de l’aiguilleur (en conduite)', checked: store.showDispatcher },
         { id: 'toggle-inspector', label: 'Inspecteur', checked: store.isSidePanelOpen, shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
         {
           id: 'theme',
@@ -242,6 +257,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'toggle-driving-view':
             store.toggleMinimalDrivingView()
+            break
+          case 'toggle-dispatcher':
+            store.toggleDispatcher()
             break
           case 'toggle-inspector':
             store.toggleSidePanel()
@@ -434,7 +452,32 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
           <OsmImportModal store={store} onClose={() => setShowOsmImport(false)} />
         </Suspense>
       )}
-      <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} onClose={() => setShowAboutModal(false)} />
+      {showLineBetween && (
+        <Suspense fallback={null}>
+          <LineBetweenStationsModal store={store} onClose={() => setShowLineBetween(false)} />
+        </Suspense>
+      )}
+      <Modal
+        isOpen={mergeOutcome !== null}
+        title="Bilan de la fusion"
+        onClose={() => setMergeOutcome(null)}
+        closeLabel="Fermer"
+        confirmLabel="Cadrer l’ajout"
+        onConfirm={mergeOutcome?.addedBox ? () => store.frameBox(mergeOutcome.addedBox!) : undefined}
+        dialogClassName="osm-dialog"
+      >
+        {mergeOutcome && (
+          <>
+            <Figures figures={mergeReportFigures(mergeOutcome)} wide />
+            {mergeReportNotes(mergeOutcome).map((note) => (
+              <p className="osm-note" key={note}>
+                {note}
+              </p>
+            ))}
+          </>
+        )}
+      </Modal>
+      <AboutModal isOpen={showAboutModal} osmSource={store.osmSource} dataset={store.isNetworkLocked} onClose={() => setShowAboutModal(false)} />
       <RemoteDeskModal store={store} remote={remote} isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
       <ShortcutsModal store={store} isOpen={showShortcutsModal} onClose={() => setShowShortcutsModal(false)} />
       <SettingsModal
@@ -478,6 +521,26 @@ function importJSON(store: EditorStore): void {
       const data = JSON.parse(text)
       store.loadFromData(data)
       showToast('Réseau importé', 'success')
+    } catch {
+      showToast('Fichier JSON invalide', 'error')
+    }
+  }
+  input.click()
+}
+
+/** « Ajouter un JSON au projet… »: the file is merged into the current project instead of replacing it */
+function mergeJSON(store: EditorStore, onDone: (outcome: MergeOutcome) => void): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json,application/json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    try {
+      const outcome = store.mergeProjectFile(JSON.parse(text))
+      if (outcome) onDone(outcome)
+      else showToast('Fusion impossible en conduite ou sur un réseau importé', 'error')
     } catch {
       showToast('Fichier JSON invalide', 'error')
     }

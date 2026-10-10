@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { convertOsm, surveyOsm } from './osmImport'
 import type { OsmImportIssue, OsmImportOptions, OsmImportResult, OverpassResponse } from './osmTypes'
 import { countOsmCrossings, distancesToTrack, openInEditor, options, readFixture } from './osmImport.testkit'
-import { createProjection } from './osmProjection'
+import { projectionFor } from './osmProjection'
 import { walkForward, type WalkTrace } from '../models/locomotive'
 import { exitsOf } from '../models/routing'
 import { MAX_LEVEL, MIN_LEVEL, nodeLevel, resetIdCounter } from '../models/network'
@@ -131,7 +131,7 @@ describe('sample areas', () => {
       it.runIf(whole)('stays on the tracks OpenStreetMap draws', () => {
         const { data, options: opts, result } = sample(name, over)
         expect(result.report.droppedComponents).toBe(0)
-        const project = createProjection(result.origin.lat, result.origin.lon)
+        const project = projectionFor(result.frame, result.origin)
         const kinds = ['rail', ...opts.extraKinds, ...(opts.disusedTracks ? ['disused', 'abandoned'] : [])]
         const used = new Set<number>()
         for (const el of data.elements) if (el.type === 'way' && kinds.includes(el.tags?.railway ?? '')) for (const id of el.nodes!) used.add(id)
@@ -179,6 +179,12 @@ describe('sample areas', () => {
     const { report, network } = result
     expect(report).toMatchObject({ turnouts: 5, doubleSlips: 1, fixedCrossings: 0, stackedCrossings: 0, undecidedCrossings: 0, droppedComponents: 0, lengthWithoutSpeedKm: 0 })
     expect(issuesByKind(result)).toEqual({ 'cut-by-area': 2 })
+    // Its station: the two stop positions, grouped by UIC code, and the building node for the trigram
+    expect(report.stations).toEqual({ found: 1, placed: 1, stops: 2, skipped: {} })
+    const station = [...network.stations.values()][0]
+    expect(station).toMatchObject({ name: 'Clelles-Mens', uic: '8774762', code: 'CMS' })
+    expect(station.stops).toHaveLength(2)
+    for (const stop of station.stops) expect(network.segments.has(stop.segId)).toBe(true)
     expect(report.lengthKm).toBeCloseTo(12.58, 1)
     expect(report.rails).toBeGreaterThan(300)
     expect(report.rails).toBeLessThan(450)

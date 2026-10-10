@@ -414,6 +414,29 @@ kbd {
   opacity: 0.8;
 }
 
+.remote-desks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.remote-desks li {
+  display: flex;
+  gap: var(--space-1);
+  align-items: baseline;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.remote-desks li span {
+  opacity: 0.7;
+}
+
 .remote-main {
   display: flex;
   flex-wrap: wrap;
@@ -2331,6 +2354,40 @@ select.cb-step-select {
   user-select: none;
 }
 
+.dispatcher-points {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.dispatcher-points-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dispatcher-points-row .spectator-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.dispatcher-points-row .spectator-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dispatcher-driver.is-host {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dispatcher-driver.is-desk {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .spectator-header {
   display: flex;
   align-items: baseline;
@@ -3895,4 +3952,69 @@ select.cb-step-select {
   .osm-dialog .modal-footer {
     flex-wrap: wrap;
   }
+}
+
+/* A dataset project: its drawing tools are greyed out, the inspector says why */
+.tb-btn.is-locked {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.sp-locked-note {
+  margin: 10px 14px 0;
+}
+
+/* « Ligne entre gares… » */
+.dataset-stops {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dataset-stop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #d0d4dc);
+  border-radius: 8px;
+}
+.dataset-stop-index {
+  min-width: 1.4em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+.dataset-stop-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dataset-stop-lines {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.dataset-stop-actions {
+  display: flex;
+  gap: 4px;
+}
+.dataset-stop-actions .modal-btn {
+  padding: 2px 8px;
+  min-width: 0;
+}
+.dataset-attribution {
+  font-size: 12px;
+}
+.about-attribution {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+/* The time factor button of the driving dock shows its value as text */
+.console-tool.console-time-factor {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 34px;
 }

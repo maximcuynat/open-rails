@@ -1,3 +1,4 @@
+import { datasetErrorMessage } from '@application/dataset/datasetClient'
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { overspeedMessage, signalPassedMessage, trainImpactMessage, type EditorStore } from '@application/state/editorStore'
 import type { ActionId } from '@application/keybindings/keybindings'
@@ -12,7 +13,7 @@ import { compactKeyLabel, newDerailment } from '../console/consoleModel'
 import type { ConsoleArrangement } from '../console/consoleLayout'
 import type { ConsoleKeys } from '../console/consoleParts'
 import { TrainDebugPanel } from './TrainDebugPanel'
-import { SpectatorPanel } from './SpectatorPanel'
+import { DispatcherPanel } from './DispatcherPanel'
 
 const KEY_ACTIONS: Record<keyof ConsoleKeys, ActionId> = {
   notchUp: 'drive.notchUp',
@@ -55,6 +56,19 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
     store.onTrainImpact = (_train, speed) => showToast(trainImpactMessage(speed), 'warning')
     return () => {
       store.onTrainImpact = null
+    }
+  }, [store])
+
+  // Lines of the dataset fetched as a train nears them, or not
+  useEffect(() => {
+    store.onDatasetLinesAdded = (lines) => {
+      const names = lines.map((id) => store.datasetIndex?.lines.find((line) => line.id === id)?.name ?? id)
+      showToast(`${names.join(', ')} : ligne${lines.length > 1 ? 's' : ''} chargée${lines.length > 1 ? 's' : ''} en route`, 'info')
+    }
+    store.onDatasetError = (error) => showToast(datasetErrorMessage(error), 'warning', 6000)
+    return () => {
+      store.onDatasetLinesAdded = null
+      store.onDatasetError = null
     }
   }, [store])
 
@@ -101,13 +115,14 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
     <>
       <div className="hud-dock">
         <TrainDebugPanel store={store} />
-        {/* A phone holds the desk: this screen shows who runs where, not a second console */}
-        {store.isSpectating && (
-          <SpectatorPanel
+        {/* Who runs where and how the points lie: up when asked for, and whenever a desk is in the room */}
+        {(store.dispatcherVisible || store.isSpectating) && (
+          <DispatcherPanel
             store={store}
+            linked={phoneConnected}
             onCutLink={() => {
               remote.close()
-              showToast('Liaison avec le téléphone coupée : le poste de conduite revient sur cet écran', 'info')
+              showToast('Liaison coupée : les pupitres sont renvoyés', 'info')
             }}
           />
         )}
@@ -150,6 +165,15 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
                 }}
               >
                 <ConsoleIcon name="coupling" />
+              </button>
+              <button
+                type="button"
+                className={`console-tool console-time-factor${store.timeFactor !== 1 ? ' is-active' : ''}`}
+                title="Vitesse du temps : le temps simulé court plus vite que le vrai (×1, ×2, ×5, ×10)"
+                aria-label={`Vitesse du temps : ×${store.timeFactor}`}
+                onClick={() => store.cycleTimeFactor()}
+              >
+                ×{store.timeFactor}
               </button>
               <button
                 type="button"

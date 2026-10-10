@@ -4,6 +4,7 @@ import type { ActionId } from '@application/keybindings/keybindings'
 import { ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
 import type { SignallingLevel } from '@domain/models/signals'
 import { signalPalette } from './signalPalette'
+import { DATASET_LOCKED_MESSAGE, DATASET_LOCKED_TOOLS } from '@domain/dataset/datasetRecipe'
 
 interface ToolDef {
   id: Tool
@@ -263,6 +264,8 @@ export function ToolBar({ store }: { store: EditorStore }) {
     }
     lastGroup = t.group
     const active = store.tool === t.id
+    // The track of a dataset project is read only: its drawing tools are greyed out
+    const locked = store.isNetworkLocked && !DATASET_LOCKED_TOOLS.has(t.id)
     toolItems.push(
       <div
         key={t.id}
@@ -271,17 +274,18 @@ export function ToolBar({ store }: { store: EditorStore }) {
         onMouseLeave={() => setHoverId((h) => (h === t.id ? null : h))}
       >
         <button
-          className={`tb-btn${active ? ' active' : ''}`}
+          className={`tb-btn${active ? ' active' : ''}${locked ? ' is-locked' : ''}`}
           onClick={() => store.setTool(t.id)}
-          aria-label={t.label}
+          aria-label={locked ? `${t.label} (${DATASET_LOCKED_MESSAGE})` : t.label}
           aria-pressed={active}
+          disabled={locked}
         >
           {t.icon}
         </button>
         {hoverId === t.id && (
           <div className="tb-tooltip">
-            {t.label}
-            {t.shortcut !== null && kbd(t.shortcut ?? (`tool.${t.id}` as ActionId))}
+            {locked ? DATASET_LOCKED_MESSAGE : t.label}
+            {!locked && t.shortcut !== null && kbd(t.shortcut ?? (`tool.${t.id}` as ActionId))}
           </div>
         )}
       </div>,

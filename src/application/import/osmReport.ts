@@ -68,6 +68,7 @@ export function surveyFigures(survey: OsmSurvey): Figure[] {
     { label: survey.switches > 1 ? 'aiguillages' : 'aiguillage', value: formatCount(survey.switches) },
     { label: survey.bridges > 1 ? 'ponts' : 'pont', value: formatCount(survey.bridges) },
     { label: survey.tunnels > 1 ? 'tunnels' : 'tunnel', value: formatCount(survey.tunnels) },
+    { label: (survey.stations ?? 0) > 1 ? 'gares' : 'gare', value: formatCount(survey.stations ?? 0) },
     { label: 'rails estimés', value: `≈ ${formatCount(survey.estimatedRails)}` },
   ]
 }
@@ -83,6 +84,7 @@ export function reportFigures(report: OsmImportReport): Figure[] {
     { label: report.speedZones > 1 ? 'zones de vitesse' : 'zone de vitesse', value: formatCount(report.speedZones) },
     { label: report.railsOnBridge > 1 ? 'rails sur un pont' : 'rail sur un pont', value: formatCount(report.railsOnBridge) },
     { label: report.railsInTunnel > 1 ? 'rails en tunnel' : 'rail en tunnel', value: formatCount(report.railsInTunnel) },
+    ...(report.stations ? [{ label: report.stations.placed > 1 ? 'gares' : 'gare', value: formatCount(report.stations.placed) }] : []),
   ]
 }
 
@@ -105,6 +107,12 @@ export function reportNotes(report: OsmImportReport): string[] {
         ? `${formatCount(report.droppedComponents)} groupes de voies isolés du réseau principal ont été laissés de côté.`
         : 'Un groupe de voies isolé du réseau principal a été laissé de côté.',
     )
+  }
+  if (report.stations) {
+    const { placed, stops, skipped } = report.stations
+    if (placed > 0) notes.push(`${plural(placed, 'gare posée', 'gares posées')}, avec ${plural(stops, 'voie à quai', 'voies à quai')}.`)
+    const without = skipped['no-track-nearby'] ?? 0
+    if (without > 0) notes.push(`${plural(without, 'gare nommée sans voie importée à portée', 'gares nommées sans voie importée à portée')} : non posée${without > 1 ? 's' : ''}.`)
   }
   return notes
 }
@@ -143,10 +151,15 @@ export const OSM_ISSUE_TEXT: Record<OsmIssueKind, { one: string; many: string; m
     many: 'Signaux réels non posés',
     meaning: 'Les données ne disent pas à quel sens de circulation le signal s’adresse, ou il se trouve sur un aiguillage.',
   },
+  'station-not-placed': {
+    one: 'Gare sans voie',
+    many: 'Gares sans voie',
+    meaning: 'La gare est nommée dans les données, mais aucune voie importée ne passe assez près pour lui donner des voies à quai.',
+  },
 }
 
 /** Order of the groups in the report: what needs a decision first */
-const ISSUE_ORDER: readonly OsmIssueKind[] = ['undecided-crossing', 'unknown-junction', 'sharp-angle', 'uncertain-level', 'signal-not-placed', 'cut-by-area']
+const ISSUE_ORDER: readonly OsmIssueKind[] = ['undecided-crossing', 'unknown-junction', 'sharp-angle', 'uncertain-level', 'signal-not-placed', 'station-not-placed', 'cut-by-area']
 
 export interface OsmIssueGroup {
   kind: OsmIssueKind
@@ -193,6 +206,13 @@ export function defaultSignalMode(level: SignallingLevel): OsmSignalMode {
 }
 
 /** « 125 signaux réels dans la zone »: the ones the import can lay, counted before anything is built */
+/** How many stations the data names in the area, beside the box that imports them */
+export function stationsInArea(survey: Pick<OsmSurvey, 'stations'>): string {
+  const count = survey.stations ?? 0
+  if (count <= 0) return 'aucune dans la zone'
+  return count > 1 ? `${formatCount(count)} dans la zone` : '1 dans la zone'
+}
+
 export function realSignalsInArea(survey: Pick<OsmSurvey, 'usableSignals' | 'typedMainSignals'>): string {
   const count = survey.usableSignals ?? survey.typedMainSignals
   if (count <= 0) return 'aucun signal réel dans la zone'
