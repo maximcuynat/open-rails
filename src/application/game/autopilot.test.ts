@@ -99,7 +99,8 @@ describe('what the pilot does with the handles', () => {
   })
 })
 
-describe('the automatic pilot on a train of the game', () => {
+// Minutes of simulated driving each: seconds of work, more when the whole suite runs beside
+describe('the automatic pilot on a train of the game', { timeout: 30_000 }, () => {
   beforeEach(() => resetMemoryStorage())
 
   it('takes a train from one station to the platform of the next and stops there', () => {

@@ -66,10 +66,10 @@ describe('leaving a train to its pilot and looking elsewhere', () => {
     const { store, train } = await driving()
     store.setAutopilot(train.id, true)
     store.leaveTrain()
-    store.armRakePlacement('duplex')
+    store.armRakePlacement({ model: 'duplex' })
     // Off the track: nothing
     expect(store.placeRakeAt({ x: 700, y: 4000 }, 'duplex')).toBe(false)
-    expect(store.rakePlacement).toBe('duplex')
+    expect(store.rakePlacement).toEqual({ model: 'duplex' })
     // On the branch of line a, clear of the first train
     expect(store.placeRakeAt({ x: 1250, y: 30 }, 'duplex')).toBe(true)
     expect(store.rakePlacement).toBeNull()

@@ -5,7 +5,7 @@ import { resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { resetIdCounter } from '@domain/models/network'
 import { ROLLING_STOCK } from '@domain/models/rollingStock'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
-import { addSandboxTrain, canAddSandboxTrain, prepareSandbox, SANDBOX_TRAINS, SandboxError, sandboxErrorMessage } from './sandbox'
+import { addSandboxTrain, canAddSandboxTrain, checkStationFit, prepareSandbox, SANDBOX_TRAINS, SandboxError, sandboxErrorMessage, stationFitMessage } from './sandbox'
 
 function serving(bodies: Record<string, unknown>, fail = false): typeof fetch {
   return (async (input: RequestInfo | URL) => {
@@ -143,5 +143,40 @@ describe('starting a sandbox game', () => {
     await expect(addSandboxTrain(store, index, 's1', 'duplex', options)).rejects.toThrow(/quai libre/)
     await expect(addSandboxTrain(store, index, 'nope', 'duplex', options)).rejects.toBeInstanceOf(SandboxError)
     expect(store.trains).toHaveLength(1)
+  })
+
+  it('starts a game with the composition asked for', async () => {
+    const { index, files } = fakeDataset()
+    const store = new EditorStore()
+    await prepareSandbox(store, index, 's1', { model: 'duplex', trailers: 5 }, { fetch: serving(files), baseUrl: '/' })
+    expect(store.trains[0].vehicles.map((v) => v.kind)).toEqual(['loco', 'wagon', 'wagon', 'wagon', 'wagon', 'wagon', 'loco'])
+  })
+
+  it('says before the launch whether the rake holds at the platforms, without touching the project', async () => {
+    const { index, files } = fakeDataset()
+    const options = { fetch: serving(files), baseUrl: '/' }
+    const store = new EditorStore()
+    // « Gare Un » is on a 500 m rail between two plain joints of a 1 500 m line
+    const fit = (await checkStationFit(store, index, 's1', 'duplex', options))!
+    expect(fit).toMatchObject({ tracks: 1, fitting: 1, placeable: true })
+    expect(stationFitMessage(fit)).toMatchObject({ ok: true })
+    expect(stationFitMessage(fit).text).toMatch(/tient sur 1 voie de la gare sur 1/)
+    expect(store.network.segments.size).toBe(0)
+    expect(store.dataset).toBeNull()
+    expect(await checkStationFit(store, index, 'nope', 'duplex', options)).toBeNull()
+
+    // In a game under way the trains standing there count, and the ids to come stay clear of theirs
+    await prepareSandbox(store, index, 's1', 'duplex', options)
+    expect((await checkStationFit(store, index, 's1', 'regiolis', options))!.placeable).toBe(false)
+    await checkStationFit(store, index, 's2', 'regiolis', options)
+    await addSandboxTrain(store, index, 's2', 'regiolis', options)
+    const ids = store.trains.flatMap((t) => [t.id, ...t.vehicles.map((v) => v.id)])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('has words for a rake too long for the platforms, and for one that fits nowhere', () => {
+    expect(stationFitMessage({ rakeLength: 401, tracks: 3, fitting: 0, longest: 320, placeable: true })).toMatchObject({ ok: false })
+    expect(stationFitMessage({ rakeLength: 401, tracks: 3, fitting: 0, longest: 320, placeable: true }).text).toMatch(/dépasse.*320 m/)
+    expect(stationFitMessage({ rakeLength: 401, tracks: 0, fitting: 0, longest: 0, placeable: false }).text).toMatch(/aucune voie/)
   })
 })

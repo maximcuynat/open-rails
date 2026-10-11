@@ -24,6 +24,9 @@ Branche : `feature/jeu-conduite` (poussée). Rien n'est fusionné dans `develope
 - [x] Trajets selon le train : sans signalisation de cabine, pas de ligne à grande vitesse
 - [x] Plusieurs trains : ajouter un train à la partie en cours (gare, ou clic sur la voie)
 - [x] Vue libre : quitter un train laissé au pilote automatique, en reprendre un, en poser un autre ; aucun outil de voie tant que des trains roulent
+- [x] Composition au choix : TGV de 5 voitures à la rame complète ou deux rames accouplées, TER de 3, 4 ou 6 caisses ou deux unités
+- [x] Indication avant le lancement : la rame tient-elle sur les voies de la gare (longueur entre aiguilles)
+- [x] Vue libre : le clic gauche maintenu déplace la vue
 - [x] Par une autre session, sur la même branche : temps de trajet estimé dans la fenêtre
       d'itinéraire, cause du signal fermé au pupitre, courbes d'import compatibles avec la
       vitesse de la ligne
@@ -84,6 +87,13 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 - [ ] **O3** — Décharger aussi hors conduite ; ne plus charger tout un trajet dans « Ligne entre gares »
 - [ ] **O4** — Une gare traversée sans arrêt n'est pas comptée comme desservie
 
+### Composition et quais, suites
+
+- [ ] **Q1** — Longueur réelle des quais : la lire d'OpenStreetMap (`railway=platform`) à l'import.
+      Aujourd'hui l'indication mesure la voie entre deux aiguilles, pas le quai : dans une halte
+      en pleine ligne, elle dit « tient » même si le quai est court.
+- [ ] **Q2** — Choisir la composition aussi pour un train posé au clic en vue libre (rame complète seulement)
+
 ### Plusieurs trains, suites
 
 - [ ] **V1** — Faire tourner les trains hors conduite (Échap arrête encore toute la simulation)
@@ -91,8 +101,9 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 
 ### Pilote automatique, suites
 
-- [ ] **P1** — Sur LGV, ne plus ralentir à l'excès devant ce que le signal de cabine annonce
-- [ ] **P2** — Le commander depuis le pupitre téléphone
+- [x] **P1** — Sur LGV, ne plus ralentir à l'excès devant ce que le signal de cabine annonce
+- [x] **P2** — Le commander depuis le pupitre téléphone (bouton « Pilote », à essayer sur un vrai téléphone)
+- [x] Manipulateur de B10 à P10, conduite du pilote cran par cran, arrêt à quai d'un seul freinage — `tasks/plan-pilote-crans.md`
 - [ ] **P3** — Trains pilotés par le jeu autour du joueur
 
 ## À contrôler à l'écran
@@ -106,3 +117,5 @@ Vérifié en navigateur sans tête et par les tests, jamais par un humain :
 - [ ] Couleurs et légende au dézoom, thème sombre compris
 - [ ] Morceaux qui arrivent et partent en roulant, sans à-coup visible
 - [ ] Pilote automatique sur un trajet entier, et sa coupure dès qu'on touche une manette
+- [ ] Échelle à 21 crans du bandeau et des manettes, touche maintenue qui s'arrête sur N
+- [ ] Bouton « Pilote » du pupitre téléphone

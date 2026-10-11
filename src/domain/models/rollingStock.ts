@@ -343,11 +343,77 @@ export function bogieCount(vehicles: readonly StockVehicle[]): number {
 
 /** The complete trainset of a model: power car, trailers, power car turned nose outwards. */
 export function referenceConsist(model: RollingStockModel): StockVehicle[] {
-  return [
+  return consistOf({ model })
+}
+
+/**
+ * What a rake is made of: its model, how many trailers stand between the two end cars of a
+ * trainset (the complete trainset when not said), and how many trainsets are coupled (one).
+ */
+export interface RakeChoice {
+  model: RollingStockModel
+  trailers?: number
+  units?: 1 | 2
+}
+
+/** A rake asked for by its model alone is the complete trainset of that model */
+export const rakeChoice = (rake: RollingStockModel | RakeChoice): RakeChoice => (typeof rake === 'string' ? { model: rake } : rake)
+
+/**
+ * The vehicles of a rake: for each trainset a power car, its trailers, and a power car turned
+ * nose outwards — two trainsets stand nose to nose, coupled as units.
+ */
+export function consistOf(rake: RollingStockModel | RakeChoice): StockVehicle[] {
+  const { model, trailers, units } = rakeChoice(rake)
+  const count = Math.max(0, Math.round(trailers ?? ROLLING_STOCK[model].trailerCount))
+  const trainset = (): StockVehicle[] => [
     { kind: 'loco', model },
-    ...Array.from({ length: ROLLING_STOCK[model].trailerCount }, (): StockVehicle => ({ kind: 'wagon', model })),
+    ...Array.from({ length: count }, (): StockVehicle => ({ kind: 'wagon', model })),
     { kind: 'loco', model, flipped: true },
   ]
+  return units === 2 ? [...trainset(), ...trainset()] : trainset()
+}
+
+/** A composition a player can ask for, with what tells it apart */
+export interface RakeOption extends RakeChoice {
+  id: string
+  label: string
+  /** Length over both ends, m */
+  length: number
+}
+
+/** Trailers of the shortest TGV trainset offered: below it the two power cars outweigh their rake */
+const SHORTEST_TGV_TRAILERS = 5
+/** Trailers of the Régiolis as it is built: three, four or six cars */
+const REGIOLIS_TRAILERS = [1, 2, 4]
+
+/**
+ * The compositions offered for a model, the complete trainset marked by `trailers` being its
+ * `trailerCount`. A TGV: one trainset of five trailers up to the complete one, or two complete
+ * trainsets coupled. A multiple unit whose end cars carry passengers (`articulatedEnds`) is
+ * counted in cars, end cars included: three, four or six, or two four-car units coupled.
+ */
+export function rakeOptions(model: RollingStockModel): RakeOption[] {
+  const spec = ROLLING_STOCK[model]
+  const option = (id: string, label: string, choice: RakeChoice): RakeOption => ({ ...choice, id, label, length: consistLength(consistOf(choice)) })
+  if (spec.articulatedEnds) {
+    return [
+      ...REGIOLIS_TRAILERS.map((trailers) => option(`${trailers + 2}`, `${trailers + 2} caisses`, { model, trailers })),
+      option('um', `2 × ${spec.trailerCount + 2} caisses`, { model, trailers: spec.trailerCount, units: 2 }),
+    ]
+  }
+  const options: RakeOption[] = []
+  for (let trailers = Math.min(SHORTEST_TGV_TRAILERS, spec.trailerCount); trailers <= spec.trailerCount; trailers++) {
+    options.push(option(`${trailers}`, `2 motrices + ${trailers} voitures`, { model, trailers }))
+  }
+  options.push(option('um', `2 rames de ${spec.trailerCount} voitures`, { model, trailers: spec.trailerCount, units: 2 }))
+  return options
+}
+
+/** The composition a model comes in when nothing else is asked: its complete trainset */
+export function defaultRakeOption(model: RollingStockModel): RakeOption {
+  const options = rakeOptions(model)
+  return options.find((o) => o.units !== 2 && o.trailers === ROLLING_STOCK[model].trailerCount) ?? options[0]
 }
 
 /** Mass of a vehicle, kg */

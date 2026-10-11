@@ -1225,7 +1225,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       // Priority 0: Check if click hit a 2D Gizmo translation/rotation handle on selected node or section
-      if (e.button === 0 && store.tool === 'select' && store.canEditNetwork) {
+      // (not in the free view of a running game: there the left button looks around, see below)
+      if (e.button === 0 && store.tool === 'select' && store.canEditNetwork && !store.isFreeView) {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
@@ -1257,18 +1258,6 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
       }
 
-      if (e.button === 1 || (e.button === 0 && (store.tool === 'pan' || isSpaceDown))) {
-        // Middle click, pan tool, or spacebar pan: pan
-        store.panning = true
-        lastX = e.clientX
-        lastY = e.clientY
-        store.moved = false
-        canvas.setPointerCapture(e.pointerId)
-        canvas.style.cursor = 'grabbing'
-        stopEdgePan()
-        return
-      }
-
       // Free view, a train armed: the click sets it down on the track there
       if (e.button === 0 && store.isPlayMode && store.rakePlacement) {
         const model = store.rakePlacement
@@ -1284,6 +1273,19 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           redraw()
           return
         }
+      }
+
+      // Free view: with nothing under the click, the left button moves the view
+      if (e.button === 1 || (e.button === 0 && (store.tool === 'pan' || isSpaceDown || store.isFreeView))) {
+        // Middle click, pan tool, or spacebar pan: pan
+        store.panning = true
+        lastX = e.clientX
+        lastY = e.clientY
+        store.moved = false
+        canvas.setPointerCapture(e.pointerId)
+        canvas.style.cursor = 'grabbing'
+        stopEdgePan()
+        return
       }
 
       if (e.button === 0 && store.tool === 'coupling') {

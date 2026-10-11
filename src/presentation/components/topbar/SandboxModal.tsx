@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorStore } from '@application/state/editorStore'
 import type { ConsolePreference } from '@application/console/consolePreference'
 import { datasetErrorMessage, loadDatasetIndex, type LineFetchProgress } from '@application/dataset/datasetClient'
-import { addSandboxTrain, canAddSandboxTrain, prepareSandbox, SANDBOX_TRAINS, sandboxErrorMessage, type SandboxStart } from '@application/game/sandbox'
+import { addSandboxTrain, canAddSandboxTrain, checkStationFit, prepareSandbox, SANDBOX_TRAINS, sandboxErrorMessage, stationFitMessage, type SandboxStart } from '@application/game/sandbox'
+import { defaultRakeOption, rakeOptions, type RakeOption } from '@domain/models/rollingStock'
 import type { DatasetIndex } from '@domain/dataset/datasetIndex'
 import { searchStations, stationBadge, type StationMatch } from '@domain/dataset/stationSearch'
 import { showToast } from '../common/Toast'
@@ -36,6 +37,9 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
   const [active, setActive] = useState(0)
   const [station, setStation] = useState<StationMatch | null>(null)
   const [trainId, setTrainId] = useState(SANDBOX_TRAINS[0].id)
+  // The composition asked for, by train: each keeps its own while another is looked at
+  const [optionIds, setOptionIds] = useState<Record<string, string>>({})
+  const [fit, setFit] = useState<{ ok: boolean; text: string } | null>(null)
   const [phase, setPhase] = useState<Phase>('setup')
   const [progress, setProgress] = useState<LineFetchProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -69,6 +73,24 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
 
   const results = useMemo(() => (index && !station ? searchStations(index, query, 8) : []), [index, query, station])
   const train = SANDBOX_TRAINS.find((t) => t.id === trainId)
+  const options: RakeOption[] = useMemo(() => (train?.model ? rakeOptions(train.model) : []), [train])
+  const option = options.find((o) => o.id === optionIds[trainId]) ?? (train?.model ? defaultRakeOption(train.model) : undefined)
+
+  // Does that rake hold at the platforms of that station? Asked as soon as both are chosen
+  const stationId = station?.station.id
+  useEffect(() => {
+    setFit(null)
+    if (!index || !stationId || !option) return
+    let current = true
+    checkStationFit(store, index, stationId, option)
+      .then((found) => {
+        if (current) setFit(found ? stationFitMessage(found) : null)
+      })
+      .catch(() => {})
+    return () => {
+      current = false
+    }
+  }, [store, index, stationId, option])
   const replaces = store.network.segments.size > 0
   const canStart = !!index && !!station && !!train?.model && !loading
 
@@ -89,13 +111,13 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
   const canJoin = canAddSandboxTrain(store)
 
   const launch = async (join = false) => {
-    if (!index || !station || !train?.model) return
+    if (!index || !station || !train?.model || !option) return
     setPhase('loading')
     setError(null)
     setProgress({ done: 0, total: station.lines.length })
     try {
       if (join) {
-        const added = await addSandboxTrain(store, index, station.station.id, train.model, { onProgress: setProgress })
+        const added = await addSandboxTrain(store, index, station.station.id, option, { onProgress: setProgress })
         // Already driving: this screen is on the new train, with the console it had
         if (store.isPlayMode) {
           showToast(`${train.name} à quai — ${added.stationName}${added.stop.ref ? `, voie ${added.stop.ref}` : ''}`, 'success')
@@ -104,7 +126,7 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
         }
         setStart(added)
       } else {
-        setStart(await prepareSandbox(store, index, station.station.id, train.model, { onProgress: setProgress }))
+        setStart(await prepareSandbox(store, index, station.station.id, option, { onProgress: setProgress }))
       }
       setPhase('desk')
     } catch (e) {
@@ -246,6 +268,33 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
                     </button>
                   ))}
                 </div>
+                {options.length > 1 && (
+                  <>
+                    <div className="settings-label">Composition</div>
+                    <div className="sandbox-choices" role="radiogroup" aria-label="Composition">
+                      {options.map((choice) => (
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={choice.id === option?.id}
+                          className={`sandbox-choice${choice.id === option?.id ? ' is-active' : ''}`}
+                          key={choice.id}
+                          disabled={loading}
+                          onClick={() => setOptionIds((ids) => ({ ...ids, [trainId]: choice.id }))}
+                        >
+                          <span className="sandbox-choice-name">{choice.label}</span>
+                          <span className="sandbox-choice-detail">{Math.round(choice.length)} m</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {fit && (
+                  <p className={`osm-message${fit.ok ? '' : ' is-error'}`} role="status">
+                    {fit.ok ? '✓ ' : '⚠ '}
+                    {fit.text}
+                  </p>
+                )}
                 {error && (
                   <p className="osm-message is-error" role="alert">
                     {error}

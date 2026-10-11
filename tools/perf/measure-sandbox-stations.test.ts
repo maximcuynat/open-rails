@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { deserializeNetwork, type SerializedProject } from '@infrastructure/persistence/persistence'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
 import { readDatasetIndex } from '@domain/dataset/datasetIndex'
-import { createRakeAtStation } from '@domain/models/rakePlacement'
+import { createRakeAtStation, stationFit } from '@domain/models/rakePlacement'
 import { verifyNetworkRevisions } from '@domain/models/networkWatch'
 import { advanceTrainSet, trackLeftAhead } from '@domain/models/train'
 
@@ -37,4 +37,20 @@ test.runIf(process.env.PROFILE && existsSync(`${DIR}index.json`))('sandbox start
     )
   }
   process.stderr.write(`${ok} / ${index.stations.length} stations\n`)
+  // How the compositions compare with the platform tracks
+  for (const [label, rake] of [['TER 3 caisses', { model: 'regiolis', trailers: 1 }], ['TER 4 caisses', 'regiolis'], ['TGV Duplex', 'duplex'], ['2 rames Duplex', { model: 'duplex', trailers: 8, units: 2 }]] as const) {
+    let fitting = 0
+    let placeable = 0
+    const misses: string[] = []
+    for (const station of index.stations) {
+      const net = deserializeNetwork(unionProjects(station.lines.map((id) => files.get(id)!))).network
+      const there = net.stations.get(station.id)
+      if (!there) continue
+      const fit = stationFit(net, there, rake)
+      if (fit.fitting > 0) fitting++
+      else if (misses.length < 6) misses.push(`${station.name} (${Math.round(fit.longest)} m)`)
+      if (fit.placeable) placeable++
+    }
+    process.stderr.write(`${label}: holds at a platform track in ${fitting} stations, can be set down in ${placeable}; too long e.g. at ${misses.join(', ')}\n`)
+  }
 })

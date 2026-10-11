@@ -48,10 +48,10 @@ export function FreeViewPanel({ store }: { store: EditorStore }) {
             <button
               type="button"
               role="radio"
-              aria-checked={armed === choice.model}
-              className={`itinerary-aid-choice${armed === choice.model ? ' is-active' : ''}`}
+              aria-checked={armed?.model === choice.model}
+              className={`itinerary-aid-choice${armed?.model === choice.model ? ' is-active' : ''}`}
               key={choice.id}
-              onClick={() => store.armRakePlacement(armed === choice.model ? null : choice.model!)}
+              onClick={() => store.armRakePlacement(armed?.model === choice.model ? null : { model: choice.model! })}
             >
               {choice.name}
             </button>

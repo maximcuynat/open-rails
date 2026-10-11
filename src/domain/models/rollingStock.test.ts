@@ -12,7 +12,10 @@ import {
   consistMaxSpeed,
   consistPower,
   consistResistance,
+  consistOf,
   consistResistanceCoefficients,
+  defaultRakeOption,
+  rakeOptions,
   referenceConsist,
   endOverhang,
   jointKind,
@@ -223,5 +226,39 @@ describe('the Régiolis, a multiple unit articulated from end to end', () => {
     expect(ROLLING_STOCK.regiolis.cabSignalling).toBe(false)
     expect(ROLLING_STOCK.duplex.cabSignalling).toBe(true)
     expect(ROLLING_STOCK.tgvm.cabSignalling).toBe(true)
+  })
+})
+
+describe('the compositions a rake can be asked in', () => {
+  it('a TGV: one trainset of five trailers up to the complete one, or two complete trainsets coupled', () => {
+    const options = rakeOptions('duplex')
+    expect(options.map((o) => o.label)).toEqual(['2 motrices + 5 voitures', '2 motrices + 6 voitures', '2 motrices + 7 voitures', '2 motrices + 8 voitures', '2 rames de 8 voitures'])
+    expect(options[3].length).toBeCloseTo(200.19, 2)
+    // Two trainsets and the gap between their noses
+    expect(options[4].length).toBeCloseTo(2 * 200.19 + UNIT_COUPLING_GAP, 2)
+    expect(options[0].length).toBeCloseTo(200.19 - 3 * 18.7, 2)
+    expect(defaultRakeOption('duplex').id).toBe('8')
+    expect(rakeOptions('tgvm').map((o) => o.trailers)).toEqual([5, 6, 7, 8, 9, 9])
+  })
+
+  it('a Régiolis: three, four or six cars, end cars counted, or two four-car units', () => {
+    const options = rakeOptions('regiolis')
+    expect(options.map((o) => o.label)).toEqual(['3 caisses', '4 caisses', '6 caisses', '2 × 4 caisses'])
+    expect(options[1].length).toBeCloseTo(71.82, 2)
+    expect(options[0].length).toBeLessThan(options[1].length)
+    expect(defaultRakeOption('regiolis').label).toBe('4 caisses')
+    // Three cars: two end cars and one trailer, on four bogies
+    const three = consistOf(options[0])
+    expect(three.map((v) => v.kind)).toEqual(['loco', 'wagon', 'loco'])
+    expect(bogieCount(three)).toBe(4)
+  })
+
+  it('lays two trainsets nose to nose, each with its own two power cars', () => {
+    const double = consistOf({ model: 'duplex', trailers: 8, units: 2 })
+    expect(double).toHaveLength(20)
+    expect(double.filter((v) => v.kind === 'loco')).toHaveLength(4)
+    expect(jointKind(double[9], double[10])).toBe('unit')
+    expect(consistPower(double)).toBe(2 * consistPower(referenceConsist('duplex')))
+    expect(consistOf('duplex')).toEqual(referenceConsist('duplex'))
   })
 })

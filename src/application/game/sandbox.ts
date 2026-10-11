@@ -1,5 +1,8 @@
 import type { DatasetIndex } from '@domain/dataset/datasetIndex'
-import type { RollingStockModel } from '@domain/models/rollingStock'
+import { stationFit, type StationFit } from '@domain/models/rakePlacement'
+import type { RakeChoice, RollingStockModel } from '@domain/models/rollingStock'
+import { deserializeNetwork } from '@infrastructure/persistence/persistence'
+import { unionProjects } from '@infrastructure/persistence/projectSlices'
 import type { StationStop } from '@domain/models/types'
 import type { EditorStore } from '@application/state/editorStore'
 import { datasetErrorMessage, fetchLineFiles } from '@application/dataset/datasetClient'
@@ -46,11 +49,11 @@ export interface SandboxStart {
  * chosen a console. Rejects with a `DatasetError` (the store is then as it was) or, when the
  * station is loaded but holds no rake, a `SandboxError`.
  */
-export async function prepareSandbox(store: EditorStore, index: DatasetIndex, stationId: string, model: RollingStockModel, options: JourneyLoadOptions = {}): Promise<SandboxStart> {
+export async function prepareSandbox(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: JourneyLoadOptions = {}): Promise<SandboxStart> {
   if (store.isPlayMode) store.togglePlayMode()
   await loadStation(store, index, stationId, options)
   const stationName = index.stations.find((s) => s.id === stationId)?.name ?? stationId
-  const stop = store.placeRakeAtStation(stationId, model)
+  const stop = store.placeRakeAtStation(stationId, rake)
   if (!stop) throw new SandboxError(`Aucun quai de ${stationName} n’est assez long pour la rame. La gare est chargée : posez un train à la main.`)
   return { stationName, stop }
 }
@@ -66,13 +69,48 @@ export function canAddSandboxTrain(store: EditorStore): boolean {
  * its platforms and this screen moves to it. The trains left behind keep running under their
  * automatic pilot if they have one. Rejects like `prepareSandbox`.
  */
-export async function addSandboxTrain(store: EditorStore, index: DatasetIndex, stationId: string, model: RollingStockModel, options: JourneyLoadOptions = {}): Promise<SandboxStart> {
+export async function addSandboxTrain(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: JourneyLoadOptions = {}): Promise<SandboxStart> {
   const station = index.stations.find((s) => s.id === stationId)
   const stationName = station?.name ?? stationId
   if (!station || !store.dataset) throw new SandboxError(`La gare ${stationName} n’est pas dans le jeu de données de cette partie.`)
   const missing = station.lines.filter((id) => !store.datasetFiles.has(id))
   if (missing.length > 0) store.addDatasetLines(await fetchLineFiles(index, missing, options.onProgress, options))
-  const stop = store.placeRakeAtStation(stationId, model)
+  const stop = store.placeRakeAtStation(stationId, rake)
   if (!stop) throw new SandboxError(`Aucun quai libre de ${stationName} n’est assez long pour la rame.`)
   return { stationName, stop }
+}
+
+/**
+ * Whether a rake holds at the platforms of a station, asked before anything is launched: the
+ * lines of the station are fetched (the browser keeps them for the launch) and read on the side,
+ * the project of the store is not touched. The trains of the game under way, when the station
+ * is already loaded, are counted as standing where they stand.
+ */
+export async function checkStationFit(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: JourneyLoadOptions = {}): Promise<StationFit | null> {
+  const station = index.stations.find((s) => s.id === stationId)
+  if (!station) return null
+  const live = store.dataset ? store.network.stations.get(stationId) : undefined
+  if (live && station.lines.every((id) => store.datasetFiles.has(id))) return stationFit(store.network, live, rake, store.trains)
+  const files = await fetchLineFiles(index, station.lines, undefined, options)
+  try {
+    const net = deserializeNetwork(unionProjects(station.lines.map((id) => files.get(id)!))).network
+    const there = net.stations.get(stationId)
+    return there ? stationFit(net, there, rake) : null
+  } finally {
+    // Reading a network moves the id counter to its ids: back to those of the project
+    store.restoreIdCounter()
+  }
+}
+
+/**
+ * What to tell the player of a `StationFit`, and whether it is good news. The lengths are those
+ * of the tracks between two sets of points: the data does not hold the length of the platforms
+ * themselves, and the wording does not claim it.
+ */
+export function stationFitMessage(fit: StationFit): { ok: boolean; text: string } {
+  const rake = `${Math.round(fit.rakeLength)} m`
+  const longest = `${Math.round(fit.longest)} m`
+  if (!fit.placeable) return { ok: false, text: `La rame (${rake}) ne tient sur aucune voie de cette gare.` }
+  if (fit.fitting === 0) return { ok: false, text: `La rame (${rake}) dépasse de toutes les voies de la gare : la plus longue fait ${longest} entre aiguilles. Elle sera posée quand même, à cheval sur les aiguilles.` }
+  return { ok: true, text: `La rame (${rake}) tient sur ${fit.fitting} voie${fit.fitting > 1 ? 's' : ''} de la gare sur ${fit.tracks} (la plus longue : ${longest} entre aiguilles).` }
 }

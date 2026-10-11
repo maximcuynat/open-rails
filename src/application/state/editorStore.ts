@@ -6,7 +6,7 @@ import { dirtyNodesOf, networkChangesSince } from '@domain/geometry/networkFollo
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
 import { raiseIdCounter } from '@domain/models/ids'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
+import { createNetwork, syncIdCounter, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
@@ -101,7 +101,7 @@ import {
   type TrainHitResult,
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
-import { DEFAULT_ROLLING_STOCK, stockSpec, type RollingStockModel } from '@domain/models/rollingStock'
+import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockModel } from '@domain/models/rollingStock'
 import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
@@ -3585,10 +3585,10 @@ export class EditorStore {
    * brakes applied, and this screen moves to it — the train it was on keeps its pilot if it has
    * one, else it is left with its brake where it is, like any train let go of.
    */
-  placeRakeAtStation = (stationId: StationId, model: RollingStockModel): StationStop | null => {
+  placeRakeAtStation = (stationId: StationId, rake: RollingStockModel | RakeChoice): StationStop | null => {
     const station = this.network.stations.get(stationId)
     if (!station) return null
-    const placed = createRakeAtStation(this.network, station, model, this.trains)
+    const placed = createRakeAtStation(this.network, station, rake, this.trains)
     if (!placed) return null
     startItineraryAt(placed.train, stationId)
     this.adoptRake(placed.train)
@@ -3600,9 +3600,9 @@ export class EditorStore {
    * way with most track ahead: a train put anywhere, while the others run. False when there is no
    * track near enough, or when the whole rake does not fit there clear of the other trains.
    */
-  placeRakeAt = (worldPos: Point, model: RollingStockModel): boolean => {
+  placeRakeAt = (worldPos: Point, rake: RollingStockModel | RakeChoice): boolean => {
     const snap = snapToNearestTrack(this.network, worldPos, Math.max(12, 45 / this.camera.scale))
-    const train = snap ? createRakeAtTrack(this.network, snap.segId, snap.t, model, this.trains) : null
+    const train = snap ? createRakeAtTrack(this.network, snap.segId, snap.t, rake, this.trains) : null
     if (!train) return false
     this.rakePlacement = null
     this.adoptRake(train)
@@ -3637,13 +3637,22 @@ export class EditorStore {
     return this.isPlayMode && this.selectedTrainId === null
   }
 
-  /** The model of the rake the next click on the track sets down; null when no placing is armed */
-  rakePlacement: RollingStockModel | null = null
+  /** The rake the next click on the track sets down; null when no placing is armed */
+  rakePlacement: RakeChoice | null = null
 
-  armRakePlacement = (model: RollingStockModel | null): void => {
-    if (this.rakePlacement === model) return
-    this.rakePlacement = model
+  armRakePlacement = (rake: RakeChoice | null): void => {
+    this.rakePlacement = rake
     this.notify()
+  }
+
+  /**
+   * Put the ids to come back after those of this project: to be called after a network was read
+   * on the side (a station looked at before a train is set down there), which moves the counter
+   * to the ids of that other network.
+   */
+  restoreIdCounter = (): void => {
+    syncIdCounter(this.network)
+    this.keepTrainIdsClear()
   }
 
   /**
