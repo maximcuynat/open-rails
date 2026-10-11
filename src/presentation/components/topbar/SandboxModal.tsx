@@ -74,7 +74,10 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
   const results = useMemo(() => (index && !station ? searchStations(index, query, 8) : []), [index, query, station])
   const train = SANDBOX_TRAINS.find((t) => t.id === trainId)
   const options: RakeOption[] = useMemo(() => (train?.model ? rakeOptions(train.model) : []), [train])
-  const option = options.find((o) => o.id === optionIds[trainId]) ?? (train?.model ? defaultRakeOption(train.model) : undefined)
+  // Kept from one render to the next: the check below runs again when it changes, and the default
+  // composition, made anew each time, would start it over at every render (the message blinked)
+  const chosenId = optionIds[trainId]
+  const option = useMemo(() => options.find((o) => o.id === chosenId) ?? (train?.model ? defaultRakeOption(train.model) : undefined), [options, chosenId, train])
 
   // Does that rake hold at the platforms of that station? Asked as soon as both are chosen
   const stationId = station?.station.id
