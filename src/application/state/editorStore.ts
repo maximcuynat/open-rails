@@ -68,6 +68,8 @@ import {
 } from '@infrastructure/persistence/persistence'
 import {
   loadConsolePreference,
+  loadDrivingAid,
+  saveDrivingAid,
   loadTimeFactorPreference,
   loadKeyPreferences,
   loadRemoteHostPreference,
@@ -101,6 +103,7 @@ import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/mod
 import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
 import { createRakeAtStation } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
+import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
 import type { StationId, StationStop } from '@domain/models/types'
 import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
@@ -384,6 +387,8 @@ export class EditorStore {
   /** The way of each train to the next station of its itinerary, found on the track loaded; never saved */
   routeGuides = new Map<string, RouteGuideState>()
   private routeGuideElapsed = 0
+  /** How much the game helps along an itinerary: way drawn and points set, way drawn only, or nothing */
+  drivingAid: DrivingAid = 'full'
   /** The desks seated in the room and the name each driver gave, by desk number */
   deskNames = new Map<number, string>()
 
@@ -1058,6 +1063,8 @@ export class EditorStore {
     this.loadKeyPreferences()
     const savedConsole = loadConsolePreference()
     if (isConsolePreference(savedConsole)) this.consolePreference = savedConsole
+    const savedAid = loadDrivingAid()
+    if (isDrivingAid(savedAid)) this.drivingAid = savedAid
     const savedFactor = Number(loadTimeFactorPreference())
     if (isTimeFactor(savedFactor)) this.timeFactor = savedFactor
     this.remoteDeskHost = loadRemoteHostPreference()
@@ -3453,6 +3460,21 @@ export class EditorStore {
     }
     this.commitTrainChange()
     return placed.stop
+  }
+
+  setDrivingAid = (aid: DrivingAid): void => {
+    if (this.drivingAid === aid) return
+    this.drivingAid = aid
+    saveDrivingAid(aid)
+    // At once, not at the next second: the points ahead of every train on its way
+    for (const train of this.trains) if (train.itinerary) refreshRouteGuide(this, train)
+    this.notify()
+  }
+
+  /** Points were set for a train by the driving aid: the panels and the canvas are told */
+  pointsThrownByAid = (): void => {
+    this.markDirty()
+    this.notify()
   }
 
   /** The itinerary of a train was changed: its way is found again, the project saved, the panels told */

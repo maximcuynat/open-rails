@@ -4,7 +4,10 @@ import { buildTrainConsoleState } from '@application/console/consoleState'
 import { fakeDataset } from '@application/dataset/dataset.testkit'
 import { fetchLineFiles, resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { resetIdCounter } from '@domain/models/network'
+import { openPassage } from '@domain/models/junction'
+import { findJunctionAtNode, isPassageOpen } from '@domain/models/routing'
 import { advanceTrainSet } from '@domain/models/train'
+import { guideAhead } from '@domain/services/routeGuide'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { decodeMessage, encodeMessage } from '@application/remote/protocol'
 import { addItineraryStop, buildItineraryView, refreshRouteGuide, removeItineraryStop } from './itinerary'
@@ -109,5 +112,84 @@ describe('the itinerary of a train in a game', () => {
     addItineraryStop(store, train, 's2')
     const saved = store.exportProject()
     expect(saved.trains?.[0].itinerary).toEqual({ stations: ['s1', 's2'], next: 1 })
+  })
+})
+
+describe('the driving aid along an itinerary', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetDatasetIndexCache()
+    resetIdCounter()
+  })
+
+  /** On the way to « Gare Deux » with line b loaded, the points at x = 1000 set towards the branch of line a */
+  async function towardsTheBranch(aid: 'full' | 'guide' | 'none') {
+    const { store, index, train, options } = await started()
+    store.setDrivingAid(aid)
+    addItineraryStop(store, train, 's2')
+    store.addDatasetLines(await fetchLineFiles(index, ['b'], undefined, options))
+    store.notify()
+    const node = [...store.network.nodes.values()].find((n) => n.pos.x === 1000 && n.pos.y === 0)!
+    const junction = findJunctionAtNode(store.network, node.id)!
+    const rails = (store.network.adjacency.get(node.id) ?? []).map((id) => store.network.segments.get(id)!)
+    const other = (seg: (typeof rails)[number]) => store.network.nodes.get(seg.from === node.id ? seg.to : seg.from)!.pos
+    const arriving = rails.find((seg) => other(seg).x === 500)!
+    const branch = rails.find((seg) => other(seg).y === 60)!
+    const onward = rails.find((seg) => other(seg).x === 1500 && other(seg).y === 0)!
+    expect(openPassage(junction, arriving.id, branch.id)).toBe(true)
+    const setForTheWay = () => isPassageOpen(store.network, node.id, arriving.id, onward.id)
+    return { store, train, setForTheWay }
+  }
+
+  it('sets the points ahead for the way under the full aid', async () => {
+    const { store, train, setForTheWay } = await towardsTheBranch('full')
+    expect(setForTheWay()).toBe(false)
+    refreshRouteGuide(store, train)
+    expect(setForTheWay()).toBe(true)
+    expect(buildItineraryView(store, train)!.pointsAgainst).toBeNull()
+  })
+
+  it('leaves them to the driver under guidance, and says how far they are', async () => {
+    const { store, train, setForTheWay } = await towardsTheBranch('guide')
+    refreshRouteGuide(store, train)
+    expect(setForTheWay()).toBe(false)
+    expect(buildItineraryView(store, train)!.pointsAgainst).toBeCloseTo(750, 3)
+    // Asking for the full aid sets them at once
+    store.setDrivingAid('full')
+    expect(setForTheWay()).toBe(true)
+  })
+
+  it('does nothing without aid', async () => {
+    const { store, train, setForTheWay } = await towardsTheBranch('none')
+    refreshRouteGuide(store, train)
+    expect(setForTheWay()).toBe(false)
+    expect(buildItineraryView(store, train)!.pointsAgainst).toBeNull()
+  })
+
+  it('leaves alone the points a train stands on', async () => {
+    const { store, train, setForTheWay } = await towardsTheBranch('full')
+    // The rake astride the points: its lead 100 m past them, on the branch they are set to
+    expect(advanceTrainSet(store.network, train, 850)).toBe(true)
+    refreshRouteGuide(store, train)
+    expect(setForTheWay()).toBe(false)
+  })
+
+  it('remembers the aid asked for', async () => {
+    const { store } = await started()
+    expect(store.drivingAid).toBe('full')
+    store.setDrivingAid('guide')
+    expect(new EditorStore().drivingAid).toBe('guide')
+  })
+
+  it('gives the stretch of the way to draw ahead of the train', async () => {
+    const { store, train } = await towardsTheBranch('guide')
+    refreshRouteGuide(store, train)
+    const guide = store.routeGuides.get(train.id)!.guide!
+    const lead = train.vehicles[0].front
+    const near = guideAhead(store.network, guide, lead, 400)
+    expect(near[0]).toMatchObject({ segId: lead.segId, t0: lead.t })
+    expect(near.length).toBeLessThan(guide.path.spans.length)
+    expect(guideAhead(store.network, guide, lead, 10_000)).toHaveLength(guide.path.spans.length)
+    expect(guideAhead(store.network, guide, { segId: 's_nope', t: 0 }, 400)).toEqual([])
   })
 })

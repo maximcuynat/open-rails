@@ -1,3 +1,5 @@
+import { renderRouteGuide, routeGuideReach } from '@infrastructure/render/routeGuideRender'
+import { guideAhead } from '@domain/services/routeGuide'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clampScale, screenToWorld, type Camera } from '@infrastructure/render/camera'
 import {
@@ -405,6 +407,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const driven = store.selectedTrain
       const loco = store.trains.length === 0 ? store.locomotive : null
       if (driven) {
+        // The way to the next station of its itinerary, under the route as the points lie
+        const guide = store.drivingAid !== 'none' ? store.routeGuides.get(driven.id)?.guide : null
+        const lead = driven.vehicles[0]?.front
+        if (guide && !guide.behind && lead) {
+          renderRouteGuide(ctx, cam, rect.width, rect.height, store.network, guideAhead(store.network, guide, lead, routeGuideReach(cam, rect.width, rect.height)))
+        }
         const routeStart = trainRouteStart(driven)
         if (routeStart) {
           renderDrivingRoute(ctx, cam, rect.width, rect.height, store.network, routeStart, driven.currentSpeed, store.unit)

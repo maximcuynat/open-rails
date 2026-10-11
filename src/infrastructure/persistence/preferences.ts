@@ -94,3 +94,23 @@ export function saveTimeFactorPreference(factor: number): void {
     // Storage full or denied: the choice still applies for this session
   }
 }
+
+/** How much the game helps the driver along an itinerary; a preference of the player, kept apart from the project */
+export const DRIVING_AID_KEY = 'open-rail:driving-aid'
+
+/** The saved value as it was written: the caller validates it */
+export function loadDrivingAid(): string | null {
+  try {
+    return getStorage()?.getItem(DRIVING_AID_KEY) ?? null
+  } catch {
+    return null
+  }
+}
+
+export function saveDrivingAid(aid: string): void {
+  try {
+    getStorage()?.setItem(DRIVING_AID_KEY, aid)
+  } catch {
+    // Storage full or denied: the choice still applies for this session
+  }
+}

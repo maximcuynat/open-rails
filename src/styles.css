@@ -4147,6 +4147,33 @@ select.cb-step-select {
   border-left-color: var(--accent);
   background: var(--panel);
 }
+.itinerary-aid {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.itinerary-aid-label {
+  margin-right: auto;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.itinerary-aid-choice {
+  padding: 2px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.itinerary-aid-choice.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .sandbox-choices {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

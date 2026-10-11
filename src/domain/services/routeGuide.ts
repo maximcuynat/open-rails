@@ -1,5 +1,6 @@
 import { segmentPartialLength, type TrackPosition } from '../models/locomotive'
-import type { Network, NodeId, Station, StationStop } from '../models/types'
+import { findJunctionAtNode, isPassageOpen } from '../models/routing'
+import type { Network, NodeId, SegmentId, Station, StationStop, TrackSpan } from '../models/types'
 import { findTrackPathToAny, type TrackPath, type TrackPoint } from './trackPath'
 
 // ─────────────────── The way to the next station, rail by rail ───────────────────
@@ -81,4 +82,61 @@ export function guideLeft(net: Network, guide: RouteGuide, at: TrackPoint): numb
     return segmentPartialLength(net, span.segId, at.t, span.t1) + rest
   }
   return null
+}
+
+/** Index of the stretch of the guide the lead bogie is on; -1 when it is not on the way */
+function stretchAt(guide: RouteGuide, at: TrackPoint): number {
+  return guide.path.spans.findIndex((span) => span.segId === at.segId && within(span.t0, span.t1, at.t))
+}
+
+/** A set of points the guide passes, with the two rails it passes between */
+export interface GuidePoints {
+  nodeId: NodeId
+  inSeg: SegmentId
+  outSeg: SegmentId
+  /** Metres from the lead bogie to the node */
+  distance: number
+}
+
+/**
+ * The points on the way within `reach` metres ahead of the lead bogie that are not set for it,
+ * nearest first: the nodes with a route table where the guide passes between two rails the
+ * table does not open as it stands. None when the train is off the way.
+ */
+export function pointsAgainstGuide(net: Network, guide: RouteGuide, at: TrackPoint, reach: number): GuidePoints[] {
+  const start = stretchAt(guide, at)
+  const here = guideLeft(net, guide, at)
+  if (start < 0 || here === null) return []
+  const { spans } = guide.path
+  const against: GuidePoints[] = []
+  for (let i = start; i + 1 < spans.length; i++) {
+    const distance = here - guide.left[i + 1]
+    if (distance > reach) break
+    const span = spans[i]
+    const next = spans[i + 1]
+    if (span.segId === next.segId) continue
+    const seg = net.segments.get(span.segId)
+    if (!seg) continue
+    const nodeId = span.t1 >= span.t0 ? seg.to : seg.from
+    if (!findJunctionAtNode(net, nodeId) || isPassageOpen(net, nodeId, span.segId, next.segId)) continue
+    against.push({ nodeId, inSeg: span.segId, outSeg: next.segId, distance })
+  }
+  return against
+}
+
+/**
+ * The stretches of the guide from the lead bogie on, as far as `reach` metres: what is drawn of
+ * the way. Empty when the train is off it.
+ */
+export function guideAhead(net: Network, guide: RouteGuide, at: TrackPoint, reach: number): TrackSpan[] {
+  const start = stretchAt(guide, at)
+  const here = guideLeft(net, guide, at)
+  if (start < 0 || here === null) return []
+  const { spans } = guide.path
+  const ahead: TrackSpan[] = [{ segId: spans[start].segId, t0: at.t, t1: spans[start].t1 }]
+  for (let i = start + 1; i < spans.length; i++) {
+    if (here - guide.left[i] > reach) break
+    ahead.push(spans[i])
+  }
+  return ahead
 }

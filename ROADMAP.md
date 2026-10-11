@@ -73,7 +73,7 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 | D | Bogies visibles en conduite | **Fait**, à contrôler à l'écran | Petite | v0.6 |
 | E | Mode bac à sable et écran de lancement | **Fait**, téléphone à essayer en vrai | Moyenne | v0.6 |
 | F | Destination et itinéraire | **Fait** | Grande | v0.6 |
-| G | Niveaux d'aide à la conduite | Tracé devant la rame sur 400 m, aiguilles à la main | Moyenne | v0.7 |
+| G | Niveaux d'aide à la conduite | **Fait** | Moyenne | v0.7 |
 | A | Catégories de réseau et couleurs | Un booléen « grande vitesse » par ligne dans l'index | Moyenne | v0.7 |
 | C | Vue d'ensemble grossière au dézoom | Quatre paliers de détail, vue schéma | Moyenne | v0.7 |
 | B | Chargement et déchargement par morceaux | Chargement par ligne entière, jamais déchargé | Grande | v0.8 |
@@ -144,12 +144,20 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 
 - **Constat.** Le tracé affiché devant la rame suit les aiguilles telles qu'elles sont, sur 400 m.
   Les aiguilles se manœuvrent à la main.
-- **À faire.** Un réglage d'aide à trois crans : *complète* (itinéraire surligné jusqu'à la
-  prochaine étape, aiguilles orientées automatiquement devant la rame), *guidage* (itinéraire
-  surligné, aiguilles à la main, alerte si l'aiguille devant mène hors de l'itinéraire),
-  *aucune*. L'orientation automatique respecte le verrouillage et les réservations existants.
-- **Dépend de.** Lot F.
-- **Vérifié par.** Tests : une rame en aide complète arrive à destination sans manœuvre manuelle.
+- **Fait le 2026-10-11.** Réglage « Aide » à trois crans dans la fenêtre d'itinéraire, mémorisé
+  d'une session à l'autre :
+  - *Complète* (par défaut) : chemin tracé sur la voie jusqu'à la prochaine gare, aiguilles
+    orientées automatiquement devant la rame (2 km au moins, 45 s de marche à grande vitesse).
+    Une aiguille occupée ou réservée pour une autre rame est laissée telle quelle.
+  - *Guidage* : chemin tracé, aiguilles à la main ; la fenêtre signale l'aiguille orientée hors
+    du chemin et sa distance.
+  - *Aucune* : ni tracé ni aiguilles.
+- **Vérifié par.** Tests des trois crans (`application/game/itinerary.test.ts`), et en navigateur
+  sans tête : au départ de Marseille vers Avignon TGV, 8 aiguilles orientées sans intervention,
+  la rame reste sur le chemin, la LGV se charge en route, aucun signal franchi fermé.
+- **Reste.** L'aide n'est pas affichée ni réglable depuis le pupitre téléphone. Elle ne tient
+  pas la vitesse : la limite reste à respecter à la main (une rame lancée à fond déraille en
+  sortie de gare) — c'est le pilote automatique, lot H.
 
 ### Lot A — Catégories de réseau et couleurs
 

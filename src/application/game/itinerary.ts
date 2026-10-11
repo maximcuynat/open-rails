@@ -6,7 +6,10 @@ import { networkCheckToken } from '@domain/models/networkWatch'
 import { isTrainStopped, type TrainSet } from '@domain/models/train'
 import type { Point, StationId } from '@domain/models/types'
 import { afterCall, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStop, type StationRef } from '@domain/services/itinerary'
-import { findRouteGuide, guideLeft, type RouteGuide } from '@domain/services/routeGuide'
+import { openPassage } from '@domain/models/junction'
+import { findJunctionAtNode } from '@domain/models/routing'
+import { findRouteGuide, guideLeft, pointsAgainstGuide, type GuidePoints, type RouteGuide } from '@domain/services/routeGuide'
+import { aidReach } from './drivingAid'
 import { trackSpansEnds } from '@domain/services/trackPath'
 
 // The itinerary of a train as the game runs it: the stations come from the index of the dataset
@@ -28,6 +31,8 @@ export interface RouteGuideState {
   guide: RouteGuide | null
   /** Metres left on the guide at the last look */
   left: number | null
+  /** The nearest points ahead that lead off the way and were left as they are (aid `guide`, or held by another train) */
+  against: GuidePoints | null
 }
 
 /** The stations an itinerary can name, by id */
@@ -106,7 +111,7 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
   const token = networkCheckToken(net)
   let state = guides.get(train.id)
   if (!state || state.station !== station || state.token !== token) {
-    state = { station, token, failedOn: null, guide: null, left: null }
+    state = { station, token, failedOn: null, guide: null, left: null, against: null }
     guides.set(train.id, state)
   }
   state.left = state.guide ? guideLeft(net, state.guide, lead) : null
@@ -124,7 +129,29 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
     refreshRouteGuide(store, train)
     return true
   }
+  state.against = applyDrivingAid(store, train, state.guide)
   return false
+}
+
+/**
+ * The points ahead of a train on its way: set for it under the full aid, unless a train stands on
+ * them or they are held for another. Returns the nearest ones left leading off the way (what the
+ * driver has to see to), null when there are none or no aid is wanted.
+ */
+function applyDrivingAid(store: EditorStore, train: TrainSet, guide: RouteGuide | null): GuidePoints | null {
+  const lead = train.vehicles[0]?.front
+  if (!guide || guide.behind || !lead || store.drivingAid === 'none') return null
+  const against = pointsAgainstGuide(store.network, guide, lead, aidReach(train.currentSpeed))
+  if (store.drivingAid !== 'full') return against[0] ?? null
+  let left: GuidePoints | null = null
+  let thrown = false
+  for (const points of against) {
+    const junction = findJunctionAtNode(store.network, points.nodeId)
+    if (junction && store.junctionLock(junction, train.id) === null && openPassage(junction, points.inSeg, points.outSeg)) thrown = true
+    else left ??= points
+  }
+  if (thrown) store.pointsThrownByAid()
+  return left
 }
 
 export interface ItineraryStopView {
@@ -135,6 +162,8 @@ export interface ItineraryStopView {
 }
 
 export interface ItineraryView extends ConsoleRoute {
+  /** Metres to the nearest points ahead that lead off the way; null when the way is set, or not watched */
+  pointsAgainst: number | null
   /** The station called at last, if any */
   origin: string | null
   /** The stations ahead, the next one first */
@@ -154,7 +183,7 @@ export function buildItineraryView(store: EditorStore, train: TrainSet): Itinera
   const origin = name(itinerary.stations[itinerary.next - 1])
   const next = stops[0]
   if (!next) {
-    return { origin, stops, platform: null, next: null, distance: null, exact: true, destination: null, total: null, status: itinerary.stations.length > 1 ? 'arrived' : 'ok' }
+    return { origin, stops, platform: null, pointsAgainst: null, next: null, distance: null, exact: true, destination: null, total: null, status: itinerary.stations.length > 1 ? 'arrived' : 'ok' }
   }
   const state = store.routeGuides.get(train.id)
   const guide = state?.station === next.id ? state.guide : null
@@ -179,6 +208,7 @@ export function buildItineraryView(store: EditorStore, train: TrainSet): Itinera
     origin,
     stops,
     platform: guide?.stop?.ref ?? null,
+    pointsAgainst: guide && state?.against ? state.against.distance : null,
     next: next.name,
     distance,
     exact,

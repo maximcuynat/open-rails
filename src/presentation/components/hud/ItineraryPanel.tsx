@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { EditorStore } from '@application/state/editorStore'
+import { DRIVING_AIDS, DRIVING_AID_LABELS } from '@application/game/drivingAid'
 import { addItineraryStop, buildItineraryView, removeItineraryStop, stationRefs } from '@application/game/itinerary'
 import { showToast } from '../common/Toast'
 import { formatRouteDistance, routeStatusNote, stationChoices } from './itineraryModel'
@@ -75,6 +76,11 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
               {note}
             </span>
           )}
+          {view.pointsAgainst !== null && (
+            <span className="itinerary-note" role="status">
+              Aiguille à {formatRouteDistance(view.pointsAgainst, true)} orientée hors du chemin.
+            </span>
+          )}
         </div>
       )}
 
@@ -117,6 +123,22 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
           ))}
         </ul>
       )}
+      <div className="itinerary-aid" role="radiogroup" aria-label="Aide à la conduite">
+        <span className="itinerary-aid-label">Aide</span>
+        {DRIVING_AIDS.map((aid) => (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={store.drivingAid === aid}
+            className={`itinerary-aid-choice${store.drivingAid === aid ? ' is-active' : ''}`}
+            title={DRIVING_AID_LABELS[aid].detail}
+            key={aid}
+            onClick={() => store.setDrivingAid(aid)}
+          >
+            {DRIVING_AID_LABELS[aid].name}
+          </button>
+        ))}
+      </div>
     </aside>
   )
 }
