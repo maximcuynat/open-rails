@@ -139,6 +139,23 @@ describe('the automatic pilot on a train of the game', () => {
     expect(headX()).toBeLessThanOrEqual(12_000 + 3)
   })
 
+  it('sent the way it does not face, changes ends once and leaves', () => {
+    // « Départ » is at 500 m of a 14 km line: the rake is set down facing the long way, east
+    const { store, headX, run, train } = line(14, {})
+    addStation(store.network, { id: 'ouest', name: 'Ouest', pos: { x: 0, y: 0 }, stops: [{ segId: [...store.network.segments.keys()][0], t: 0.1 }] })
+    // No aid: nothing turns the train when its itinerary is set
+    store.setDrivingAid('none')
+    const first = headX()
+    expect(addItineraryStop(store, train(), 'ouest')).toBeNull()
+    expect(headX()).toBe(first)
+    store.setAutopilot(train().id, true)
+    run(60)
+    // It is on its way west, reverser forward, not standing with its controls reset over and over
+    expect(train().reverser).toBe('forward')
+    expect(headX()).toBeLessThan(first)
+    expect(train().currentSpeed).toBeGreaterThan(0)
+  })
+
   it('gives the train back as soon as the driver touches a handle', () => {
     const { store, run, train } = line(14, { arrivee: 12 })
     addItineraryStop(store, train(), 'arrivee')

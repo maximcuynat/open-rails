@@ -5,7 +5,7 @@ import { releaseEmergencyBrake, setNotch, setReverser, type TrainSet } from '@do
 import { setBrakeCommand } from '@domain/models/trainDynamics'
 import { nextStop } from '@domain/services/itinerary'
 import { guideLeft } from '@domain/services/routeGuide'
-import { ARRIVAL_DISTANCE } from './itinerary'
+import { ARRIVAL_DISTANCE, refreshRouteGuide } from './itinerary'
 
 // The automatic pilot at the controls of a train of the game: several times a second it reads
 // what a console would show of that train, works out where it has to stop — the platform of the
@@ -62,8 +62,15 @@ function pilotTrain(store: EditorStore, train: TrainSet, memory: PilotMemory, el
     memory.dwell = Math.max(0, memory.dwell - elapsed)
     stopIn = 0
   } else if (target.behind && state.stopped) {
-    // The way on starts behind: from the other cab, and the next look goes from there
-    if (state.canSwitchCab && store.switchTrainCab(train)) return
+    // The way on starts behind: from the other cab. The way is found again at once from there —
+    // kept until the itineraries are next looked at, it would still say « behind », the pilot
+    // would change ends again at its next look, and so on without ever leaving
+    if (state.canSwitchCab && store.switchTrainCab(train)) {
+      const turned = store.trains.find((t) => t.id === train.id)
+      store.routeGuides.delete(train.id)
+      if (turned) refreshRouteGuide(store, turned)
+      return
+    }
     stopIn = 0
   } else if (target.behind) {
     stopIn = 0
