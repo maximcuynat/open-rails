@@ -77,7 +77,20 @@ export function addItineraryStop(store: EditorStore, train: TrainSet, stationId:
   }
   train.itinerary = itinerary
   store.itineraryChanged(train)
+  faceTheWay(store, train)
   return null
+}
+
+/**
+ * A train at rest whose way starts behind it is driven from its other cab, under the full aid:
+ * set down at a through station it faces one way or the other, and the station it is sent to
+ * may be the other way.
+ */
+function faceTheWay(store: EditorStore, train: TrainSet): void {
+  if (store.drivingAid !== 'full' || !isTrainStopped(train) || !store.routeGuides.get(train.id)?.guide?.behind) return
+  if (!store.switchTrainCab(train)) return
+  const turned = store.trains.find((t) => t.id === train.id)
+  if (turned) store.itineraryChanged(turned)
 }
 
 /** Take a station ahead out of the itinerary of a train (`index` in its list of stations) */
@@ -119,7 +132,11 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
     const index = store.datasetIndex
     const indexed = index?.stations.find((s) => s.id === station)
     const gates = index && indexed && store.dataset ? gatesToward(index, new Set(store.dataset.lines), indexed.lines) : []
-    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates)
+    // A call on the way to somewhere else: a platform the train can go on from
+    const after = train.itinerary?.stations[train.itinerary.next + 1]
+    const afterIndexed = after === undefined ? undefined : index?.stations.find((s) => s.id === after)
+    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, new Set(store.dataset.lines), afterIndexed.lines) : [] }
+    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond)
     state.left = state.guide ? state.guide.path.length : null
     state.failedOn = state.guide ? null : lead.segId
   }

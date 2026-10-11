@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { addNode, addSegment, createNetwork, resetIdCounter } from '../models/network'
+import { proposeJunction } from '../models/junction'
 import { addStation } from '../models/stations'
 import { findRouteGuide, guideLeft } from './routeGuide'
 
@@ -50,6 +51,39 @@ describe('the way to the next station', () => {
     const guide = findRouteGuide(net, { segId: rails[0].id, t: 0.5, forward: false }, station)!
     expect(guide.behind).toBe(true)
     expect(guide.path.length).toBeCloseTo(2000, 6)
+  })
+
+  it('calls at a platform the way onward runs through, not at a nearer bay', () => {
+    const { net, n, rails } = line()
+    // A bay off the line at 2 km (points there), nearer than the through platform at 2.5 km
+    const bayEnd = addNode(net, { x: 2300, y: 20 })
+    const bay = addSegment(net, n[2].id, bayEnd.id)!
+    expect(proposeJunction(net, n[2].id)).not.toBeNull()
+    const calling = addStation(net, { name: 'Étape', pos: { x: 2300, y: 10 }, stops: [{ segId: bay.id, t: 0.3, ref: 'bay' }, { segId: rails[2].id, t: 0.5, ref: 'through' }] })
+    const lead = { segId: rails[0].id, t: 0.5, forward: true }
+    expect(findRouteGuide(net, lead, calling)!.stop?.ref).toBe('bay')
+    expect(findRouteGuide(net, lead, calling, [], { gates: [n[3].id] })!.stop?.ref).toBe('through')
+    // Nothing known beyond: the nearest, as before
+    expect(findRouteGuide(net, lead, calling, [], { gates: ['n_unknown'] })!.stop?.ref).toBe('bay')
+  })
+
+  it('at a terminus, calls at a platform there is a way out of towards what lies beyond', () => {
+    // The line ends at buffers at 3 km; points at 2 km lead back out, westwards, onto another
+    // line. The bay that leaves at 1 km is nearer, but there is no way out of it towards that line
+    const { net, n, rails, branch } = line()
+    const west = addNode(net, { x: 1000, y: 120 })
+    addSegment(net, n[2].id, west.id)
+    const far = addNode(net, { x: 0, y: 300 })
+    const beyond = addSegment(net, west.id, far.id)!
+    expect(proposeJunction(net, n[1].id)).not.toBeNull()
+    expect(proposeJunction(net, n[2].id)).not.toBeNull()
+    const terminus = addStation(net, { name: 'Terminus', pos: { x: 2900, y: 0 }, stops: [{ segId: branch.id, t: 0.3, ref: 'bay' }, { segId: rails[2].id, t: 0.9, ref: 'joined' }] })
+    const onward = addStation(net, { name: 'Suite', pos: { x: 500, y: 200 }, stops: [{ segId: beyond.id, t: 0.5 }] })
+    // Without a station to go on to, the bay is where the train stops
+    expect(findRouteGuide(net, { segId: rails[0].id, t: 0.5, forward: true }, terminus)!.stop?.ref).toBe('bay')
+    const guide = findRouteGuide(net, { segId: rails[0].id, t: 0.5, forward: true }, terminus, [], { station: onward })!
+    expect(guide.stop?.ref).toBe('joined')
+    expect(guide.behind).toBe(false)
   })
 
   it('heads for a gate while the station has no platform on the track loaded', () => {
