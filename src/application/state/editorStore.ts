@@ -1277,6 +1277,7 @@ export class EditorStore {
   private adoptLoadedProject(res: ReturnType<typeof deserializeNetwork>): void {
     this.locomotive = null
     this.restoreTrains(res.trains)
+    this.autopilots.clear()
     if (res.projectName) this.projectName = res.projectName
     if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
     // Section names belong to the imported file: never keep those of the previous network
@@ -1618,6 +1619,7 @@ export class EditorStore {
     this.network = createNetwork()
     this.locomotive = null
     this.restoreTrains([])
+    this.autopilots.clear()
     this.restoreSignallingSettings({})
     this.restoreSignalDisplay({})
     this.flatLevels = false
@@ -3213,11 +3215,14 @@ export class EditorStore {
       this.sidePanelOpenBeforeDriving = this.isSidePanelOpen
       this.isSidePanelOpen = false
       this.closeContextMenu()
-      if (this.trains.length > 0 && !this.selectedTrain) {
+      // Back as it was left: on no train when the view was free, and a pilot still has a train to hold
+      for (const id of [...this.autopilots.keys()]) if (!this.trains.some((t) => t.id === id)) this.autopilots.delete(id)
+      if (this.trains.length > 0 && !this.selectedTrain && !(this.leftInFreeView && this.autopilots.size > 0)) {
         this.selectTrainById(this.trains[0].id)
       }
-      // Every train starts at rest with its brakes applied: the driver releases them to leave
-      for (const t of this.trains) resetTrainControls(t)
+      this.leftInFreeView = false
+      // The trains go on as they were left (speed, handles, pilots): a train just laid is at rest,
+      // brakes applied (`makeTrainSet`), and `haltAllTrains` puts every one of them back there
       this.impactReported.clear()
       // Signals show their state from the first frame
       resetSignalling(this.signalling)
@@ -3227,21 +3232,42 @@ export class EditorStore {
       }
       this.startSimulationLoop()
     } else {
-      this.trainDrivers.clear()
-      this.autopilots.clear()
+      // Nothing of the trains is reset: the simulation is held, and goes on from here when
+      // driving starts again. The desks let go: no phone drives while the time is stopped
+      this.leftInFreeView = this.selectedTrainId === null && this.trains.length > 0
+      for (const desk of new Set(this.trainDrivers.values())) this.releaseTrain(desk)
       this.rakePlacement = null
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       resetSignalling(this.signalling)
       this.locomotiveCurrentSpeed = 0
       this.locomotiveThrottle = 0
-      for (const t of this.trains) resetTrainControls(t)
       // Where the trains were driven to is one undo step, and survives a reload
       const lastSaved = this.history[this.historyIndex]?.trains ?? []
       if (JSON.stringify(serializeTrains(this.trains)) !== JSON.stringify(lastSaved)) {
         this.commitTrainChange()
       }
     }
+    this.notify()
+  }
+
+  /** Driving was left from the free view: it starts again there, on no train */
+  private leftInFreeView = false
+
+  /**
+   * Out of play mode with trains that were left running: a train still has speed, or a pilot holds
+   * one. Driving again goes on from there; `haltAllTrains` is the way to start from rest instead.
+   */
+  get isSimulationHeld(): boolean {
+    return !this.isPlayMode && (this.autopilots.size > 0 || this.trains.some((t) => Math.abs(t.currentSpeed) > 0.1))
+  }
+
+  /** Every train at rest, brakes applied, handles at neutral, and no pilot: the simulation starts afresh, the trains where they stand */
+  haltAllTrains = (): void => {
+    for (const t of this.trains) resetTrainControls(t)
+    this.autopilots.clear()
+    this.leftInFreeView = false
+    this.forgetBrakeHolds(null)
     this.notify()
   }
 

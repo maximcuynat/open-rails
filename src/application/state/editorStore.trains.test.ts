@@ -534,7 +534,10 @@ describe('EditorStore trains', () => {
       expect(JSON.stringify(parked.vehicles)).toBe(parkedBefore)
       // Bringing the train to rest against the obstacle is the domain's business: the store forces nothing
       expect(driven.notch).toBe(5)
+      // Leaving resets nothing; putting the trains at rest is asked for
       store.togglePlayMode()
+      expect(driven.notch).toBe(5)
+      store.haltAllTrains()
       expect(driven.currentSpeed).toBe(0)
       expect(driven.notch).toBe(0)
     })

@@ -253,10 +253,14 @@ describe('the automatic pilot on a train of the game', { timeout: 30_000 }, () =
     applyConsoleCommand(store, { type: 'notchSet', notch: 0 })
     expect(store.autopilots.has(train().id)).toBe(false)
     expect(buildTrainConsoleState(store, train()).autopilot).toBeUndefined()
-    // And leaving the driving lets every train go
+    // Leaving the driving keeps the pilot on its train; putting every train at rest lets it go
     store.setAutopilot(train().id, true)
     store.togglePlayMode()
+    expect(store.autopilots.has(train().id)).toBe(true)
+    expect(store.isSimulationHeld).toBe(true)
+    store.haltAllTrains()
     expect(store.autopilots.size).toBe(0)
+    expect(store.isSimulationHeld).toBe(false)
   })
 
   it('holds its speed on level track hardly touching the handle, and up a ramp within a few notches', () => {

@@ -307,15 +307,17 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         {
           id: 'toggle-play',
-          label: store.isPlayMode ? 'Quitter la conduite' : 'Prendre les commandes',
+          label: store.isPlayMode ? 'Quitter la conduite' : store.isSimulationHeld ? 'Reprendre la simulation' : 'Prendre les commandes',
           shortcut: store.shortcutLabel('sim.togglePlay'),
           disabled: !hasTrain,
         },
+        { id: 'halt-trains', label: 'Tout remettre à l’arrêt', disabled: store.isPlayMode || !store.isSimulationHeld },
         { id: 'remote-desk', label: 'Pupitre sur téléphone…', separatorAfter: true },
         { id: 'toggle-train-debug', label: 'Squelette des trains', checked: store.showTrainDebug, shortcut: store.shortcutLabel('train.debug') },
       ],
       onSelect: (id) => {
         if (id === 'toggle-play') store.togglePlayMode()
+        else if (id === 'halt-trains') store.haltAllTrains()
         else if (id === 'toggle-train-debug') store.toggleTrainDebug()
         else if (id === 'remote-desk') {
           // A new room each time the session is opened; an open one is shown again as it is

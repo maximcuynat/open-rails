@@ -437,7 +437,7 @@ describe('EditorStore persistence', () => {
       expect(train.notch).toBe(0)
     })
 
-    it('puts every train at rest, brakes applied, on entering play mode', () => {
+    it('enters play mode with the trains as they are, and puts every one at rest only when asked', () => {
       const store = makeDrivingStore()
       store.togglePlayMode()
       expect(store.placeTrainLoco({ x: 400, y: 0 })).toBe(true)
@@ -446,6 +446,11 @@ describe('EditorStore persistence', () => {
       // The state a train leaves from is the domain's: the store only has to ask for it
       const reset = vi.spyOn(trainModel, 'resetTrainControls')
       store.togglePlayMode()
+      expect(reset).not.toHaveBeenCalled()
+      // A train just laid is at rest, brakes applied, without anything being asked
+      const laid = store.trains[1]
+      expect([laid.currentSpeed, laid.notch, laid.reverser, laid.brakeCommand]).toEqual([0, 0, 'neutral', 'hold'])
+      store.haltAllTrains()
       expect(reset.mock.calls.map(([t]) => t.id).sort()).toEqual(store.trains.map((t) => t.id).sort())
     })
 
@@ -640,15 +645,44 @@ describe('EditorStore persistence', () => {
       expect(trainImpactMessage(8)).toBe('Choc à 29 km/h')
     })
 
-    it('puts every control back at rest when leaving play mode', () => {
+    it('keeps every control where it is when leaving play mode, and goes on from there', () => {
       const store = makeDrivingStore()
       const train = store.selectedTrain!
       store.setSelectedTrainReverser('reverse')
       store.setSelectedTrainNotch(3)
+      train.currentSpeed = 8
       store.togglePlayMode()
-      expect(train.reverser).toBe('neutral')
-      expect(train.notch).toBe(0)
-      expect(train.currentSpeed).toBe(0)
+      expect([train.reverser, train.notch, train.currentSpeed]).toEqual(['reverse', 3, 8])
+      expect(store.isSimulationHeld).toBe(true)
+      store.togglePlayMode()
+      expect(store.selectedTrain).toBe(train)
+      expect([train.reverser, train.notch, train.currentSpeed]).toEqual(['reverse', 3, 8])
+      expect(store.isSimulationHeld).toBe(false)
+    })
+
+    it('puts every train at rest and lets go of every pilot when asked', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.setSelectedTrainReverser('forward')
+      store.setSelectedTrainNotch(3)
+      train.currentSpeed = 8
+      store.setAutopilot(train.id, true)
+      store.togglePlayMode()
+      store.haltAllTrains()
+      expect([train.reverser, train.notch, train.currentSpeed]).toEqual(['neutral', 0, 0])
+      expect(store.autopilots.size).toBe(0)
+      expect(store.isSimulationHeld).toBe(false)
+    })
+
+    it('comes back to the free view when driving was left from it', () => {
+      const store = makeDrivingStore()
+      const train = store.selectedTrain!
+      store.setAutopilot(train.id, true)
+      expect(store.leaveTrain()).toBe(true)
+      store.togglePlayMode()
+      store.togglePlayMode()
+      expect(store.isFreeView).toBe(true)
+      expect(store.autopilots.has(train.id)).toBe(true)
     })
   })
 })

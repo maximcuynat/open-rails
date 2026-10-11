@@ -17,16 +17,24 @@ dont Échap et Espace.
   pause et reprennent ; Échap range d'abord un train armé à poser. `drive.leave` (quitter) n'a plus
   de touche par défaut. `hud/PauseControl.tsx` : bouton ⏸ en haut au centre, bandeau « En pause »
   avec « Reprendre » et « Quitter la conduite » (confirmation si un train roule ou est sous pilote).
-- [ ] **Lot 2 — quitter sans effacer.** Retour à l'édition qui fige les trains au lieu de les
-  remettre à zéro, pilotes gardés ; « Reprendre la simulation » ; « Tout remettre à l'arrêt » en
-  bouton à part ; un train dont la voie a été modifiée repart seul à l'arrêt.
-- [ ] **Lot 3 — mode visible, sortie volontaire.** Indicateur « Édition | Jeu » ; une seule sortie,
-  confirmée (les boutons ⏹ de la barre d'outils, ✕ de la console, le menu et F5 quittent encore
-  sans rien demander) ; en bac à sable, plus de mode édition (attelage et dételage en jeu, à l'arrêt).
+- [x] **Lot 2 — quitter sans effacer.** `togglePlayMode` ne remet plus rien à zéro, ni à la sortie
+  ni à l'entrée : vitesses, manettes et pilotes restent, et la conduite reprend de là (dans la vue
+  libre si on l'avait quittée de là). `store.isSimulationHeld` + bandeau « Simulation suspendue »
+  hors conduite (« Reprendre », « Tout remettre à l'arrêt » = `haltAllTrains`), mêmes entrées au menu
+  Simulation. Un train neuf est à l'arrêt, freins serrés (`makeTrainSet`). Les pupitres téléphone
+  lâchent leur train à la sortie (manette au neutre). Les pilotes sont effacés au chargement d'un
+  projet ; ceux d'un train disparu, à la reprise.
+- [ ] **Lot 3 — mode visible.** Indicateur « Édition | Jeu » ; en bac à sable, plus de mode édition
+  (attelage et dételage en jeu, à l'arrêt). La confirmation de sortie n'a plus lieu d'être : quitter
+  ne perd plus rien.
 - [ ] **Lot 4 — plus tard.** État en cours enregistré (vitesses, pilotes) pour reprendre après un
   rechargement.
 
-## Reste du lot 1
+## Reste des lots 1 et 2
+
+- Un train laissé en marche garde sa vitesse même si on modifie la voie devant lui en édition :
+  seuls les trains recréés (annulation, attelage, véhicules retirés avec leur rail) repartent à l'arrêt.
+- Après un rechargement de page, les trains sont à l'arrêt et sans pilote (lot 4).
 
 - Le pupitre téléphone ne sait pas que le jeu est en pause (pas de champ dans `ConsoleState`) : ses
   manettes bougent, le train ne part pas.
