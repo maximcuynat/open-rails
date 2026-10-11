@@ -9,7 +9,8 @@ export interface ModeChoice {
 }
 
 export interface ModeSwitchView {
-  build: ModeChoice
+  /** Null on a real network: there is nothing to build there, the game is all there is */
+  build: ModeChoice | null
   play: ModeChoice
   /** What the time of the game is doing, said next to the switch; null when there is nothing to say */
   status: 'running' | 'paused' | 'held' | null
@@ -19,22 +20,19 @@ export const MODE_STATUS_LABELS = { running: 'en marche', paused: 'en pause', he
 
 /**
  * The two modes of the application as the top bar shows them, always: building (the track and the
- * trains; the trains only on a real network, whose track is locked) and playing. Going from one to
+ * trains) and playing — playing only on a real network, whose track is locked. Going from one to
  * the other loses nothing, and the titles say so.
  */
 export function modeSwitchView(store: EditorStore): ModeSwitchView {
   const playing = store.isPlayMode
   const hasTrain = store.trains.length > 0 || store.locomotive !== null
-  const locked = store.dataset !== null
   return {
-    build: {
-      label: locked ? 'Trains' : 'Édition',
-      title: playing
-        ? `${locked ? 'Composer et retirer des trains (la voie d’un réseau réel ne se modifie pas)' : 'Revenir à l’édition de la voie et des trains'} — les trains restent comme ils sont, la simulation reprendra d’ici`
-        : locked ? 'Réseau réel : la voie ne se modifie pas, les trains se composent et se retirent ici' : 'Édition de la voie et des trains',
+    build: store.hasBuildMode ? {
+      label: 'Édition',
+      title: playing ? 'Revenir à l’édition de la voie et des trains — les trains restent comme ils sont, la simulation reprendra d’ici' : 'Édition de la voie et des trains',
       active: !playing,
       disabled: false,
-    },
+    } : null,
     play: {
       label: 'Jeu',
       title: playing

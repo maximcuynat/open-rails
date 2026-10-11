@@ -4404,3 +4404,44 @@ select.cb-step-select {
   color: #fff;
   font-weight: 600;
 }
+
+/* ─── Rakes in the game (YardTools) ────────────────────────────────────────── */
+.yard-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.yard-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+}
+.yard-row .itinerary-aid-choice:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.free-view-panel .spectator-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.free-view-panel .spectator-list .spectator-row {
+  flex: 1;
+  min-width: 0;
+}
+.spectator-remove {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+.spectator-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

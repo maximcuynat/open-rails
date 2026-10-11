@@ -146,6 +146,7 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
     if (e.key === 'Escape') {
       // Never out of the game on this key: a train about to be set down is put away, else the time stops
       if (store.rakePlacement) store.armRakePlacement(null)
+      else if (store.couplingArmed) store.armCoupling(false)
       else store.togglePause()
       return
     } else if (e.key === 'Tab') {

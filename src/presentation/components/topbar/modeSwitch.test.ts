@@ -20,8 +20,8 @@ describe('the mode switch of the top bar', () => {
 
   it('shows building as the mode, and playing out of reach without a train', () => {
     const view = modeSwitchView(storeWithTrack())
-    expect([view.build.active, view.play.active, view.play.disabled, view.status]).toEqual([true, false, true, null])
-    expect(view.build.label).toBe('Édition')
+    expect([view.build!.active, view.play.active, view.play.disabled, view.status]).toEqual([true, false, true, null])
+    expect(view.build!.label).toBe('Édition')
     expect(view.play.title).toBe('Posez un train pour jouer')
   })
 
@@ -38,7 +38,7 @@ describe('the mode switch of the top bar', () => {
     store.selectedTrain!.currentSpeed = 10
     store.togglePlayMode()
     const held = modeSwitchView(store)
-    expect([held.build.active, held.status]).toEqual([true, 'held'])
+    expect([held.build!.active, held.status]).toEqual([true, 'held'])
     expect(held.play.title).toContain('Reprendre la simulation')
 
     store.haltAllTrains()
@@ -46,10 +46,9 @@ describe('the mode switch of the top bar', () => {
     expect(modeSwitchView(store).play.title).toContain('Prendre les commandes')
   })
 
-  it('calls the building side « Trains » on a real network, whose track is locked', () => {
+  it('has no building side on a real network, whose track is locked', () => {
     const store = storeWithTrack()
     store.dataset = { id: 'lgv', lines: [] } as unknown as EditorStore['dataset']
-    expect(modeSwitchView(store).build.label).toBe('Trains')
-    expect(modeSwitchView(store).build.title).toContain('la voie ne se modifie pas')
+    expect(modeSwitchView(store).build).toBeNull()
   })
 })

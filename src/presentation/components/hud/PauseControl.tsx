@@ -49,9 +49,11 @@ export function PauseControl({ store }: { store: EditorStore }) {
         <button type="button" className="pause-resume" title={`Reprendre${hint}`} onClick={() => store.setPaused(false)} autoFocus>
           ▶ Reprendre
         </button>
-        <button type="button" className="pause-leave" title="Les trains restent comme ils sont : la simulation reprendra d’ici" onClick={() => store.togglePlayMode()}>
-          Quitter la conduite
-        </button>
+        {store.hasBuildMode && (
+          <button type="button" className="pause-leave" title="Les trains restent comme ils sont : la simulation reprendra d’ici" onClick={() => store.togglePlayMode()}>
+            Quitter la conduite
+          </button>
+        )}
       </div>
     </div>
   )

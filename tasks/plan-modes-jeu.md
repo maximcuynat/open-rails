@@ -28,14 +28,23 @@ dont Échap et Espace.
   (`topbar/modeSwitch.ts`, `ModeSwitch` dans `TopBar.tsx`), avec l'état du temps à côté de « Jeu » :
   en marche, en pause, suspendue. Sur un réseau réel le côté édition s'appelle « Trains » (la voie
   y est verrouillée). « Jeu » est grisé sans train.
-- [ ] **Lot 3b — bac à sable sans mode « Trains ».** Demande d'abord, en jeu et à l'arrêt :
-  atteler et dételer (les rames changent d'identifiant : pilotes, itinéraires et pupitres à
-  reporter), retirer un train, poser un véhicule seul. Tant que ce n'est pas fait, le mode
-  « Trains » reste le seul endroit où le faire.
+- [x] **Lot 3b — réseau réel sans mode « Trains ».** `store.hasBuildMode` (faux dès qu'il y a
+  un `dataset`) : `togglePlayMode` y met en pause au lieu de sortir, le sélecteur n'affiche que
+  « Jeu », le bandeau de pause n'a plus de « Quitter la conduite ». En jeu, à l'arrêt :
+  `armCoupling` + clic sur un attelage (`coupleInGame` : la rame qui garde la tête garde pilote,
+  pupitre, itinéraire et cet écran), `removeTrainInGame` (jamais le dernier, jamais un train qui
+  roule). `hud/YardTools.tsx` dans les deux panneaux. Une partie retrouvée après un rechargement
+  reprend en pause (`enterGamePaused`).
 - [ ] **Lot 4 — plus tard.** État en cours enregistré (vitesses, pilotes) pour reprendre après un
   rechargement.
 
-## Reste des lots 1 et 2
+## Reste des lots 1 à 3
+
+- Sur un réseau réel, les boutons ⏹ (barre d'outils) et ✕ (console) disent encore « quitter » alors
+  qu'ils mettent en pause.
+- Poser un véhicule seul n'existe plus sur un réseau réel une fois la partie lancée : on pose une
+  rame, on la dételle, on retire ce qui est en trop.
+- Avant le premier lancement (« Ligne entre gares… » sans train), l'outil Train de l'éditeur sert encore.
 
 - Un train laissé en marche garde sa vitesse même si on modifie la voie devant lui en édition :
   seuls les trains recréés (annulation, attelage, véhicules retirés avec leur rail) repartent à l'arrêt.

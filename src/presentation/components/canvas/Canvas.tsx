@@ -491,8 +491,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     )
 
     // Render coupler points in coupling mode
-    if (store.tool === 'coupling') {
-      renderCouplerPoints(ctx, cam, rect.width, rect.height, store.couplerPoints, store.hoveredCouplerPoint)
+    if (store.tool === 'coupling' || store.couplingArmed) {
+      // Armed in the game, the trains may be moving: their couplings are read where they are now
+      renderCouplerPoints(ctx, cam, rect.width, rect.height, store.couplingArmed ? store.liveCouplerPoints() : store.couplerPoints, store.hoveredCouplerPoint)
     }
 
     // Ghost preview when placing a vehicle (locomotive or wagon)
@@ -1258,6 +1259,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
       }
 
+      // In the game, coupling armed: a click on a coupling couples two rakes at rest, or parts one
+      if (e.button === 0 && store.isPlayMode && store.couplingArmed) {
+        const world = getWorldPos(e.clientX, e.clientY)
+        if (store.findNearestCouplerAt(world)) {
+          if (store.handleCouplingClick(world) === 'moving') showToast('Arrêtez la rame avant de l’atteler ou de la dételer.', 'warning')
+          redraw()
+          return
+        }
+      }
       // Free view, a train armed: the click sets it down on the track there
       if (e.button === 0 && store.isPlayMode && store.rakePlacement) {
         const model = store.rakePlacement
@@ -2049,7 +2059,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       // Update coupler hover detection in coupling mode
-      if (store.tool === 'coupling') {
+      if (store.tool === 'coupling' || store.couplingArmed) {
         const nearest = store.findNearestCouplerAt(rawWorld)
         canvas.style.cursor = nearest ? 'pointer' : 'crosshair'
         redraw()

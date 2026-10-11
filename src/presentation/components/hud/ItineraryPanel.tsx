@@ -1,3 +1,4 @@
+import { YardTools, removalRefusal, removeTrain } from './YardTools'
 import { useMemo, useState } from 'react'
 import type { EditorStore } from '@application/state/editorStore'
 import { DRIVING_AIDS, DRIVING_AID_LABELS } from '@application/game/drivingAid'
@@ -158,6 +159,12 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
       >
         Quitter ce train
       </button>
+      <div className="yard-row">
+        <YardTools store={store} />
+        <button type="button" className="itinerary-aid-choice" disabled={removalRefusal(store, train) !== null} title={removalRefusal(store, train) ?? 'Retirer ce train de la partie'} onClick={() => removeTrain(store, train)}>
+          Retirer ce train
+        </button>
+      </div>
     </aside>
   )
 }

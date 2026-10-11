@@ -1,3 +1,4 @@
+import { YardTools, removalRefusal, removeTrain } from './YardTools'
 import type { EditorStore } from '@application/state/editorStore'
 import { SANDBOX_TRAINS } from '@application/game/sandbox'
 import { ROLLING_STOCK, DEFAULT_ROLLING_STOCK } from '@domain/models/rollingStock'
@@ -36,10 +37,15 @@ export function FreeViewPanel({ store }: { store: EditorStore }) {
                   <span className="spectator-status">{piloted ? 'Pilote auto' : 'Libre'}</span>
                 </span>
               </button>
+              <button type="button" className="spectator-remove" aria-label={`Retirer le train T${i + 1}`} disabled={removalRefusal(store, train) !== null} title={removalRefusal(store, train) ?? 'Retirer ce train de la partie'} onClick={() => removeTrain(store, train)}>
+                ✕
+              </button>
             </li>
           )
         })}
       </ul>
+
+      <YardTools store={store} />
 
       <div className="free-view-place">
         <span className="itinerary-next-label">Poser un train</span>

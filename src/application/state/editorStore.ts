@@ -287,6 +287,9 @@ export interface TrainDebugOptions {
  * fields mutated outside React for performance. A version counter + subscribe
  * lets UI panels re-render when something changes.
  */
+/** Under this speed (m/s) a train counts as at rest: it can be coupled, parted or taken out */
+const AT_REST_SPEED = 0.1
+
 export class EditorStore {
   // --- Mutable canvas state (not React state) ---
   network: Network = createNetwork()
@@ -3197,6 +3200,11 @@ export class EditorStore {
   /** Toggle play mode on/off */
   togglePlayMode = (): void => {
     if (!this.locomotive && this.trains.length === 0) return
+    // A real network has nothing to build: its game is never left, what asks for it stops the time
+    if (this.isPlayMode && !this.hasBuildMode) {
+      this.togglePause()
+      return
+    }
     this.isPlayMode = !this.isPlayMode
     this.isPaused = false
     this.forgetBrakeHolds(null)
@@ -3235,6 +3243,7 @@ export class EditorStore {
       // Nothing of the trains is reset: the simulation is held, and goes on from here when
       // driving starts again. The desks let go: no phone drives while the time is stopped
       this.leftInFreeView = this.selectedTrainId === null && this.trains.length > 0
+      this.couplingArmed = false
       for (const desk of new Set(this.trainDrivers.values())) this.releaseTrain(desk)
       this.rakePlacement = null
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
@@ -3249,6 +3258,21 @@ export class EditorStore {
       }
     }
     this.notify()
+  }
+
+  /**
+   * Whether there is a mode to build in besides the game. Not on a real network: its track is
+   * locked, and its trains are set down, coupled and removed while the game runs.
+   */
+  get hasBuildMode(): boolean {
+    return this.dataset === null
+  }
+
+  /** A game found again (a page loaded again): it starts with the time stopped, for the player to look before the trains move */
+  enterGamePaused = (): void => {
+    if (this.isPlayMode || this.trains.length === 0) return
+    this.togglePlayMode()
+    this.setPaused(true)
   }
 
   /** Driving was left from the free view: it starts again there, on no train */
@@ -3566,6 +3590,8 @@ export class EditorStore {
       this.isPlayMode = false
       this.stopSimulationLoop()
     }
+    this.isPaused = false
+    this.couplingArmed = false
     resetSignalling(this.signalling)
     this.trains = trains
     this.locomotiveCurrentSpeed = 0
@@ -3681,7 +3707,43 @@ export class EditorStore {
 
   armRakePlacement = (rake: RakeChoice | null): void => {
     this.rakePlacement = rake
+    if (rake) this.couplingArmed = false
     this.notify()
+  }
+
+  /** While trains run: the next click on a coupling couples two rakes at rest, or parts one */
+  couplingArmed = false
+
+  armCoupling = (on: boolean): void => {
+    if (!this.isPlayMode || this.couplingArmed === on) return
+    this.couplingArmed = on
+    if (on) this.rakePlacement = null
+    this.hoveredCouplerPoint = null
+    this.notify()
+  }
+
+  /** The couplings of the trains where they stand now, for the canvas while coupling is armed in the game */
+  liveCouplerPoints = (): CouplerPoint[] => getAllCouplerPoints(this.network, this.trains)
+
+  /**
+   * Take a train out of the game while it runs. Refused for a train that moves, and for the last
+   * one (a game has a train). This screen goes to the free view when it was on that train.
+   */
+  removeTrainInGame = (id: string): 'done' | 'moving' | 'last' | 'unknown' => {
+    const train = this.trains.find((t) => t.id === id)
+    if (!this.isPlayMode || !train) return 'unknown'
+    if (this.trains.length < 2) return 'last'
+    if (Math.abs(train.currentSpeed) > AT_REST_SPEED) return 'moving'
+    this.autopilots.delete(id)
+    this.trainDrivers.delete(id)
+    this.routeGuides.delete(id)
+    if (this.selectedTrainId === id) {
+      this.releaseTrainSelection()
+      this.followLocomotiveCamera = false
+    }
+    this.trains = this.trains.filter((t) => t.id !== id)
+    this.commitTrainChange()
+    return 'done'
   }
 
   /**
@@ -4715,6 +4777,8 @@ export class EditorStore {
       this.tool = 'locomotive'
       this.trainToolSubMode = 'select'
     } else {
+      // On a real network the game is not left: coupling is armed in it (`armCoupling`)
+      if (this.isPlayMode && !this.hasBuildMode) return
       if (this.isPlayMode) this.togglePlayMode()
       this.tool = 'coupling'
       this.hoveredTrainDeleteVehicle = null
@@ -4769,10 +4833,10 @@ export class EditorStore {
   }
 
   /** Handle a click in coupling mode: couple two nearby ends or split at a joint (one undo step) */
-  handleCouplingClick = (worldPos: Point): void => {
-    if (this.isPlayMode) return
+  handleCouplingClick = (worldPos: Point): 'done' | 'moving' | 'nothing' => {
+    if (this.isPlayMode) return this.couplingArmed ? this.coupleInGame(worldPos) : 'nothing'
     const updated = handleCouplingClick(this.network, this.trains, worldPos)
-    if (updated === this.trains) return
+    if (updated === this.trains) return 'nothing'
     this.trains = updated
     // The selected train may have been merged or split into trains with new ids
     if (!this.selectedTrain) {
@@ -4781,6 +4845,43 @@ export class EditorStore {
     this.repairTrainSelection()
     this.refreshCouplerPoints()
     this.commitTrainChange()
+    return 'done'
+  }
+
+  /**
+   * The same click while trains run: only between rakes at rest. A rake made of others takes
+   * their place: the one that keeps the head of a rake keeps its pilot, its desk and this
+   * screen; the rake coupled behind another gives up its own.
+   */
+  private coupleInGame(worldPos: Point): 'done' | 'moving' | 'nothing' {
+    const before = this.trains
+    const updated = handleCouplingClick(this.network, before, worldPos)
+    if (updated === before) return 'nothing'
+    const gone = before.filter((t) => !updated.includes(t))
+    if (gone.some((t) => Math.abs(t.currentSpeed) > AT_REST_SPEED)) return 'moving'
+    const made = updated.filter((t) => !before.includes(t))
+    const watched = this.selectedTrainVehicleId
+    const wasSelected = gone.some((t) => t.id === this.selectedTrainId)
+    for (const old of gone) {
+      const heir = made.find((t) => t.vehicles[0].id === old.vehicles[0].id)
+      const pilot = this.autopilots.get(old.id)
+      const desk = this.trainDrivers.get(old.id)
+      this.autopilots.delete(old.id)
+      this.trainDrivers.delete(old.id)
+      this.routeGuides.delete(old.id)
+      if (heir && pilot) this.autopilots.set(heir.id, pilot)
+      if (heir && desk !== undefined) this.trainDrivers.set(heir.id, desk)
+    }
+    // The part let go has no journey of its own: it stands where it was parted
+    for (const t of made) if (!gone.some((old) => old.vehicles[0].id === t.vehicles[0].id)) delete t.itinerary
+    this.trains = updated
+    if (wasSelected) {
+      const now = made.find((t) => t.vehicles.some((v) => v.id === watched)) ?? made[0]
+      this.selectTrainById(now.id, now.vehicles.some((v) => v.id === watched) ? watched ?? undefined : undefined)
+    }
+    this.hoveredCouplerPoint = null
+    this.commitTrainChange()
+    return 'done'
   }
 
   /** Find nearest coupler to a world position for hover highlight */

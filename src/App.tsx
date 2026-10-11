@@ -57,6 +57,7 @@ export default function App() {
     if (store.datasetReloadPending) {
       showToast('Rechargement de la ligne…', 'info')
       void reloadDataset(store)
+        .then(() => store.enterGamePaused())
         .then(() => showToast(`Ligne « ${store.projectName} » rechargée`, 'success'))
         .catch((error: unknown) => showToast(datasetErrorMessage(error), 'error', 8000))
     } else if (store.dataset && !store.datasetIndex) {

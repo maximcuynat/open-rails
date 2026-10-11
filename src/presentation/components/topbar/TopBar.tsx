@@ -43,9 +43,11 @@ function ModeSwitch({ store }: { store: EditorStore }) {
   }
   return (
     <div className="tb-mode" role="radiogroup" aria-label="Mode">
-      <button type="button" role="radio" aria-checked={view.build.active} className={`tb-mode-choice${view.build.active ? ' is-active' : ''}`} title={view.build.title} onClick={() => choose(false)}>
-        {view.build.label}
-      </button>
+      {view.build && (
+        <button type="button" role="radio" aria-checked={view.build.active} className={`tb-mode-choice${view.build.active ? ' is-active' : ''}`} title={view.build.title} onClick={() => choose(false)}>
+          {view.build.label}
+        </button>
+      )}
       <button type="button" role="radio" aria-checked={view.play.active} className={`tb-mode-choice${view.play.active ? ' is-active' : ''}`} title={view.play.title} disabled={view.play.disabled} onClick={() => choose(true)}>
         {view.play.label}
         {view.status && <span className={`tb-mode-status is-${view.status}`}>{MODE_STATUS_LABELS[view.status]}</span>}
@@ -327,7 +329,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
       items: [
         {
           id: 'toggle-play',
-          label: store.isPlayMode ? 'Quitter la conduite' : store.isSimulationHeld ? 'Reprendre la simulation' : 'Prendre les commandes',
+          label: store.isPlayMode ? (store.hasBuildMode ? 'Quitter la conduite' : store.isPaused ? 'Reprendre' : 'Mettre en pause') : store.isSimulationHeld ? 'Reprendre la simulation' : 'Prendre les commandes',
           shortcut: store.shortcutLabel('sim.togglePlay'),
           disabled: !hasTrain,
         },
