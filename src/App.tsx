@@ -9,6 +9,7 @@ import { CanvasOverlay } from '@presentation/components/canvas/CanvasOverlay'
 import { MiniMap } from '@presentation/components/minimap/MiniMap'
 import { ToastContainer, showToast } from '@presentation/components/common/Toast'
 import { DrivingDock } from '@presentation/components/hud/DrivingDock'
+import { ItineraryPanel } from '@presentation/components/hud/ItineraryPanel'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
 import { createHostLink } from '@infrastructure/remote/remoteLinks'
@@ -136,6 +137,7 @@ export default function App() {
               {OSM_ATTRIBUTION}
             </a>
           )}
+          <ItineraryPanel store={store} />
           <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>

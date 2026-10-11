@@ -1,3 +1,4 @@
+import { consoleRoute } from '@application/game/itinerary'
 import type { EditorStore } from '@application/state/editorStore'
 import { trainAhead } from '@domain/models/train'
 import { TRAIN_AHEAD_REACH, type ConsoleTrainAhead } from './consoleContract'
@@ -261,6 +262,8 @@ export function buildTrainConsoleState(store: EditorStore, train: TrainSet): Con
   )
   // Only worth a walk where there is another train to meet
   if (store.trains.length > 1) state.ahead = trainAheadState(store, train)
+  const route = consoleRoute(store, train)
+  if (route) state.route = route
   return state
 }
 

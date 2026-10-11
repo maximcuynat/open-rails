@@ -1,3 +1,4 @@
+import { CONSOLE_ROUTE_STATUSES } from '../console/consoleContract'
 import type {
   ConsoleBrake,
   ConsoleCommand,
@@ -480,6 +481,16 @@ function readState(value: unknown): ConsoleState | null {
       if (ahead.driver !== null && !isText(ahead.driver, MAX_LABEL_LENGTH)) return null
       state.ahead = { distance: ahead.distance, speed: ahead.speed, driver: ahead.driver }
     }
+  }
+  // Optional too: absent when the train has no itinerary, and from an older PC
+  if (v.route !== undefined) {
+    const route = v.route
+    if (!isObject(route) || typeof route.exact !== 'boolean' || !isOneOf(route.status, CONSOLE_ROUTE_STATUSES)) return null
+    if (route.next !== null && !isText(route.next, MAX_LABEL_LENGTH)) return null
+    if (route.destination !== null && !isText(route.destination, MAX_LABEL_LENGTH)) return null
+    if (route.distance !== null && !isFiniteNumber(route.distance)) return null
+    if (route.total !== null && !isFiniteNumber(route.total)) return null
+    state.route = { next: route.next, distance: route.distance, exact: route.exact, destination: route.destination, total: route.total, status: route.status }
   }
   return state
 }

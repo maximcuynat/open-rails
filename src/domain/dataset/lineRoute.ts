@@ -128,6 +128,17 @@ export interface LineGate {
   lines: LineId[]
 }
 
+/**
+ * The nodes where the loaded lines meet the first line not loaded on the way to `station`: where
+ * a train bound for it leaves what it has. None when its lines are loaded, or cannot be reached.
+ */
+export function gatesToward(index: DatasetIndex, loaded: ReadonlySet<LineId>, stationLines: readonly LineId[]): string[] {
+  const route = shortestLineRoute(buildLineGraph(index), loaded, new Set(stationLines))
+  if (!route || route.length < 2) return []
+  const beyond = route[1]
+  return index.connections.filter((c) => c.lines.includes(beyond) && c.lines.some((id) => loaded.has(id))).map((c) => c.nodeId)
+}
+
 /** The connections that lead from a loaded line to one not loaded: where a train leaves what it has */
 export function connectionsToward(index: DatasetIndex, loaded: ReadonlySet<LineId>): LineGate[] {
   const gates: LineGate[] = []

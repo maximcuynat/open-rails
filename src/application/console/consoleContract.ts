@@ -152,7 +152,31 @@ export interface ConsoleState {
   signals?: ConsoleSignals
   /** The train met first on the route ahead; null when the route is clear as far as it is looked at. Absent from an older PC */
   ahead?: ConsoleTrainAhead | null
+  /** Where the train is going; absent when it has no itinerary, and from an older PC */
+  route?: ConsoleRoute
 }
+
+/** The itinerary of the driven train, as its driver needs it */
+export interface ConsoleRoute {
+  /** The station headed for; null once arrived */
+  next: string | null
+  /** Metres to it; null when not known */
+  distance: number | null
+  /** `distance` is measured along the track all the way (false: partly as the crow flies) */
+  exact: boolean
+  /** The last station of the journey; null once arrived */
+  destination: string | null
+  /** Metres to the destination, an estimate; null when not known */
+  total: number | null
+  status: ConsoleRouteStatus
+}
+
+/**
+ * `ok` a way ahead is known · `behind` the way starts behind the train (change cabs) ·
+ * `no-path` no way on the track loaded · `arrived` the last station is reached
+ */
+export type ConsoleRouteStatus = 'ok' | 'behind' | 'no-path' | 'arrived'
+export const CONSOLE_ROUTE_STATUSES: readonly ConsoleRouteStatus[] = ['ok', 'behind', 'no-path', 'arrived']
 
 /** The train ahead of the driven one on its route, as the points lie */
 export interface ConsoleTrainAhead {

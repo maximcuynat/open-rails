@@ -108,6 +108,16 @@ export interface Vehicle {
   model?: RollingStockModel
 }
 
+/**
+ * Where a train is going: the stations it calls at, in order, the one it started from first.
+ * `next` is the index of the station it heads for now; the length of the list once arrived.
+ * Read and changed through `services/itinerary.ts`.
+ */
+export interface TrainItinerary {
+  stations: string[]
+  next: number
+}
+
 /** An ordered set of coupled vehicles forming a train */
 export interface TrainSet {
   id: TrainSetId
@@ -157,6 +167,8 @@ export interface TrainSet {
    * (see `tickSignalling`), until it is back under it or its controls are reset. Absent or null otherwise.
    */
   overspeed?: CabOverspeed | null
+  /** Where the train is going, when its driver said so; saved with it */
+  itinerary?: TrainItinerary
 }
 
 export type Reverser = 'forward' | 'neutral' | 'reverse'
@@ -1421,14 +1433,24 @@ export interface SerializedTrain {
   id: TrainSetId
   direction: 1 | -1
   vehicles: Vehicle[]
+  itinerary?: TrainItinerary
 }
 
 export function serializeTrains(trains: TrainSet[]): SerializedTrain[] {
-  return trains.map((train) => ({
-    id: train.id,
-    direction: train.direction,
-    vehicles: train.vehicles.map(copyVehicle),
-  }))
+  return trains.map((train) => {
+    const saved: SerializedTrain = { id: train.id, direction: train.direction, vehicles: train.vehicles.map(copyVehicle) }
+    if (train.itinerary) saved.itinerary = { stations: [...train.itinerary.stations], next: train.itinerary.next }
+    return saved
+  })
+}
+
+/** An itinerary as saved, or nothing when what is there is not one */
+function savedItinerary(raw: unknown): TrainItinerary | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const { stations, next } = raw as { stations?: unknown; next?: unknown }
+  if (!Array.isArray(stations) || !stations.every((id) => typeof id === 'string')) return undefined
+  if (typeof next !== 'number' || !Number.isInteger(next) || next < 0 || next > stations.length) return undefined
+  return { stations: [...(stations as string[])], next }
 }
 
 /**
@@ -1518,6 +1540,8 @@ export function deserializeTrains(net: Network, data: unknown): TrainSet[] {
     )
     const train = makeTrainSet(raw.id, vehicles)
     if (raw.direction === -1) train.direction = -1
+    const itinerary = savedItinerary(raw.itinerary)
+    if (itinerary) train.itinerary = itinerary
     trains.push(train)
   }
   const loaded = pruneTrainsToNetwork(net, trains)

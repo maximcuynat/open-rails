@@ -72,7 +72,7 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 | --- | ----- | ------------- | ------ | ------------- |
 | D | Bogies visibles en conduite | **Fait**, à contrôler à l'écran | Petite | v0.6 |
 | E | Mode bac à sable et écran de lancement | **Fait**, téléphone à essayer en vrai | Moyenne | v0.6 |
-| F | Destination et itinéraire | Trajet ligne à ligne, plus court chemin sur les rails | Grande | v0.6 |
+| F | Destination et itinéraire | **Fait** ; Paris injoignable dans les données | Grande | v0.6 |
 | G | Niveaux d'aide à la conduite | Tracé devant la rame sur 400 m, aiguilles à la main | Moyenne | v0.7 |
 | A | Catégories de réseau et couleurs | Un booléen « grande vitesse » par ligne dans l'index | Moyenne | v0.7 |
 | C | Vue d'ensemble grossière au dézoom | Quatre paliers de détail, vue schéma | Moyenne | v0.7 |
@@ -116,16 +116,30 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 - **Constat.** Une rame n'a pas de destination. Le trajet entre gares est cherché ligne à ligne
   (`routeThroughStations`), jamais rail à rail ; `findTrackPath` sait le faire entre deux points
   mais ne sert qu'aux outils de pose. L'ordre des étapes n'est contrôlé que par la connexité.
-- **À faire.**
-  1. Itinéraire d'une rame : départ, étapes, destination, stocké avec la rame.
-  2. Chemin rail à rail de quai à quai sur le réseau chargé, prolongé à mesure qu'il se charge.
-  3. Contrôle de l'ordre des étapes : refus d'un ordre infaisable, signalement d'un détour
-     (étape qui oblige à revenir sur ses pas), proposition de l'ordre le plus court.
-  4. Fenêtre en haut à droite en conduite : gare courante, prochaine étape, destination,
-     distance restante ; ajout et retrait d'étapes en route.
-  5. Champs correspondants dans `ConsoleState` et sa validation, pour le pupitre téléphone.
-- **Vérifié par.** Tests du chemin sur le jeu LGV (Marseille → Paris, avec et sans étape à Lyon),
-  tests de l'ordre des étapes.
+- **Fait le 2026-10-11.**
+  1. Itinéraire porté par la rame (`TrainSet.itinerary`), enregistré avec elle.
+  2. Chemin rail à rail jusqu'au quai de la prochaine gare, ou jusqu'au raccordement vers la
+     ligne suivante tant qu'elle n'est pas chargée ; recalculé quand la voie change ou que la rame
+     quitte le chemin (`domain/services/routeGuide.ts`, `findTrackPathToAny`).
+  3. Ordre des étapes tenu logique par construction : une gare ajoutée se place là où elle
+     allonge le moins le trajet (entre Marseille et Paris, Lyon se met entre les deux ; Lille se
+     met après Paris). Une gare qu'aucune ligne ne relie est refusée.
+  4. Fenêtre « Itinéraire » en haut à droite en conduite : gare quittée, prochaine gare avec sa
+     distance et sa voie, étapes à venir, ajout et retrait en route, arrivée constatée à l'arrêt
+     à quai.
+  5. Champ `route` dans `ConsoleState` et sa validation ; **pas encore affiché** sur le pupitre
+     téléphone.
+- **Vérifié par.** Tests (`itinerary.test.ts`, `routeGuide.test.ts`, `application/game/`), parcours
+  en navigateur sans tête, et le jeu de données réel
+  (`tools/perf/measure-itinerary.test.ts`) : Marseille → Avignon TGV → Lyon Part-Dieu trouvé rail
+  à rail (325 km, 50 à 140 ms de recherche, mesure de la distance restante en 0,004 ms).
+- **Défaut du jeu de données mis au jour.** Aucun chemin n'existe jusqu'à Paris Gare de Lyon :
+  le fichier du raccordement de Paris est en 12 morceaux disjoints, les quais de Paris sont dans
+  un morceau et les jonctions avec la LGV Sud-Est dans d'autres. De même Lyon Part-Dieu n'est pas
+  relié à son raccordement nord (5 morceaux). L'itinéraire accepte ces gares (les lignes se
+  touchent) puis affiche « Aucun chemin » une fois sur place. **À corriger dans
+  `tools/lgv-dataset/` avant la v0.6** : requêtes des raccordements, puis un contrôle de
+  continuité gare à gare à la génération.
 
 ### Lot G — Niveaux d'aide à la conduite
 

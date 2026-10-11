@@ -100,6 +100,7 @@ import {
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
 import { createRakeAtStation } from '@domain/models/rakePlacement'
+import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import type { StationId, StationStop } from '@domain/models/types'
 import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
@@ -380,6 +381,9 @@ export class EditorStore {
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
   /** The trains held by a phone desk, by desk number (set by the remote session); empty outside driving */
   trainDrivers = new Map<string, number>()
+  /** The way of each train to the next station of its itinerary, found on the track loaded; never saved */
+  routeGuides = new Map<string, RouteGuideState>()
+  private routeGuideElapsed = 0
   /** The desks seated in the room and the name each driver gave, by desk number */
   deskNames = new Map<number, string>()
 
@@ -3436,6 +3440,7 @@ export class EditorStore {
     if (!station) return null
     const placed = createRakeAtStation(this.network, station, model, this.trains)
     if (!placed) return null
+    startItineraryAt(placed.train, stationId)
     this.trains = [...this.trains, placed.train]
     this.trainChainId = null
     this.selectTrainById(placed.train.id)
@@ -3448,6 +3453,29 @@ export class EditorStore {
     }
     this.commitTrainChange()
     return placed.stop
+  }
+
+  /** The itinerary of a train was changed: its way is found again, the project saved, the panels told */
+  itineraryChanged = (train: TrainSet): void => {
+    this.routeGuides.delete(train.id)
+    refreshRouteGuide(this, train)
+    this.dirty = true
+    this.savePersistedState()
+    this.notify()
+  }
+
+  /** Once a second while driving: where each train is on the way to its next station */
+  private checkItineraries(dt: number): void {
+    this.routeGuideElapsed += dt
+    if (this.routeGuideElapsed < ROUTE_GUIDE_PERIOD_S) return
+    this.routeGuideElapsed = 0
+    let called = false
+    for (const train of this.trains) if (train.itinerary && refreshRouteGuide(this, train)) called = true
+    for (const id of [...this.routeGuides.keys()]) if (!this.trains.some((t) => t.id === id)) this.routeGuides.delete(id)
+    if (called) {
+      this.dirty = true
+      this.savePersistedState()
+    }
   }
 
   /** Place a new independent locomotive TrainSet at worldPos */
@@ -4535,6 +4563,7 @@ export class EditorStore {
     for (const trainId of [...this.trainDrivers.keys()]) if (!this.trains.some((t) => t.id === trainId)) this.trainDrivers.delete(trainId)
     // A train nearing a line of the dataset that is not loaded: its file is asked for now
     this.checkDatasetLines(dt)
+    this.checkItineraries(dt)
     // Once every train has moved: what each one holds, what the signals show, the signals passed
     // (nothing at all on a network without signal)
     // A driven train holds the track over the stopping distance its physics works out; the
@@ -4596,6 +4625,8 @@ export const isTimeFactor = (v: unknown): v is TimeFactor => (TIME_FACTORS as re
 export const DATASET_LOOKAHEAD_M = 5000
 /** How often (s) the trains are checked against the connections */
 const DATASET_CHECK_PERIOD_S = 1
+/** How often (s) the trains are placed on the way to their next station */
+const ROUTE_GUIDE_PERIOD_S = 1
 /** Camera scale (px per metre) a rake set down at a station is shown at: its bogies show from 3.5 */
 const RAKE_START_SCALE = 4
 /** What a dataset project writes in place of its track: nothing (never changed) */
