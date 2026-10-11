@@ -87,7 +87,7 @@ export function buildIndex(
     if (info.ref !== undefined) line.ref = info.ref
     if (info.partOf !== undefined && info.partOf !== id) line.partOf = info.partOf
     // An approach is a stretch of classic main line into a terminal
-    line.category = info.highSpeed ? 'highSpeed' : 'main'
+    line.category = info.category ?? (info.highSpeed ? 'highSpeed' : 'main')
     line.outline = lineOutline(net, own)
     indexLines.push(line)
   }

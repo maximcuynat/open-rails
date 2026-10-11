@@ -2,7 +2,7 @@ import type { OsmImportResult, OverpassResponse } from '@domain/import/osmTypes'
 import { segmentShapeLength } from '@domain/geometry/segmentGeometry'
 import { findSectionChains } from '@domain/models/sections'
 import type { Network, SegmentId } from '@domain/models/types'
-import type { LineId } from '@domain/dataset/datasetIndex'
+import type { LineCategory, LineId } from '@domain/dataset/datasetIndex'
 import type { DatasetManifest } from './manifest'
 
 // Which line each rail belongs to. A way names its line through the relations it is a member of
@@ -23,6 +23,8 @@ export interface LineInfo {
   /** RFN line code of the relation, when it came from one */
   ref?: string
   highSpeed: boolean
+  /** What kind of line it is, when it is not said by `highSpeed` alone (a classic line of a region) */
+  category?: LineCategory
   /** For a piece of a line (`cutIntoPieces`): the line it is a piece of */
   partOf?: LineId
 }
@@ -40,6 +42,8 @@ interface Relation {
   id: number
   ref?: string
   name?: string
+  /** `railway` for a line, `tracks` for one of its tracks */
+  route: string
   ways: Set<number>
 }
 
@@ -55,7 +59,7 @@ export function readLineRelations(data: OverpassResponse): Relation[] {
     if (tags.type !== 'route' || !(tags.route === 'tracks' || tags.route === 'railway')) continue
     const ways = new Set<number>()
     for (const member of element.members) if (member.type === 'way') ways.add(member.ref)
-    const relation: Relation = { id: element.id, ways }
+    const relation: Relation = { id: element.id, route: tags.route, ways }
     if (tags.ref) relation.ref = tags.ref
     if (tags.name) relation.name = tags.name
     relations.push(relation)
@@ -83,6 +87,7 @@ export function assignLines(
   data: OverpassResponse,
   manifest: DatasetManifest,
   approachWays: ReadonlyMap<string, ReadonlySet<number>>,
+  regionWays: ReadonlySet<number> = new Set(),
 ): LineAssignment {
   const net = result.network
   const wayOfRail = result.wayOfRail
@@ -110,6 +115,34 @@ export function assignLines(
   const approachInfo = new Map(manifest.approaches.map((a) => [a.id, { id: a.id, name: a.name, highSpeed: false } as LineInfo]))
   const listed = linesOfManifest(manifest)
 
+  // A classic line of a region is its relation: the line itself rather than one of its tracks,
+  // one with an RFN code first, then the one that holds most ways (the whole line, not a section)
+  const classicInfo = new Map<number, LineInfo>()
+  const classicLine = (way: number): LineInfo | null => {
+    let best: Relation | null = null
+    const rank = (r: Relation): number => (r.route === 'railway' ? 2 : 0) + (r.ref ? 1 : 0)
+    for (const relation of relationsOfWay.get(way) ?? []) {
+      if (!best || rank(relation) > rank(best) || (rank(relation) === rank(best) && (relation.ways.size > best.ways.size || (relation.ways.size === best.ways.size && relation.id < best.id)))) best = relation
+    }
+    if (!best) return null
+    let info = classicInfo.get(best.id)
+    if (!info) {
+      // Main line or branch line: what most of its ways say
+      let main = 0
+      let branch = 0
+      for (const member of best.ways) {
+        const usage = wayTags.get(member)?.usage
+        if (usage === 'main') main++
+        else if (usage === 'branch') branch++
+      }
+      const code = best.ref?.replace(/[^0-9A-Za-z]+/g, '')
+      info = { id: code ? `ligne-${code.toLowerCase()}` : `ligne-r${best.id}`, name: best.name ?? (best.ref ? `Ligne ${best.ref}` : `Ligne ${best.id}`), highSpeed: false, category: branch > main ? 'regional' : 'main' }
+      if (best.ref) info.ref = best.ref
+      classicInfo.set(best.id, info)
+    }
+    return info
+  }
+
   let unlistedHighSpeedWays = 0
   const lineOfWay = new Map<number, LineId | null>()
   const wayLine = (way: number): LineId | null => {
@@ -129,6 +162,10 @@ export function assignLines(
     else if (approach) line = keep(approachInfo.get(approach)!)
     else if (preferred) line = keep(preferred.info)
     else if (highSpeed) unlistedHighSpeedWays++
+    else if (regionWays.has(way)) {
+      const classic = classicLine(way)
+      if (classic) line = keep(classic)
+    }
     lineOfWay.set(way, line)
     return line
   }

@@ -121,6 +121,46 @@ describe('the itinerary of a train in a game', () => {
   })
 })
 
+describe('a train sent the way it does not face', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetDatasetIndexCache()
+    resetIdCounter()
+  })
+
+  /** A game at « Gare Deux » (x = 1750 on line b), the rake turned to face east; « Gare Un » is west, on line a */
+  async function facingAway(aid: 'full' | 'guide') {
+    const { index, files } = fakeDataset()
+    const options = { fetch: serving(files), baseUrl: '/' }
+    const store = new EditorStore()
+    store.setDrivingAid(aid)
+    await prepareSandbox(store, index, 's2', 'duplex', options)
+    store.addDatasetLines(await fetchLineFiles(index, ['a'], undefined, options))
+    const headX = () => store.trains[0].vehicles[0].front.t
+    // Set down facing the longer way out, west: driven from the other cab, it faces east
+    const west = headX()
+    expect(store.switchTrainCab(store.trains[0])).toBe(true)
+    expect(headX()).not.toBe(west)
+    return { store, headX, east: headX() }
+  }
+
+  it('is driven from its other cab under the full aid, and its way is then ahead', async () => {
+    const { store, headX, east } = await facingAway('full')
+    expect(addItineraryStop(store, store.trains[0], 's1')).toBeNull()
+    expect(headX()).not.toBe(east)
+    expect(buildItineraryView(store, store.trains[0])!.status).toBe('ok')
+    expect(store.trains[0].itinerary).toEqual({ stations: ['s2', 's1'], next: 1 })
+    expect(store.trains).toHaveLength(1)
+  })
+
+  it('is left as it is under guidance: the driver is told to change ends', async () => {
+    const { store, headX, east } = await facingAway('guide')
+    addItineraryStop(store, store.trains[0], 's1')
+    expect(headX()).toBe(east)
+    expect(buildItineraryView(store, store.trains[0])!.status).toBe('behind')
+  })
+})
+
 describe('the driving aid along an itinerary', () => {
   beforeEach(() => {
     resetMemoryStorage()

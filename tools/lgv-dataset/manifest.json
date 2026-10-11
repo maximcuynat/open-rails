@@ -114,5 +114,13 @@
       "radiusM": 400,
       "stationRadiusM": 1000
     }
+  ],
+  "regions": [
+    {
+      "id": "provence-alpes-cote-d-azur",
+      "name": "Provence-Alpes-Côte d'Azur",
+      "iso": "FR-PAC",
+      "comment": "The first region taken whole, around Marseille: the classic lines a TER or an Intercités runs on. Each line is its OSM relation (route=railway), main or branch by the usage of its tracks."
+    }
   ]
 }

@@ -158,7 +158,7 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
               <div className="settings-section">
                 <label className="settings-label" htmlFor="sandbox-station">
                   Gare de départ
-                  <span className="settings-hint">Une gare du réseau à grande vitesse français et de ses raccordements</span>
+                  <span className="settings-hint">Une gare du réseau à grande vitesse français, de ses raccordements ou des lignes classiques publiées</span>
                 </label>
                 {station ? (
                   <div className="dataset-stop">

@@ -130,7 +130,7 @@ export function LineBetweenStationsModal({ store, onClose }: LineBetweenStations
             <div className="settings-section">
               <label className="settings-label" htmlFor="dataset-station">
                 Gares
-                <span className="settings-hint">Les gares du réseau à grande vitesse français et de ses raccordements, dans l’ordre du trajet</span>
+                <span className="settings-hint">Les gares du réseau à grande vitesse français, de ses raccordements et des lignes classiques publiées, dans l’ordre du trajet</span>
               </label>
               <input
                 id="dataset-station"

@@ -40,7 +40,8 @@ test.runIf(process.env.PROFILE && existsSync(`${DIR}index.json`))('a journey rai
   let lead = placed.train.vehicles[0].front
   for (let i = 1; i < journey.length; i++) {
     t0 = performance.now()
-    const guide = findRouteGuide(net, lead, net.stations.get(journey[i].id))
+    const after = journey[i + 1]
+    const guide = findRouteGuide(net, lead, net.stations.get(journey[i].id), [], after ? { station: net.stations.get(after.id) } : undefined)
     const found = performance.now() - t0
     if (!guide) {
       process.stderr.write(`${journey[i - 1].name} → ${journey[i].name}: NO WAY (${found.toFixed(0)} ms)\n`)

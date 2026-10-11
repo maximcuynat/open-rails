@@ -91,3 +91,41 @@ export function cutIntoPieces(net: Network, assignment: LineAssignment, options:
   }
   return { lineOf, lines, unlistedHighSpeedWays: assignment.unlistedHighSpeedWays }
 }
+
+/**
+ * The classic lines of a region are named by their relation, and a relation may hold a handful
+ * of rails only (the end of a line that belongs to the next region, a spur): such a line is not
+ * worth a file nor a name on the map. Its rails go to the neighbouring line they share most nodes
+ * with; a line with no neighbour stays. The lines listed by hand (high-speed lines, approaches)
+ * are left alone.
+ */
+export function absorbSmallLines(net: Network, assignment: LineAssignment, minRails = 60): LineAssignment {
+  const railsOf = new Map<LineId, SegmentId[]>()
+  for (const [segId, line] of assignment.lineOf) {
+    const rails = railsOf.get(line)
+    if (rails) rails.push(segId)
+    else railsOf.set(line, [segId])
+  }
+  const lineOf = new Map(assignment.lineOf)
+  const lines = new Map(assignment.lines)
+  const small = [...railsOf].filter(([id, rails]) => rails.length < minRails && lines.get(id)?.category !== undefined).sort((p, q) => p[1].length - q[1].length || p[0].localeCompare(q[0]))
+  for (const [id, rails] of small) {
+    const shared = new Map<LineId, number>()
+    for (const segId of rails) {
+      const seg = net.segments.get(segId)
+      if (!seg) continue
+      for (const nodeId of [seg.from, seg.to]) {
+        for (const other of net.adjacency.get(nodeId) ?? []) {
+          const line = lineOf.get(other)
+          if (line && line !== id) shared.set(line, (shared.get(line) ?? 0) + 1)
+        }
+      }
+    }
+    let best: LineId | null = null
+    for (const [line, count] of shared) if (best === null || count > shared.get(best)! || (count === shared.get(best)! && line < best)) best = line
+    if (best === null) continue
+    for (const segId of rails) lineOf.set(segId, best)
+    lines.delete(id)
+  }
+  return { lineOf, lines, unlistedHighSpeedWays: assignment.unlistedHighSpeedWays }
+}

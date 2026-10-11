@@ -47,17 +47,58 @@ function railEndsAt(net: Network, nodeId: NodeId): TrackPoint[] {
   return ends
 }
 
+/** Where a train goes on after the station it heads for: the next station of its itinerary, or the gates towards it */
+export interface Beyond {
+  station?: Station
+  gates?: readonly NodeId[]
+}
+
+/** How many platforms of a terminus are looked for from what lies beyond (a search each) */
+const TERMINUS_PLATFORMS = 4
+
+/**
+ * The platforms of a station a train can call at and go on from to what lies beyond: those the
+ * way onward runs through; or, at a terminus (no way runs through), the nearest ones from which
+ * there is a way out towards it — the train changes ends there.
+ */
+function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: readonly StationStop[], beyond: Beyond): StationStop[] {
+  const onward = (beyond.station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
+  const goals: TrackPoint[] = onward.length > 0 ? onward : (beyond.gates ?? []).flatMap((nodeId) => railEndsAt(net, nodeId))
+  if (goals.length === 0) return []
+  const way = findTrackPathToAny(net, from, goals, { leaving })
+  const through = way ? stops.filter((stop) => way.spans.some((span) => span.segId === stop.segId && within(span.t0, span.t1, stop.t))) : []
+  if (through.length > 0) return through
+  // A way runs the same both ways: the platforms reached from beyond are those it is reached from
+  const reached: StationStop[] = []
+  const pool = [...stops]
+  while (pool.length > 0 && reached.length < TERMINUS_PLATFORMS) {
+    const back = findTrackPathToAny(net, goals[0], pool)
+    if (!back) break
+    reached.push(pool[back.goal])
+    pool.splice(back.goal, 1)
+  }
+  return reached
+}
+
 /**
  * The way from the lead bogie of a train to the nearest platform of `station`, or — when the
  * station has no platform on the track loaded — to the nearest of `gates` (nodes of the track).
  * Ahead of the train when there is such a way, else behind it (`behind`). Null when neither.
+ * With `beyond` (the train goes on afterwards), a platform the way onward runs through is taken
+ * rather than the nearest one, which may be a bay it could only leave backwards.
+ * At a terminus, a platform it can leave towards it from the other cab.
  */
-export function findRouteGuide(net: Network, lead: TrackPosition, station: Station | undefined, gates: readonly NodeId[] = []): RouteGuide | null {
-  const stops = (station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
+export function findRouteGuide(net: Network, lead: TrackPosition, station: Station | undefined, gates: readonly NodeId[] = [], beyond?: Beyond): RouteGuide | null {
+  let stops = (station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
   const target: RouteGuide['target'] = stops.length > 0 ? 'platform' : 'gate'
+  const from = { segId: lead.segId, t: lead.t }
+  if (beyond && stops.length > 1) {
+    const onward = onwardStops(net, from, lead.forward ? 1 : 0, stops, beyond)
+    // Unless the train cannot get to any of them: the nearest platform then, as without a beyond
+    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0 }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1 }))) stops = onward
+  }
   const goals: TrackPoint[] = target === 'platform' ? stops : gates.flatMap((nodeId) => railEndsAt(net, nodeId))
   if (goals.length === 0) return null
-  const from = { segId: lead.segId, t: lead.t }
   const ahead = findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 1 : 0 })
   const found = ahead ?? findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 0 : 1 })
   if (!found) return null
