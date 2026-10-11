@@ -60,9 +60,10 @@ describe('queries', () => {
     expect(q).toContain('rel(bw.w)[type=route][route~"^(tracks|railway)$"];\nout body;')
   })
 
-  it('ask an approach for the main tracks along its corridor and every track around its terminal', () => {
+  it('ask an approach for the running tracks along its corridor and every track around its terminal', () => {
     const q = approachQuery(manifest().approaches[0])
-    expect(q).toContain('way[railway=rail][usage~"^(main|branch)$"](around:400,43.4,5.37,43.3,5.38)')
+    // Crossovers and junction tracks included (they often have no `usage`): yards and sidings left out
+    expect(q).toContain('way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](around:400,43.4,5.37,43.3,5.38)')
     expect(q).toContain('way[railway=rail](around:1500,43.3,5.38)')
     expect(q).not.toContain('rel(')
   })

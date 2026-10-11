@@ -100,8 +100,8 @@
       "id": "racc-lyon-part-dieu-nord",
       "name": "Raccordement de Lyon Part-Dieu par le nord",
       "stationUic": "87723197",
-      "comment": "From the end of the LGV Sud-Est at Montanay down the Saône: Sathonay-Rillieux, Lyon Saint-Clair, Lyon Part-Dieu.",
-      "corridor": [[45.862, 4.905], [45.820264, 4.875315], [45.7875, 4.868], [45.760559, 4.859355]],
+      "comment": "From the junction where the LGV Sud-Est meets the Lyon–Bourg line north of Montanay, down that line: Sathonay-Rillieux, Lyon Saint-Clair, Lyon Part-Dieu. The waypoints are sampled every 700 m along the way a train runs (the shortest way along the rails of OpenStreetMap, 18 km): four waypoints strayed up to 4 km from the track and left Part-Dieu cut off from the north.",
+      "corridor": [[45.88741, 4.87879], [45.89232, 4.87747], [45.88545, 4.87997], [45.87913, 4.88205], [45.87268, 4.88278], [45.86605, 4.88458], [45.85969, 4.8861], [45.85281, 4.88768], [45.84531, 4.88939], [45.83856, 4.89094], [45.83228, 4.8912], [45.82652, 4.8877], [45.82245, 4.88081], [45.81854, 4.87308], [45.81307, 4.86992], [45.80984, 4.87791], [45.80607, 4.88427], [45.80008, 4.87916], [45.7947, 4.87403], [45.79235, 4.86558], [45.78769, 4.86006], [45.78136, 4.85933], [45.77498, 4.85868], [45.76886, 4.85996], [45.76251, 4.85989], [45.76056, 4.85953]],
       "radiusM": 400,
       "stationRadiusM": 1500
     },
@@ -109,8 +109,8 @@
       "id": "racc-paris-gare-de-lyon",
       "name": "Raccordement de Paris Gare de Lyon",
       "stationUic": "87686006",
-      "comment": "From the start of the LGV Sud-Est at Lieusaint along the Paris–Marseille line: Lieusaint-Moissy, Combs-la-Ville, Brunoy, Montgeron, Villeneuve-Saint-Georges, Maisons-Alfort, Paris Gare de Lyon. The terminal disc is 1 km: the platforms of Gare de Lyon reach 800 m from its head, Bercy and Austerlitz are not wanted.",
-      "corridor": [[48.628305, 2.568935], [48.667179, 2.547798], [48.6981, 2.5057], [48.7046, 2.4571], [48.730113, 2.446011], [48.802071, 2.426977], [48.844888, 2.37352]],
+      "comment": "From the start of the LGV Sud-Est at Lieusaint along the Paris–Marseille line: Lieusaint-Moissy, Combs-la-Ville, Brunoy, Montgeron, Villeneuve-Saint-Georges, Maisons-Alfort, Paris Gare de Lyon. The waypoints are sampled every 700 m along the way a train runs (the shortest way along the rails of OpenStreetMap between the two ends, 30.6 km): seven waypoints strayed up to 740 m from the track and left the approach in twelve pieces. The terminal disc is 1 km: the platforms of Gare de Lyon reach 800 m from its head.",
+      "corridor": [[48.62838, 2.56937], [48.63453, 2.56653], [48.6409, 2.5633], [48.6471, 2.56108], [48.65352, 2.55824], [48.65982, 2.55396], [48.66546, 2.54951], [48.67114, 2.54499], [48.67698, 2.53989], [48.6814, 2.53223], [48.68488, 2.52341], [48.68936, 2.51666], [48.69549, 2.51023], [48.7012, 2.50495], [48.70538, 2.49748], [48.70698, 2.4882], [48.70583, 2.47863], [48.70664, 2.46817], [48.70961, 2.45951], [48.71341, 2.45171], [48.7183, 2.44523], [48.72437, 2.44353], [48.73045, 2.44646], [48.73692, 2.44611], [48.74319, 2.44593], [48.74971, 2.44466], [48.75595, 2.44343], [48.76247, 2.44185], [48.76874, 2.43987], [48.77481, 2.43671], [48.78116, 2.43472], [48.78742, 2.43248], [48.79354, 2.43007], [48.79988, 2.42761], [48.80607, 2.42477], [48.81189, 2.41984], [48.81741, 2.41507], [48.82246, 2.40935], [48.82617, 2.40156], [48.83155, 2.39691], [48.83611, 2.39031], [48.84052, 2.38233], [48.84461, 2.37396], [48.84464, 2.37391]],
       "radiusM": 400,
       "stationRadiusM": 1000
     }

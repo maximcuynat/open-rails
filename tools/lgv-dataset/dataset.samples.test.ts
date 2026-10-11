@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { deserializeNetwork, type SerializedProject } from '@infrastructure/persistence/persistence'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
 import { readDatasetIndex, type DatasetIndex } from '@domain/dataset/datasetIndex'
+import { routeThroughStations } from '@domain/dataset/lineRoute'
+import { createRakeAtStation } from '@domain/models/rakePlacement'
+import { findRouteGuide } from '@domain/services/routeGuide'
 
 // The dataset as it is published under `public/data/lgv/`: skipped when it has not been generated
 // (a fresh checkout without the data still passes `npm test`).
@@ -17,7 +20,7 @@ const read = <T>(name: string): T => JSON.parse(readFileSync(`${DIR}${name}`, 'u
 describe.runIf(present)('the published « LGV France » dataset', () => {
   const index = present ? readDatasetIndex(read<unknown>('index.json')) : (null as unknown as DatasetIndex)
 
-  it('names its lines, each with a file that loads as the index says', () => {
+  it('names its lines, each with a file that loads as the index says', { timeout: 60_000 }, () => {
     expect(index.version).toBe(1)
     expect(index.frame).toBe('lambert93')
     expect(index.lines.length).toBeGreaterThan(3)
@@ -52,5 +55,25 @@ describe.runIf(present)('the published « LGV France » dataset', () => {
     const loaded = deserializeNetwork(union)
     expect(loaded.network.segments.size).toBe(union.segments.length)
     for (const station of found) expect(loaded.network.stations.has(station!.id)).toBe(true)
+  })
+
+  // The approaches are fetched along a corridor: one that strays from the track leaves the
+  // terminal cut off from its high-speed line, which nothing else would tell
+  it('joins Marseille, Lyon Part-Dieu and Paris Gare de Lyon rail by rail, both ways', { timeout: 120_000 }, () => {
+    const station = (name: string) => index.stations.filter((s) => s.name === name).sort((a, b) => b.lines.length - a.lines.length)[0]
+    const journey = [station('Marseille Saint-Charles'), station('Lyon Part Dieu'), station('Paris Gare de Lyon')]
+    const route = routeThroughStations(index, journey.map((s) => s.id))
+    if ('error' in route) throw new Error(`no line route: ${route.error}`)
+    const net = deserializeNetwork(unionProjects(route.lines.map((id) => read<SerializedProject>(index.lines.find((l) => l.id === id)!.file)))).network
+    for (const stops of [journey, [...journey].reverse()]) {
+      let lead = createRakeAtStation(net, net.stations.get(stops[0].id)!, 'duplex')!.train.vehicles[0].front
+      for (const next of stops.slice(1)) {
+        const guide = findRouteGuide(net, lead, net.stations.get(next.id))
+        expect(guide, `to ${next.name}`).not.toBeNull()
+        expect(guide!.target).toBe('platform')
+        const last = guide!.path.spans[guide!.path.spans.length - 1]
+        lead = { segId: last.segId, t: last.t1, forward: last.t1 >= last.t0 }
+      }
+    }
   })
 })

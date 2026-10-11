@@ -72,7 +72,7 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 | --- | ----- | ------------- | ------ | ------------- |
 | D | Bogies visibles en conduite | **Fait**, à contrôler à l'écran | Petite | v0.6 |
 | E | Mode bac à sable et écran de lancement | **Fait**, téléphone à essayer en vrai | Moyenne | v0.6 |
-| F | Destination et itinéraire | **Fait** ; Paris injoignable dans les données | Grande | v0.6 |
+| F | Destination et itinéraire | **Fait** | Grande | v0.6 |
 | G | Niveaux d'aide à la conduite | Tracé devant la rame sur 400 m, aiguilles à la main | Moyenne | v0.7 |
 | A | Catégories de réseau et couleurs | Un booléen « grande vitesse » par ligne dans l'index | Moyenne | v0.7 |
 | C | Vue d'ensemble grossière au dézoom | Quatre paliers de détail, vue schéma | Moyenne | v0.7 |
@@ -133,13 +133,12 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
   en navigateur sans tête, et le jeu de données réel
   (`tools/perf/measure-itinerary.test.ts`) : Marseille → Avignon TGV → Lyon Part-Dieu trouvé rail
   à rail (325 km, 50 à 140 ms de recherche, mesure de la distance restante en 0,004 ms).
-- **Défaut du jeu de données mis au jour.** Aucun chemin n'existe jusqu'à Paris Gare de Lyon :
-  le fichier du raccordement de Paris est en 12 morceaux disjoints, les quais de Paris sont dans
-  un morceau et les jonctions avec la LGV Sud-Est dans d'autres. De même Lyon Part-Dieu n'est pas
-  relié à son raccordement nord (5 morceaux). L'itinéraire accepte ces gares (les lignes se
-  touchent) puis affiche « Aucun chemin » une fois sur place. **À corriger dans
-  `tools/lgv-dataset/` avant la v0.6** : requêtes des raccordements, puis un contrôle de
-  continuité gare à gare à la génération.
+- **Défaut du jeu de données, corrigé le 2026-10-12.** Paris Gare de Lyon et le nord de Lyon
+  Part-Dieu étaient injoignables par le rail : les couloirs des raccordements s'écartaient de la
+  voie (jusqu'à 740 m à Paris, 4 km à Lyon nord, pour un rayon de 400 m) et le raccordement de
+  Paris sortait en 12 morceaux. Couloirs recalculés le long du chemin réel, voies de jonction
+  et communications incluses, jeu de données régénéré. Marseille → Paris : 747 km trouvés rail à
+  rail ; un test garde la continuité Marseille ↔ Lyon ↔ Paris (`dataset.samples.test.ts`).
 
 ### Lot G — Niveaux d'aide à la conduite
 
