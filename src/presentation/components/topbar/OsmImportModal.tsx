@@ -57,6 +57,8 @@ import { Figures } from '../common/Figures'
 
 /** Speeds offered for the service tracks, km/h: always picked in a list, by tens */
 const SERVICE_SPEEDS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+/** 0: no speed is assumed, the line speed applies */
+const TRACK_SPEEDS = [0, 60, 80, 100, 120, 140, 160, 200]
 
 const EXTRA_KINDS: readonly { kind: OsmExtraTrackKind; label: string }[] = [
   { kind: 'tram', label: 'Tram' },
@@ -665,6 +667,24 @@ export function OsmImportModal({ store, onClose }: OsmImportModalProps) {
                     {SERVICE_SPEEDS.map((speed) => (
                       <option key={speed} value={speed}>
                         {speed} km/h
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="osm-row osm-speed-row">
+                  <label htmlFor="osm-track-speed" className="settings-checkbox-text">
+                    Vitesse des voies principales qui n’en portent pas (à défaut de celle de la voie qu’elles prolongent)
+                  </label>
+                  <select
+                    id="osm-track-speed"
+                    className="settings-input osm-speed-select"
+                    value={options.defaultTrackSpeed ?? 0}
+                    disabled={!options.speedLimits || phase === 'converting'}
+                    onChange={(e) => set('defaultTrackSpeed', Number(e.target.value))}
+                  >
+                    {TRACK_SPEEDS.map((speed) => (
+                      <option key={speed} value={speed}>
+                        {speed === 0 ? 'Vitesse de ligne' : `${speed} km/h`}
                       </option>
                     ))}
                   </select>

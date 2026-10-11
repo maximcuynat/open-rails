@@ -14,7 +14,7 @@ import { findChainCrossings, type ChainCrossing } from './osmCrossings'
 import { planLevels, separateStructures, trackAt } from './osmLevels'
 import { settleNodeTangents, sideBySideReach } from './osmJunctions'
 import { DEFAULT_FIT_TOLERANCE } from './osmFit'
-import { buildNetwork, isLaidAsOnePiece, laySpeedZones, type BuiltNetwork } from './osmBuild'
+import { buildNetwork, isLaidAsOnePiece, laySpeedZones, slowUnderSpeed, type BuiltNetwork } from './osmBuild'
 import { checkNetwork, settleContacts, type Contact } from './osmCheck'
 import { distance } from './osmArcs'
 import { importLine, isUsableSignal, laySignals } from './osmSignals'
@@ -243,6 +243,8 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   syncIdCounter(net)
   if (lastIdTaken() < firstId) resetIdCounter(firstId)
   if (options.speedLimits) laySpeedZones(built, chains, tangents, options)
+  // Counted on the track as it was fitted, before anything cuts its rails
+  const slowUnderSpeedKm = options.speedLimits ? slowUnderSpeed(built, chains, graph) / 1000 : 0
   const issues: OsmImportIssue[] = []
   /** The OSM way a rail was laid from; a rail cut since then answers for the one it was cut from */
   const wayOf = (segId: string): number[] => {
@@ -301,6 +303,7 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     undecidedCrossings: undecided,
     speedZones: net.speedZones.size,
     lengthWithoutSpeedKm: 0,
+    slowUnderSpeedKm,
     droppedComponents: dropped,
     issues,
   }

@@ -143,10 +143,10 @@ describe('sample areas', () => {
         expect(off[off.length >> 1]).toBeLessThan(0.15)
         // Clelles is a mountain line drawn with a node every 30 to 45 m in curves of 250 m of radius:
         // laid within 30 cm of each, it was straight lines and bends of 40 to 60 m of radius, 20 to
-        // 40 km/h under a zone of 70. The nodes of those curves are left by up to 90 cm (8 % of them
+        // 40 km/h under a zone of 70. The nodes of those curves are left by up to 3 m (8 % of them
         // by more than 35 cm) for a track that can be run at the speed of its zone, or near it
-        expect(off[Math.floor(off.length * 0.95)]).toBeLessThan(name === 'clelles-mens' ? 0.45 : 0.35)
-        expect(off[Math.floor(off.length * 0.99)]).toBeLessThan(1)
+        expect(off[Math.floor(off.length * 0.95)]).toBeLessThan(name === 'clelles-mens' ? 0.5 : 0.35)
+        expect(off[Math.floor(off.length * 0.99)]).toBeLessThan(name === 'clelles-mens' ? 1.1 : 1)
         expect(off[off.length - 1]).toBeLessThan(3)
       })
 

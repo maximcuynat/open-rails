@@ -47,8 +47,8 @@ describe('curves of the sample areas next to the speed of their zone', () => {
   /** The curved rails of a converted area on which the editor allows less than the zone OSM gives them */
   function slowCurves(name: string): { radius: number; allowed: number; zone: number }[] {
     resetIdCounter()
-    // Only the zones read from `maxspeed`: a service track without one is given no speed here
-    const result = convertOsm(readFixture(name), options({ defaultServiceSpeed: 0 }))
+    // Only the zones read from `maxspeed`: a track without one is given no speed here
+    const result = convertOsm(readFixture(name), options({ defaultServiceSpeed: 0, defaultTrackSpeed: 0 }))
     const net = result.network
     const profile = trackProfile(net, { lineSpeed: result.lineSpeed!, lineType: result.highSpeed ? 'highSpeed' : 'classic' })
     const slow: { radius: number; allowed: number; zone: number }[] = []

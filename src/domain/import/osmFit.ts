@@ -47,7 +47,7 @@ const SHORT_RUN = 30
 /** Lengths (m) tried, longest first, for the stretch of each run given up to the piece that joins it to the next */
 const JOIN_REACHES = [60, 40, 25, 15, 10, 5]
 /** …and longer ones, tried after them where a track has a speed the usual ones do not give it */
-const LONG_JOIN_REACHES = [120, 240]
+const LONG_JOIN_REACHES = [120, 240, 480]
 /** …which never takes more than this share of a run */
 const MAX_JOIN_SHARE = 0.45
 /** The single arc that joins two runs turns by this much (degrees) at most */
@@ -61,9 +61,9 @@ const JOIN_TOLERANCE_DEG = 0.3
 
 /** Where a track allows less than its zone, the tolerance of the nodes around is multiplied by this, as many times… */
 const WIDENING = 1.5
-const MAX_WIDENINGS = 4
-/** …and up to this many times the tolerance of the chain: 0.9 m for the 0.3 m of a first fitting */
-const MAX_WIDENING = 3
+const MAX_WIDENINGS = 6
+/** …and up to this many times the tolerance of the chain: 3 m for the 0.3 m of a first fitting. What OSM says of the speed of a track is trusted over where it puts a node: a bend no train takes at that speed is a bend drawn with too few nodes */
+const MAX_WIDENING = 10
 
 /** A primitive of a fitted chain, with the stretch of the chain (distances along it) it stands for */
 export interface FittedPrim extends Prim {

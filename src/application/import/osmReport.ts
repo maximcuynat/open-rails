@@ -99,7 +99,10 @@ export function reportNotes(report: OsmImportReport): string[] {
     notes.push(`${stacked}, ${formatCount(report.undecidedCrossings)} indécis.`)
   }
   if (report.lengthWithoutSpeedKm > 0) {
-    notes.push(`${formatKm(report.lengthWithoutSpeedKm)} de voie principale sans limite de vitesse dans les données : la vitesse de ligne s’y applique.`)
+    notes.push(`${formatKm(report.lengthWithoutSpeedKm)} de voie principale sans limite de vitesse dans les données : elle prend celle de la voie qu’elle prolonge ou la vitesse par défaut, sinon la vitesse de ligne.`)
+  }
+  if (report.slowUnderSpeedKm !== undefined && report.slowUnderSpeedKm >= 0.05) {
+    notes.push(`${formatKm(report.slowUnderSpeedKm)} de voie dont la courbe tracée impose moins que la vitesse donnée par les données.`)
   }
   if (report.droppedComponents > 0) {
     notes.push(

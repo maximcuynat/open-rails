@@ -18,6 +18,7 @@ import { buildIndex } from './datasetIndex'
 import { fetchAll } from './fetch'
 import { assignLines, groupOfRail, type LineId } from './lines'
 import { cutIntoPieces } from './pieces'
+import { speedDips } from './speedDips'
 import { readManifest, type DatasetManifest } from './manifest'
 
 // The « LGV France » dataset: the whole high-speed network converted once, in the national frame,
@@ -35,6 +36,11 @@ export interface BuiltDataset {
     zonesCut: number
     unlistedHighSpeedWays: number
     convertMs: number
+    /** Track without `maxspeed`, and track laid slower than its `maxspeed` (see `OsmImportReport`), km */
+    lengthWithoutSpeedKm: number
+    slowUnderSpeedKm: number
+    /** Rails whose limit falls well under that of both their neighbours, over all the files (`speedDips`) */
+    speedDips: { dips: number; underZone: number; withoutZone: number }
   }
 }
 
@@ -63,6 +69,7 @@ export function buildDataset(
     levels: true,
     speedLimits: true,
     defaultServiceSpeed: 30,
+    defaultTrackSpeed: 160,
     keepDetachedOverKm: manifest.keepDetachedOverKm,
     signals: 'generated',
     stations: true,
@@ -87,6 +94,13 @@ export function buildDataset(
     files.set(id, slice)
     written.set(id, { file: fileName(id), bytes: JSON.stringify(slice).length, project: slice })
   }
+  const dips = { dips: 0, underZone: 0, withoutZone: 0 }
+  for (const project of files.values()) {
+    const found = speedDips(project)
+    dips.dips += found.dips
+    dips.underZone += found.underZone
+    dips.withoutZone += found.withoutZone
+  }
   const dataDate = result.dataDate ?? now.toISOString().slice(0, 10)
   const index = buildIndex(net, assignment, written, registry, { dataDate, generatedAt: now.toISOString() })
   return {
@@ -101,6 +115,9 @@ export function buildDataset(
       zonesCut,
       unlistedHighSpeedWays: assignment.unlistedHighSpeedWays,
       convertMs,
+      lengthWithoutSpeedKm: result.report.lengthWithoutSpeedKm,
+      slowUnderSpeedKm: result.report.slowUnderSpeedKm ?? 0,
+      speedDips: dips,
     },
   }
 }
@@ -163,6 +180,10 @@ export async function main(argv: string[]): Promise<number> {
   log(`converted in ${(r.convertMs / 1000).toFixed(1)} s: ${r.rails} rails, ${r.lengthKm.toFixed(0)} km of track, ${r.stations} stations, ${r.droppedComponents} detached parts dropped`)
   log(`reconcile: ${r.reconcile.splitCount} split, ${r.reconcile.weldedCount} welded; ${r.zonesCut} speed zones cut at line borders`)
   log(`${r.unlistedHighSpeedWays} high-speed ways in no listed relation (taken from a neighbour, else « autres »)`)
+
+  log(`speeds: ${r.lengthWithoutSpeedKm.toFixed(1)} km of main track without maxspeed, ${r.slowUnderSpeedKm.toFixed(2)} km laid slower than its maxspeed; ${r.speedDips.dips} rails well under both their neighbours (${r.speedDips.underZone} under a zone, ${r.speedDips.withoutZone} under none)`)
+  // `--dry`: the figures only, nothing written
+  if (argv.includes('--dry')) return 0
 
   mkdirSync(OUT_DIR, { recursive: true })
   let total = 0

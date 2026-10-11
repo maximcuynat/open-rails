@@ -47,6 +47,12 @@ export interface OsmImportOptions {
   /** km/h given to a service track that carries no `maxspeed`. */
   defaultServiceSpeed: number
   /**
+   * What a running track that carries no `maxspeed` takes: the speed of the track it continues
+   * when OSM gives one, else this (km/h) — but on a high-speed track, left to the line speed.
+   * 0 or absent: such a track gets no zone, and the line speed applies.
+   */
+  defaultTrackSpeed?: number
+  /**
    * Parts of the data that do not touch the main network are left out and counted. Set, the ones
    * with at least this many km of track are kept with it: networks that only pass over each other.
    */
@@ -71,6 +77,8 @@ export const DEFAULT_OSM_IMPORT_OPTIONS: OsmImportOptions = {
   levels: true,
   speedLimits: true,
   defaultServiceSpeed: 30,
+  // A conventional line: what the curves and the points allow comes under it
+  defaultTrackSpeed: 160,
   // A line that flies over another without joining it inside the area is still wanted
   keepDetachedOverKm: 0,
   signals: 'generated',
@@ -193,6 +201,11 @@ export interface OsmImportReport {
   speedZones: number
   /** Length of main track that carried no `maxspeed`. */
   lengthWithoutSpeedKm: number
+  /**
+   * Length of track whose curve, as it was laid, allows less than the `maxspeed` it carries; absent
+   * from a report written before the import counted it
+   */
+  slowUnderSpeedKm?: number
   /** Parts of the data left out because they do not touch the main network. */
   droppedComponents: number
   /** What was done about the signals; absent from a report written before the import laid any */

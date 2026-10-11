@@ -3,7 +3,7 @@
  * Builds the « LGV France » dataset under `public/data/lgv/` (the pipeline is `build.ts`; this file
  * is named differently so that `import './build'` never resolves to it).
  *
- *   node tools/lgv-dataset/run.mjs [--offline] [--only <lineId>] [--round]
+ *   node tools/lgv-dataset/run.mjs [--offline] [--only <lineId>] [--round] [--dry]
  *
  * The pipeline is the TypeScript of the application (domain import, persistence): it runs here
  * through Vite's module runner, which resolves the `@domain/*` aliases of `vite.config.ts` and
