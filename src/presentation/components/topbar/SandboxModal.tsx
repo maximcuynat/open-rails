@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EditorStore } from '@application/state/editorStore'
 import type { ConsolePreference } from '@application/console/consolePreference'
 import { datasetErrorMessage, loadDatasetIndex, type LineFetchProgress } from '@application/dataset/datasetClient'
-import { prepareSandbox, SANDBOX_TRAINS, sandboxErrorMessage, type SandboxStart } from '@application/game/sandbox'
+import { addSandboxTrain, canAddSandboxTrain, prepareSandbox, SANDBOX_TRAINS, sandboxErrorMessage, type SandboxStart } from '@application/game/sandbox'
 import type { DatasetIndex } from '@domain/dataset/datasetIndex'
 import { searchStations, stationBadge, type StationMatch } from '@domain/dataset/stationSearch'
+import { showToast } from '../common/Toast'
 
 interface SandboxModalProps {
   store: EditorStore
@@ -84,13 +85,27 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
     }
   }
 
-  const launch = async () => {
+  // A game under way: the train can join it, the trains already running go on
+  const canJoin = canAddSandboxTrain(store)
+
+  const launch = async (join = false) => {
     if (!index || !station || !train?.model) return
     setPhase('loading')
     setError(null)
     setProgress({ done: 0, total: station.lines.length })
     try {
-      setStart(await prepareSandbox(store, index, station.station.id, train.model, { onProgress: setProgress }))
+      if (join) {
+        const added = await addSandboxTrain(store, index, station.station.id, train.model, { onProgress: setProgress })
+        // Already driving: this screen is on the new train, with the console it had
+        if (store.isPlayMode) {
+          showToast(`${train.name} à quai — ${added.stationName}${added.stop.ref ? `, voie ${added.stop.ref}` : ''}`, 'success')
+          onClose()
+          return
+        }
+        setStart(added)
+      } else {
+        setStart(await prepareSandbox(store, index, station.station.id, train.model, { onProgress: setProgress }))
+      }
       setPhase('desk')
     } catch (e) {
       setError(sandboxErrorMessage(e))
@@ -236,7 +251,12 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
                     {error}
                   </p>
                 )}
-                {station && (
+                {station && canJoin && (
+                  <p className="osm-note">
+                    « Ajouter à la partie » pose ce train sans rien arrêter : les trains déjà lancés continuent, sous leur pilote automatique s’ils en ont un. « Nouvelle partie » remplace tout.
+                  </p>
+                )}
+                {station && !canJoin && (
                   <p className="osm-note">
                     {replaces ? 'Le réseau actuel sera remplacé par les lignes de la gare, sans retour en arrière. ' : ''}
                     Les lignes voisines se chargent à l’approche du train. La voie chargée n’est pas modifiable.
@@ -254,11 +274,16 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
             </span>
           )}
           <button type="button" className="modal-btn modal-btn-secondary" onClick={onClose} disabled={loading}>
-            {phase === 'desk' ? 'Plus tard' : 'Ouvrir l’éditeur'}
+            {phase === 'desk' ? 'Plus tard' : canJoin ? 'Annuler' : 'Ouvrir l’éditeur'}
           </button>
           {phase !== 'desk' && (
             <button type="button" className={`modal-btn ${replaces ? 'modal-btn-danger' : 'modal-btn-primary'}`} disabled={!canStart} onClick={() => void launch()}>
-              {loading ? 'Chargement…' : 'Lancer'}
+              {loading ? 'Chargement…' : canJoin ? 'Nouvelle partie' : 'Lancer'}
+            </button>
+          )}
+          {phase !== 'desk' && canJoin && (
+            <button type="button" className="modal-btn modal-btn-primary" disabled={!canStart} onClick={() => void launch(true)}>
+              Ajouter à la partie
             </button>
           )}
         </div>

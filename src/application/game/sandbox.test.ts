@@ -5,7 +5,7 @@ import { resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { resetIdCounter } from '@domain/models/network'
 import { ROLLING_STOCK } from '@domain/models/rollingStock'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
-import { prepareSandbox, SANDBOX_TRAINS, SandboxError, sandboxErrorMessage } from './sandbox'
+import { addSandboxTrain, canAddSandboxTrain, prepareSandbox, SANDBOX_TRAINS, SandboxError, sandboxErrorMessage } from './sandbox'
 
 function serving(bodies: Record<string, unknown>, fail = false): typeof fetch {
   return (async (input: RequestInfo | URL) => {
@@ -97,5 +97,51 @@ describe('starting a sandbox game', () => {
     expect(train.maxSpeed).toBeCloseTo(160 / 3.6, 6)
     store.togglePlayMode()
     store.togglePlayMode()
+  })
+
+  it('adds a train at another station to the game under way, the first going on under its pilot', async () => {
+    const { index, files } = fakeDataset()
+    const options = { fetch: serving(files), baseUrl: '/' }
+    const store = new EditorStore()
+    expect(canAddSandboxTrain(store)).toBe(false)
+    await prepareSandbox(store, index, 's1', 'duplex', options)
+    expect(canAddSandboxTrain(store)).toBe(true)
+    const first = store.trains[0]
+    store.togglePlayMode()
+    store.setAutopilot(first.id, true)
+    for (let i = 0; i < 200; i++) store.tickAllTrains(0.05)
+    expect(first.currentSpeed).toBeGreaterThan(0)
+
+    // « Gare Deux » is on line b, not loaded: its line is added, nothing is replaced
+    const added = await addSandboxTrain(store, index, 's2', 'regiolis', options)
+    expect(added.stationName).toBe('Gare Deux')
+    expect(store.isPlayMode).toBe(true)
+    expect(store.dataset!.lines).toEqual(['a', 'b'])
+    expect(store.trains).toHaveLength(2)
+    const second = store.trains[1]
+    expect(second.vehicles[0].model).toBe('regiolis')
+    expect(second.itinerary).toEqual({ stations: ['s2'], next: 1 })
+    // This screen is on the new train, at rest with its brakes on; the first keeps its pilot and runs on
+    expect(store.selectedTrain).toBe(second)
+    expect(second.currentSpeed).toBe(0)
+    expect(second.brakeCylinder).toBeGreaterThan(0.5)
+    expect(store.autopilots.has(first.id)).toBe(true)
+    const before = first.vehicles[0].front
+    const at = `${before.segId} ${before.t}`
+    for (let i = 0; i < 100; i++) store.tickAllTrains(0.05)
+    expect(`${first.vehicles[0].front.segId} ${first.vehicles[0].front.t}`).not.toBe(at)
+    expect(second.currentSpeed).toBe(0)
+    store.togglePlayMode()
+  })
+
+  it('refuses a train where no platform is free, and a station the game does not know', async () => {
+    const { index, files } = fakeDataset()
+    const options = { fetch: serving(files), baseUrl: '/' }
+    const store = new EditorStore()
+    await prepareSandbox(store, index, 's1', 'duplex', options)
+    // « Gare Un » has one platform track, and a rake stands on it
+    await expect(addSandboxTrain(store, index, 's1', 'duplex', options)).rejects.toThrow(/quai libre/)
+    await expect(addSandboxTrain(store, index, 'nope', 'duplex', options)).rejects.toBeInstanceOf(SandboxError)
+    expect(store.trains).toHaveLength(1)
   })
 })

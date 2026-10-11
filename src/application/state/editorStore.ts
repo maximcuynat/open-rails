@@ -5,6 +5,7 @@ import { networkCheckToken, touchNetwork, verifyingNetworkRevisions } from '@dom
 import { dirtyNodesOf, networkChangesSince } from '@domain/geometry/networkFollower'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
+import { raiseIdCounter } from '@domain/models/ids'
 import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
 import { computeParallelCurve } from '@domain/geometry/curve'
@@ -1445,6 +1446,7 @@ export class EditorStore {
     const union = unionProjects([...this.datasetFiles.values()])
     const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
     const res = deserializeNetwork(union, tolerance, this.network)
+    this.keepTrainIdsClear()
     if (res.sectionMeta) {
       const keys = Object.keys(res.sectionMeta).filter((key) => !(key in this.sectionMeta))
       for (const key of keys) this.sectionMeta[key] = res.sectionMeta[key]
@@ -1455,6 +1457,24 @@ export class EditorStore {
     this.savePersistedState()
     this.notify()
     return this.network.segments.size - before
+  }
+
+  /**
+   * Putting lines onto the live network sets the ids to come after those of the track alone: the
+   * trains, which are not part of what is put back, keep theirs — a train added afterwards must
+   * not be given the id of one that is running.
+   */
+  private keepTrainIdsClear(): void {
+    let highest = 0
+    const scan = (id: string): void => {
+      const n = Number(id.slice(id.lastIndexOf('_') + 1))
+      if (Number.isInteger(n) && n > highest) highest = n
+    }
+    for (const train of this.trains) {
+      scan(train.id)
+      for (const veh of train.vehicles) scan(veh.id)
+    }
+    raiseIdCounter(highest)
   }
 
   /**
@@ -1484,6 +1504,7 @@ export class EditorStore {
     const union = unionProjects([...this.datasetFiles.values()])
     const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
     deserializeNetwork(union, tolerance, this.network)
+    this.keepTrainIdsClear()
     this.dataset = { ...this.dataset, lines: this.dataset.lines.filter((id) => !going.includes(id)) }
     this.datasetLastRemoveMs = performance.now() - t0
     this.savePersistedState()
@@ -3556,16 +3577,22 @@ export class EditorStore {
   /**
    * Set a complete rake of `model` down at a platform of a station of the network, facing the way
    * out, select it and put the camera on its head, close enough for its bogies to show. Returns
-   * the stop it stands at; null in play mode, for an unknown station, or when no platform free of
-   * the other trains holds the whole rake.
+   * the stop it stands at; null for an unknown station, or when no platform free of the other
+   * trains holds the whole rake. While trains are being driven it joins them: it stands at rest,
+   * brakes applied, and this screen moves to it — the train it was on keeps its pilot if it has
+   * one, else it is left with its brake where it is, like any train let go of.
    */
   placeRakeAtStation = (stationId: StationId, model: RollingStockModel): StationStop | null => {
-    if (this.isPlayMode) return null
     const station = this.network.stations.get(stationId)
     if (!station) return null
     const placed = createRakeAtStation(this.network, station, model, this.trains)
     if (!placed) return null
     startItineraryAt(placed.train, stationId)
+    if (this.isPlayMode) {
+      resetTrainControls(placed.train)
+      this.centreSelectedTrainBrake()
+      this.followLocomotiveCamera = true
+    }
     this.trains = [...this.trains, placed.train]
     this.trainChainId = null
     this.selectTrainById(placed.train.id)

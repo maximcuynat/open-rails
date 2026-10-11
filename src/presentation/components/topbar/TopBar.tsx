@@ -65,7 +65,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
     {
       label: 'Fichier',
       items: [
-        { id: 'sandbox', label: 'Nouvelle partie (bac à sable)…' },
+        { id: 'sandbox', label: store.dataset && store.trains.length > 0 ? 'Nouveau train ou nouvelle partie…' : 'Nouvelle partie (bac à sable)…' },
         { id: 'new', label: 'Nouveau réseau', separatorAfter: true },
         { id: 'import-json', label: 'Importer JSON…' },
         { id: 'merge-json', label: 'Ajouter un JSON au projet…', disabled: !store.canEditNetwork },
