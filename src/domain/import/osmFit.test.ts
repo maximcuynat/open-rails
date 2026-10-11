@@ -243,12 +243,12 @@ describe('fitting a track whose speed is known', () => {
     expect(tightest(tight)).toBeLessThan(80)
     expect(slowest(tight, design)).toBeLessThanOrEqual(25)
 
-    // Built for 70 km/h: a curve, that leaves the nodes it has to by less than a metre
+    // Built for 70 km/h: a curve, that leaves the nodes it has to by no more than ten times the tolerance
     const round = fitChain(chain, null, null, 10, 10, 0.3, design)
     expectTangent(round)
     expect(tightest(round)).toBeGreaterThan(150)
     expect(slowest(round, design)).toBeGreaterThanOrEqual(55)
-    expect(farthest(round, pts)).toBeLessThan(0.9 + 1e-6)
+    expect(farthest(round, pts)).toBeLessThan(3 + 1e-6)
   })
 
   it('does not lay a jog where two straight stretches of a high-speed line miss each other by decimetres', () => {

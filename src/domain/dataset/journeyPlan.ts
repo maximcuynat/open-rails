@@ -74,7 +74,8 @@ export function previewJourney(index: DatasetIndex, plan: JourneyPlan): JourneyP
   return {
     route: result,
     problem: null,
-    lineNames: result.lines.map((id) => linesById.get(id)?.name ?? id),
+    // The pieces of a line share its name: said once
+    lineNames: result.lines.map((id) => linesById.get(id)?.name ?? id).filter((name, i, names) => name !== names[i - 1]),
     lengthLabel: formatTrackKm(result.lengthKm),
     sizeLabel: formatDownloadSize(result.bytes),
     attribution: index.attribution,

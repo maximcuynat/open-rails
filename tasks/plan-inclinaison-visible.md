@@ -147,3 +147,14 @@ Le banc dessine désormais les repères (`BENCH_NO_INCLINATION=1` pour les retir
 - Vu à l'écran (captures `2x-*`) : arrêt en courbe clair et sombre, chevrons à 2,2 et 3 px/m, rampe raide avec son diagnostic, véhicule sélectionné, train couché, sortie de courbe, case « Dévers et pentes » cliquée dans le menu, déraillement atteint en conduisant (240 km/h dans la courbe de 500 m) : le train reste couché du même côté une fois sorti de la courbe.
 - Conduite : les touches W et A ont été pressées ; Q (desserrer) doit rester enfoncée, elle a été tenue par un évènement `keydown` envoyé à la page.
 - Reste : un train déraillé continue de glisser sur la voie pendant que la console annonce « Le train est immobilisé » (comportement existant, hors périmètre).
+
+## Décision du 2026-10-11 — la rame ne penche plus à l'écran
+
+Demande de l'utilisateur : garder une vue 2D de dessus. Une rame en marche est dessinée
+d'aplomb, par son empreinte, quels que soient le dévers et la vitesse en courbe. Rien ne change
+aux calculs : dévers, insuffisance, inclinaison de caisse (`vehicleLean`) et déraillement restent
+calculés. Restent à l'écran : les marques de dévers sur la voie, et une rame déraillée couchée sur
+le flanc (seul signe visible d'un déraillement).
+
+Un seul endroit décide : `getTrainSetVisuals` (`domain/models/train.ts`) ne demande l'inclinaison
+à dessiner que pour une rame déraillée.

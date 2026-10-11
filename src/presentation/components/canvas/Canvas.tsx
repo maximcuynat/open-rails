@@ -1,3 +1,6 @@
+import { renderDatasetOverview } from '@infrastructure/render/datasetOverview'
+import { renderRouteGuide, routeGuideReach } from '@infrastructure/render/routeGuideRender'
+import { guideAhead } from '@domain/services/routeGuide'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clampScale, screenToWorld, type Camera } from '@infrastructure/render/camera'
 import {
@@ -352,6 +355,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
     }
 
+    // A project of the dataset: the lines that are not loaded, as the index outlines them
+    if (store.datasetIndex && store.dataset) {
+      renderDatasetOverview(ctx, cam, rect.width, rect.height, store.datasetIndex, new Set(store.dataset.lines))
+    }
+
     // The gizmo is drawn last, on the selection anchor: section badges keep clear of it
     const gizmoAnchor = store.tool === 'select' && store.canEditNetwork ? getGizmoAnchor(store.network, store.selection) : null
     const gizmoScreen = gizmoAnchor
@@ -371,6 +379,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       ...(plainView ? { hideSectionCenterline: true, hideSpeedZoneBands: true, plainRails: true } : {}),
+      railTint: store.railTint,
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
       quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
       // Zones are only picked in the signalling mode; in its delete sub-mode the hovered one turns red
@@ -405,6 +414,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const driven = store.selectedTrain
       const loco = store.trains.length === 0 ? store.locomotive : null
       if (driven) {
+        // The way to the next station of its itinerary, under the route as the points lie
+        const guide = store.drivingAid !== 'none' ? store.routeGuides.get(driven.id)?.guide : null
+        const lead = driven.vehicles[0]?.front
+        if (guide && !guide.behind && lead) {
+          renderRouteGuide(ctx, cam, rect.width, rect.height, store.network, guideAhead(store.network, guide, lead, routeGuideReach(cam, rect.width, rect.height)))
+        }
         const routeStart = trainRouteStart(driven)
         if (routeStart) {
           renderDrivingRoute(ctx, cam, rect.width, rect.height, store.network, routeStart, driven.currentSpeed, store.unit)
@@ -1210,7 +1225,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       }
 
       // Priority 0: Check if click hit a 2D Gizmo translation/rotation handle on selected node or section
-      if (e.button === 0 && store.tool === 'select' && store.canEditNetwork) {
+      // (not in the free view of a running game: there the left button looks around, see below)
+      if (e.button === 0 && store.tool === 'select' && store.canEditNetwork && !store.isFreeView) {
         const anchor = getGizmoAnchor(store.network, store.selection)
         if (anchor) {
           const sx = (anchor.worldPos.x - store.camera.x) * store.camera.scale + rect.width / 2
@@ -1242,7 +1258,25 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         }
       }
 
-      if (e.button === 1 || (e.button === 0 && (store.tool === 'pan' || isSpaceDown))) {
+      // Free view, a train armed: the click sets it down on the track there
+      if (e.button === 0 && store.isPlayMode && store.rakePlacement) {
+        const model = store.rakePlacement
+        if (!store.placeRakeAt(getWorldPos(e.clientX, e.clientY), model)) showToast('Pas de voie ici assez longue et libre pour la rame.', 'warning')
+        redraw()
+        return
+      }
+      // Free view: a click on a train takes it
+      if (e.button === 0 && store.isFreeView) {
+        const hit = store.findVehicleAt(getWorldPos(e.clientX, e.clientY))
+        if (hit) {
+          store.spectateTrain(hit.train.id)
+          redraw()
+          return
+        }
+      }
+
+      // Free view: with nothing under the click, the left button moves the view
+      if (e.button === 1 || (e.button === 0 && (store.tool === 'pan' || isSpaceDown || store.isFreeView))) {
         // Middle click, pan tool, or spacebar pan: pan
         store.panning = true
         lastX = e.clientX

@@ -7,6 +7,11 @@ export function resetIdCounter(startFrom = 0): void {
   idCounter = startFrom
 }
 
+/** Keep the ids to come clear of `atLeast`: the counter is raised to it, never lowered */
+export function raiseIdCounter(atLeast: number): void {
+  if (atLeast > idCounter) idCounter = atLeast
+}
+
 export function generateId(prefix: string): string {
   idCounter++
   return `${prefix}_${idCounter}`

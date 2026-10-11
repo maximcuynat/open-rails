@@ -58,6 +58,6 @@ export function stationBadge(match: StationMatch): string {
     const codes = [match.station.uic ? `UIC ${match.station.uic}` : null, match.station.code ?? null].filter((c): c is string => c !== null)
     if (codes.length) parts.push(codes.join(' · '))
   }
-  if (match.lines.length) parts.push(match.lines.map((line) => line.name).join(', '))
+  if (match.lines.length) parts.push([...new Set(match.lines.map((line) => line.name))].join(', '))
   return parts.join(' — ')
 }

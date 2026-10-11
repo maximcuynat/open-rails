@@ -1,3 +1,4 @@
+import { consoleRoute } from '@application/game/itinerary'
 import type { EditorStore } from '@application/state/editorStore'
 import { trainAhead } from '@domain/models/train'
 import { TRAIN_AHEAD_REACH, type ConsoleTrainAhead } from './consoleContract'
@@ -120,6 +121,7 @@ export function trainSignals(
     // Only there when lit: the state of a signal that shows neither is what it always was
     if (aspect.slowdown) next.slowdown = aspect.slowdown
     if (aspect.reminder) next.reminder = aspect.reminder
+    if (ahead.cause) next.cause = ahead.cause
   }
   const closed = view.closedSignal
   const signals: ConsoleSignals = {
@@ -261,6 +263,9 @@ export function buildTrainConsoleState(store: EditorStore, train: TrainSet): Con
   )
   // Only worth a walk where there is another train to meet
   if (store.trains.length > 1) state.ahead = trainAheadState(store, train)
+  const route = consoleRoute(store, train)
+  if (route) state.route = route
+  if (store.autopilots.has(train.id)) state.autopilot = true
   return state
 }
 

@@ -49,26 +49,26 @@ describe('lever geometry', () => {
 })
 
 describe('traction lever', () => {
-  it('snaps to the notches from B5 at the bottom to P5 at the top', () => {
-    expect(notchAtRatio(0, -5, 5)).toBe(-5)
-    expect(notchAtRatio(0.5, -5, 5)).toBe(0)
-    expect(notchAtRatio(1, -5, 5)).toBe(5)
-    expect(notchAtRatio(0.8, -5, 5)).toBe(3)
-    expect(notchAtRatio(0.2, -5, 5)).toBe(-3)
+  it('snaps to the notches from B10 at the bottom to P10 at the top', () => {
+    expect(notchAtRatio(0, -10, 10)).toBe(-10)
+    expect(notchAtRatio(0.5, -10, 10)).toBe(0)
+    expect(notchAtRatio(1, -10, 10)).toBe(10)
+    expect(notchAtRatio(0.8, -10, 10)).toBe(6)
+    expect(notchAtRatio(0.2, -10, 10)).toBe(-6)
   })
 
   it('changes notch half-way between two stops', () => {
-    // P1 sits at 0.6, P2 at 0.7
-    expect(notchAtRatio(0.649, -5, 5)).toBe(1)
-    expect(notchAtRatio(0.651, -5, 5)).toBe(2)
+    // P1 sits at 0.55, P2 at 0.6
+    expect(notchAtRatio(0.574, -10, 10)).toBe(1)
+    expect(notchAtRatio(0.576, -10, 10)).toBe(2)
     // Around N: never a negative zero
-    expect(Object.is(notchAtRatio(0.49, -5, 5), 0)).toBe(true)
+    expect(Object.is(notchAtRatio(0.49, -10, 10), 0)).toBe(true)
   })
 
   it('stays within the stops', () => {
-    expect(notchAtRatio(3, -5, 5)).toBe(5)
-    expect(notchAtRatio(-3, -5, 5)).toBe(-5)
-    expect(notchAtRatio(NaN, -5, 5)).toBe(-5)
+    expect(notchAtRatio(3, -10, 10)).toBe(10)
+    expect(notchAtRatio(-3, -10, 10)).toBe(-10)
+    expect(notchAtRatio(NaN, -10, 10)).toBe(-10)
   })
 
   it('handles the three positions of the legacy throttle', () => {

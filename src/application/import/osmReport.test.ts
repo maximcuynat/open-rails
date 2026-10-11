@@ -99,9 +99,15 @@ describe('the report shown after an import', () => {
 
   it('tells what carried no speed and what was left out', () => {
     const notes = reportNotes(REPORT)
-    expect(notes[1]).toBe('15,7 km de voie principale sans limite de vitesse dans les données : la vitesse de ligne s’y applique.')
+    expect(notes[1]).toBe('15,7 km de voie principale sans limite de vitesse dans les données : elle prend celle de la voie qu’elle prolonge ou la vitesse par défaut, sinon la vitesse de ligne.')
     expect(notes[2]).toBe('3 groupes de voies isolés du réseau principal ont été laissés de côté.')
     expect(reportNotes({ ...REPORT, droppedComponents: 1 })[2]).toBe('Un groupe de voies isolé du réseau principal a été laissé de côté.')
+  })
+
+  it('tells the track laid slower than the speed the data gives it', () => {
+    const notes = reportNotes({ ...REPORT, slowUnderSpeedKm: 2.4 })
+    expect(notes).toContain('2,40 km de voie dont la courbe tracée impose moins que la vitesse donnée par les données.')
+    expect(reportNotes({ ...REPORT, slowUnderSpeedKm: 0.01 })).toEqual(reportNotes(REPORT))
   })
 
   it('says nothing of what did not happen', () => {

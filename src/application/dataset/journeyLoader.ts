@@ -1,5 +1,5 @@
 import type { DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
-import { recipeName, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
+import { recipeLines, recipeName, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { routeBbox, routeThroughStations, type JourneyRoute } from '@domain/dataset/lineRoute'
 import type { SerializedProject } from '@infrastructure/persistence/persistence'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
@@ -51,13 +51,28 @@ export async function loadJourney(store: EditorStore, index: DatasetIndex, stati
 }
 
 /**
+ * Load the lines one station is on, as a locked project named after it: where a game starts,
+ * the lines beyond come as a train nears them. Rejects like `loadJourney`.
+ */
+export async function loadStation(store: EditorStore, index: DatasetIndex, stationId: string, options: JourneyLoadOptions = {}): Promise<void> {
+  const station = index.stations.find((s) => s.id === stationId)
+  if (!station || station.lines.length === 0) throw new DatasetError('missing-line', DATASET_ERROR_MESSAGES.missingLine(station?.name ?? stationId))
+  const files = await fetchLineFiles(index, station.lines, options.onProgress, options)
+  const union = unionOf(files, station.lines)
+  const recipe: DatasetRecipe = { version: 1, dataDate: index.dataDate, lines: [...station.lines], stations: [stationId] }
+  store.loadDataset(recipe, union, files, index, routeBbox(index, station.lines), { name: recipeName(index, recipe) })
+  installLineStreaming(store, index, options)
+}
+
+/**
  * Fetch again the lines of a project saved as a recipe (the store was built from the storage
  * with `datasetReloadPending`): the trains and the camera it saved come back with them.
  */
 export async function reloadDataset(store: EditorStore, options: JourneyLoadOptions = {}): Promise<void> {
-  const recipe = store.dataset
-  if (!recipe) return
+  const saved = store.dataset
+  if (!saved) return
   const index = await loadDatasetIndex(options)
+  const recipe: DatasetRecipe = { ...saved, lines: recipeLines(index, saved.lines) }
   const files = await fetchLineFiles(index, recipe.lines, options.onProgress, options)
   const union = unionOf(files, recipe.lines)
   const stored = store.datasetStoredProject

@@ -103,9 +103,9 @@ export function ShortcutsModal({ store, isOpen, onClose }: ShortcutsModalProps) 
         <div>{keys('drive.exit')} ou <span className="shortcut-kbd">Échap</span></div>
         <div>Quitter la conduite</div>
         <div>{keys('drive.notchUp')}</div>
-        <div>Manipulateur : un cran de plus (traction, jusqu’à P5)</div>
+        <div>Manipulateur : un cran de plus (traction, jusqu’à P10) ; maintenue, les crans défilent jusqu’à N</div>
         <div>{keys('drive.notchDown')}</div>
-        <div>Manipulateur : un cran de moins (frein électrique sous N, jusqu’à B5)</div>
+        <div>Manipulateur : un cran de moins (frein électrique sous N, jusqu’à B10) ; maintenue, les crans défilent jusqu’à N</div>
         <div>{keys('drive.brakeApply')} (maintenir)</div>
         <div>Serrer le frein</div>
         <div>{keys('drive.brakeRelease')} (maintenir)</div>

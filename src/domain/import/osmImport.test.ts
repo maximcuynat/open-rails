@@ -481,8 +481,9 @@ describe('speed zones', () => {
     expect(report.speedZones).toBe(3)
     // 120 from the start to node 13, across three ways and the points at node 7
     expect(Math.abs(zoneLength(network, zones[0]) - 600)).toBeLessThan(3)
-    // The lower of the two directions, brought down to a zone speed, never up
-    expect(Math.abs(zoneLength(network, zones[1]) - 300)).toBeLessThan(3)
+    // The lower of the two directions, brought down to a zone speed, never up — and the way after
+    // it, that carries no speed, takes the speed of the track it continues
+    expect(Math.abs(zoneLength(network, zones[1]) - 600)).toBeLessThan(3)
     // The service track takes the default
     expect(zoneLength(network, zones[2])).toBeGreaterThan(350)
     expect(lineSpeed).toBe(120)
@@ -508,6 +509,35 @@ describe('speed zones', () => {
     expect(speeds({ defaultServiceSpeed: 40 })).toEqual([40, 50, 120])
     expect(speeds({ defaultServiceSpeed: 45 })).toEqual([40, 50, 120])
     expect(speeds({ defaultServiceSpeed: 0 })).toEqual([50, 120])
+  })
+
+  it('gives a running track without speed the speed of the track it continues, the lower one between two', () => {
+    const zonesOf = (elements: OverpassElement[], over: Parameters<typeof options>[0] = {}) =>
+      [...convertOsm(answer(elements), options(over)).network.speedZones.values()].sort((a, b) => b.speed - a.speed)
+    // Nothing assumed when it is not asked for: the last way is left to the line speed
+    const plain = convertOsm(answer(line()), options({ defaultTrackSpeed: 0 }))
+    const fifty = [...plain.network.speedZones.values()].find((zone) => zone.speed === 50)!
+    expect(Math.abs(zoneLength(plain.network, fifty) - 300)).toBeLessThan(3)
+
+    // 120, nothing, 80: the gap is run at 80
+    const nodes = along([0, 0], [900, 0], 50).map(([x, y], i) => osmNode(1 + i, x, y))
+    const ids = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, i) => from + i)
+    const gap = [...nodes, osmWay(100, ids(1, 7), { maxspeed: '120' }), osmWay(101, ids(7, 13)), osmWay(102, ids(13, 19), { maxspeed: '80' })]
+    const zones = zonesOf(gap)
+    expect(zones.map((zone) => zone.speed)).toEqual([120, 80])
+    const net = convertOsm(answer(gap), options()).network
+    expect(Math.abs(zoneLength(net, [...net.speedZones.values()].find((zone) => zone.speed === 80)!) - 600)).toBeLessThan(3)
+  })
+
+  it('gives a running track that continues none the default speed, but a high-speed one', () => {
+    const speeds = (tags: Record<string, string> | undefined, over: Parameters<typeof options>[0] = {}): number[] =>
+      [...convertOsm(answer(groundTrack(tags)), options(over)).network.speedZones.values()].map((zone) => zone.speed)
+    expect(speeds(undefined)).toEqual([160])
+    expect(speeds(undefined, { defaultTrackSpeed: 100 })).toEqual([100])
+    expect(speeds(undefined, { defaultTrackSpeed: 0 })).toEqual([])
+    expect(speeds({ highspeed: 'yes' })).toEqual([])
+    // An assumed speed is not the speed of the line
+    expect(convertOsm(answer(groundTrack(undefined)), options()).lineSpeed).toBeUndefined()
   })
 
   it('lays no zone and reads no line speed when speed limits are not asked for', () => {

@@ -45,7 +45,12 @@ export interface LineTrackColors {
   accent: string
   /** Background colour: the edging of a rail above ground */
   paper: string
+  /** The colour of the kind of line a rail belongs to, when the map tells kinds apart (line tier only) */
+  category?: RailTint
 }
+
+/** The colour a rail takes on a map that tells the kinds of line apart; undefined: the colour of the rails */
+export type RailTint = (segId: string) => string | undefined
 
 /** Screen coordinates of the lines of one style: `ax ay bx by NaN NaN` or `ax ay bx by vx vy` per line */
 type LineBatch = number[]
@@ -92,6 +97,15 @@ export function renderLineTracks(
   const selectedClosed: LineBatch = []
   // Whole pieces, whatever their style: the edging runs under all of them
   const halo: LineBatch = []
+  // Rails in the colour of their kind of line, by colour (a few kinds at most)
+  const tint = hollow ? undefined : colors.category
+  const tinted = new Map<string, LineBatch>()
+  const tintedClosed = new Map<string, LineBatch>()
+  const batchOf = (batches: Map<string, LineBatch>, color: string): LineBatch => {
+    let batch = batches.get(color)
+    if (!batch) batches.set(color, (batch = []))
+    return batch
+  }
 
   const add = (batch: LineBatch, a: Point, b: Point, via?: Point): void => {
     batch.push(a.x * s + ox, a.y * s + oy, b.x * s + ox, b.y * s + oy)
@@ -118,7 +132,10 @@ export function renderLineTracks(
       const t0 = whole ? inter.t0 : Math.max(inter.t0, piece.t0)
       const t1 = whole ? inter.t1 : Math.min(inter.t1, piece.t1)
       if (t1 <= t0) continue
-      const batch = inter.isTurnout ? (isSelected ? selectedClosed : closed) : isSelected ? selected : normal
+      const color = isSelected ? undefined : tint?.(seg.id)
+      const batch = color
+        ? batchOf(inter.isTurnout ? tintedClosed : tinted, color)
+        : inter.isTurnout ? (isSelected ? selectedClosed : closed) : isSelected ? selected : normal
       addPart(batch, ends, t0, t1)
     }
   }
@@ -158,12 +175,20 @@ export function renderLineTracks(
   ctx.globalAlpha = alpha * CLOSED_BRANCH_ALPHA
   ctx.strokeStyle = colors.rail
   strokeBatch(ctx, closed)
+  for (const [color, batch] of tintedClosed) {
+    ctx.strokeStyle = color
+    strokeBatch(ctx, batch)
+  }
   ctx.strokeStyle = colors.accent
   strokeBatch(ctx, selectedClosed)
   inside(closed, selectedClosed)
   ctx.globalAlpha = alpha
   ctx.strokeStyle = colors.rail
   strokeBatch(ctx, normal)
+  for (const [color, batch] of tinted) {
+    ctx.strokeStyle = color
+    strokeBatch(ctx, batch)
+  }
   ctx.strokeStyle = colors.accent
   strokeBatch(ctx, selected)
   inside(normal, selected)
@@ -426,6 +451,8 @@ export function decimatePolyline(
 export interface SchematicTrackColors {
   rail: string
   accent: string
+  /** The colour of the kind of line a section belongs to (asked of its first rail), when the map tells kinds apart */
+  category?: RailTint
 }
 
 /** Distance between two tracks laid side by side, metres: the line of the schematic covers it */
@@ -464,13 +491,20 @@ export function renderSchematicTracks(
   const ground: SectionPolyline[] = []
   const tunnel: SectionPolyline[] = []
   const selected: SectionPolyline[] = []
+  const tinted = new Map<string, SectionPolyline[]>()
   for (const line of polylines) {
     if (line.maxX < bounds.minX || line.minX > bounds.maxX || line.maxY < bounds.minY || line.minY > bounds.maxY) continue
+    const first = line.section.segmentIds[0]
+    const color = colors.category && first !== undefined ? colors.category(first) : undefined
     if (selectedSections.has(line.section)) selected.push(line)
     else if (line.tunnel) tunnel.push(line)
-    else ground.push(line)
+    else if (color) {
+      const lines = tinted.get(color)
+      if (lines) lines.push(line)
+      else tinted.set(color, [line])
+    } else ground.push(line)
   }
-  if (ground.length + tunnel.length + selected.length === 0) return
+  if (ground.length + tunnel.length + selected.length + tinted.size === 0) return
 
   const pts: number[] = []
   const strokeLines = (lines: SectionPolyline[], color: string, alpha: number): void => {
@@ -493,6 +527,7 @@ export function renderSchematicTracks(
   ctx.lineJoin = 'round'
   strokeLines(tunnel, colors.rail, TUNNEL_ALPHA)
   strokeLines(ground, colors.rail, 1)
+  for (const [color, lines] of tinted) strokeLines(lines, color, 1)
   strokeLines(selected, colors.accent, 1)
   ctx.restore()
 }

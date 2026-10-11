@@ -157,29 +157,11 @@ function trainAt(net: Network, world: Point, kind: 'loco' | 'wagon' = 'wagon'): 
   return makeTrainSet('T', [createVehicle(net, hit.segId, hit.t, kind, 1)!])
 }
 
-/** Is `p` inside the polygon, or within `tolerance` of its edge? */
-function enclosed(p: [number, number], polygon: [number, number][], tolerance = 0.01): boolean {
-  let inside = false
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i]
-    const [xj, yj] = polygon[j]
-    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside
-    const len2 = (xj - xi) ** 2 + (yj - yi) ** 2
-    const t = len2 > 0 ? Math.max(0, Math.min(1, ((p[0] - xi) * (xj - xi) + (p[1] - yi) * (yj - yi)) / len2)) : 0
-    if (Math.hypot(p[0] - (xi + t * (xj - xi)), p[1] - (yi + t * (yj - yi))) <= tolerance) return true
-  }
-  return inside
-}
-
 /** World point of a screen point */
 const toWorld = (cam: Camera, p: [number, number]): Point => ({ x: (p[0] - VW / 2) / cam.scale + cam.x, y: (p[1] - VH / 2) / cam.scale + cam.y })
 const distance = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y)
-const meanDistance = (cam: Camera, paint: Paint, from: Point): number => {
-  const points = paint.path.flat()
-  return points.reduce((sum, p) => sum + distance(toWorld(cam, p), from), 0) / points.length
-}
 
-// ─────────────────── Lot 1: the body of the train leans ───────────────────
+// ─────────────────── The body of the train: upright from above, lying once derailed ───────────────────
 
 describe('renderTrainSet: lean of the bodies', () => {
   const draw = (net: Network, train: TrainSet, cam: Camera, line?: LineSettings) => {
@@ -198,34 +180,30 @@ describe('renderTrainSet: lean of the bodies', () => {
     expect(draw(net, train, cam, CLASSIC_160).calls).toEqual(plain.calls)
   })
 
-  it('in a curve the roof is drawn off the footprint, towards the inside when stopped, and a flank shows', () => {
+  it('in a curve the body is drawn upright, as on straight track: the view is from above', () => {
     for (const side of [1, -1] as const) {
       const { net } = curveLayout(side)
       const world = onCurve(side, 45)
       const train = trainAt(net, world)
       const cam = createCamera(world.x, world.y, 10)
       const plain = draw(net, train, cam)
-      const leaning = draw(net, train, cam, CLASSIC_160)
-      const body = (paints: Paint[]): Paint => paints.find((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL)!
-      expect(plain.paints.some((p) => p.fillStyle === FLANK_FILL)).toBe(false)
-      const shift = meanDistance(cam, body(plain.paints), centreOf(side)) - meanDistance(cam, body(leaning.paints), centreOf(side))
-      // 4.32 m of body on 150 mm of cant, stopped: about half a metre, the real figure
-      expect(shift).toBeGreaterThan(0.4)
-      expect(shift).toBeLessThan(0.6)
-      const flanks = leaning.paints.filter((p) => p.kind === 'fill' && p.fillStyle === FLANK_FILL)
-      expect(flanks).toHaveLength(1)
-      // The flank is on the outside: further from the centre than the roof
-      expect(meanDistance(cam, flanks[0], centreOf(side))).toBeGreaterThan(meanDistance(cam, body(leaning.paints), centreOf(side)))
-      // One fill and one stroke more than upright, nothing else
-      expect(leaning.paints.length).toBe(plain.paints.length + 2)
+      // Stopped on the cant, and running: nothing leans on screen
+      for (const speed of [0, 40]) {
+        train.currentSpeed = speed
+        const withLine = draw(net, train, cam, CLASSIC_160)
+        expect(withLine.calls).toEqual(plain.calls)
+        expect(withLine.paints.some((p) => p.fillStyle === FLANK_FILL)).toBe(false)
+      }
     }
   })
 
-  it('the flank is a shade of its own: neither the roof nor the accent of the cant mark', () => {
+  it('the flank of a derailed body is a shade of its own: neither the roof nor the accent of the cant mark', () => {
     const { net } = curveLayout()
     const world = onCurve(1, 45)
     const cam = createCamera(world.x, world.y, 10)
-    const fills = draw(net, trainAt(net, world), cam, CLASSIC_160).paints.filter((p) => p.kind === 'fill').map((p) => p.fillStyle)
+    const train = trainAt(net, world)
+    train.derailed = { speed: 200, limit: 110 }
+    const fills = draw(net, train, cam, CLASSIC_160).paints.filter((p) => p.kind === 'fill').map((p) => p.fillStyle)
     expect(fills).toContain(TRAIN_FLANK_FILL)
     expect(TRAIN_FLANK_FILL).not.toBe(BODY_FILL)
     // The cant mark is stroked in the accent colour (see below): a blue, where the flank is a slate grey
@@ -235,9 +213,7 @@ describe('renderTrainSet: lean of the bodies', () => {
     expect(accent[2] - accent[0]).toBeGreaterThan(150)
   })
 
-  it('the outline of a selected vehicle goes round what is drawn: the roof and the flank', () => {
-    const SELECTION = '#38bdf8'
-    const TARGET = '#f59e0b'
+  it('the outline of a selected vehicle is its footprint, in a curve as on straight track', () => {
     const select = (net: Network, train: TrainSet, cam: Camera, line?: LineSettings) => {
       const rec = recordingContext()
       renderTrainSet(rec.ctx, cam, VW, VH, net, train, true, false, false, undefined, train.vehicles[0].id, null, undefined, line)
@@ -248,26 +224,8 @@ describe('renderTrainSet: lean of the bodies', () => {
       const world = onCurve(1, 45)
       const train = trainAt(net, world, kind)
       const cam = createCamera(world.x, world.y, 10)
-      const paints = select(net, train, cam, CLASSIC_160)
-      const roof = paints.find((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL)!.path[0]
-      const flank = paints.find((p) => p.kind === 'fill' && p.fillStyle === FLANK_FILL)!.path[0]
-      const footprint = select(net, train, cam).find((p) => p.kind === 'stroke' && p.strokeStyle === SELECTION)!.path[0]
-      for (const color of [SELECTION, TARGET]) {
-        const outline = paints.find((p) => p.kind === 'stroke' && p.strokeStyle === color)!.path[0]
-        for (const p of [...roof, ...flank]) expect(enclosed(p, outline)).toBe(true)
-        // …and is drawn over the body, where the flank does not hide it
-        const at = (match: (p: Paint) => boolean): number => paints.findIndex(match)
-        expect(at((p) => p.kind === 'stroke' && p.strokeStyle === color)).toBeGreaterThan(at((p) => p.kind === 'fill' && p.fillStyle === BODY_FILL))
-        // The footprint did not enclose the roof: it stands half a metre (5 px) off
-        expect(roof.every((p) => enclosed(p, footprint))).toBe(false)
-        expect(outline).not.toEqual(footprint)
-      }
+      expect(select(net, train, cam, CLASSIC_160)).toEqual(select(net, train, cam))
     }
-    // Upright, the outline is the footprint as before
-    const { net } = curveLayout()
-    const train = trainAt(net, { x: 200, y: 0 })
-    const cam = createCamera(200, 0, 10)
-    expect(select(net, train, cam, CLASSIC_160)).toEqual(select(net, train, cam))
   })
 
   it('a derailed power car lies on its side with its nose', () => {

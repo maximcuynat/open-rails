@@ -764,6 +764,12 @@ html.phone-desk-page body {
   font-size: 13px;
 }
 
+.phone-foot .phone-pilot.is-active {
+  color: #06101f;
+  background: var(--hud-green);
+  border-color: var(--hud-green);
+}
+
 .phone-foot .phone-estop {
   flex: 2.4 1 0;
   min-width: 0;

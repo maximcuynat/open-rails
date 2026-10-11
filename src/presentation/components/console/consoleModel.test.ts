@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ConsoleGuidance, ConsoleSignal, ConsoleSignals, ConsoleState, FleetEntry } from '@application/console/consoleContract'
+import { CLOSED_CAUSES, type ConsoleGuidance, type ConsoleSignal, type ConsoleSignals, type ConsoleState, type FleetEntry } from '@application/console/consoleContract'
 import { signalPassedMessage } from '@application/state/editorStore'
 import {
   BRAKE_CYLINDER_GAUGE,
@@ -21,6 +21,7 @@ import {
   notchStops,
   signalHeadView,
   signalPassedLabel,
+  closedCauseNote,
   signalsView,
   speedDialTicks,
   speedMinorTicks,
@@ -36,8 +37,8 @@ const baseState: ConsoleState = {
   maxSpeed: 320 / 3.6,
   stopped: false,
   notch: 3,
-  minNotch: -5,
-  maxNotch: 5,
+  minNotch: -10,
+  maxNotch: 10,
   handleEffort: 0.62,
   reverser: 'forward',
   reverserLocked: true,
@@ -59,8 +60,8 @@ const fleet: FleetEntry[] = [
 ]
 
 describe('driving console model', () => {
-  it('names the notches B5 … B1, N, P1 … P5', () => {
-    expect([-5, -1, 0, 1, 5].map(notchLabel)).toEqual(['B5', 'B1', 'N', 'P1', 'P5'])
+  it('names the notches B10 … B1, N, P1 … P10', () => {
+    expect([-10, -1, 0, 1, 10].map(notchLabel)).toEqual(['B10', 'B1', 'N', 'P1', 'P10'])
   })
 
   it('gives the applied effort as a percentage', () => {
@@ -131,9 +132,11 @@ describe('driving console model', () => {
 })
 
 describe('notch stops', () => {
-  it('lists the whole handle from B5 to P5 and lights the traction notches up to the handle', () => {
+  it('lists the whole handle from B10 to P10, names one stop in five, and lights the traction notches up to the handle', () => {
     const stops = notchStops(baseState)
-    expect(stops.map((s) => s.label)).toEqual(['B5', 'B4', 'B3', 'B2', 'B1', 'N', 'P1', 'P2', 'P3', 'P4', 'P5'])
+    expect(stops).toHaveLength(21)
+    expect(stops.slice(8, 13).map((s) => s.label)).toEqual(['B2', 'B1', 'N', 'P1', 'P2'])
+    expect(stops.filter((s) => s.major).map((s) => s.label)).toEqual(['B10', 'B5', 'N', 'P5', 'P10'])
     expect(stops.filter((s) => s.current).map((s) => s.label)).toEqual(['P3'])
     expect(stops.filter((s) => s.passed).map((s) => s.label)).toEqual(['N', 'P1', 'P2'])
     expect(stops.find((s) => s.label === 'B2')!.side).toBe('brake')
@@ -481,6 +484,21 @@ describe('signals', () => {
   it('tells a train waiting for its route before a closed path signal', () => {
     const view = signalsView(signals({ next: signal({ color: 'red', label: 'Arrêt', distance: 40 }), waiting: true }))
     expect(view.notes).toEqual([{ tone: 'warning', text: 'Attente de l’itinéraire' }])
+  })
+
+  it('says why the next signal is closed, in place of the plain wait', () => {
+    const closed = (cause: ConsoleSignal['cause'], waiting = false) =>
+      signalsView(signals({ next: signal({ color: 'red', label: 'Arrêt', distance: 220, cause }), waiting })).notes
+    expect(closed('parked')).toEqual([{ tone: 'warning', text: 'Engagez l’inverseur pour partir' }])
+    expect(closed('not-asked')).toEqual([{ tone: 'info', text: 'Itinéraire donné à l’approche' }])
+    expect(closed('points-against', true)).toEqual([{ tone: 'warning', text: 'Aiguille contre l’itinéraire' }])
+    expect(closed('occupied', true)).toEqual([{ tone: 'warning', text: 'Voie occupée par un autre train' }])
+    expect(closed('reserved', true)).toEqual([{ tone: 'warning', text: 'Voie réservée à un autre train' }])
+    expect(closed('opposed', true)).toEqual([{ tone: 'warning', text: 'Train en sens contraire' }])
+    for (const cause of CLOSED_CAUSES) expect(closedCauseNote(cause).text.length).toBeLessThanOrEqual(32)
+    // The brake alert stays first
+    const braking = signalsView(signals({ next: signal({ color: 'red', distance: 220, cause: 'occupied' }), brakeAlert: true }))
+    expect(braking.notes.map((note) => note.tone)).toEqual(['alert', 'warning'])
   })
 
   it('says how loud the block is: flashing to brake now, steady red after a fault, calm otherwise', () => {

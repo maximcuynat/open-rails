@@ -40,6 +40,8 @@ interface SearchItem {
   parent: string | null
   /** Parameter at which rail B is entered (the start parameter itself when A and B are joined along one rail) */
   goalEntry?: number
+  /** Which of the goals this arrival is at */
+  goalIndex?: number
 }
 
 /** Binary heap on `dist`: the search is run at every pointer move while a zone is being laid */
@@ -93,13 +95,37 @@ const GOAL = 'GOAL'
  * loop is shorter. `a` and `b` at the same place give an empty path of length 0.
  */
 export function findTrackPath(net: Network, a: TrackPoint, b: TrackPoint): TrackPath | null {
+  const found = findTrackPathToAny(net, a, [b])
+  return found ? { spans: found.spans, length: found.length } : null
+}
+
+export interface TrackPathOptions {
+  /** Leave `a` towards the `to` end of its rail only (1) or its `from` end only (0): the way a train faces */
+  leaving?: 0 | 1
+  /** Rails the way must not take (track the train has no business on); the rail of `a` itself is always left freely */
+  blocked?: (segId: SegmentId) => boolean
+}
+
+/**
+ * Shortest way from `a` to the nearest of `goals`, as `findTrackPath` finds it, with the index of
+ * the goal reached. Goals off the track are passed over; null when none can be reached.
+ */
+export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly TrackPoint[], options: TrackPathOptions = {}): (TrackPath & { goal: number }) | null {
   const segA = net.segments.get(a.segId)
-  const segB = net.segments.get(b.segId)
-  if (!segA || !segB) return null
-  if (!net.nodes.has(segA.from) || !net.nodes.has(segA.to) || !net.nodes.has(segB.from) || !net.nodes.has(segB.to)) return null
-  if (!Number.isFinite(a.t) || !Number.isFinite(b.t)) return null
+  if (!segA) return null
+  if (!net.nodes.has(segA.from) || !net.nodes.has(segA.to)) return null
+  if (!Number.isFinite(a.t)) return null
   const ta = Math.max(0, Math.min(1, a.t))
-  const tb = Math.max(0, Math.min(1, b.t))
+  const goalsOn = new Map<SegmentId, { index: number; t: number }[]>()
+  goals.forEach((goal, index) => {
+    const seg = net.segments.get(goal.segId)
+    if (!seg || !net.nodes.has(seg.from) || !net.nodes.has(seg.to) || !Number.isFinite(goal.t)) return
+    const on = goalsOn.get(seg.id) ?? []
+    on.push({ index, t: Math.max(0, Math.min(1, goal.t)) })
+    goalsOn.set(seg.id, on)
+  })
+  if (goalsOn.size === 0) return null
+  const { leaving, blocked } = options
 
   const key = (node: NodeId, inSeg: SegmentId): string => `${inSeg}>${node}`
   const heap = new MinHeap()
@@ -112,10 +138,12 @@ export function findTrackPath(net: Network, a: TrackPoint, b: TrackPoint): Track
   }
 
   // Leaving A by either end of its rail; that rail cannot be taken again straight away
-  offer({ key: key(segA.from, segA.id), node: segA.from, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, 0), parent: null })
-  offer({ key: key(segA.to, segA.id), node: segA.to, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, 1), parent: null })
-  if (segA.id === segB.id) {
-    offer({ key: GOAL, node: segA.from, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, tb), parent: null, goalEntry: ta })
+  if (leaving !== 1) offer({ key: key(segA.from, segA.id), node: segA.from, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, 0), parent: null })
+  if (leaving !== 0) offer({ key: key(segA.to, segA.id), node: segA.to, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, 1), parent: null })
+  for (const goal of goalsOn.get(segA.id) ?? []) {
+    // Further along the rail on the side it is left by; either side when it may be left by both
+    if ((leaving === 1 && goal.t < ta) || (leaving === 0 && goal.t > ta)) continue
+    offer({ key: GOAL, node: segA.from, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, goal.t), parent: null, goalEntry: ta, goalIndex: goal.index })
   }
 
   let goal: SearchItem | null = null
@@ -132,11 +160,16 @@ export function findTrackPath(net: Network, a: TrackPoint, b: TrackPoint): Track
       if (sid === current.inSeg) continue
       const seg = net.segments.get(sid)
       if (!seg || seg.from === seg.to) continue
+      if (blocked?.(sid)) continue
       if (!isPassageOpen(net, current.node, current.inSeg, sid, { anyPosition: true })) continue
       const entry = seg.from === current.node ? 0 : 1
-      if (sid === segB.id) {
-        // Running the whole of rail B to come back to it is never shorter: it is only entered
-        offer({ key: GOAL, node: current.node, inSeg: sid, dist: current.dist + segmentPartialLength(net, sid, entry, tb), parent: current.key, goalEntry: entry })
+      const here = goalsOn.get(sid)
+      if (here) {
+        // Running the whole of a goal's rail to come back to it is never shorter, and a goal
+        // beyond it is further than the one on it: the rail is only entered
+        for (const goal of here) {
+          offer({ key: GOAL, node: current.node, inSeg: sid, dist: current.dist + segmentPartialLength(net, sid, entry, goal.t), parent: current.key, goalEntry: entry, goalIndex: goal.index })
+        }
         continue
       }
       const next = entry === 0 ? seg.to : seg.from
@@ -147,10 +180,12 @@ export function findTrackPath(net: Network, a: TrackPoint, b: TrackPoint): Track
 
   // Walk back from B: the last stretch, the rails run from end to end, then the stretch out of A
   const spans: TrackSpan[] = []
+  const reached = goals[goal.goalIndex!]
+  const tb = Math.max(0, Math.min(1, reached.t))
   if (goal.parent === null) {
     spans.push({ segId: segA.id, t0: ta, t1: tb })
   } else {
-    spans.push({ segId: segB.id, t0: goal.goalEntry!, t1: tb })
+    spans.push({ segId: reached.segId, t0: goal.goalEntry!, t1: tb })
     let item = settled.get(goal.parent)
     while (item) {
       const seg = net.segments.get(item.inSeg)!
@@ -160,5 +195,5 @@ export function findTrackPath(net: Network, a: TrackPoint, b: TrackPoint): Track
     }
     spans.reverse()
   }
-  return { spans: tidyTrackSpans(spans), length: goal.dist }
+  return { spans: tidyTrackSpans(spans), length: goal.dist, goal: goal.goalIndex! }
 }

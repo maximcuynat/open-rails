@@ -1,4 +1,4 @@
-import type { BBox, DatasetIndex, IndexLine, LineId } from './datasetIndex'
+import { lineCategory, type BBox, type DatasetIndex, type IndexLine, type LineCategory, type LineId } from './datasetIndex'
 
 // The way from one station to another over the index, line by line: lines are the vertices,
 // the connections (a node where rails of two lines meet) the edges. The index is tiny (a few
@@ -23,17 +23,47 @@ export function buildLineGraph(index: DatasetIndex): LineGraph {
   return { byId, neighbours }
 }
 
+/** Speed a train makes on a line of each kind, km/h: what a kilometre of it costs in time */
+export const LINE_TRAVEL_SPEED: Record<LineCategory, number> = { highSpeed: 300, main: 140, regional: 90, service: 40 }
+
+/**
+ * What entering a line costs on a journey: the time to run it, so that a journey takes the
+ * high-speed line rather than the classic line beside it, shorter but twice as slow.
+ */
+export function travelWeight(line: IndexLine): number {
+  return line.lengthKm / LINE_TRAVEL_SPEED[lineCategory(line)]
+}
+
+/** What a train can do on the lines: its top speed, and whether it has the cab signalling of the high-speed lines */
+export interface TrainAbility {
+  maxKmh: number
+  cabSignalling: boolean
+}
+
+/**
+ * The cost of entering a line for a given train: the time it takes it, at its own top speed when
+ * that is lower than the line's; a high-speed line cannot be entered at all without its cab
+ * signalling (an infinite cost: the route goes round, or there is none).
+ */
+export function travelWeightFor(train: TrainAbility): (line: IndexLine) => number {
+  return (line) => {
+    const category = lineCategory(line)
+    if (category === 'highSpeed' && !train.cabSignalling) return Infinity
+    return line.lengthKm / Math.min(LINE_TRAVEL_SPEED[category], Math.max(1, train.maxKmh))
+  }
+}
+
 /**
  * The cheapest sequence of lines from any line of `from` to any line of `to`, the lines of
  * `from` costing nothing (the train is already there) and every line entered afterwards its
- * `weight` (its length of track by default). A line in both sets is a route of its own.
- * `null` when the two sets are not connected.
+ * `weight` (the time to run it by default, see `travelWeight`). A line in both sets is a route
+ * of its own. `null` when the two sets are not connected.
  */
 export function shortestLineRoute(
   graph: LineGraph,
   from: ReadonlySet<LineId>,
   to: ReadonlySet<LineId>,
-  weight: (line: IndexLine) => number = (line) => line.lengthKm,
+  weight: (line: IndexLine) => number = travelWeight,
 ): LineId[] | null {
   const cost = new Map<LineId, number>()
   const previous = new Map<LineId, LineId>()
@@ -52,6 +82,8 @@ export function shortestLineRoute(
     for (const next of graph.neighbours.get(current) ?? []) {
       if (settled.has(next)) continue
       const through = cost.get(current)! + weight(graph.byId.get(next)!)
+      // A line that cannot be entered
+      if (!Number.isFinite(through)) continue
       if (through < (cost.get(next) ?? Infinity)) {
         cost.set(next, through)
         previous.set(next, current)
@@ -83,7 +115,7 @@ export interface RouteProblem {
 }
 
 /** The route through two stations or more, in the order given */
-export function routeThroughStations(index: DatasetIndex, stationIds: readonly string[]): JourneyRoute | RouteProblem {
+export function routeThroughStations(index: DatasetIndex, stationIds: readonly string[], weight: (line: IndexLine) => number = travelWeight): JourneyRoute | RouteProblem {
   const stations = new Map(index.stations.map((station) => [station.id, station]))
   for (let i = 0; i < stationIds.length; i++) if (!stations.has(stationIds[i])) return { error: 'unknown-station', at: i }
   if (stationIds.length < 2) return { error: 'no-route', at: stationIds.length }
@@ -93,7 +125,7 @@ export function routeThroughStations(index: DatasetIndex, stationIds: readonly s
   for (let i = 1; i < stationIds.length; i++) {
     const from = stations.get(stationIds[i - 1])!
     const to = stations.get(stationIds[i])!
-    const leg = shortestLineRoute(graph, new Set(from.lines), new Set(to.lines))
+    const leg = shortestLineRoute(graph, new Set(from.lines), new Set(to.lines), weight)
     if (!leg) return { error: 'no-route', at: i }
     legs.push({ from: from.id, to: to.id, lines: leg })
     for (const id of leg) if (!lines.includes(id)) lines.push(id)
@@ -126,6 +158,49 @@ export interface LineGate {
   y: number
   /** The lines met there that are not loaded */
   lines: LineId[]
+}
+
+/**
+ * The nodes where a train bound for a station leaves what is loaded: on the route from the lines
+ * it stands on (`from`; any loaded line when not said) to the lines of the station, the nodes
+ * the first line not loaded shares with the one before it. The route starts where the train is:
+ * a line loaded beside it, on another way to the same place, must not draw it off its own.
+ * None when the route is loaded to the end, or when there is no route.
+ */
+export function gatesToward(
+  index: DatasetIndex,
+  loaded: ReadonlySet<LineId>,
+  stationLines: readonly LineId[],
+  from: ReadonlySet<LineId> = loaded,
+  weight: (line: IndexLine) => number = travelWeight,
+): string[] {
+  const route = shortestLineRoute(buildLineGraph(index), from.size > 0 ? from : loaded, new Set(stationLines), weight)
+  if (!route) return []
+  const first = route.findIndex((id) => !loaded.has(id))
+  if (first < 1) return []
+  const beyond = route[first]
+  const before = route[first - 1]
+  return index.connections.filter((c) => c.lines.includes(beyond) && c.lines.includes(before)).map((c) => c.nodeId)
+}
+
+/** Metres from a point to a box; 0 inside it */
+export function distanceToBox(x: number, y: number, box: BBox): number {
+  return Math.hypot(Math.max(box.minX - x, 0, x - box.maxX), Math.max(box.minY - y, 0, y - box.maxY))
+}
+
+/**
+ * The loaded lines that every one of `points` (where the trains are) is further than `keep`
+ * metres from, those in `held` left out (a train stands on them, or they are being fetched):
+ * what can be dropped.
+ */
+export function linesToDrop(index: DatasetIndex, loaded: ReadonlySet<LineId>, points: readonly { x: number; y: number }[], keep: number, held: ReadonlySet<LineId>): LineId[] {
+  if (points.length === 0) return []
+  const drop: LineId[] = []
+  for (const line of index.lines) {
+    if (!loaded.has(line.id) || held.has(line.id)) continue
+    if (points.every((p) => distanceToBox(p.x, p.y, line.bbox) > keep)) drop.push(line.id)
+  }
+  return drop
 }
 
 /** The connections that lead from a loaded line to one not loaded: where a train leaves what it has */

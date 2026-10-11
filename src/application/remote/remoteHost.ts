@@ -213,6 +213,11 @@ export function createRemoteHost(deps: RemoteHostDeps): RemoteHost {
       seat.brakeTimer = null
       seat.brakeHeld = command.command !== 'hold'
       if (seat.brakeHeld) seat.brakeTimer = scheduler.setTimeout(() => releaseHeldBrake(desk, seat), BRAKE_HOLD_TIMEOUT_MS)
+    } else if (command.type === 'autopilot' && command.on) {
+      // The brake is the pilot's from now on: nothing of the desk's is held any more
+      if (seat.brakeTimer !== null) scheduler.clearTimeout(seat.brakeTimer)
+      seat.brakeTimer = null
+      seat.brakeHeld = false
     } else if (
       command.type === 'selectTrain' ||
       command.type === 'selectTrainByOffset' ||

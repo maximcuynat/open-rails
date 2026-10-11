@@ -1,6 +1,7 @@
 import type { Network, NodeId, Point, SegmentId, TrackSpan } from '../models/types'
 import { addCurveSegment, addNode, addSegment, createNetwork } from '../models/network'
 import { addSpeedZone } from '../models/speedZones'
+import { trackProfile } from '../models/trackSpeed'
 import type { OsmImportOptions } from './osmTypes'
 import type { Chain, ChainEnd, TrackGraph } from './osmGraph'
 import { endKey, type NodeTangents } from './osmJunctions'
@@ -166,6 +167,85 @@ export function buildNetwork(
   return { network, osmNode, railChain, chainRails, lostRails }
 }
 
+/**
+ * Length (m) of track laid slower than the speed OSM gives it: the rails whose curve, read the way
+ * the editor reads it (`trackProfile`, with the zones laid), allows less than the `maxspeed` of
+ * their stretch. What the fitting could not make as fast as the data says.
+ */
+export function slowUnderSpeed(built: BuiltNetwork, chains: Chain[], graph: TrackGraph): number {
+  const highSpeed = graph.edges.some((edge) => edge.track.highSpeed)
+  let lineSpeed = 0
+  for (const edge of graph.edges) if (edge.track.speed !== null && edge.track.speed > lineSpeed) lineSpeed = edge.track.speed
+  if (lineSpeed === 0) return 0
+  const profile = trackProfile(built.network, { lineSpeed, lineType: highSpeed ? 'highSpeed' : 'classic' })
+  let length = 0
+  for (const chain of chains) {
+    const design = designSpeed(chain, highSpeed)
+    if (!design) continue
+    for (const rail of built.chainRails[chain.index]) {
+      const wanted = design.over(rail.s0, rail.s1)
+      const curve = profile.rails.get(rail.segId)
+      if (wanted !== null && curve && curve.maxSpeed < wanted) length += rail.s1 - rail.s0
+    }
+  }
+  return length
+}
+
+/** Chains followed at most from a track without `maxspeed` to the next one that carries one */
+const MAX_SPEED_HOPS = 50
+
+/**
+ * The speed a running track without `maxspeed` is taken to have, for each edge of each chain (null
+ * for an edge that needs none — it carries a speed, or is a service track — and where nothing is
+ * assumed). It is the speed of the track it continues: the nearest `maxspeed` along its chain and
+ * the chains that run on from it (`NodeTangents.through`), the lower of the two when both sides
+ * carry one. A track that continues none takes `defaultSpeed`, unless it is a high-speed track:
+ * that one is left to the line speed. Nothing is assumed when `defaultSpeed` is 0.
+ *
+ * An assumed speed is a ceiling only: the track is not laid for it (`designSpeed` reads what OSM
+ * says and nothing else), and its curves keep the limit of their radius.
+ */
+export function assumedSpeeds(chains: Chain[], tangents: NodeTangents, defaultSpeed: number): (number | null)[][] {
+  if (!(defaultSpeed > 0)) return chains.map((chain) => chain.edges.map(() => null))
+  const fallback = zoneSpeedUnder(defaultSpeed)
+  /** The first `maxspeed` met leaving `chain` by one of its ends, on the chains that run on from it */
+  const beyond = (chain: Chain, atStart: boolean): number | null => {
+    let end: ChainEnd | undefined = tangents.through.get(endKey({ chain, atStart }))
+    for (let hop = 0; end && hop < MAX_SPEED_HOPS; hop++) {
+      const edges = end.atStart ? end.chain.edges : [...end.chain.edges].reverse()
+      for (const edge of edges) if (edge.track.speed !== null) return edge.track.speed
+      end = tangents.through.get(endKey({ chain: end.chain, atStart: !end.atStart }))
+    }
+    return null
+  }
+  return chains.map((chain) => {
+    const edges = chain.edges
+    if (edges.every((edge) => edge.track.speed !== null || edge.track.service)) return edges.map(() => null)
+    // The nearest speed before each edge and after it, within the chain then beyond its ends
+    const before: (number | null)[] = []
+    let last: number | null | undefined
+    edges.forEach((edge, i) => {
+      if (edge.track.speed !== null) last = edge.track.speed
+      else if (last === undefined) last = beyond(chain, true)
+      before[i] = last ?? null
+    })
+    const after: (number | null)[] = []
+    last = undefined
+    for (let i = edges.length - 1; i >= 0; i--) {
+      if (edges[i].track.speed !== null) last = edges[i].track.speed
+      else if (last === undefined) last = beyond(chain, false)
+      after[i] = last ?? null
+    }
+    return edges.map((edge, i) => {
+      if (edge.track.speed !== null || edge.track.service) return null
+      const a = before[i]
+      const b = after[i]
+      if (a !== null && b !== null) return Math.min(a, b)
+      return a ?? b ?? (edge.track.highSpeed ? null : fallback)
+    })
+  })
+}
+
 /** A stretch of a chain at one speed */
 interface SpeedRun {
   chain: Chain
@@ -179,17 +259,19 @@ interface SpeedRun {
 /**
  * Lay the speed zones: one for each stretch of track that carries the same `maxspeed` from one end
  * to the other, followed through the nodes where the track runs on (see `NodeTangents.through`).
- * A service track without `maxspeed` takes `defaultServiceSpeed`. Returns the number of zones laid.
+ * A service track without `maxspeed` takes `defaultServiceSpeed`, a running track without one what
+ * `assumedSpeeds` gives it. Returns the number of zones laid.
  */
 export function laySpeedZones(built: BuiltNetwork, chains: Chain[], tangents: NodeTangents, options: OsmImportOptions): number {
   const serviceSpeed = options.defaultServiceSpeed > 0 ? zoneSpeedUnder(options.defaultServiceSpeed) : null
+  const assumed = assumedSpeeds(chains, tangents, options.defaultTrackSpeed ?? 0)
   const runs: SpeedRun[] = []
   const firstRun = new Map<Chain, SpeedRun>()
   const lastRun = new Map<Chain, SpeedRun>()
   for (const chain of chains) {
     let current: SpeedRun | null = null
     chain.edges.forEach((edge, i) => {
-      const speed = edge.track.speed ?? (edge.track.service ? serviceSpeed : null)
+      const speed = edge.track.speed ?? (edge.track.service ? serviceSpeed : assumed[chain.index][i])
       if (speed === null) {
         current = null
         return

@@ -94,6 +94,7 @@ export function hapticFor(command: ConsoleCommand): number | number[] | null {
     case 'reverser':
     case 'steer':
     case 'switchCab':
+    case 'autopilot':
       return 12
     case 'brake':
       // Coming back to the centre is the spring, not a notch

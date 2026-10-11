@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { convertOsm } from '@domain/import/osmImport'
@@ -17,6 +17,8 @@ import type { DatasetIndex } from '@domain/dataset/datasetIndex'
 import { buildIndex } from './datasetIndex'
 import { fetchAll } from './fetch'
 import { assignLines, groupOfRail, type LineId } from './lines'
+import { absorbSmallLines, cutIntoPieces } from './pieces'
+import { speedDips } from './speedDips'
 import { readManifest, type DatasetManifest } from './manifest'
 
 // The « LGV France » dataset: the whole high-speed network converted once, in the national frame,
@@ -34,6 +36,11 @@ export interface BuiltDataset {
     zonesCut: number
     unlistedHighSpeedWays: number
     convertMs: number
+    /** Track without `maxspeed`, and track laid slower than its `maxspeed` (see `OsmImportReport`), km */
+    lengthWithoutSpeedKm: number
+    slowUnderSpeedKm: number
+    /** Rails whose limit falls well under that of both their neighbours, over all the files (`speedDips`) */
+    speedDips: { dips: number; underZone: number; withoutZone: number }
   }
 }
 
@@ -51,6 +58,7 @@ export function buildDataset(
   registry: readonly StationRegistryEntry[],
   approachWays: ReadonlyMap<string, ReadonlySet<number>>,
   now: Date,
+  regionWays: ReadonlySet<number> = new Set(),
   fileName: (id: LineId) => string = (id) => `${id}.json`,
 ): BuiltDataset {
   resetIdCounter(0)
@@ -62,6 +70,7 @@ export function buildDataset(
     levels: true,
     speedLimits: true,
     defaultServiceSpeed: 30,
+    defaultTrackSpeed: 160,
     keepDetachedOverKm: manifest.keepDetachedOverKm,
     signals: 'generated',
     stations: true,
@@ -72,9 +81,14 @@ export function buildDataset(
   const net = result.network
   matchStationRegistry(net, registry, projectionFor('lambert93', LAMBERT93_ORIGIN))
   const reconcile = reconcileNetworkIntersections(net, placementThresholds(GAUGE).reconcileTolerance)
-  const assignment = assignLines(result, merged, manifest, approachWays)
+  // The lines, then their pieces: what is written, one file each
+  const assignment = cutIntoPieces(net, absorbSmallLines(net, assignLines(result, merged, manifest, approachWays, regionWays)))
   const zonesCut = splitSpeedZonesBy(net, groupOfRail(assignment))
-  const whole = buildOsmProject(result, { levels: true, now })
+  // A file is dated by its data, not by the run that wrote it: the same data gives the same
+  // files, and git sees no change in a piece nothing touched
+  const dataDate = result.dataDate ?? now.toISOString().slice(0, 10)
+  const dated = new Date(dataDate)
+  const whole = buildOsmProject(result, { levels: true, now: Number.isNaN(dated.getTime()) ? now : dated })
 
   const files = new Map<LineId, SerializedProject>()
   const written = new Map<LineId, { file: string; bytes: number; project: SerializedProject }>()
@@ -85,7 +99,13 @@ export function buildDataset(
     files.set(id, slice)
     written.set(id, { file: fileName(id), bytes: JSON.stringify(slice).length, project: slice })
   }
-  const dataDate = result.dataDate ?? now.toISOString().slice(0, 10)
+  const dips = { dips: 0, underZone: 0, withoutZone: 0 }
+  for (const project of files.values()) {
+    const found = speedDips(project)
+    dips.dips += found.dips
+    dips.underZone += found.underZone
+    dips.withoutZone += found.withoutZone
+  }
   const index = buildIndex(net, assignment, written, registry, { dataDate, generatedAt: now.toISOString() })
   return {
     files,
@@ -99,6 +119,9 @@ export function buildDataset(
       zonesCut,
       unlistedHighSpeedWays: assignment.unlistedHighSpeedWays,
       convertMs,
+      lengthWithoutSpeedKm: result.report.lengthWithoutSpeedKm,
+      slowUnderSpeedKm: result.report.slowUnderSpeedKm ?? 0,
+      speedDips: dips,
     },
   }
 }
@@ -134,6 +157,13 @@ ${lines}
 `
 }
 
+/** The index as it is written: one field per line to be read by eye, the strokes of an outline on one line each */
+export function indexText(index: DatasetIndex): string {
+  const text = JSON.stringify(index, (key, value: unknown) => (key === 'outline' ? JSON.stringify(value) : value), 1)
+  // An outline holds numbers only: its text has no quote to escape
+  return text.replace(/"outline": "(\[[^"]*\])"/g, '"outline": $1')
+}
+
 /** The command: fetch (or read the cache), build, write */
 export async function main(argv: string[]): Promise<number> {
   const offline = argv.includes('--offline')
@@ -149,11 +179,15 @@ export async function main(argv: string[]): Promise<number> {
   })
   log(`${fetched.tiles} tiles, ${fetched.asked} queries sent, ${fetched.merged.elements.length} elements merged`)
 
-  const built = buildDataset(fetched.merged, manifest, registry, fetched.approachWays, new Date())
+  const built = buildDataset(fetched.merged, manifest, registry, fetched.approachWays, new Date(), fetched.regionWays)
   const r = built.report
   log(`converted in ${(r.convertMs / 1000).toFixed(1)} s: ${r.rails} rails, ${r.lengthKm.toFixed(0)} km of track, ${r.stations} stations, ${r.droppedComponents} detached parts dropped`)
   log(`reconcile: ${r.reconcile.splitCount} split, ${r.reconcile.weldedCount} welded; ${r.zonesCut} speed zones cut at line borders`)
   log(`${r.unlistedHighSpeedWays} high-speed ways in no listed relation (taken from a neighbour, else « autres »)`)
+
+  log(`speeds: ${r.lengthWithoutSpeedKm.toFixed(1)} km of main track without maxspeed, ${r.slowUnderSpeedKm.toFixed(2)} km laid slower than its maxspeed; ${r.speedDips.dips} rails well under both their neighbours (${r.speedDips.underZone} under a zone, ${r.speedDips.withoutZone} under none)`)
+  // `--dry`: the figures only, nothing written
+  if (argv.includes('--dry')) return 0
 
   mkdirSync(OUT_DIR, { recursive: true })
   let total = 0
@@ -164,7 +198,17 @@ export async function main(argv: string[]): Promise<number> {
     total += text.length
     log(`  ${line.file}: ${line.rails} rails, ${line.lengthKm.toFixed(1)} km, ${(text.length / 1024).toFixed(0)} ko`)
   }
-  writeFileSync(join(OUT_DIR, 'index.json'), JSON.stringify(built.index, null, 1))
+  // The files of a previous run that the index no longer names (lines since cut otherwise) go
+  if (!only) {
+    const kept = new Set(['index.json', 'README.md', ...built.index.lines.map((line) => line.file)])
+    for (const name of readdirSync(OUT_DIR)) {
+      if (name.endsWith('.json') && !kept.has(name)) {
+        unlinkSync(join(OUT_DIR, name))
+        log(`  ${name}: removed (no longer in the index)`)
+      }
+    }
+  }
+  writeFileSync(join(OUT_DIR, 'index.json'), indexText(built.index))
   writeFileSync(join(OUT_DIR, 'README.md'), readme(built.index))
   log(`${built.index.lines.length} lines, ${built.index.stations.length} stations, ${built.index.connections.length} connections; ${(total / 1048576).toFixed(2)} MiB of line files`)
   return 0

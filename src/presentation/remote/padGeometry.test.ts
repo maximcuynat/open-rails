@@ -74,15 +74,15 @@ describe('a brake pad', () => {
 
 describe('padTravel', () => {
   it('is the drawn travel on a tall pad: the lever follows the thumb one for one', () => {
-    expect(padTravel(420, 10 * MIN_SLIDE_PER_NOTCH)).toBe(420)
+    expect(padTravel(420, 20 * MIN_SLIDE_PER_NOTCH)).toBe(420)
   })
 
   it('never asks for less than a deliberate slide on a short pad', () => {
-    const travel = padTravel(135, 10 * MIN_SLIDE_PER_NOTCH)
+    const travel = padTravel(135, 20 * MIN_SLIDE_PER_NOTCH)
     expect(travel).toBe(280)
-    // 13 px was a notch of the drawing: it no longer moves the lever, a full slide does
-    const notchAfter = (dy: number) => notchAtRatio(padRatioAfterDrag(ratioOfNotch(0, -5, 5), dy, travel), -5, 5)
-    expect(notchAfter(-13)).toBe(0)
+    // 6 px was a notch of the drawing: it no longer moves the lever, a full slide does
+    const notchAfter = (dy: number) => notchAtRatio(padRatioAfterDrag(ratioOfNotch(0, -10, 10), dy, travel), -10, 10)
+    expect(notchAfter(-6)).toBe(0)
     expect(notchAfter(-MIN_SLIDE_PER_NOTCH)).toBe(1)
   })
 

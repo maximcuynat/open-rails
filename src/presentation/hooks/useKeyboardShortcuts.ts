@@ -4,6 +4,32 @@ import { findAction, type ActionId } from '@application/keybindings/keybindings'
 import { showToast } from '../components/common/Toast'
 import { flipSelectedSignal } from '../components/common/signalActions'
 
+/** A handle key held down moves the handle one notch every so often, ms: a pace of our own, not the keyboard's */
+export const NOTCH_REPEAT_MS = 120
+
+/** What is remembered of a handle key while it is down */
+export interface NotchHold {
+  /** When the handle last moved, ms */
+  at: number
+  /** The handle came to N: it waits there for the key to be let go */
+  parked: boolean
+}
+
+export const newNotchHold = (): NotchHold => ({ at: -Infinity, parked: false })
+
+/**
+ * Whether a key event moves the handle by `step` from `notch`. A press always does; a held key
+ * does at its pace, and never past N: the driver lets go and presses again to cross it.
+ */
+export function notchKeyMoves(hold: NotchHold, repeat: boolean, notch: number, step: 1 | -1, now: number): boolean {
+  if (repeat && (hold.parked || now - hold.at < NOTCH_REPEAT_MS)) return false
+  hold.at = now
+  hold.parked = notch + step === 0
+  return true
+}
+
+const notchHold = newNotchHold()
+
 /** Brake handle position held by each of the two brake keys */
 const HELD_BRAKE_COMMAND = { 'drive.brakeApply': 'apply', 'drive.brakeRelease': 'release' } as const
 
@@ -22,8 +48,7 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
       if (!store.selectedTrain) {
         // Legacy locomotive: throttle held while the key is down
         store.setLocomotiveThrottle(step)
-      } else if (!e.repeat) {
-        // One notch per key press: holding the key must not sweep the whole handle
+      } else if (notchKeyMoves(notchHold, e.repeat, store.selectedTrain.notch, step, e.timeStamp)) {
         store.stepSelectedTrainNotch(step)
       }
       return
@@ -257,6 +282,7 @@ export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
     }
     return
   }
+  if (action === 'drive.notchUp' || action === 'drive.notchDown') notchHold.parked = false
   // Legacy locomotive: releasing the key that holds the throttle lets it coast
   if (action === 'drive.notchUp' && store.locomotiveThrottle === 1) {
     e.preventDefault()
@@ -269,6 +295,7 @@ export function handleKeyUp(store: EditorStore, e: KeyboardEvent): void {
 
 /** The window lost the focus: no key release will come, so nothing stays held */
 export function handleWindowBlur(store: EditorStore): void {
+  notchHold.parked = false
   if (!store.isPlayMode) return
   if (store.locomotiveThrottle !== 0) store.setLocomotiveThrottle(0)
   store.setSelectedTrainBrakeCommand('hold')

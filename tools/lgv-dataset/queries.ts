@@ -1,4 +1,4 @@
-import type { Approach } from './manifest'
+import type { Approach, Region } from './manifest'
 import type { Tile } from './tiles'
 
 /** Seconds a server is given for one of these queries: a tile of high-speed track is small, a busy server slow */
@@ -35,17 +35,40 @@ export function tileQuery(tile: Tile): string {
 }
 
 /**
- * A classic line into a terminal: the main and branch tracks within reach of the corridor, every
- * track within reach of the terminal, their nodes and the stations beside them.
+ * A classic line into a terminal: the running tracks within reach of the corridor (everything
+ * but yards, sidings, spurs and industrial or tourist lines — the crossovers and the junction
+ * tracks, often without a `usage`, are what joins the main tracks to one another), every track
+ * within reach of the terminal, their nodes and the stations beside them.
  */
 export function approachQuery(approach: Approach): string {
   const line = approach.corridor.map(([lat, lon]) => `${degrees(lat)},${degrees(lon)}`).join(',')
   const [lat, lon] = approach.corridor[approach.corridor.length - 1]
   return [
     `[out:json][timeout:${QUERY_TIMEOUT_S}];`,
-    `(way[railway=rail][usage~"^(main|branch)$"](around:${Math.round(approach.radiusM)},${line});`,
+    `(way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](around:${Math.round(approach.radiusM)},${line});`,
     `way[railway=rail](around:${Math.round(approach.stationRadiusM)},${degrees(lat)},${degrees(lon)});)->.w;`,
     `(.w;.w>;node(around.w:${STATION_REACH_M})[railway~"^(station|halt)$"];);`,
     'out body qt;',
+  ].join('\n')
+}
+
+/** Seconds a server is given for a whole region */
+export const REGION_TIMEOUT_S = 300
+
+/**
+ * The classic lines of a region: its running tracks (as for an approach: everything but yards,
+ * sidings, spurs and industrial or tourist lines), their nodes, its stations, and the line
+ * relations the tracks belong to — a classic line is named by its relation, there are too many
+ * to list by hand.
+ */
+export function regionQuery(region: Region): string {
+  return [
+    `[out:json][timeout:${REGION_TIMEOUT_S}];`,
+    `area["ISO3166-2"="${region.iso}"]->.r;`,
+    'way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](area.r)->.w;',
+    '(.w;.w>;node[railway~"^(station|halt)$"](area.r););',
+    'out body qt;',
+    'rel(bw.w)[type=route][route~"^(tracks|railway)$"];',
+    'out body;',
   ].join('\n')
 }

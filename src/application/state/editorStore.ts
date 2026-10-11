@@ -5,7 +5,8 @@ import { networkCheckToken, touchNetwork, verifyingNetworkRevisions } from '@dom
 import { dirtyNodesOf, networkChangesSince } from '@domain/geometry/networkFollower'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
 import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
-import { createNetwork, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
+import { raiseIdCounter } from '@domain/models/ids'
+import { createNetwork, syncIdCounter, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
 import { computeParallelCurve } from '@domain/geometry/curve'
 import { CURVE_RADII } from '@domain/profiles/profiles'
@@ -51,8 +52,8 @@ import { LINE_SPEED_RANGE, overlapsOfZone, rerailTrain } from '@domain/models/sp
 import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
-import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
-import { connectionsToward } from '@domain/dataset/lineRoute'
+import { lineCategory, type BBox, type DatasetIndex, type LineId } from '@domain/dataset/datasetIndex'
+import { connectionsToward, linesToDrop } from '@domain/dataset/lineRoute'
 import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
 import type { MergeOutcome } from '@application/import/mergeReport'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
@@ -68,6 +69,8 @@ import {
 } from '@infrastructure/persistence/persistence'
 import {
   loadConsolePreference,
+  loadDrivingAid,
+  saveDrivingAid,
   loadTimeFactorPreference,
   loadKeyPreferences,
   loadRemoteHostPreference,
@@ -98,7 +101,13 @@ import {
   type TrainHitResult,
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
-import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockModel } from '@domain/models/rollingStock'
+import { railTintOf } from '@infrastructure/render/datasetOverview'
+import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
+import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
+import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
+import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
+import type { SegmentId, StationId, StationStop } from '@domain/models/types'
 import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
@@ -378,6 +387,22 @@ export class EditorStore {
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
   /** The trains held by a phone desk, by desk number (set by the remote session); empty outside driving */
   trainDrivers = new Map<string, number>()
+  /** The way of each train to the next station of its itinerary, found on the track loaded; never saved */
+  routeGuides = new Map<string, RouteGuideState>()
+  private routeGuideElapsed = 0
+  /** The trains the automatic pilot drives, with what it remembers of each; never saved */
+  autopilots = new Map<string, PilotMemory>()
+
+  /** Hand a train to the automatic pilot, or take it back */
+  setAutopilot = (trainId: string, on: boolean): void => {
+    if (on === this.autopilots.has(trainId)) return
+    if (on) this.autopilots.set(trainId, newPilotMemory())
+    else this.autopilots.delete(trainId)
+    this.notify()
+  }
+
+  /** How much the game helps along an itinerary: way drawn and points set, way drawn only, or nothing */
+  drivingAid: DrivingAid = 'full'
   /** The desks seated in the room and the name each driver gave, by desk number */
   deskNames = new Map<number, string>()
 
@@ -388,6 +413,59 @@ export class EditorStore {
   datasetIndex: DatasetIndex | null = null
   /** The files of the lines loaded, kept to be put together again when a line is added */
   datasetFiles = new Map<LineId, SerializedProject>()
+  /** Bumped whenever a file comes or goes: what is worked out from the files is worked out again */
+  private datasetFilesRevision = 0
+  private railTintCache: { index: DatasetIndex; revision: number; tint: (segId: string) => string | undefined } | null = null
+  private railLineCache: { revision: number; lineOf: Map<SegmentId, LineId> } | null = null
+
+  /**
+   * The rails of a dataset project a train must keep off: those of the high-speed lines, for a
+   * train without their cab signalling. Undefined when it may go anywhere.
+   */
+  railsBlockedFor = (train: TrainSet): ((segId: SegmentId) => boolean) | undefined => {
+    const index = this.datasetIndex
+    if (!this.dataset || !index || train.vehicles.every((veh) => stockSpec(veh).cabSignalling)) return undefined
+    const highSpeed = new Set(index.lines.filter((line) => lineCategory(line) === 'highSpeed').map((line) => line.id))
+    const railLine = this.railLine
+    return (segId) => {
+      const line = railLine.get(segId)
+      return line !== undefined && highSpeed.has(line)
+    }
+  }
+
+  /** The lines (or pieces of lines) of the dataset a train stands on */
+  linesUnder = (train: TrainSet): Set<LineId> => {
+    const railLine = this.railLine
+    const under = new Set<LineId>()
+    for (const veh of train.vehicles) {
+      for (const pos of [veh.front, veh.rear]) {
+        const line = railLine.get(pos.segId)
+        if (line) under.add(line)
+      }
+    }
+    return under
+  }
+
+  /** The file (line, or piece of a line) each rail of a dataset project came with; the first that holds it */
+  private get railLine(): Map<SegmentId, LineId> {
+    const cache = this.railLineCache
+    if (cache && cache.revision === this.datasetFilesRevision) return cache.lineOf
+    const lineOf = new Map<SegmentId, LineId>()
+    for (const [id, file] of this.datasetFiles) for (const seg of file.segments) if (!lineOf.has(seg.id)) lineOf.set(seg.id, id)
+    this.railLineCache = { revision: this.datasetFilesRevision, lineOf }
+    return lineOf
+  }
+
+  /** The colour of the kind of line each rail of a dataset project belongs to; undefined on any other project */
+  get railTint(): ((segId: string) => string | undefined) | undefined {
+    const index = this.datasetIndex
+    if (!this.dataset || !index || this.datasetFiles.size === 0) return undefined
+    const cache = this.railTintCache
+    if (cache && cache.index === index && cache.revision === this.datasetFilesRevision) return cache.tint
+    const tint = railTintOf(index, this.datasetFiles)
+    this.railTintCache = { index, revision: this.datasetFilesRevision, tint }
+    return tint
+  }
   /** Fetches the files of some lines; set by the application layer (the store does not fetch) */
   datasetLoader: ((lines: LineId[]) => Promise<Map<LineId, SerializedProject>>) | null = null
   /** Lines asked for and not arrived yet */
@@ -396,6 +474,8 @@ export class EditorStore {
   datasetReloadPending = false
   /** How long the last addition of lines took, in ms (read by the measuring scripts) */
   datasetLastAddMs = 0
+  /** How long the last drop of lines took, ms (measures) */
+  datasetLastRemoveMs = 0
   /** The stored recipe-only project, kept until its lines are fetched again (trains and camera to put back) */
   datasetStoredProject: SerializedProject | null = null
   /** Seconds since the trains were last checked against the connections to lines not loaded */
@@ -1052,6 +1132,8 @@ export class EditorStore {
     this.loadKeyPreferences()
     const savedConsole = loadConsolePreference()
     if (isConsolePreference(savedConsole)) this.consolePreference = savedConsole
+    const savedAid = loadDrivingAid()
+    if (isDrivingAid(savedAid)) this.drivingAid = savedAid
     const savedFactor = Number(loadTimeFactorPreference())
     if (isTimeFactor(savedFactor)) this.timeFactor = savedFactor
     this.remoteDeskHost = loadRemoteHostPreference()
@@ -1303,17 +1385,31 @@ export class EditorStore {
     if (this.datasetCheckElapsed < DATASET_CHECK_PERIOD_S) return
     this.datasetCheckElapsed = 0
     const gates = connectionsToward(this.datasetIndex, new Set(this.dataset.lines))
-    if (gates.length === 0) return
     const wanted = new Set<LineId>()
+    const leads: Point[] = []
     for (const train of this.trains) {
       const lead = train.vehicles[0]
       const pos = lead ? positionOnSegment(this.network, lead.front.segId, lead.front.t) : null
       if (!pos) continue
+      leads.push(pos)
       for (const gate of gates) {
         if (Math.hypot(gate.x - pos.x, gate.y - pos.y) > DATASET_LOOKAHEAD_M) continue
         for (const id of gate.lines) if (!this.datasetPending.has(id)) wanted.add(id)
       }
     }
+    // What every train has left far behind is dropped: never what a train stands on, nor what
+    // was just asked for. Further than what is fetched, so that nothing comes and goes
+    const held = new Set<LineId>([...wanted, ...this.datasetPending])
+    const railLine = this.railLine
+    for (const train of this.trains) {
+      for (const veh of train.vehicles) {
+        for (const pos of [veh.front, veh.rear]) {
+          const line = railLine.get(pos.segId)
+          if (line) held.add(line)
+        }
+      }
+    }
+    this.removeDatasetLines(linesToDrop(this.datasetIndex, new Set(this.dataset.lines), leads, DATASET_KEEP_M, held))
     if (wanted.size === 0) return
     const ids = [...wanted]
     for (const id of ids) this.datasetPending.add(id)
@@ -1344,11 +1440,13 @@ export class EditorStore {
       this.datasetFiles.set(id, project)
     }
     if (added.length === 0) return 0
+    this.datasetFilesRevision++
     const before = this.network.segments.size
     const t0 = performance.now()
     const union = unionProjects([...this.datasetFiles.values()])
     const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
     const res = deserializeNetwork(union, tolerance, this.network)
+    this.keepTrainIdsClear()
     if (res.sectionMeta) {
       const keys = Object.keys(res.sectionMeta).filter((key) => !(key in this.sectionMeta))
       for (const key of keys) this.sectionMeta[key] = res.sectionMeta[key]
@@ -1359,6 +1457,59 @@ export class EditorStore {
     this.savePersistedState()
     this.notify()
     return this.network.segments.size - before
+  }
+
+  /**
+   * Putting lines onto the live network sets the ids to come after those of the track alone: the
+   * trains, which are not part of what is put back, keep theirs — a train added afterwards must
+   * not be given the id of one that is running.
+   */
+  private keepTrainIdsClear(): void {
+    let highest = 0
+    const scan = (id: string): void => {
+      const n = Number(id.slice(id.lastIndexOf('_') + 1))
+      if (Number.isInteger(n) && n > highest) highest = n
+    }
+    for (const train of this.trains) {
+      scan(train.id)
+      for (const veh of train.vehicles) scan(veh.id)
+    }
+    raiseIdCounter(highest)
+  }
+
+  /**
+   * Drop some lines (or pieces of lines) of the dataset project, in place: what is left is put
+   * back onto the live network, the rails of the lines dropped go and everything else stays the
+   * object it is. A line a vehicle stands on is kept whatever is asked, and so is the last one.
+   * Returns how many rails went.
+   */
+  removeDatasetLines = (ids: readonly LineId[]): number => {
+    if (!this.dataset || ids.length === 0) return 0
+    const railLine = this.railLine
+    const occupied = new Set<LineId>()
+    for (const train of this.trains) {
+      for (const veh of train.vehicles) {
+        for (const pos of [veh.front, veh.rear]) {
+          const line = railLine.get(pos.segId)
+          if (line) occupied.add(line)
+        }
+      }
+    }
+    const going = ids.filter((id) => this.datasetFiles.has(id) && !occupied.has(id))
+    if (going.length === 0 || going.length >= this.datasetFiles.size) return 0
+    for (const id of going) this.datasetFiles.delete(id)
+    this.datasetFilesRevision++
+    const before = this.network.segments.size
+    const t0 = performance.now()
+    const union = unionProjects([...this.datasetFiles.values()])
+    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
+    deserializeNetwork(union, tolerance, this.network)
+    this.keepTrainIdsClear()
+    this.dataset = { ...this.dataset, lines: this.dataset.lines.filter((id) => !going.includes(id)) }
+    this.datasetLastRemoveMs = performance.now() - t0
+    this.savePersistedState()
+    this.notify()
+    return before - this.network.segments.size
   }
 
   /**
@@ -1595,6 +1746,8 @@ export class EditorStore {
   setTool = (t: Tool): void => {
     // A dataset project keeps its track as it is: only the looking and train tools apply
     if (this.isNetworkLocked && !DATASET_LOCKED_TOOLS.has(t)) return
+    // While trains run nothing is laid nor cut: the track is what they run on
+    if (this.isPlayMode && !DATASET_LOCKED_TOOLS.has(t)) return
     // If transitioning away from an active creation without finishing, clean up abandoned degree 0 nodes
     this.discardPendingPlacement()
 
@@ -3072,6 +3225,8 @@ export class EditorStore {
       this.startSimulationLoop()
     } else {
       this.trainDrivers.clear()
+      this.autopilots.clear()
+      this.rakePlacement = null
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       resetSignalling(this.signalling)
@@ -3422,6 +3577,135 @@ export class EditorStore {
     return true
   }
 
+  /**
+   * Set a complete rake of `model` down at a platform of a station of the network, facing the way
+   * out, select it and put the camera on its head, close enough for its bogies to show. Returns
+   * the stop it stands at; null for an unknown station, or when no platform free of the other
+   * trains holds the whole rake. While trains are being driven it joins them: it stands at rest,
+   * brakes applied, and this screen moves to it — the train it was on keeps its pilot if it has
+   * one, else it is left with its brake where it is, like any train let go of.
+   */
+  placeRakeAtStation = (stationId: StationId, rake: RollingStockModel | RakeChoice): StationStop | null => {
+    const station = this.network.stations.get(stationId)
+    if (!station) return null
+    const placed = createRakeAtStation(this.network, station, rake, this.trains)
+    if (!placed) return null
+    startItineraryAt(placed.train, stationId)
+    this.adoptRake(placed.train)
+    return placed.stop
+  }
+
+  /**
+   * Set a complete rake of `model` down on the track nearest to a place of the world, facing the
+   * way with most track ahead: a train put anywhere, while the others run. False when there is no
+   * track near enough, or when the whole rake does not fit there clear of the other trains.
+   */
+  placeRakeAt = (worldPos: Point, rake: RollingStockModel | RakeChoice): boolean => {
+    const snap = snapToNearestTrack(this.network, worldPos, Math.max(12, 45 / this.camera.scale))
+    const train = snap ? createRakeAtTrack(this.network, snap.segId, snap.t, rake, this.trains) : null
+    if (!train) return false
+    this.rakePlacement = null
+    this.adoptRake(train)
+    return true
+  }
+
+  /** A rake just set down joins the trains: selected, in view close enough for its bogies, at rest when the others are driven */
+  private adoptRake(train: TrainSet): void {
+    if (this.isPlayMode) {
+      resetTrainControls(train)
+      this.centreSelectedTrainBrake()
+      this.followLocomotiveCamera = true
+    }
+    this.trains = [...this.trains, train]
+    this.trainChainId = null
+    this.selectTrainById(train.id)
+    this.refreshCouplerPoints()
+    const head = trainAnchors(this.network, [train]).get(train.id)
+    if (head) {
+      this.camera.x = head.x
+      this.camera.y = head.y
+      this.camera.scale = clampScale(RAKE_START_SCALE)
+    }
+    this.commitTrainChange()
+  }
+
+  /**
+   * No train of this screen while the simulation runs: the view is free, the trains go on under
+   * their pilots, and a train can be taken, or a new one set down.
+   */
+  get isFreeView(): boolean {
+    return this.isPlayMode && this.selectedTrainId === null
+  }
+
+  /** The rake the next click on the track sets down; null when no placing is armed */
+  rakePlacement: RakeChoice | null = null
+
+  armRakePlacement = (rake: RakeChoice | null): void => {
+    this.rakePlacement = rake
+    this.notify()
+  }
+
+  /**
+   * Put the ids to come back after those of this project: to be called after a network was read
+   * on the side (a station looked at before a train is set down there), which moves the counter
+   * to the ids of that other network.
+   */
+  restoreIdCounter = (): void => {
+    syncIdCounter(this.network)
+    this.keepTrainIdsClear()
+  }
+
+  /**
+   * Leave the train of this screen to its automatic pilot and look elsewhere. Only a train the
+   * pilot holds can be left: nobody would drive it otherwise. Returns false when it was not.
+   */
+  leaveTrain = (): boolean => {
+    const train = this.selectedTrain
+    if (!this.isPlayMode || !train || !this.autopilots.has(train.id)) return false
+    this.releaseTrainSelection()
+    this.followLocomotiveCamera = false
+    this.notify()
+    return true
+  }
+
+  setDrivingAid = (aid: DrivingAid): void => {
+    if (this.drivingAid === aid) return
+    this.drivingAid = aid
+    saveDrivingAid(aid)
+    // At once, not at the next second: the points ahead of every train on its way
+    for (const train of this.trains) if (train.itinerary) refreshRouteGuide(this, train)
+    this.notify()
+  }
+
+  /** Points were set for a train by the driving aid: the panels and the canvas are told */
+  pointsThrownByAid = (): void => {
+    this.markDirty()
+    this.notify()
+  }
+
+  /** The itinerary of a train was changed: its way is found again, the project saved, the panels told */
+  itineraryChanged = (train: TrainSet): void => {
+    this.routeGuides.delete(train.id)
+    refreshRouteGuide(this, train)
+    this.dirty = true
+    this.savePersistedState()
+    this.notify()
+  }
+
+  /** Once a second while driving: where each train is on the way to its next station */
+  private checkItineraries(dt: number): void {
+    this.routeGuideElapsed += dt
+    if (this.routeGuideElapsed < ROUTE_GUIDE_PERIOD_S) return
+    this.routeGuideElapsed = 0
+    let called = false
+    for (const train of this.trains) if (train.itinerary && refreshRouteGuide(this, train)) called = true
+    for (const id of [...this.routeGuides.keys()]) if (!this.trains.some((t) => t.id === id)) this.routeGuides.delete(id)
+    if (called) {
+      this.dirty = true
+      this.savePersistedState()
+    }
+  }
+
   /** Place a new independent locomotive TrainSet at worldPos */
   placeTrainLoco = (worldPos: Point): boolean => {
     return this.placeTrainItem(worldPos, 'tgv_loco')
@@ -3715,7 +3999,7 @@ export class EditorStore {
   /** Dynamics of the driven trains as of the last simulation step; dropped by any notification */
   private drivenDynamics: Map<TrainSet, TrainDynamics> | null = null
 
-  /** Put a train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
+  /** Put a train's handle on a notch: MIN_NOTCH (B10) … 0 (N) … MAX_NOTCH (P10) */
   setTrainNotch = (train: TrainSet, notch: number): void => {
     if (setNotch(train, Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, notch)))) this.notify()
   }
@@ -3740,13 +4024,13 @@ export class EditorStore {
     this.notify()
   }
 
-  /** Put the selected train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
+  /** Put the selected train's handle on a notch: MIN_NOTCH (B10) … 0 (N) … MAX_NOTCH (P10) */
   setSelectedTrainNotch = (notch: number): void => {
     const train = this.hostTrain
     if (train) this.setTrainNotch(train, notch)
   }
 
-  /** Move the selected train's handle by one notch; it stops at B5 and at P5 */
+  /** Move the selected train's handle by one notch; it stops at B10 and at P10 */
   stepSelectedTrainNotch = (step: 1 | -1): void => {
     const train = this.hostTrain
     if (train) this.setSelectedTrainNotch(train.notch + step)
@@ -4490,8 +4774,9 @@ export class EditorStore {
     this.drivenDynamics = null
     const occupancy: TrainOccupancyCache = new Map()
     const env = this.drivingEnvironment
-    // Driven: held by a desk, or the train of this screen
-    const isDriven = (train: TrainSet): boolean => train.id === this.selectedTrainId || this.trainDrivers.has(train.id)
+    // Driven: held by a desk, the train of this screen, or one the automatic pilot holds
+    const isDriven = (train: TrainSet): boolean => train.id === this.selectedTrainId || this.trainDrivers.has(train.id) || this.autopilots.has(train.id)
+    runAutopilots(this, dt)
     for (const train of this.trains) {
       if (!isDriven(train)) {
         // Nobody holds the brake handle of a train that is not driven
@@ -4507,6 +4792,7 @@ export class EditorStore {
     for (const trainId of [...this.trainDrivers.keys()]) if (!this.trains.some((t) => t.id === trainId)) this.trainDrivers.delete(trainId)
     // A train nearing a line of the dataset that is not loaded: its file is asked for now
     this.checkDatasetLines(dt)
+    this.checkItineraries(dt)
     // Once every train has moved: what each one holds, what the signals show, the signals passed
     // (nothing at all on a network without signal)
     // A driven train holds the track over the stopping distance its physics works out; the
@@ -4566,8 +4852,14 @@ export type TimeFactor = (typeof TIME_FACTORS)[number]
 export const isTimeFactor = (v: unknown): v is TimeFactor => (TIME_FACTORS as readonly number[]).includes(v as number)
 /** How close (m) a train's lead comes to a connection before the line beyond it is fetched */
 export const DATASET_LOOKAHEAD_M = 5000
+/** A loaded line every train is further than this (m) from is dropped; well beyond `DATASET_LOOKAHEAD_M` */
+export const DATASET_KEEP_M = 20_000
 /** How often (s) the trains are checked against the connections */
 const DATASET_CHECK_PERIOD_S = 1
+/** How often (s) the trains are placed on the way to their next station */
+const ROUTE_GUIDE_PERIOD_S = 1
+/** Camera scale (px per metre) a rake set down at a station is shown at: its bogies show from 3.5 */
+const RAKE_START_SCALE = 4
 /** What a dataset project writes in place of its track: nothing (never changed) */
 const EMPTY_NETWORK = createNetwork()
 

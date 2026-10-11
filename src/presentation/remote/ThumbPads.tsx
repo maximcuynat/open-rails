@@ -129,7 +129,7 @@ export function TractionPad({ state, stops, title, onCommand, children }: {
     <ThumbPad
       side="traction"
       title={title}
-      stops={stops.map((stop) => ({ ratio: ratioOf(stop.notch), label: stop.label, active: stop.notch === notch }))}
+      stops={stops.map((stop) => ({ ratio: ratioOf(stop.notch), label: stop.major ? stop.label : '', active: stop.notch === notch }))}
       ratio={ratioOf(notch)}
       tone={notch < 0 ? 'amber' : notch > 0 ? 'green' : 'grey'}
       fillFrom={ratioOf(0)}

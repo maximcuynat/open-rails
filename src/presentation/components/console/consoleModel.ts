@@ -8,7 +8,7 @@ import type {
   ConsoleTurnout,
   FleetEntry,
 } from '@application/console/consoleContract'
-import type { SignalColor } from '@domain/models/signalling'
+import type { ClosedCause, SignalColor } from '@domain/models/signalling'
 import {
   BRAKE_CYLINDER_MAX_BAR,
   BRAKE_PIPE_FIRST_REDUCTION,
@@ -21,7 +21,7 @@ import {
  * Pure description: the React components only render it, the tests read it directly.
  */
 
-/** Handle position: B5 … B1 (electric brake), N, P1 … P5 (traction) */
+/** Handle position: B10 … B1 (electric brake), N, P1 … P10 (traction) */
 export function notchLabel(notch: number): string {
   return notch > 0 ? `P${notch}` : notch < 0 ? `B${-notch}` : 'N'
 }
@@ -146,12 +146,17 @@ export type HandleSide = 'traction' | 'neutral' | 'brake'
 export interface NotchStop {
   notch: number
   label: string
+  /** Named on the scale; the others are bare graduations */
+  major: boolean
   side: HandleSide
   /** The handle stands on this stop */
   current: boolean
   /** Between neutral and the handle: lit along with it */
   passed: boolean
 }
+
+/** One stop in this many carries its name on a scale */
+const MAJOR_NOTCH_EVERY = 5
 
 const sideOf = (notch: number): HandleSide => (notch > 0 ? 'traction' : notch < 0 ? 'brake' : 'neutral')
 
@@ -163,6 +168,7 @@ export function notchStops(state: Pick<ConsoleState, 'notch' | 'minNotch' | 'max
     stops.push({
       notch,
       label: legacy ? LEGACY_THROTTLE_LABEL[notch] ?? String(notch) : notchLabel(notch),
+      major: legacy || notch % MAJOR_NOTCH_EVERY === 0,
       side: sideOf(notch),
       current: notch === state.notch,
       passed: notch !== state.notch && (state.notch > 0 ? notch >= 0 && notch < state.notch : notch <= 0 && notch > state.notch),
@@ -476,6 +482,20 @@ export function signalPassedNote(braked: boolean): string {
   return braked ? 'Signal fermé franchi · urgence' : 'Signal fermé franchi'
 }
 
+/** Why the next signal is closed, in one short line */
+const CLOSED_CAUSE_NOTES: Record<ClosedCause, SignalNote> = {
+  parked: { tone: 'warning', text: 'Engagez l’inverseur pour partir' },
+  'not-asked': { tone: 'info', text: 'Itinéraire donné à l’approche' },
+  'points-against': { tone: 'warning', text: 'Aiguille contre l’itinéraire' },
+  occupied: { tone: 'warning', text: 'Voie occupée par un autre train' },
+  reserved: { tone: 'warning', text: 'Voie réservée à un autre train' },
+  opposed: { tone: 'warning', text: 'Train en sens contraire' },
+}
+
+export function closedCauseNote(cause: ClosedCause): SignalNote {
+  return CLOSED_CAUSE_NOTES[cause]
+}
+
 export function overspeedNote(braked: boolean): string {
   return braked ? 'Survitesse · urgence' : 'Survitesse'
 }
@@ -513,7 +533,9 @@ export function signalsView(signals: ConsoleSignals): SignalsView {
   if (signals.passed) notes.push({ tone: 'alert', text: signalPassedNote(signals.passed.braked) })
   if (signals.overspeed) notes.push({ tone: 'alert', text: overspeedNote(signals.overspeed.braked) })
   if (signals.onSight) notes.push({ tone: 'warning', text: `Marche à vue — ${signals.onSightSpeed} km/h` })
-  if (signals.waiting) notes.push({ tone: 'warning', text: 'Attente de l’itinéraire' })
+  // The cause says more than the wait: it takes its place when the signalling knows it
+  if (next?.cause && !signals.cab) notes.push(closedCauseNote(next.cause))
+  else if (signals.waiting) notes.push({ tone: 'warning', text: 'Attente de l’itinéraire' })
   if (signals.closedDistance !== null && !signals.brakeAlert) {
     notes.push({ tone: 'info', text: `Signal fermé à ${stoppingDistanceLabel(signals.closedDistance)}` })
   }
@@ -597,7 +619,7 @@ export function consoleView(state: ConsoleState, fleet: readonly FleetEntry[]): 
     speedRatio: Math.max(0, Math.min(1, state.speed / Math.max(state.maxSpeed, 1e-6))),
     legacy,
     handleSide,
-    handleTitle: legacy ? 'Commande' : handleSide === 'brake' ? 'Frein élec.' : 'Traction',
+    handleTitle: `${state.autopilot ? 'Pilote · ' : ''}${legacy ? 'Commande' : handleSide === 'brake' ? 'Frein élec.' : 'Traction'}`,
     handleLabel: legacy ? LEGACY_THROTTLE_LABEL[state.notch] ?? '' : `${notchLabel(state.notch)} · ${handlePercent} %`,
     handlePercent,
     composition: `${state.locoCount}M · ${state.wagonCount}V`,

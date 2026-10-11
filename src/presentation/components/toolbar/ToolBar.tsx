@@ -639,7 +639,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                   aria-label={ROLLING_STOCK[model].label}
                   aria-pressed={store.trainPlacementModel === model}
                 >
-                  <span style={{ fontSize: '9px', fontWeight: 700 }}>{ROLLING_STOCK[model].label.replace('TGV ', '')}</span>
+                  <span style={{ fontSize: '9px', fontWeight: 700 }}>{ROLLING_STOCK[model].label.replace('TGV ', '').replace('TER ', '')}</span>
                 </button>
                 {hoverId === `train-model-${model}` && (
                   <div className="tb-tooltip">

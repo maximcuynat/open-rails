@@ -3,7 +3,7 @@ import { addArcCurve, addNode, addSegment, createNetwork, resetIdCounter } from 
 import { placeTurnout, setJunctionBranch } from '../models/junction'
 import { snapToNearestTrack } from '../models/locomotive'
 import type { Network } from '../models/types'
-import { findTrackPath, trackSpansEnds, trackSpansLength } from './trackPath'
+import { findTrackPath, findTrackPathToAny, trackSpansEnds, trackSpansLength } from './trackPath'
 
 beforeEach(() => resetIdCounter(0))
 
@@ -167,5 +167,45 @@ describe('findTrackPath', () => {
     const one = addSegment(net, a.id, b.id)!
     const two = addSegment(net, b.id, c.id)!
     expect(findTrackPath(net, { segId: one.id, t: 0.5 }, { segId: two.id, t: 0.5 })).toBeNull()
+  })
+})
+
+describe('findTrackPathToAny', () => {
+  /** A 1000 m straight in two rails end to end */
+  function line() {
+    const net = createNetwork()
+    const n = [0, 500, 1000].map((x) => addNode(net, { x, y: 0 }))
+    const first = addSegment(net, n[0].id, n[1].id)!
+    const second = addSegment(net, n[1].id, n[2].id)!
+    return { net, first, second }
+  }
+
+  it('reaches the nearest goal and says which', () => {
+    const { net, first, second } = line()
+    const goals = [{ segId: second.id, t: 0.8 }, { segId: second.id, t: 0.2 }, { segId: 's_nope', t: 0.5 }]
+    const path = findTrackPathToAny(net, { segId: first.id, t: 0.5 }, goals)!
+    expect(path.goal).toBe(1)
+    expect(path.length).toBeCloseTo(350, 9)
+    expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, [])).toBeNull()
+    expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, [{ segId: 's_nope', t: 0.5 }])).toBeNull()
+  })
+
+  it('leaves only by the end asked for: a goal behind a train is not ahead of it', () => {
+    const { net, first, second } = line()
+    const from = { segId: first.id, t: 0.5 }
+    const ahead = [{ segId: second.id, t: 0.5 }]
+    expect(findTrackPathToAny(net, from, ahead, { leaving: 1 })!.length).toBeCloseTo(500, 9)
+    expect(findTrackPathToAny(net, from, ahead, { leaving: 0 })).toBeNull()
+    // On the rail of the start itself
+    const behind = [{ segId: first.id, t: 0.1 }]
+    expect(findTrackPathToAny(net, from, behind, { leaving: 0 })!.length).toBeCloseTo(200, 9)
+    expect(findTrackPathToAny(net, from, behind, { leaving: 1 })).toBeNull()
+  })
+
+  it('keeps off the rails it is told to, and still leaves the rail it starts on', () => {
+    const { net, first, second } = line()
+    const goal = [{ segId: second.id, t: 0.5 }]
+    expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, goal, { blocked: (id) => id === second.id })).toBeNull()
+    expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, goal, { blocked: (id) => id === first.id })!.length).toBeCloseTo(500, 9)
   })
 })

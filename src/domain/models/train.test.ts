@@ -227,12 +227,12 @@ describe('driving controls', () => {
     const { net, ts } = makeTrain()
     releaseBrake(ts)
     setReverser(ts, 'forward')
-    setNotch(ts, 1)
+    setNotch(ts, 2)
     tickTrainSet(net, ts, 0.5)
     expect(ts.tractionEffort).toBeCloseTo(0.1, 6)
     tickTrainSet(net, ts, 4.5)
-    expect(ts.tractionEffort).toBeCloseTo(1 / MAX_NOTCH, 6)
-    const oneNotch = trainDynamics(net, ts)
+    expect(ts.tractionEffort).toBeCloseTo(2 / MAX_NOTCH, 6)
+    const twoNotches = trainDynamics(net, ts)
 
     setNotch(ts, MAX_NOTCH)
     tickTrainSet(net, ts, 3.9)
@@ -243,8 +243,8 @@ describe('driving controls', () => {
 
     // A lone power car: 106 kN of starting effort
     expect(full.tractionForce).toBeCloseTo(106_000, 0)
-    expect(oneNotch.tractionForce).toBeCloseTo(full.tractionForce / MAX_NOTCH, 0)
-    expect(full.acceleration).toBeGreaterThan(oneNotch.acceleration)
+    expect(twoNotches.tractionForce).toBeCloseTo((2 * full.tractionForce) / MAX_NOTCH, 0)
+    expect(full.acceleration).toBeGreaterThan(twoNotches.acceleration)
   })
 
   it('brakes harder as the brake pipe empties and stops exactly at zero', () => {
@@ -308,7 +308,7 @@ describe('driving controls', () => {
     expect(trainDynamics(net, ts).stoppingDistance).toBe(0)
   })
 
-  it('clamps the handle to MIN_NOTCH…MAX_NOTCH: B5 to P5', () => {
+  it('clamps the handle to MIN_NOTCH…MAX_NOTCH: B10 to P10', () => {
     const { ts } = makeTrain()
     setNotch(ts, 99)
     expect(ts.notch).toBe(MAX_NOTCH)
@@ -316,7 +316,7 @@ describe('driving controls', () => {
     expect(ts.notch).toBe(-2)
     setNotch(ts, -99)
     expect(ts.notch).toBe(MIN_NOTCH)
-    expect(MIN_NOTCH).toBe(-5)
+    expect(MIN_NOTCH).toBe(-10)
   })
 
   it('moves forward or backward according to the reverser', () => {

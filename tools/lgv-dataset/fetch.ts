@@ -5,7 +5,7 @@ import type { OverpassResponse } from '@domain/import/osmTypes'
 import { OsmError } from '@infrastructure/osm/osmError'
 import type { DatasetManifest } from './manifest'
 import { mergeAnswers, wayIdsOf } from './merge'
-import { approachQuery, tileQuery } from './queries'
+import { approachQuery, regionQuery, tileQuery } from './queries'
 import { splitTile, tileKey, tilesOf, type Tile } from './tiles'
 
 export interface FetchOptions {
@@ -23,6 +23,8 @@ export interface FetchedData {
   merged: OverpassResponse
   /** The ways each approach brought, by approach id */
   approachWays: Map<string, Set<number>>
+  /** The ways the regions brought: classic track, named by its line relation */
+  regionWays: Set<number>
   /** How many queries went to the servers (not the cache) */
   asked: number
   tiles: number
@@ -78,5 +80,11 @@ export async function fetchAll(manifest: DatasetManifest, cacheDir: string, opti
     approachWays.set(approach.id, wayIdsOf(answer))
     answers.push(answer)
   }
-  return { merged: mergeAnswers(answers), approachWays, asked, tiles }
+  const regionWays = new Set<number>()
+  for (const region of manifest.regions ?? []) {
+    const answer = await cached(`region-${region.id}`, regionQuery(region))
+    for (const id of wayIdsOf(answer)) regionWays.add(id)
+    answers.push(answer)
+  }
+  return { merged: mergeAnswers(answers), approachWays, regionWays, asked, tiles }
 }

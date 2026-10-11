@@ -449,7 +449,7 @@ describe('EditorStore persistence', () => {
       expect(reset.mock.calls.map(([t]) => t.id).sort()).toEqual(store.trains.map((t) => t.id).sort())
     })
 
-    it('steps the handle one notch at a time, from B5 to P5 and no further', () => {
+    it('steps the handle one notch at a time, from B10 to P10 and no further', () => {
       const store = makeDrivingStore()
       const train = store.selectedTrain!
 
@@ -462,14 +462,14 @@ describe('EditorStore persistence', () => {
       // Under N: the electric brake notches
       for (let i = 0; i < 4; i++) store.stepSelectedTrainNotch(-1)
       expect(train.notch).toBe(-3)
-      for (let i = 0; i < 6; i++) store.stepSelectedTrainNotch(-1)
+      for (let i = 0; i < 9; i++) store.stepSelectedTrainNotch(-1)
       expect(train.notch).toBe(trainModel.MIN_NOTCH)
-      store.setSelectedTrainNotch(-12)
+      store.setSelectedTrainNotch(-22)
       expect(train.notch).toBe(trainModel.MIN_NOTCH)
 
-      for (let i = 0; i < 14; i++) store.stepSelectedTrainNotch(1)
+      for (let i = 0; i < 24; i++) store.stepSelectedTrainNotch(1)
       expect(train.notch).toBe(trainModel.MAX_NOTCH)
-      store.setSelectedTrainNotch(12)
+      store.setSelectedTrainNotch(22)
       expect(train.notch).toBe(trainModel.MAX_NOTCH)
     })
 

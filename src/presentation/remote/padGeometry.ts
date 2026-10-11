@@ -7,7 +7,7 @@
  */
 
 /** The least a thumb slides to move a traction lever by one notch, px */
-export const MIN_SLIDE_PER_NOTCH = 28
+export const MIN_SLIDE_PER_NOTCH = 14
 /** The least travel a brake pad is read on, px: its dead zone is a share of it (`BRAKE_LEVER_DEAD_ZONE`) */
 export const MIN_BRAKE_TRAVEL = 240
 

@@ -2,7 +2,7 @@ import type { Reverser } from '@domain/models/train'
 import type { BrakeCommand } from '@domain/models/trainDynamics'
 import type { CurveState, Derailment, UpcomingSpeedLimit } from '@domain/models/speedLimits'
 import type { SignallingLevel } from '@domain/models/signals'
-import type { SignalColor, SignalIndication, SlowdownSpeed } from '@domain/models/signalling'
+import type { ClosedCause, SignalColor, SignalIndication, SlowdownSpeed } from '@domain/models/signalling'
 import type { CabIndicationKind } from '@domain/models/cabSignalling'
 
 /**
@@ -48,6 +48,9 @@ export interface ConsoleGuidance {
   derailed: Derailment | null
 }
 
+/** Every `ClosedCause`, for what reads a state from the wire */
+export const CLOSED_CAUSES: readonly ClosedCause[] = ['parked', 'not-asked', 'points-against', 'occupied', 'reserved', 'opposed']
+
 /** A signal ahead of the train, as its signalling level shows it (`signalAspect`) */
 export interface ConsoleSignal {
   /** Distance from the head of the train, m */
@@ -69,6 +72,8 @@ export interface ConsoleSignal {
   slowdown?: SlowdownSpeed
   /** Pro level, only there when lit: the reminder of that speed before the points (two yellow lamps one above the other) */
   reminder?: SlowdownSpeed
+  /** Only there for a closed signal: why it is closed for this train */
+  cause?: ClosedCause
 }
 
 /** The target speed shown in the cab of a high-speed line (see `cabSignalling.ts`) */
@@ -152,7 +157,33 @@ export interface ConsoleState {
   signals?: ConsoleSignals
   /** The train met first on the route ahead; null when the route is clear as far as it is looked at. Absent from an older PC */
   ahead?: ConsoleTrainAhead | null
+  /** Where the train is going; absent when it has no itinerary, and from an older PC */
+  route?: ConsoleRoute
+  /** True while the automatic pilot holds the handles; absent from an older PC */
+  autopilot?: boolean
 }
+
+/** The itinerary of the driven train, as its driver needs it */
+export interface ConsoleRoute {
+  /** The station headed for; null once arrived */
+  next: string | null
+  /** Metres to it; null when not known */
+  distance: number | null
+  /** `distance` is measured along the track all the way (false: partly as the crow flies) */
+  exact: boolean
+  /** The last station of the journey; null once arrived */
+  destination: string | null
+  /** Metres to the destination, an estimate; null when not known */
+  total: number | null
+  status: ConsoleRouteStatus
+}
+
+/**
+ * `ok` a way ahead is known · `behind` the way starts behind the train (change cabs) ·
+ * `no-path` no way on the track loaded · `arrived` the last station is reached
+ */
+export type ConsoleRouteStatus = 'ok' | 'behind' | 'no-path' | 'arrived'
+export const CONSOLE_ROUTE_STATUSES: readonly ConsoleRouteStatus[] = ['ok', 'behind', 'no-path', 'arrived']
 
 /** The train ahead of the driven one on its route, as the points lie */
 export interface ConsoleTrainAhead {
@@ -205,6 +236,8 @@ export type ConsoleCommand =
   | { type: 'releaseControls' }
   /** Put the derailed train back on the track */
   | { type: 'rerail' }
+  /** Hand the train to the automatic pilot, or take it back; moving a handle takes it back too */
+  | { type: 'autopilot'; on: boolean }
 
 export const CONSOLE_COMMAND_TYPES = [
   'notchStep',
@@ -218,4 +251,5 @@ export const CONSOLE_COMMAND_TYPES = [
   'selectTrainByOffset',
   'releaseControls',
   'rerail',
+  'autopilot',
 ] as const satisfies readonly ConsoleCommand['type'][]

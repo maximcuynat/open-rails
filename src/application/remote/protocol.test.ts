@@ -83,6 +83,8 @@ const COMMANDS: ConsoleCommand[] = [
   { type: 'selectTrainByOffset', offset: -1 },
   { type: 'releaseControls' },
   { type: 'rerail' },
+  { type: 'autopilot', on: true },
+  { type: 'autopilot', on: false },
 ]
 
 const decode = (value: unknown) => decodeMessage(JSON.stringify(value))
@@ -384,6 +386,11 @@ describe('protocol: rejection', () => {
     expect(next({ indication: 'rappel', reminder: 30 }).ok).toBe(true)
     expect(next({ slowdown: 40 })).toEqual(malformed)
     expect(next({ reminder: null })).toEqual(malformed)
+    // Why a closed signal is closed: one of the causes, or not there at all
+    expect(next({ color: 'red', cause: 'parked' }).ok).toBe(true)
+    expect(next({ color: 'red', cause: 'points-against' }).ok).toBe(true)
+    expect(next({ cause: 'broken' })).toEqual(malformed)
+    expect(next({ cause: null })).toEqual(malformed)
     expect(signals({ overspeed: { braked: true } }).ok).toBe(true)
     expect(signals({ overspeed: true })).toEqual(malformed)
     expect(signals({ overspeed: {} })).toEqual(malformed)

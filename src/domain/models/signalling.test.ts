@@ -962,3 +962,89 @@ describe('cost', () => {
     expect(movingMs).toBeLessThan(4)
   })
 })
+
+describe('why the signal ahead is closed', () => {
+  const causeAhead = (state: SignallingState, train: TrainSet) => state.trains.get(train.id)!.nextSignal?.cause
+
+  it('a parked train asks for nothing: its path signal stays closed until the reverser is thrown', () => {
+    const layout = crossoverLayout()
+    const { net, pa } = layout
+    layout.route('straight')
+    const train = trainAt(net, 700, 0, 'east')
+    const state = createSignallingState()
+    updateSignalling(net, [train], state)
+    expect(state.trains.get(train.id)!.nextSignal).toMatchObject({ id: pa.id, state: 'stop', cause: 'parked' })
+
+    drive(train, 0)
+    updateSignalling(net, [train], state)
+    const next = state.trains.get(train.id)!.nextSignal!
+    expect(next.id).toBe(pa.id)
+    expect(next.state).not.toBe('stop')
+    expect('cause' in next).toBe(false)
+  })
+
+  it('a path signal further than the approach distance has not been asked yet', () => {
+    const layout = crossoverLayout()
+    const { net, pa } = layout
+    layout.route('straight')
+    const train = drive(trainAt(net, 100, 0, 'east'), 0)
+    const state = createSignallingState()
+    updateSignalling(net, [train], state)
+    expect(state.trains.get(train.id)!.nextSignal).toMatchObject({ id: pa.id, state: 'stop', cause: 'not-asked' })
+  })
+
+  it('tells a route another train stands on from one another train holds', () => {
+    const layout = crossoverLayout()
+    const { net } = layout
+    layout.route('straight')
+    const standing = trainAt(net, 1500, 0, 'east')
+    const onA = drive(trainAt(net, 700, 0, 'east'), 0)
+    const state = createSignallingState()
+    updateSignalling(net, [standing, onA], state)
+    expect(causeAhead(state, onA)).toBe('occupied')
+
+    // A single track given to the train that asked first: the other one finds it held
+    const single = singleTrackLayout()
+    single.west('main')
+    single.east('main')
+    const eastbound = drive(trainAt(single.net, 700, 0, 'east'), 10)
+    const westbound = drive(trainAt(single.net, 3300, 0, 'west'), 10)
+    const held = createSignallingState()
+    updateSignalling(single.net, [westbound, eastbound], held)
+    expect(causeAhead(held, eastbound)).toBe('reserved')
+  })
+
+  it('tells points set against the route', () => {
+    const layout = crossoverLayout()
+    const { net } = layout
+    layout.route('diverging')
+    const train = drive(trainAt(net, 700, 20, 'east'), 0)
+    const state = createSignallingState()
+    updateSignalling(net, [train], state)
+    expect(causeAhead(state, train)).toBe('points-against')
+  })
+
+  it('tells a train coming the other way on the track that follows', () => {
+    const layout = singleTrackLayout()
+    const { net } = layout
+    layout.west('main')
+    layout.east('main')
+    signalAt(net, 2000, 0, 'east')
+    signalAt(net, 2000, 0, 'west')
+    const eastbound = drive(trainAt(net, 700, 0, 'east'), 10)
+    const westbound = drive(trainAt(net, 3300, 0, 'west'), 10)
+    const state = createSignallingState()
+    updateSignalling(net, [eastbound, westbound], state)
+    expect(stateOf(state, layout.exitEastMain)).toBe('stop')
+    expect(causeAhead(state, westbound)).toBe('opposed')
+  })
+
+  it('a closed block signal says whether its block is occupied', () => {
+    const { net, signals } = blockLine()
+    const standing = trainAt(net, 1500, 0, 'east')
+    const train = drive(trainAt(net, 300, 0, 'east'), 0)
+    const state = createSignallingState()
+    updateSignalling(net, [standing, train], state)
+    expect(state.trains.get(train.id)!.nextSignal).toMatchObject({ id: signals[0].id, state: 'stop', cause: 'occupied' })
+  })
+})
