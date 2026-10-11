@@ -84,7 +84,11 @@ export function buildDataset(
   // The lines, then their pieces: what is written, one file each
   const assignment = cutIntoPieces(net, absorbSmallLines(net, assignLines(result, merged, manifest, approachWays, regionWays)))
   const zonesCut = splitSpeedZonesBy(net, groupOfRail(assignment))
-  const whole = buildOsmProject(result, { levels: true, now })
+  // A file is dated by its data, not by the run that wrote it: the same data gives the same
+  // files, and git sees no change in a piece nothing touched
+  const dataDate = result.dataDate ?? now.toISOString().slice(0, 10)
+  const dated = new Date(dataDate)
+  const whole = buildOsmProject(result, { levels: true, now: Number.isNaN(dated.getTime()) ? now : dated })
 
   const files = new Map<LineId, SerializedProject>()
   const written = new Map<LineId, { file: string; bytes: number; project: SerializedProject }>()
@@ -102,7 +106,6 @@ export function buildDataset(
     dips.underZone += found.underZone
     dips.withoutZone += found.withoutZone
   }
-  const dataDate = result.dataDate ?? now.toISOString().slice(0, 10)
   const index = buildIndex(net, assignment, written, registry, { dataDate, generatedAt: now.toISOString() })
   return {
     files,
