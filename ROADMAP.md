@@ -133,6 +133,11 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
   en navigateur sans tête, et le jeu de données réel
   (`tools/perf/measure-itinerary.test.ts`) : Marseille → Avignon TGV → Lyon Part-Dieu trouvé rail
   à rail (325 km, 50 à 140 ms de recherche, mesure de la distance restante en 0,004 ms).
+- **Étapes et quais (2026-10-12).** À une gare d'étape la rame vise un quai d'où elle peut
+  repartir : un quai traversant sur le chemin de la gare suivante, ou, dans un terminus, un quai
+  relié à la sortie vers elle (elle y change de cabine). Avant, elle visait le quai le plus
+  proche, parfois une voie en impasse. Sous l'aide complète, une rame à l'arrêt envoyée dans le
+  sens opposé à celui où elle est posée change de cabine toute seule.
 - **Défaut du jeu de données, corrigé le 2026-10-12.** Paris Gare de Lyon et le nord de Lyon
   Part-Dieu étaient injoignables par le rail : les couloirs des raccordements s'écartaient de la
   voie (jusqu'à 740 m à Paris, 4 km à Lyon nord, pour un rayon de 400 m) et le raccordement de
@@ -176,7 +181,18 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 - **Reste.**
   - Un import OpenStreetMap ordinaire n'a pas de catégorie : il faut la lire des attributs à
     l'import et la garder par section.
-  - Étape 3 : extension du jeu de données aux lignes classiques, par régions (après le lot B).
+  - Étape 3, **commencée le 2026-10-12 par une région pilote** : Provence-Alpes-Côte d'Azur.
+    Le manifeste nomme une région (`regions`), le générateur en prend toutes les voies de
+    circulation et nomme chaque ligne d'après sa relation OpenStreetMap (« Ligne de
+    Marseille-Saint-Charles à Vintimille »…), principale ou régionale selon ses voies. 17 lignes
+    classiques, 1 860 km de voie, 142 gares de plus (200 en tout) ; le jeu passe de 9 à 15 Mo et
+    sa génération de 30 à 90 s. Trajets vérifiés rail à rail : Marseille → Toulon → Nice,
+    Marseille → Briançon, Nice → Toulon → Marseille → Avignon → Lyon (rebroussement à
+    Saint-Charles), Nice → Paris (971 km).
+  - Les autres régions restent à ajouter une à une. Ordre de grandeur : l'Île-de-France a deux
+    fois plus de voies que PACA ; la France entière pèserait autour de 100 Mo, à décider avant
+    de continuer (dépôt, temps de génération).
+  - Les trains restent des TGV : pas encore de matériel TER ou Intercités.
 - **Vérifié par.** Tests du rendu par palier (`lodTracks.test.ts`), et en navigateur.
 
 ### Lot C — Vue d'ensemble grossière au dézoom

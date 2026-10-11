@@ -11,6 +11,16 @@ export interface DatasetManifest {
   /** The lines to publish, in order of precedence: a way in two of them goes to the first */
   lines: LineSpec[]
   approaches: Approach[]
+  /** The regions whose classic lines are published too; none when absent */
+  regions?: Region[]
+}
+
+/** A region of France taken whole: every running track of its classic lines */
+export interface Region {
+  id: string
+  name: string
+  /** Its ISO 3166-2 code (`FR-PAC`), which names its area for Overpass */
+  iso: string
 }
 
 /** A published line: the OSM relations whose member ways make it */

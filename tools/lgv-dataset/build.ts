@@ -17,7 +17,7 @@ import type { DatasetIndex } from '@domain/dataset/datasetIndex'
 import { buildIndex } from './datasetIndex'
 import { fetchAll } from './fetch'
 import { assignLines, groupOfRail, type LineId } from './lines'
-import { cutIntoPieces } from './pieces'
+import { absorbSmallLines, cutIntoPieces } from './pieces'
 import { readManifest, type DatasetManifest } from './manifest'
 
 // The « LGV France » dataset: the whole high-speed network converted once, in the national frame,
@@ -52,6 +52,7 @@ export function buildDataset(
   registry: readonly StationRegistryEntry[],
   approachWays: ReadonlyMap<string, ReadonlySet<number>>,
   now: Date,
+  regionWays: ReadonlySet<number> = new Set(),
   fileName: (id: LineId) => string = (id) => `${id}.json`,
 ): BuiltDataset {
   resetIdCounter(0)
@@ -74,7 +75,7 @@ export function buildDataset(
   matchStationRegistry(net, registry, projectionFor('lambert93', LAMBERT93_ORIGIN))
   const reconcile = reconcileNetworkIntersections(net, placementThresholds(GAUGE).reconcileTolerance)
   // The lines, then their pieces: what is written, one file each
-  const assignment = cutIntoPieces(net, assignLines(result, merged, manifest, approachWays))
+  const assignment = cutIntoPieces(net, absorbSmallLines(net, assignLines(result, merged, manifest, approachWays, regionWays)))
   const zonesCut = splitSpeedZonesBy(net, groupOfRail(assignment))
   const whole = buildOsmProject(result, { levels: true, now })
 
@@ -158,7 +159,7 @@ export async function main(argv: string[]): Promise<number> {
   })
   log(`${fetched.tiles} tiles, ${fetched.asked} queries sent, ${fetched.merged.elements.length} elements merged`)
 
-  const built = buildDataset(fetched.merged, manifest, registry, fetched.approachWays, new Date())
+  const built = buildDataset(fetched.merged, manifest, registry, fetched.approachWays, new Date(), fetched.regionWays)
   const r = built.report
   log(`converted in ${(r.convertMs / 1000).toFixed(1)} s: ${r.rails} rails, ${r.lengthKm.toFixed(0)} km of track, ${r.stations} stations, ${r.droppedComponents} detached parts dropped`)
   log(`reconcile: ${r.reconcile.splitCount} split, ${r.reconcile.weldedCount} welded; ${r.zonesCut} speed zones cut at line borders`)

@@ -14,7 +14,7 @@ import { fetchAll } from './fetch'
 import { assignLines, readLineRelations } from './lines'
 import type { DatasetManifest } from './manifest'
 import { mergeAnswers } from './merge'
-import { approachQuery, tileQuery } from './queries'
+import { approachQuery, regionQuery, tileQuery } from './queries'
 import { splitTile, tileKey, tilesOf } from './tiles'
 
 const manifest = (over: Partial<DatasetManifest> = {}): DatasetManifest => ({
@@ -66,6 +66,14 @@ describe('queries', () => {
     expect(q).toContain('way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](around:400,43.4,5.37,43.3,5.38)')
     expect(q).toContain('way[railway=rail](around:1500,43.3,5.38)')
     expect(q).not.toContain('rel(')
+  })
+
+  it('ask a region for its running tracks, its stations and the line relations that name them', () => {
+    const q = regionQuery({ id: 'paca', name: 'Provence-Alpes-Côte d’Azur', iso: 'FR-PAC' })
+    expect(q).toContain('area["ISO3166-2"="FR-PAC"]->.r;')
+    expect(q).toContain('way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](area.r)->.w;')
+    expect(q).toContain('node[railway~"^(station|halt)$"](area.r)')
+    expect(q).toContain('rel(bw.w)[type=route][route~"^(tracks|railway)$"];')
   })
 })
 
@@ -157,6 +165,21 @@ describe('the line of each rail', () => {
     expect(lines.get('lgv-sud-est')).toEqual({ id: 'lgv-sud-est', name: 'LGV Sud-Est', ref: '752000', highSpeed: true })
     expect(unlistedHighSpeedWays).toBe(2)
     expect(lineOf.size).toBe(result.network.segments.size)
+  })
+
+  it('names a classic way of a region after its line relation, main or branch by what its ways say', () => {
+    const d = data()
+    // Way 200 as classic track: in the relation 901 « Ligne de Test à Essai », which no line of the manifest lists
+    for (const element of d.elements) if (element.type === 'way' && element.id === 200) element.tags = { railway: 'rail', usage: 'branch' }
+    const result = convertOsm(d, options({ traceWays: true }))
+    const { lineOf, lines } = assignLines(result, d, manifest({ approaches: [], lines: [] }), new Map(), new Set([200]))
+    const classic = [...lines.values()].find((line) => line.category !== undefined)!
+    expect(classic).toMatchObject({ name: 'Ligne de Test à Essai', highSpeed: false })
+    expect(classic.id).toMatch(/^ligne-/)
+    expect(classic.category).toBe('regional')
+    expect([...lineOf.values()]).toContain(classic.id)
+    // Without the region, the same way says nothing
+    expect([...assignLines(result, d, manifest({ approaches: [], lines: [] }), new Map()).lines.values()].some((line) => line.category !== undefined)).toBe(false)
   })
 
   it('gives a way to the first listed line that holds it', () => {
