@@ -581,15 +581,50 @@ export function trackPositionLevel(net: Network, pos: { segId: string; t: number
   return trackPositionBand(net, pos)
 }
 
+/** How far a vehicle reaches along the track: beyond each bogie, and from one bogie to the other (m) */
+export interface VehicleExtent {
+  front: number
+  rear: number
+  wheelbase: number
+}
+
+/** The body of a vehicle is looked at this often (m) between its bogies: no deck is shorter */
+const BODY_LEVEL_STEP = 4
+
+/** Level of each vehicle where it last stood, kept until it moves or the network changes */
+const vehicleLevels = new WeakMap<object, { token: number; key: string; level: number }>()
+
 /**
  * Level of a vehicle: the height of the rail under its bogies, the higher of the two when it
  * straddles a change of level. At the foot of a ramp it is still on the ground.
+ *
+ * With `extent`, the highest rail under the whole body, nose and tail included: a vehicle is
+ * drawn over a deck as soon as any of it is on the deck, and not once its bogie is — else its nose
+ * went under the deck it was running onto, and so did the middle of a body over a short bridge.
  */
 export function vehicleLevel(
   net: Network,
-  vehicle: { front: { segId: string; t: number }; rear: { segId: string; t: number } },
+  vehicle: { front: { segId: string; t: number; forward?: boolean }; rear: { segId: string; t: number; forward?: boolean } },
+  extent?: VehicleExtent,
 ): number {
-  return Math.max(trackPositionLevel(net, vehicle.front), trackPositionLevel(net, vehicle.rear))
+  const { front, rear } = vehicle
+  const bogies = Math.max(trackPositionLevel(net, front), trackPositionLevel(net, rear))
+  if (!extent || front.forward === undefined || rear.forward === undefined || !hasLevels(net)) return bogies
+  const token = networkCheckToken(net)
+  const key = `${front.segId}|${front.t}|${rear.segId}|${rear.t}`
+  const known = vehicleLevels.get(vehicle)
+  if (token !== undefined && known && known.token === token && known.key === key) return known.level
+  let level = bogies
+  const look = (pos: TrackPosition | null): void => {
+    if (pos) level = Math.max(level, trackPositionLevel(net, pos))
+  }
+  if (extent.front > 0) look(walkForward(net, front.segId, front.t, front.forward, extent.front))
+  if (extent.rear > 0) look(walkBackward(net, rear.segId, rear.t, rear.forward, extent.rear))
+  for (let back = BODY_LEVEL_STEP; back < extent.wheelbase; back += BODY_LEVEL_STEP) {
+    look(walkBackward(net, front.segId, front.t, front.forward, back))
+  }
+  if (token !== undefined) vehicleLevels.set(vehicle, { token, key, level })
+  return level
 }
 
 /** The rails in view (`isSegmentInBounds`), in the order of the network, found on its grid */
@@ -2783,12 +2818,15 @@ import {
   getTrackCurvatureAt,
   sampleForwardTrack,
   findJunctionAhead,
+  walkBackward,
+  walkForward,
   type BogieFrame,
   type TGVDetails,
   type TGVAccordion,
   type TGVFullTrain,
 } from '@domain/models/locomotive'
 import type { TrainSet, CouplerPoint } from '@domain/models/train'
+import { bogieDistance, endOverhang } from '@domain/models/rollingStock'
 import { getTrainSetVisuals, MAX_COUPLE_DISTANCE } from '@domain/models/train'
 import { trainDynamics, type DrivingEnvironment } from '@domain/models/trainDynamics'
 
@@ -4789,11 +4827,15 @@ export function renderTrainSet(
   // Track level of each vehicle, and of the train as a whole (its highest vehicle)
   const levelById = new Map<string, number>()
   let topLevel = -Infinity
-  for (const veh of train.vehicles) {
-    const level = vehicleLevel(net, veh)
+  train.vehicles.forEach((veh, i) => {
+    const level = vehicleLevel(net, veh, {
+      front: endOverhang(train.vehicles, i, 'front'),
+      rear: endOverhang(train.vehicles, i, 'rear'),
+      wheelbase: bogieDistance(veh),
+    })
     levelById.set(veh.id, level)
     if (level > topLevel) topLevel = level
-  }
+  })
   const levelOf = (vehicleId: string): number => levelById.get(vehicleId) ?? 0
   // A gangway hangs between two vehicles: it follows the higher one
   const gangwayLevel = (index: number): number =>

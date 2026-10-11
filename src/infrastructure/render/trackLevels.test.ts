@@ -340,6 +340,21 @@ describe('track levels — trains', () => {
     expect(vehicleLevel(net, { front: pos(ramp.id, 0.4), rear: pos(ramp.id, 0.6) })).toBe(1)
     expect(vehicleLevel(net, { front: pos('gone'), rear: pos('gone') })).toBe(0)
 
+    // With its extent, the whole body counts: the nose on the upper half of the ramp is enough
+    const whole = { front: 10, rear: 5, wheelbase: 20 }
+    const at = (segId: string, t: number) => ({ segId, t, forward: true })
+    expect(vehicleLevel(net, { front: at(ramp.id, 0.45), rear: at(ramp.id, 0.25) }, whole)).toBe(1)
+    expect(vehicleLevel(net, { front: at(ramp.id, 0.3), rear: at(ramp.id, 0.1) }, whole)).toBe(0)
+    // …and so does the tail of a vehicle that runs down the ramp
+    expect(vehicleLevel(net, { front: { segId: ramp.id, t: 0.3, forward: false }, rear: { segId: ramp.id, t: 0.48, forward: false } }, whole)).toBe(1)
+    // A deck shorter than the vehicle, between its bogies
+    const short = createNetwork()
+    const [p, q, r, s2, u] = [0, 40, 44, 48, 100].map((x, i) => addNode(short, { x, y: 0 }, i === 2 ? 1 : 0))
+    const rails = [addSegment(short, p.id, q.id)!, addSegment(short, q.id, r.id)!, addSegment(short, r.id, s2.id)!, addSegment(short, s2.id, u.id)!]
+    const over = { front: { segId: rails[3].id, t: 0.1, forward: true }, rear: { segId: rails[0].id, t: 0.9, forward: true } }
+    expect(vehicleLevel(short, over)).toBe(0)
+    expect(vehicleLevel(short, over, whole)).toBe(1)
+
     expect(inLevelBand(3)).toBe(true)
     expect(inLevelBand(0, { above: -Infinity, upTo: 0 })).toBe(true)
     expect(inLevelBand(1, { above: -Infinity, upTo: 0 })).toBe(false)
