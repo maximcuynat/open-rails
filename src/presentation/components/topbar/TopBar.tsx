@@ -1,3 +1,4 @@
+import { MODE_STATUS_LABELS, modeSwitchView } from './modeSwitch'
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { OPEN_SANDBOX_EVENT } from '../hud/FreeViewPanel'
 import { MenuBar, type MenuDef } from './Menu'
@@ -32,6 +33,25 @@ interface TopBarProps {
   /** The phone desk session, opened from the Simulation menu */
   remote: RemoteSession
   onFitView: () => void
+}
+
+/** The mode of the application, always in view: building or playing, and what the time of the game is doing */
+function ModeSwitch({ store }: { store: EditorStore }) {
+  const view = modeSwitchView(store)
+  const choose = (playing: boolean): void => {
+    if (playing !== store.isPlayMode) store.togglePlayMode()
+  }
+  return (
+    <div className="tb-mode" role="radiogroup" aria-label="Mode">
+      <button type="button" role="radio" aria-checked={view.build.active} className={`tb-mode-choice${view.build.active ? ' is-active' : ''}`} title={view.build.title} onClick={() => choose(false)}>
+        {view.build.label}
+      </button>
+      <button type="button" role="radio" aria-checked={view.play.active} className={`tb-mode-choice${view.play.active ? ' is-active' : ''}`} title={view.play.title} disabled={view.play.disabled} onClick={() => choose(true)}>
+        {view.play.label}
+        {view.status && <span className={`tb-mode-status is-${view.status}`}>{MODE_STATUS_LABELS[view.status]}</span>}
+      </button>
+    </div>
+  )
 }
 
 export function TopBar({ store, remote, onFitView }: TopBarProps) {
@@ -397,6 +417,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         </div>
         <MenuBar menus={menus} />
         <div className="tb-right">
+          <ModeSwitch store={store} />
           <button
             className="tb-scale"
             onClick={store.openSettings}

@@ -24,9 +24,14 @@ dont Échap et Espace.
   Simulation. Un train neuf est à l'arrêt, freins serrés (`makeTrainSet`). Les pupitres téléphone
   lâchent leur train à la sortie (manette au neutre). Les pilotes sont effacés au chargement d'un
   projet ; ceux d'un train disparu, à la reprise.
-- [ ] **Lot 3 — mode visible.** Indicateur « Édition | Jeu » ; en bac à sable, plus de mode édition
-  (attelage et dételage en jeu, à l'arrêt). La confirmation de sortie n'a plus lieu d'être : quitter
-  ne perd plus rien.
+- [x] **Lot 3a — mode visible.** Sélecteur « Édition | Jeu » toujours affiché dans la barre du haut
+  (`topbar/modeSwitch.ts`, `ModeSwitch` dans `TopBar.tsx`), avec l'état du temps à côté de « Jeu » :
+  en marche, en pause, suspendue. Sur un réseau réel le côté édition s'appelle « Trains » (la voie
+  y est verrouillée). « Jeu » est grisé sans train.
+- [ ] **Lot 3b — bac à sable sans mode « Trains ».** Demande d'abord, en jeu et à l'arrêt :
+  atteler et dételer (les rames changent d'identifiant : pilotes, itinéraires et pupitres à
+  reporter), retirer un train, poser un véhicule seul. Tant que ce n'est pas fait, le mode
+  « Trains » reste le seul endroit où le faire.
 - [ ] **Lot 4 — plus tard.** État en cours enregistré (vitesses, pilotes) pour reprendre après un
   rechargement.
 
