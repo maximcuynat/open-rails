@@ -61,9 +61,9 @@ export const BRAKE_PIPE_FULL_SERVICE = 3.5
 export const BRAKE_CYLINDER_MAX_BAR = 3.8
 
 /** Number of traction notches: each one is an equal share of the available effort */
-export const TRACTION_NOTCHES = 5
+export const TRACTION_NOTCHES = 10
 /** Number of electric brake notches under N: each one is an equal share of the available effort */
-export const ELECTRIC_BRAKE_NOTCHES = 5
+export const ELECTRIC_BRAKE_NOTCHES = 10
 
 /** Longest step (s) the motion is integrated with: a longer tick is cut into equal steps */
 export const PHYSICS_STEP = 1 / 30
@@ -99,7 +99,7 @@ const BRAKE_RELEASE_TIME = 4
 /** Seconds for the brake pipe to empty in an emergency application */
 const BRAKE_EMERGENCY_VENT_TIME = 1
 /** Share of the full service effort given by the first reduction */
-const FIRST_REDUCTION_EFFORT = 0.2
+export const FIRST_REDUCTION_EFFORT = 0.2
 /** Seconds before empty cylinders start to fill: service / emergency (equivalent time of 2 s both) */
 const CYLINDER_DEAD_TIME = 0.5
 const CYLINDER_DEAD_TIME_EMERGENCY = 1
@@ -295,6 +295,17 @@ function cylinderTarget(brakePipe: number): number {
   if (reduction < first) return (FIRST_REDUCTION_EFFORT * reduction) / first
   if (reduction < full) return FIRST_REDUCTION_EFFORT + ((1 - FIRST_REDUCTION_EFFORT) * (reduction - first)) / (full - first)
   return 1
+}
+
+/**
+ * Brake pipe pressure (bar) the cylinders settle at `filling` for: `cylinderTarget` the other way
+ * round. A filling under the first reduction is not a position the brake holds: it gives the first
+ * reduction, the least application there is.
+ */
+export function brakePipeFor(filling: number): number {
+  if (!(filling > 0)) return BRAKE_PIPE_RELEASED
+  const beyond = (Math.min(1, filling) - FIRST_REDUCTION_EFFORT) / (1 - FIRST_REDUCTION_EFFORT)
+  return BRAKE_PIPE_FIRST_REDUCTION - Math.max(0, beyond) * (BRAKE_PIPE_FIRST_REDUCTION - BRAKE_PIPE_FULL_SERVICE)
 }
 
 /**

@@ -68,6 +68,9 @@ export function applyDeskCommand(store: EditorStore, desk: number, command: Cons
     case 'releaseControls':
       store.releaseTrain(desk)
       return
+    case 'autopilot':
+      store.setAutopilot(train.id, command.on)
+      return
     case 'rerail':
       store.rerail(train)
       return
@@ -133,6 +136,9 @@ export function applyConsoleCommand(store: EditorStore, command: ConsoleCommand,
       return
     case 'rerail':
       store.rerailSelectedTrain()
+      return
+    case 'autopilot':
+      if (train) store.setAutopilot(train.id, command.on)
       return
   }
 }

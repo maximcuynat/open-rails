@@ -37,8 +37,8 @@ const baseState: ConsoleState = {
   maxSpeed: 320 / 3.6,
   stopped: false,
   notch: 3,
-  minNotch: -5,
-  maxNotch: 5,
+  minNotch: -10,
+  maxNotch: 10,
   handleEffort: 0.62,
   reverser: 'forward',
   reverserLocked: true,
@@ -60,8 +60,8 @@ const fleet: FleetEntry[] = [
 ]
 
 describe('driving console model', () => {
-  it('names the notches B5 … B1, N, P1 … P5', () => {
-    expect([-5, -1, 0, 1, 5].map(notchLabel)).toEqual(['B5', 'B1', 'N', 'P1', 'P5'])
+  it('names the notches B10 … B1, N, P1 … P10', () => {
+    expect([-10, -1, 0, 1, 10].map(notchLabel)).toEqual(['B10', 'B1', 'N', 'P1', 'P10'])
   })
 
   it('gives the applied effort as a percentage', () => {
@@ -132,9 +132,11 @@ describe('driving console model', () => {
 })
 
 describe('notch stops', () => {
-  it('lists the whole handle from B5 to P5 and lights the traction notches up to the handle', () => {
+  it('lists the whole handle from B10 to P10, names one stop in five, and lights the traction notches up to the handle', () => {
     const stops = notchStops(baseState)
-    expect(stops.map((s) => s.label)).toEqual(['B5', 'B4', 'B3', 'B2', 'B1', 'N', 'P1', 'P2', 'P3', 'P4', 'P5'])
+    expect(stops).toHaveLength(21)
+    expect(stops.slice(8, 13).map((s) => s.label)).toEqual(['B2', 'B1', 'N', 'P1', 'P2'])
+    expect(stops.filter((s) => s.major).map((s) => s.label)).toEqual(['B10', 'B5', 'N', 'P5', 'P10'])
     expect(stops.filter((s) => s.current).map((s) => s.label)).toEqual(['P3'])
     expect(stops.filter((s) => s.passed).map((s) => s.label)).toEqual(['N', 'P1', 'P2'])
     expect(stops.find((s) => s.label === 'B2')!.side).toBe('brake')

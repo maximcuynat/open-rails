@@ -3157,11 +3157,18 @@ select.cb-step-select {
 
 .console-notches {
   display: grid;
-  gap: 3px;
+  gap: 2px;
+  align-items: center;
 }
 
+/* A bare graduation; one stop in five is taller and carries its name */
 .console-notch {
-  padding: 9px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0;
+  white-space: nowrap;
   text-align: center;
   font-size: 11px;
   font-weight: 800;
@@ -3170,6 +3177,8 @@ select.cb-step-select {
   border: 1px solid var(--hud-line);
   border-radius: 5px;
 }
+
+.console-notch.is-major { height: 36px; }
 
 .console-stage .console-notch { color: var(--hud-dim); }
 .console-stage .console-notch:hover { border-color: var(--tone); }

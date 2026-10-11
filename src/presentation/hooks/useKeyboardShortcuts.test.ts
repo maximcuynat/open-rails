@@ -3,7 +3,7 @@ import { EditorStore } from '@application/state/editorStore'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { withChord } from '@application/keybindings/keybindings'
-import { handleKeyDown, handleKeyUp, handleWindowBlur } from './useKeyboardShortcuts'
+import { NOTCH_REPEAT_MS, handleKeyDown, handleKeyUp, handleWindowBlur, newNotchHold, notchKeyMoves } from './useKeyboardShortcuts'
 
 function keyEvent(code: string, key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return {
@@ -14,6 +14,7 @@ function keyEvent(code: string, key: string, init: Partial<KeyboardEvent> = {}):
     metaKey: false,
     altKey: false,
     repeat: false,
+    timeStamp: 0,
     target: null,
     preventDefault: vi.fn(),
     ...init,
@@ -55,14 +56,14 @@ describe('keyboard shortcuts', () => {
     handleKeyDown(store, keyEvent('KeyA', 'a'))
     handleKeyDown(store, keyEvent('KeyA', 'a'))
     expect(train.notch).toBe(2)
-    // Holding the key does not sweep the handle
-    handleKeyDown(store, keyEvent('KeyA', 'a', { repeat: true }))
+    // The keyboard's own repeat does not set the pace
+    handleKeyDown(store, keyEvent('KeyA', 'a', { repeat: true, timeStamp: 30 }))
     expect(train.notch).toBe(2)
     handleKeyDown(store, keyEvent('KeyD', 'd'))
     expect(train.notch).toBe(1)
   })
 
-  it('keeps the handle between B5 and P5: electric brake notches under N', () => {
+  it('keeps the handle between B10 and P10: electric brake notches under N', () => {
     const store = drivingStore()
     const train = store.selectedTrain!
 
@@ -70,11 +71,48 @@ describe('keyboard shortcuts', () => {
     expect(train.notch).toBe(-3)
     handleKeyDown(store, keyEvent('ArrowDown', 'ArrowDown'))
     expect(train.notch).toBe(-4)
-    for (let i = 0; i < 4; i++) handleKeyDown(store, keyEvent('KeyD', 'd'))
-    expect(train.notch).toBe(-5)
+    for (let i = 0; i < 9; i++) handleKeyDown(store, keyEvent('KeyD', 'd'))
+    expect(train.notch).toBe(-10)
 
-    for (let i = 0; i < 13; i++) handleKeyDown(store, keyEvent('KeyA', 'a'))
+    for (let i = 0; i < 23; i++) handleKeyDown(store, keyEvent('KeyA', 'a'))
+    expect(train.notch).toBe(10)
+  })
+
+  it('sweeps the handle while a key is held, at its own pace, and waits at N', () => {
+    const store = drivingStore()
+    const train = store.selectedTrain!
+    const hold = (code: string, key: string, from: number, ms: number) => {
+      // The keyboard repeats every 30 ms
+      for (let t = from + 30; t <= from + ms; t += 30) handleKeyDown(store, keyEvent(code, key, { repeat: true, timeStamp: t }))
+    }
+
+    handleKeyDown(store, keyEvent('KeyA', 'a', { timeStamp: 1000 }))
+    hold('KeyA', 'a', 1000, 4 * NOTCH_REPEAT_MS)
     expect(train.notch).toBe(5)
+    handleKeyUp(store, keyEvent('KeyA', 'a'))
+
+    // Down from P5: it stops at N however long the key is held
+    handleKeyDown(store, keyEvent('KeyD', 'd', { timeStamp: 3000 }))
+    hold('KeyD', 'd', 3000, 3000)
+    expect(train.notch).toBe(0)
+    handleKeyUp(store, keyEvent('KeyD', 'd'))
+
+    // Pressed again, it goes on under N as far as B10
+    handleKeyDown(store, keyEvent('KeyD', 'd', { timeStamp: 7000 }))
+    hold('KeyD', 'd', 7000, 3000)
+    expect(train.notch).toBe(-10)
+  })
+
+  it('paces a held handle key', () => {
+    const hold = newNotchHold()
+    expect(notchKeyMoves(hold, false, 2, 1, 0)).toBe(true)
+    expect(notchKeyMoves(hold, true, 3, 1, NOTCH_REPEAT_MS - 1)).toBe(false)
+    expect(notchKeyMoves(hold, true, 3, 1, NOTCH_REPEAT_MS)).toBe(true)
+    // Reaching N parks it, a new press frees it
+    expect(notchKeyMoves(hold, true, 1, -1, 2 * NOTCH_REPEAT_MS)).toBe(true)
+    expect(notchKeyMoves(hold, true, 0, -1, 9 * NOTCH_REPEAT_MS)).toBe(false)
+    expect(notchKeyMoves(hold, false, 0, -1, 9 * NOTCH_REPEAT_MS)).toBe(true)
+    expect(hold.parked).toBe(false)
   })
 
   it('applies the brake while E is held and releases it while Q is held', () => {

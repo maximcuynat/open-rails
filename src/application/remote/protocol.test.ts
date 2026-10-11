@@ -83,6 +83,8 @@ const COMMANDS: ConsoleCommand[] = [
   { type: 'selectTrainByOffset', offset: -1 },
   { type: 'releaseControls' },
   { type: 'rerail' },
+  { type: 'autopilot', on: true },
+  { type: 'autopilot', on: false },
 ]
 
 const decode = (value: unknown) => decodeMessage(JSON.stringify(value))

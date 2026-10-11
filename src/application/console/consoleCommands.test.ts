@@ -40,7 +40,7 @@ describe('applyConsoleCommand', () => {
   it('covers every command of the contract', () => {
     // One `describe`/`it` per command type below: this list is what they are checked against
     expect([...CONSOLE_COMMAND_TYPES].sort()).toEqual([
-      'brake', 'emergencyBrake', 'notchSet', 'notchStep', 'releaseControls', 'rerail', 'reverser',
+      'autopilot', 'brake', 'emergencyBrake', 'notchSet', 'notchStep', 'releaseControls', 'rerail', 'reverser',
       'selectTrain', 'selectTrainByOffset', 'steer', 'switchCab',
     ])
   })
@@ -55,7 +55,7 @@ describe('applyConsoleCommand', () => {
     expect(train.notch).toBe(-2)
   })
 
-  it('notchSet puts the handle on a notch, clamped from B5 to P5', () => {
+  it('notchSet puts the handle on a notch, clamped from B10 to P10', () => {
     const store = makeDrivingStore()
     const train = store.selectedTrain!
     applyConsoleCommand(store, { type: 'notchSet', notch: 4 })
@@ -213,6 +213,21 @@ describe('applyConsoleCommand', () => {
     expect(store.selectedTrainId).toBe(ids[0])
   })
 
+  it('autopilot hands the driven train to the pilot and takes it back; a handle takes it back too', () => {
+    const store = makeDrivingStore()
+    const train = store.selectedTrain!
+    applyConsoleCommand(store, { type: 'autopilot', on: true })
+    expect(store.autopilots.has(train.id)).toBe(true)
+    // Not a handle: the points ahead may be thrown under the pilot
+    applyConsoleCommand(store, { type: 'steer', side: 'left' })
+    expect(store.autopilots.has(train.id)).toBe(true)
+    applyConsoleCommand(store, { type: 'autopilot', on: false })
+    expect(store.autopilots.has(train.id)).toBe(false)
+    applyConsoleCommand(store, { type: 'autopilot', on: true })
+    applyConsoleCommand(store, { type: 'brake', command: 'apply' })
+    expect(store.autopilots.has(train.id)).toBe(false)
+  })
+
   it('rerail asks the store to put the driven train back on the track', () => {
     const store = makeDrivingStore()
     const rerail = vi.spyOn(store, 'rerailSelectedTrain')
@@ -341,6 +356,16 @@ describe('applyDeskCommand', () => {
     expect(own.brakeCommand).toBe('apply')
     expect(store.heldBrakeCommand('local')).toBe('apply')
     store.togglePlayMode()
+  })
+
+  it('autopilot is set on the train of the desk and on no other', () => {
+    const { store, held, free, own } = makeDeskStore()
+    applyDeskCommand(store, 1, { type: 'autopilot', on: true })
+    expect([...store.autopilots.keys()]).toEqual([held.id])
+    applyDeskCommand(store, 1, { type: 'notchStep', step: 1 })
+    expect(store.autopilots.size).toBe(0)
+    expect(free.notch).toBe(0)
+    expect(own.notch).toBe(0)
   })
 
   it('steer, switchCab and rerail are asked for the train of the desk', () => {

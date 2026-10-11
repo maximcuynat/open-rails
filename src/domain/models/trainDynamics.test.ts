@@ -347,7 +347,7 @@ describe('behaviour on a ramp', () => {
     expect(JSON.stringify(train.vehicles)).toBe(before)
   })
 
-  it('P5 starts the train up a 35 ‰ ramp, and brings it back forward after it has rolled back', () => {
+  it('P10 starts the train up a 35 ‰ ramp, and brings it back forward after it has rolled back', () => {
     const { net, env, train } = onRamp()
     releaseBrake(train)
     setReverser(train, 'forward')
@@ -621,9 +621,9 @@ describe('electric brake', () => {
     expect(force(5)).toBe(0)
   })
 
-  it('each notch is a fifth of the effort', () => {
-    expect(force(200, -3)).toBeCloseTo(72_000, 6)
-    expect(force(200, -1)).toBeCloseTo(24_000, 6)
+  it('each notch is a tenth of the effort', () => {
+    expect(force(200, -6)).toBeCloseTo(72_000, 6)
+    expect(force(200, -1)).toBeCloseTo(12_000, 6)
     expect(force(200, 0)).toBe(0)
   })
 

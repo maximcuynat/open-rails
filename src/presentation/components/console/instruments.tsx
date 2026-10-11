@@ -234,7 +234,7 @@ export function SpeedTape({ ratio, maxKmh, guide }: { ratio: number; maxKmh: num
   )
 }
 
-/** The stops of the handle side by side: the current one is lit, a click puts the handle on a stop */
+/** The stops of the handle side by side, one in five named: the current one is lit, a click puts the handle on a stop */
 export function NotchScale({ stops, onSet }: { stops: NotchStop[]; onSet: (notch: number) => void }) {
   const columns: CSSProperties = { gridTemplateColumns: `repeat(${stops.length}, 1fr)` }
   return (
@@ -243,11 +243,13 @@ export function NotchScale({ stops, onSet }: { stops: NotchStop[]; onSet: (notch
         <button
           key={stop.notch}
           type="button"
-          className={`console-notch side-${stop.side}${stop.current ? ' is-on' : stop.passed ? ' is-fill' : ''}`}
+          className={`console-notch side-${stop.side}${stop.major ? ' is-major' : ''}${stop.current ? ' is-on' : stop.passed ? ' is-fill' : ''}`}
+          title={stop.label}
+          aria-label={stop.label}
           aria-pressed={stop.current}
           onClick={() => onSet(stop.notch)}
         >
-          {stop.label}
+          {stop.major && <span>{stop.label}</span>}
         </button>
       ))}
     </div>

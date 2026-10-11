@@ -104,6 +104,15 @@ export function TwoThumbDesk({ state, fleet, canSwitchCab, cut, bar, onCommand }
             </button>
             <button
               type="button"
+              className={`phone-btn phone-cab phone-pilot${state.autopilot ? ' is-active' : ''}`}
+              aria-pressed={!!state.autopilot}
+              title="Pilote automatique : tient la vitesse, freine pour les limites et les signaux, s’arrête à quai. Toucher une manette le coupe."
+              onClick={() => onCommand({ type: 'autopilot', on: !state.autopilot })}
+            >
+              Pilote
+            </button>
+            <button
+              type="button"
               className={`phone-btn phone-estop${state.emergencyBrake ? ' is-active' : ''}`}
               onClick={() => onCommand({ type: 'emergencyBrake' })}
             >

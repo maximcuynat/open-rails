@@ -163,7 +163,7 @@ export function ThrottleLever({ state, stops, onCommand }: {
   const sent = useRef<number | null>(null)
   const notch = dragNotch ?? state.notch
   const ratioOf = (n: number) => ratioOfNotch(n, state.minNotch, state.maxNotch)
-  const leverStops: LeverStop[] = stops.map((stop) => ({ ratio: ratioOf(stop.notch), label: stop.label, active: stop.notch === notch }))
+  const leverStops: LeverStop[] = stops.map((stop) => ({ ratio: ratioOf(stop.notch), label: stop.major ? stop.label : '', active: stop.notch === notch }))
   return (
     <Lever
       stops={leverStops}

@@ -21,7 +21,7 @@ import {
  * Pure description: the React components only render it, the tests read it directly.
  */
 
-/** Handle position: B5 … B1 (electric brake), N, P1 … P5 (traction) */
+/** Handle position: B10 … B1 (electric brake), N, P1 … P10 (traction) */
 export function notchLabel(notch: number): string {
   return notch > 0 ? `P${notch}` : notch < 0 ? `B${-notch}` : 'N'
 }
@@ -146,12 +146,17 @@ export type HandleSide = 'traction' | 'neutral' | 'brake'
 export interface NotchStop {
   notch: number
   label: string
+  /** Named on the scale; the others are bare graduations */
+  major: boolean
   side: HandleSide
   /** The handle stands on this stop */
   current: boolean
   /** Between neutral and the handle: lit along with it */
   passed: boolean
 }
+
+/** One stop in this many carries its name on a scale */
+const MAJOR_NOTCH_EVERY = 5
 
 const sideOf = (notch: number): HandleSide => (notch > 0 ? 'traction' : notch < 0 ? 'brake' : 'neutral')
 
@@ -163,6 +168,7 @@ export function notchStops(state: Pick<ConsoleState, 'notch' | 'minNotch' | 'max
     stops.push({
       notch,
       label: legacy ? LEGACY_THROTTLE_LABEL[notch] ?? String(notch) : notchLabel(notch),
+      major: legacy || notch % MAJOR_NOTCH_EVERY === 0,
       side: sideOf(notch),
       current: notch === state.notch,
       passed: notch !== state.notch && (state.notch > 0 ? notch >= 0 && notch < state.notch : notch <= 0 && notch > state.notch),
@@ -613,7 +619,7 @@ export function consoleView(state: ConsoleState, fleet: readonly FleetEntry[]): 
     speedRatio: Math.max(0, Math.min(1, state.speed / Math.max(state.maxSpeed, 1e-6))),
     legacy,
     handleSide,
-    handleTitle: legacy ? 'Commande' : handleSide === 'brake' ? 'Frein élec.' : 'Traction',
+    handleTitle: `${state.autopilot ? 'Pilote · ' : ''}${legacy ? 'Commande' : handleSide === 'brake' ? 'Frein élec.' : 'Traction'}`,
     handleLabel: legacy ? LEGACY_THROTTLE_LABEL[state.notch] ?? '' : `${notchLabel(state.notch)} · ${handlePercent} %`,
     handlePercent,
     composition: `${state.locoCount}M · ${state.wagonCount}V`,

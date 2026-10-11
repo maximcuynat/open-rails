@@ -85,7 +85,7 @@ async function main() {
     const store = window.__openRailsStore
     store.shiftSelectedTrainReverser(1)
     store.setSelectedTrainBrakeCommand('release')
-    for (let i = 0; i < 12; i++) store.stepSelectedTrainNotch(1)
+    for (let i = 0; i < 20; i++) store.stepSelectedTrainNotch(1)
   })
 
   // Frames while driving, and the heap now and then

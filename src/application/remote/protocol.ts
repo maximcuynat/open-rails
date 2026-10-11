@@ -273,6 +273,8 @@ function readCommand(value: unknown): ConsoleCommand | null {
       return { type: 'releaseControls' }
     case 'rerail':
       return { type: 'rerail' }
+    case 'autopilot':
+      return typeof value.on === 'boolean' ? { type: 'autopilot', on: value.on } : null
     default:
       return null
   }

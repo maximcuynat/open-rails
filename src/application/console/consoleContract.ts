@@ -236,6 +236,8 @@ export type ConsoleCommand =
   | { type: 'releaseControls' }
   /** Put the derailed train back on the track */
   | { type: 'rerail' }
+  /** Hand the train to the automatic pilot, or take it back; moving a handle takes it back too */
+  | { type: 'autopilot'; on: boolean }
 
 export const CONSOLE_COMMAND_TYPES = [
   'notchStep',
@@ -249,4 +251,5 @@ export const CONSOLE_COMMAND_TYPES = [
   'selectTrainByOffset',
   'releaseControls',
   'rerail',
+  'autopilot',
 ] as const satisfies readonly ConsoleCommand['type'][]

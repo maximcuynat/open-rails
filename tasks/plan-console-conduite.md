@@ -28,7 +28,7 @@ Le principe : les consoles ne lisent plus le `store`. Elles reçoivent un état 
 
 - `ConsoleState` — tout ce que la console affiche, en données simples sérialisables : vitesse, vitesse max, cran, effort, inverseur et son verrou, état du frein, pressions CG et CF, accélération, pente, distance d'arrêt, composition, rang du train dans la flotte, urgence. Construit par une fonction pure à partir du train et de sa dynamique (extension de `drivingHudModel.ts`). La locomotive ancienne génération donne un état réduit (vitesse et commande), sans bloc frein.
 - `FleetEntry[]` — la liste des trains du canevas pour l'écran de choix du téléphone : identifiant, rang, modèle, composition (motrices et voitures), vitesse, et lequel est conduit. Envoyée à la connexion puis à chaque changement (train posé, supprimé, couplé, découplé).
-- `ConsoleCommand` — union fermée : cran ±1, cran fixé (borné de B5 à P5 : les crans négatifs sont le frein électrique), frein serrer / desserrer / maintenir, inverseur, urgence, aiguillage gauche / droite, choisir un train par son identifiant (ce qui prend les commandes), rendre les commandes, changer de cabine. Aucune commande d'édition du réseau.
+- `ConsoleCommand` — union fermée : cran ±1, cran fixé (borné de B10 à P10 : les crans négatifs sont le frein électrique), frein serrer / desserrer / maintenir, inverseur, urgence, aiguillage gauche / droite, choisir un train par son identifiant (ce qui prend les commandes), rendre les commandes, changer de cabine. Aucune commande d'édition du réseau.
 - Le contrat est dans `src/application/console/consoleContract.ts`.
 - `applyConsoleCommand(store, commande)` — seul point d'entrée vers le store, utilisé par la console locale, le clavier restant inchangé.
 
@@ -106,7 +106,7 @@ Limites à connaître :
 - Essai bout à bout dans un navigateur sans interface : un onglet PC ouvre la session, un téléphone émulé rejoint avec le code, choisit le train ; le PC entre en conduite et affiche la pastille « Téléphone ».
 - Vérifié par les agents : les trois consoles à 1920 × 960, 1366 × 650 et 900 × 600 dans les deux thèmes ; décodage du QR ; retour à « maintenir » sur silence et sur coupure ; frein tenu au clavier non écrasé par le téléphone ; gestes tactiles sur les leviers.
 - Écarts par rapport au plan et aux maquettes :
-  - manipulateur de B5 à P5 (frein électrique) : 11 crans sur le bandeau et le levier ; touches « Cran − / + » sur l'écran de bord ;
+  - manipulateur de B10 à P10 (frein électrique) : 21 crans, un nommé sur cinq, sur le bandeau et le levier ; touches « Cran − / + » sur l'écran de bord ;
   - entre 1000 et 1100 px de large avec 720 px de haut ou plus : bandeau ;
   - le code du salon est tiré par le PC, et une reconnexion reprend sa place (jeton client, délai de grâce de 20 s côté téléphone) ;
   - `ConsoleState` a reçu `upcomingTurnout` et `canSwitchCab` ;

@@ -5,6 +5,8 @@ import { buildTrainConsoleState } from '@application/console/consoleState'
 import { pilotOrders, pilotSpeed } from '@application/console/autopilot'
 import type { ConsoleState } from '@application/console/consoleContract'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
+import { setSignalOptions } from '@domain/models/signals'
+import { signalAt, trainAt } from '@domain/models/signalling.testkit'
 import { addStation } from '@domain/models/stations'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { addItineraryStop } from './itinerary'
@@ -12,17 +14,20 @@ import { PILOT_DWELL_S } from './autopilot'
 
 /**
  * A straight line of `km` kilometres in rails of 500 m, with « Départ » at 500 m and the other
- * stations where asked (km). A rake is set down at « Départ » and the driving started.
+ * stations where asked (km). A rake is set down at « Départ » and the driving started. Between
+ * the kilometres of `climb` the line rises one level per rail: a ramp of 12 ‰.
  */
-function line(km: number, stations: Record<string, number>) {
+function line(km: number, stations: Record<string, number>, climb?: [number, number]) {
   resetMemoryStorage()
   resetIdCounter()
   const store = new EditorStore()
   const net = store.network
   const rails: string[] = []
-  let prev = addNode(net, { x: 0, y: 0 })
+  let level = 0
+  let prev = addNode(net, { x: 0, y: 0 }, level)
   for (let x = 500; x <= km * 1000; x += 500) {
-    const next = addNode(net, { x, y: 0 })
+    if (climb && x > climb[0] * 1000 && x <= climb[1] * 1000) level++
+    const next = addNode(net, { x, y: 0 }, level)
     rails.push(addSegment(net, prev.id, next.id)!.id)
     prev = next
   }
@@ -48,12 +53,29 @@ function line(km: number, stations: Record<string, number>) {
     }
     return top
   }
-  return { store, headX, run, train: () => store.trains[0] }
+  /** Run until `until`, and say how the pilot held the speed it aimed at and how it moved the handle */
+  const watch = (until: () => boolean) => {
+    const train = store.trains[0]
+    const seen = { under: 0, over: 0, moves: 0, largest: 0, steepest: 0 }
+    for (let i = 0; i < 20 * 3600 && !until(); i++) {
+      const before = train.notch
+      store.tickAllTrains(0.05)
+      const state = buildTrainConsoleState(store, train)
+      const gap = train.currentSpeed - pilotSpeed(state, { stopIn: null }).speed
+      seen.under = Math.max(seen.under, -gap)
+      seen.over = Math.max(seen.over, gap)
+      seen.largest = Math.max(seen.largest, Math.abs(train.notch - before))
+      seen.steepest = Math.max(seen.steepest, state.gradientPermille)
+      if (train.notch !== before) seen.moves++
+    }
+    return seen
+  }
+  return { store, headX, run, watch, train: () => store.trains[0] }
 }
 
 /** A console state with only what the pilot reads set */
 const state = (over: Partial<ConsoleState>): ConsoleState => ({
-  trainId: 't', speed: 0, maxSpeed: 88, stopped: false, notch: 0, minNotch: -5, maxNotch: 5, handleEffort: 0, reverser: 'forward', reverserLocked: false,
+  trainId: 't', speed: 0, maxSpeed: 88, stopped: false, notch: 0, minNotch: -10, maxNotch: 10, handleEffort: 0, reverser: 'forward', reverserLocked: false,
   emergencyBrake: false, emergencyReleasable: false, brake: { command: 'hold', tone: 'released', pipeBar: 5, cylinderBar: 0 }, acceleration: 0, gradientPermille: 0,
   stoppingDistance: null, locoCount: 2, wagonCount: 8, upcomingTurnout: null, canSwitchCab: true,
   guidance: { speedLimit: 160, nextLimit: null, curve: 'ok' as never, derailed: null },
@@ -61,11 +83,27 @@ const state = (over: Partial<ConsoleState>): ConsoleState => ({
 })
 
 describe('what the pilot does with the handles', () => {
-  it('pulls under the limit, coasts near it, brakes above it', () => {
-    expect(pilotOrders(state({ speed: 10 }), { stopIn: null })).toMatchObject({ notch: 5, brake: 'hold' })
-    expect(pilotOrders(state({ speed: 42.4 }), { stopIn: null }).notch).toBe(0)
-    const over = pilotOrders(state({ speed: 47 }), { stopIn: null })
-    expect(over.notch).toBeLessThan(0)
+  it('moves the handle one notch at a time towards the acceleration that brings the train onto its speed', () => {
+    const free = { stopIn: null }
+    // Well under the limit: a notch more, once the effort has caught up with the one it is on
+    expect(pilotOrders(state({ speed: 10 }), free)).toMatchObject({ notch: 1, brake: 'hold' })
+    expect(pilotOrders(state({ speed: 10, notch: 4, handleEffort: 0.4, acceleration: 0.2 }), free).notch).toBe(5)
+    expect(pilotOrders(state({ speed: 10, notch: 4, handleEffort: 0.2, acceleration: 0.1 }), free).notch).toBe(4)
+    expect(pilotOrders(state({ speed: 10, notch: 10, handleEffort: 1, acceleration: 0.4 }), free).notch).toBe(10)
+    // On its speed and holding it: the handle stays where it is, wherever that is
+    const aim = pilotSpeed(state({ speed: 40 }), free).speed
+    expect(pilotOrders(state({ speed: aim, notch: 3, handleEffort: 0.3, acceleration: 0 }), free)).toMatchObject({ notch: 3, brake: 'hold' })
+    // Still gaining on it: a notch less, at once
+    expect(pilotOrders(state({ speed: aim, notch: 3, handleEffort: 0.1, acceleration: 0.2 }), free).notch).toBe(2)
+    // Over it: down through N to the electric brake, the air brake when well over
+    expect(pilotOrders(state({ speed: aim + 1, acceleration: 0 }), free)).toMatchObject({ notch: -1, brake: 'hold' })
+    expect(pilotOrders(state({ speed: aim + 1, notch: -1, handleEffort: 0, acceleration: 0 }), free).notch).toBe(-1)
+    expect(pilotOrders(state({ speed: aim + 1, notch: -1, handleEffort: 0.1, acceleration: -0.03 }), free).notch).toBe(-2)
+    expect(pilotOrders(state({ speed: aim + 4, acceleration: 0 }), free)).toMatchObject({ notch: -1, brake: 'apply' })
+    // No traction against brake cylinders that are still full, no electric brake at a crawl
+    const braked = { command: 'hold' as const, tone: 'applied' as const, pipeBar: 4, cylinderBar: 2 }
+    expect(pilotOrders(state({ speed: 10, brake: braked }), free)).toMatchObject({ notch: 0, brake: 'release' })
+    expect(pilotOrders(state({ speed: 2, guidance: { speedLimit: 5, nextLimit: null, curve: 'ok' as never, derailed: null } }), free).notch).toBe(0)
     // 160 km/h: it runs just under
     expect(pilotSpeed(state({ speed: 40 }), { stopIn: null }).speed).toBeCloseTo((160 / 3.6) * 0.97 - 0.5, 6)
   })
@@ -80,6 +118,25 @@ describe('what the pilot does with the handles', () => {
     for (const slowed of [limit, signal, ahead, platform]) expect(slowed).toBeLessThan(free)
     // Further away, nothing to do yet
     expect(pilotSpeed(state(fast), { stopIn: 20_000 }).speed).toBe(free)
+  })
+
+  it('meets a speed announced in the cab at the next marker board, not at once', () => {
+    const cabState = (kind: 'announce' | 'execute', markerDistance: number | null) => state({
+      speed: 80, stoppingDistance: 3600, maxSpeed: 89,
+      guidance: { speedLimit: 300, nextLimit: null, curve: 'ok' as never, derailed: null },
+      signals: { level: 'pro', next: null, closedDistance: null, brakeAlert: false, waiting: false, onSight: false, onSightSpeed: 30, passed: null, cab: { kind, speed: 160, flashing: false, markerDistance } },
+    })
+    const free = { stopIn: null }
+    const at160 = (160 / 3.6) * 0.97 - 0.5
+    // Six kilometres from the board: nothing to do yet. Nearer: down the braking curve. At it: 160
+    expect(pilotSpeed(cabState('announce', 6000), free).speed).toBeCloseTo((300 / 3.6) * 0.97 - 0.5, 6)
+    const nearer = pilotSpeed(cabState('announce', 3000), free).speed
+    expect(nearer).toBeGreaterThan(at160)
+    expect(nearer).toBeLessThan(80)
+    expect(pilotSpeed({ ...cabState('announce', 0), speed: 44 }, free).speed).toBeCloseTo(at160, 6)
+    // A speed to run at now, or no board in sight: at once
+    expect(pilotSpeed(cabState('execute', 3000), free).speed).toBeCloseTo(at160, 6)
+    expect(pilotSpeed(cabState('announce', null), free).speed).toBeCloseTo(at160, 6)
   })
 
   it('stands still with the brakes on at its stopping place, and leaves with the reverser forward first', () => {
@@ -114,12 +171,42 @@ describe('the automatic pilot on a train of the game', { timeout: 30_000 }, () =
     expect(top).toBeLessThanOrEqual(limit + 0.5)
     expect(train().currentSpeed).toBe(0)
     expect(train().itinerary).toEqual({ stations: ['depart', 'arrivee'], next: 2 })
-    expect(headX()).toBeGreaterThan(12_000 - 60)
-    expect(headX()).toBeLessThanOrEqual(12_000 + 3)
+    expect(headX()).toBeGreaterThan(12_000 - 3)
+    expect(headX()).toBeLessThanOrEqual(12_000 + 1)
     expect(train().emergencyBrake).toBe(false)
     // Arrived: it stays there
     run(60)
-    expect(headX()).toBeLessThanOrEqual(12_000 + 3)
+    expect(headX()).toBeLessThanOrEqual(12_000 + 1)
+  })
+
+  it('comes to a platform in one steady braking: no speeding up again, no crawling, the brake not hunting', () => {
+    const { store, headX, train } = line(14, { arrivee: 12 })
+    addItineraryStop(store, train(), 'arrivee')
+    store.setAutopilot(train().id, true)
+    const seen = { sped: 0, slow: 0, strongest: 0, pulled: false, reversals: 0 }
+    let push: string | null = null
+    for (let i = 0; i < 20 * 900 && !(train().itinerary!.next === 2 && train().currentSpeed === 0); i++) {
+      const before = train().currentSpeed
+      store.tickAllTrains(0.05)
+      if (headX() < 12_000 - 1500) continue
+      const gained = train().currentSpeed - before
+      seen.sped = Math.max(seen.sped, gained)
+      seen.strongest = Math.max(seen.strongest, -gained / 0.05)
+      if (train().currentSpeed < 2) seen.slow += 0.05
+      if (train().notch > 0) seen.pulled = true
+      const command = train().brakeCommand
+      if (command !== 'hold' && command !== push) {
+        if (push !== null) seen.reversals++
+        push = command
+      }
+    }
+    expect(train().currentSpeed).toBe(0)
+    expect(seen.pulled).toBe(false)
+    expect(seen.sped).toBeLessThan(1e-3)
+    // Comfortable all the way, the last metres included
+    expect(seen.strongest).toBeLessThan(0.8)
+    expect(seen.slow).toBeLessThan(9)
+    expect(seen.reversals).toBeLessThan(10)
   })
 
   it('calls at a station on the way for a while, then goes on to the last', () => {
@@ -129,15 +216,15 @@ describe('the automatic pilot on a train of the game', { timeout: 30_000 }, () =
     expect(train().itinerary!.stations).toEqual(['depart', 'etape', 'arrivee'])
     store.setAutopilot(train().id, true)
     run(600, () => train().itinerary!.next === 2 && train().currentSpeed === 0)
-    expect(headX()).toBeGreaterThan(5000 - 60)
-    expect(headX()).toBeLessThanOrEqual(5000 + 3)
+    expect(headX()).toBeGreaterThan(5000 - 3)
+    expect(headX()).toBeLessThanOrEqual(5000 + 1)
     // Still there half the call later, gone after it
     run(PILOT_DWELL_S / 2)
     expect(train().currentSpeed).toBe(0)
     run(900, () => train().itinerary!.next === 3 && train().currentSpeed === 0)
     expect(train().itinerary!.next).toBe(3)
-    expect(headX()).toBeGreaterThan(12_000 - 60)
-    expect(headX()).toBeLessThanOrEqual(12_000 + 3)
+    expect(headX()).toBeGreaterThan(12_000 - 3)
+    expect(headX()).toBeLessThanOrEqual(12_000 + 1)
   })
 
   it('sent the way it does not face, changes ends once and leaves', () => {
@@ -170,6 +257,66 @@ describe('the automatic pilot on a train of the game', { timeout: 30_000 }, () =
     store.setAutopilot(train().id, true)
     store.togglePlayMode()
     expect(store.autopilots.size).toBe(0)
+  })
+
+  it('holds its speed on level track hardly touching the handle, and up a ramp within a few notches', () => {
+    const { store, headX, watch, train } = line(40, {}, [16, 22])
+    train().itinerary = undefined
+    store.setAutopilot(train().id, true)
+    // Getting up to speed: never more than a notch at a time
+    const start = watch(() => headX() > 8000)
+    expect(start.largest).toBe(1)
+    const level = watch(() => headX() > 15_000)
+    // Seven kilometres of level track: the handle settles and stays
+    expect(level.steepest).toBe(0)
+    expect(level.moves).toBeLessThanOrEqual(3)
+    expect(level.under).toBeLessThan(0.3)
+    expect(level.over).toBeLessThan(0.3)
+    const ramp = watch(() => headX() > 24_000)
+    expect(ramp.steepest).toBeCloseTo(12, 6)
+    expect(ramp.under).toBeLessThan(0.5)
+    expect(ramp.over).toBeLessThan(0.5)
+    expect(ramp.largest).toBe(1)
+    expect(ramp.moves).toBeLessThan(20)
+  })
+
+  it('comes down the cab sequence of a high-speed line behind a train, block by block, and stops at the marker board', { timeout: 30_000 }, () => {
+    const { store, headX, train } = line(40, {})
+    // Marker boards every 1 500 m, a train standing 35 km down the line
+    const boards: number[] = []
+    for (let x = 3250; x < 40_000; x += 1500) {
+      setSignalOptions(store.network, signalAt(store.network, x, 0, 'east').id, { cabMarker: true })
+      boards.push(x)
+    }
+    store.trains.push(trainAt(store.network, 35_500, 0, 'east'))
+    store.markDirty()
+    store.setSignallingSettings({ level: 'pro' })
+    store.setLineSettings({ lineType: 'highSpeed', lineSpeed: 300 })
+    train().itinerary = undefined
+    store.setAutopilot(train().id, true)
+    let top = 0
+    let tripped = false
+    /** Speed (km/h) half-way down the first block that announces a speed */
+    let midBlock: { announced: number; speed: number } | null = null
+    for (let i = 0; i < 20 * 1500; i++) {
+      store.tickAllTrains(0.05)
+      top = Math.max(top, train().currentSpeed)
+      tripped ||= train().emergencyBrake
+      const cab = buildTrainConsoleState(store, train()).signals?.cab
+      if (!midBlock && cab?.kind === 'announce' && cab.markerDistance !== null && cab.markerDistance < 750) midBlock = { announced: cab.speed, speed: train().currentSpeed * 3.6 }
+      if (train().currentSpeed === 0 && headX() > 20_000) break
+    }
+    expect(top * 3.6).toBeGreaterThan(280)
+    // The control of the cab never had to stop it
+    expect(tripped).toBe(false)
+    // Half-way down the block it is still on its way down to the speed announced
+    expect(midBlock).not.toBeNull()
+    expect(midBlock!.speed).toBeGreaterThan(midBlock!.announced + 5)
+    // Stopped before the board that closes the buffer block behind the train ahead
+    const closed = boards.filter((x) => x < 35_500 - 200).at(-2)!
+    expect(train().currentSpeed).toBe(0)
+    expect(headX()).toBeLessThan(closed)
+    expect(headX()).toBeGreaterThan(closed - 60)
   })
 
   it('holds the line speed and nothing else on a train without an itinerary', () => {

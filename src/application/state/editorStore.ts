@@ -3999,7 +3999,7 @@ export class EditorStore {
   /** Dynamics of the driven trains as of the last simulation step; dropped by any notification */
   private drivenDynamics: Map<TrainSet, TrainDynamics> | null = null
 
-  /** Put a train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
+  /** Put a train's handle on a notch: MIN_NOTCH (B10) … 0 (N) … MAX_NOTCH (P10) */
   setTrainNotch = (train: TrainSet, notch: number): void => {
     if (setNotch(train, Math.max(MIN_NOTCH, Math.min(MAX_NOTCH, notch)))) this.notify()
   }
@@ -4024,13 +4024,13 @@ export class EditorStore {
     this.notify()
   }
 
-  /** Put the selected train's handle on a notch: MIN_NOTCH (B5) … 0 (N) … MAX_NOTCH (P5) */
+  /** Put the selected train's handle on a notch: MIN_NOTCH (B10) … 0 (N) … MAX_NOTCH (P10) */
   setSelectedTrainNotch = (notch: number): void => {
     const train = this.hostTrain
     if (train) this.setTrainNotch(train, notch)
   }
 
-  /** Move the selected train's handle by one notch; it stops at B5 and at P5 */
+  /** Move the selected train's handle by one notch; it stops at B10 and at P10 */
   stepSelectedTrainNotch = (step: 1 | -1): void => {
     const train = this.hostTrain
     if (train) this.setSelectedTrainNotch(train.notch + step)
