@@ -5,6 +5,7 @@ import { segmentShapeLength } from '@domain/geometry/segmentGeometry'
 import { LAMBERT93_ORIGIN } from '@domain/import/osmProjection'
 import type { SerializedProject } from '@infrastructure/persistence/persistence'
 import { DATASET_ATTRIBUTION, type DatasetIndex, type IndexConnection, type IndexLine, type IndexStation, type LineId } from '@domain/dataset/datasetIndex'
+import { lineOutline } from '@domain/dataset/lineOutline'
 import type { LineAssignment } from './lines'
 
 // Builds the index of the dataset (its types live in `@domain/dataset/datasetIndex`, which the
@@ -60,11 +61,13 @@ export function buildIndex(
       bbox.maxY = Math.max(bbox.maxY, p.y)
     }
     let rails = 0
+    const own: string[] = []
     for (const [segId, line] of lineOf) {
       if (line !== id) continue
       const seg = net.segments.get(segId)
       if (!seg) continue
       rails++
+      own.push(segId)
       lengthKm += segmentShapeLength(net, seg) / 1000
       extend(net.nodes.get(seg.from)!.pos)
       extend(net.nodes.get(seg.to)!.pos)
@@ -82,6 +85,9 @@ export function buildIndex(
       stations: [...(lineStations.get(id) ?? [])].sort(),
     }
     if (info.ref !== undefined) line.ref = info.ref
+    // An approach is a stretch of classic main line into a terminal
+    line.category = info.highSpeed ? 'highSpeed' : 'main'
+    line.outline = lineOutline(net, own)
     indexLines.push(line)
   }
   indexLines.sort((a, b) => a.id.localeCompare(b.id))

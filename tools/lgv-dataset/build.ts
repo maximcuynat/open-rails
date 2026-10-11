@@ -134,6 +134,13 @@ ${lines}
 `
 }
 
+/** The index as it is written: one field per line to be read by eye, the strokes of an outline on one line each */
+export function indexText(index: DatasetIndex): string {
+  const text = JSON.stringify(index, (key, value: unknown) => (key === 'outline' ? JSON.stringify(value) : value), 1)
+  // An outline holds numbers only: its text has no quote to escape
+  return text.replace(/"outline": "(\[[^"]*\])"/g, '"outline": $1')
+}
+
 /** The command: fetch (or read the cache), build, write */
 export async function main(argv: string[]): Promise<number> {
   const offline = argv.includes('--offline')
@@ -164,7 +171,7 @@ export async function main(argv: string[]): Promise<number> {
     total += text.length
     log(`  ${line.file}: ${line.rails} rails, ${line.lengthKm.toFixed(1)} km, ${(text.length / 1024).toFixed(0)} ko`)
   }
-  writeFileSync(join(OUT_DIR, 'index.json'), JSON.stringify(built.index, null, 1))
+  writeFileSync(join(OUT_DIR, 'index.json'), indexText(built.index))
   writeFileSync(join(OUT_DIR, 'README.md'), readme(built.index))
   log(`${built.index.lines.length} lines, ${built.index.stations.length} stations, ${built.index.connections.length} connections; ${(total / 1048576).toFixed(2)} MiB of line files`)
   return 0

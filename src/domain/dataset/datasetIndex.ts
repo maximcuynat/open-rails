@@ -1,3 +1,4 @@
+import { readOutline } from './lineOutline'
 // The index of the published « LGV France » dataset (`public/data/lgv/index.json`): what the
 // application reads first, before any geometry. Light enough to be fetched on every start: the
 // lines (one project file each), where lines meet, and the stations. Written by
@@ -33,6 +34,30 @@ export interface IndexLine {
   bbox: BBox
   /** Ids of the stations with a platform on this line */
   stations: string[]
+  /** What kind of line it is; absent from an older index (`lineCategory` then goes by `highSpeed`) */
+  category?: LineCategory
+  /** Its course as a few strokes (`lineOutline`), each `[x0, y0, x1, y1, …]` in metres; absent from an older index */
+  outline?: number[][]
+}
+
+/**
+ * The kinds of line a map tells apart. TER and Intercités are services, not tracks: what a rail
+ * carries is the kind of its infrastructure.
+ */
+export type LineCategory = 'highSpeed' | 'main' | 'regional' | 'service'
+
+export const LINE_CATEGORIES = ['highSpeed', 'main', 'regional', 'service'] as const satisfies readonly LineCategory[]
+
+export const LINE_CATEGORY_LABELS: Record<LineCategory, string> = {
+  highSpeed: 'Ligne à grande vitesse',
+  main: 'Ligne classique',
+  regional: 'Ligne régionale',
+  service: 'Raccordement et service',
+}
+
+/** The kind of a line of the index, whatever its age */
+export function lineCategory(line: Pick<IndexLine, 'category' | 'highSpeed'>): LineCategory {
+  return line.category ?? (line.highSpeed ? 'highSpeed' : 'main')
 }
 
 export interface BBox {
@@ -106,6 +131,14 @@ function isStation(v: unknown): v is IndexStation {
  * of the right kind, anything else is kept as it comes. Throws `DATASET_INDEX_UNREADABLE` otherwise.
  */
 export function readDatasetIndex(raw: unknown): DatasetIndex {
+  // What is optional is dropped when it is not what it should be, the line kept
+  if (isRecord(raw) && Array.isArray(raw.lines)) {
+    for (const line of raw.lines as unknown[]) {
+      if (!isRecord(line)) continue
+      if (line.outline !== undefined && (line.outline = readOutline(line.outline)) === undefined) delete line.outline
+      if (line.category !== undefined && !(LINE_CATEGORIES as readonly unknown[]).includes(line.category)) delete line.category
+    }
+  }
   if (
     !isRecord(raw) ||
     raw.version !== 1 ||

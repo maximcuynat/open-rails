@@ -42,8 +42,13 @@ interface Placed {
 
 export function renderStations(ctx: CanvasRenderingContext2D, cam: Camera, vw: number, vh: number, net: Network, options: StationRenderOptions = {}): void {
   if (net.stations.size === 0) return
+  renderStationMarks(ctx, cam, vw, vh, net.stations.values(), options)
+}
+
+/** The same marks and names for stations that are in no network: those of lines not loaded */
+export function renderStationMarks(ctx: CanvasRenderingContext2D, cam: Camera, vw: number, vh: number, stations: Iterable<Station>, options: StationRenderOptions = {}): void {
   const placed: Placed[] = []
-  for (const station of net.stations.values()) {
+  for (const station of stations) {
     const at = toScreen(station.pos, cam, vw, vh)
     if (at) placed.push({ station, x: at.x, y: at.y })
   }
