@@ -1083,12 +1083,14 @@ const TRAILER_END_MARGIN = 0.35
  * Compute the complete visual geometry for a TrainSet: body outlines, bogies with axles (a bogie
  * shared by two trailers appears once) and one gangway per joint.
  *
- * With `line`, the lean of the bodies is worked out as well (`rakeLean`): a leaning vehicle gets
- * its `roof` and `flank`, and the gangways hang between the roofs. The footprints never change.
+ * The view is from straight above: a body is drawn as its footprint, upright, whatever the cant
+ * of the track and the speed in the curve — the lean of a running train (`vehicleLean`) is worked
+ * out for the physics, never drawn. With `line`, a derailed rake is shown lying on its side
+ * (`rakeLean`): its vehicles get a `roof` and a `flank`. The footprints never change.
  */
 export function getTrainSetVisuals(net: Network, train: TrainSet, line?: LineSettings): TrainSetVisuals | null {
   if (train.vehicles.length === 0) return null
-  const leans = line && line.realScale !== false ? rakeLean(net, trackProfile(net, line), train) : null
+  const leans = line && line.realScale !== false && train.derailed ? rakeLean(net, trackProfile(net, line), train) : null
 
   const visuals: TrainVehicleVisual[] = []
   const bogies: BogieFrame[] = []

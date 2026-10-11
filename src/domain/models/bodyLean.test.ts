@@ -305,23 +305,31 @@ describe('visuals of a train', () => {
     return makeTrainSet('T', [lead])
   }
 
-  it('keep the footprint as it is and add the roof beside it in a curve', () => {
+  it('are the footprint and nothing else in a curve: the view is from above, a running train is not drawn leaning', () => {
     const { net } = curveLayout()
     for (const kind of ['loco', 'wagon'] as const) {
       const train = trainAt(net, onCurve(1, 45), [kind])
       const plain = getTrainSetVisuals(net, train)!
-      const leaning = getTrainSetVisuals(net, train, CLASSIC_160)!
-      expect(plain.vehicles[0].roof).toBeUndefined()
-      expect(leaning.vehicles[0].polygon).toEqual(plain.vehicles[0].polygon)
-      const roof = leaning.vehicles[0].roof!
-      expect(roof).toHaveLength(plain.vehicles[0].polygon.length)
-      // Stopped on 150 mm of cant: every point of the roof is nearer the centre than the footprint
-      const centre = centreOf(1)
-      const mean = (points: Point[]): number => points.reduce((sum, p) => sum + Math.hypot(p.x - centre.x, p.y - centre.y), 0) / points.length
-      const height = kind === 'loco' ? 4.1 : 4.32
-      expect(mean(plain.vehicles[0].polygon) - mean(roof)).toBeCloseTo(height * Math.sin(CANT_ANGLE * (1 + ROLL)), 1)
-      expect(leaning.vehicles[0].flank!.length).toBeGreaterThan(0)
+      // Stopped on 150 mm of cant, and at speed: the lean is worked out (see `vehicleLean`), never shown
+      for (const speed of [0, 40]) {
+        train.currentSpeed = speed
+        const withLine = getTrainSetVisuals(net, train, CLASSIC_160)!
+        expect(withLine).toEqual(plain)
+        expect(withLine.vehicles[0].roof).toBeUndefined()
+        expect(withLine.vehicles[0].flank).toBeUndefined()
+      }
     }
+  })
+
+  it('show a derailed rake lying on its side, the footprint kept', () => {
+    const { net } = curveLayout()
+    const train = trainAt(net, onCurve(1, 45), ['wagon'])
+    const plain = getTrainSetVisuals(net, train)!
+    train.derailed = { speed: 200, limit: 110 }
+    const lying = getTrainSetVisuals(net, train, CLASSIC_160)!
+    expect(lying.vehicles[0].polygon).toEqual(plain.vehicles[0].polygon)
+    expect(lying.vehicles[0].lying).toBe(true)
+    expect(lying.vehicles[0].roof).toHaveLength(plain.vehicles[0].polygon.length)
   })
 
   it('are what they were on straight track, and off the real scale', () => {
