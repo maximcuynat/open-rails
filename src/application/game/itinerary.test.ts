@@ -74,6 +74,12 @@ describe('the itinerary of a train in a game', () => {
     expect(advanceTrainSet(store.network, train, 600)).toBe(true)
     expect(refreshRouteGuide(store, train)).toBe(false)
     expect(buildItineraryView(store, train)!.distance).toBeCloseTo(900, 3)
+    // The time left follows: those 900 m at the limit of the track, or of the rake
+    const view = buildItineraryView(store, train)!
+    const fastest = Math.min(store.lineSettings.lineSpeed / 3.6, train.maxSpeed)
+    expect(view.duration).not.toBeNull()
+    expect(view.duration!).toBeGreaterThanOrEqual(900 / fastest - 1e-6)
+    expect(view.totalDuration).toBeCloseTo(view.duration!, 6)
 
     // Running through at speed is not a call
     advanceTrainSet(store.network, train, 890)

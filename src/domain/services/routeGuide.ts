@@ -1,6 +1,8 @@
 import { segmentPartialLength, type TrackPosition } from '../models/locomotive'
 import { findJunctionAtNode, isPassageOpen } from '../models/routing'
 import type { Network, NodeId, SegmentId, Station, StationStop, TrackSpan } from '../models/types'
+import type { LineSettings } from '../models/speedLimits'
+import { speedLimitOverSpans } from '../models/trackSpeed'
 import { findTrackPathToAny, type TrackPath, type TrackPoint } from './trackPath'
 
 // ─────────────────── The way to the next station, rail by rail ───────────────────
@@ -82,6 +84,40 @@ export function guideLeft(net: Network, guide: RouteGuide, at: TrackPoint): numb
     return segmentPartialLength(net, span.segId, at.t, span.t1) + rest
   }
   return null
+}
+
+/**
+ * Seconds from the start of each stretch of the guide to its end, run at the limit of the track
+ * (line speed, zones, curves: `speedLimitOverSpans`) and never faster than `maxSpeed` m/s. Starting,
+ * stopping and the signals are not counted: it is the least the way takes.
+ */
+export function guideDurations(net: Network, guide: RouteGuide, line: LineSettings, maxSpeed: number): number[] {
+  const { spans } = guide.path
+  const durations: number[] = new Array<number>(spans.length)
+  let after = 0
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const length = guide.left[i] - (i + 1 < spans.length ? guide.left[i + 1] : 0)
+    const speed = Math.min(speedLimitOverSpans(net, [spans[i]], line) / 3.6, maxSpeed)
+    if (speed > 0) after += length / speed
+    durations[i] = after
+  }
+  return durations
+}
+
+/**
+ * Seconds left on the guide for a train `left` metres from its end (`guideLeft`), from the
+ * `guideDurations` of that guide.
+ */
+export function guideDurationLeft(guide: RouteGuide, durations: readonly number[], left: number): number {
+  const lengths = guide.left
+  for (let i = lengths.length - 1; i >= 0; i--) {
+    if (lengths[i] < left) continue
+    const restLength = i + 1 < lengths.length ? lengths[i + 1] : 0
+    const restTime = i + 1 < lengths.length ? durations[i + 1] : 0
+    const stretch = lengths[i] - restLength
+    return restTime + (stretch > 0 ? ((durations[i] - restTime) * (left - restLength)) / stretch : 0)
+  }
+  return durations[0] ?? 0
 }
 
 /** Index of the stretch of the guide the lead bogie is on; -1 when it is not on the way */

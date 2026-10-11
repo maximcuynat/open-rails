@@ -3,7 +3,7 @@ import type { EditorStore } from '@application/state/editorStore'
 import { DRIVING_AIDS, DRIVING_AID_LABELS } from '@application/game/drivingAid'
 import { addItineraryStop, buildItineraryView, removeItineraryStop, stationRefs } from '@application/game/itinerary'
 import { showToast } from '../common/Toast'
-import { formatRouteDistance, routeStatusNote, stationChoices } from './itineraryModel'
+import { formatRouteDistance, formatRouteDuration, routeStatusNote, stationChoices } from './itineraryModel'
 
 interface ItineraryPanelProps {
   store: EditorStore
@@ -69,6 +69,7 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
           <span className="itinerary-next-name">{view.next}</span>
           <span className="itinerary-next-distance">
             {formatRouteDistance(view.distance, view.exact)}
+            {view.duration !== null && view.status === 'ok' ? ` · ${formatRouteDuration(view.duration)}` : ''}
             {view.platform ? ` · voie ${view.platform}` : ''}
           </span>
           {note && (
@@ -89,7 +90,12 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
           {view.stops.map((stop, i) => (
             <li className={`itinerary-stop${i === 0 ? ' is-next' : ''}`} key={stop.id}>
               <span className="itinerary-stop-name">{stop.name}</span>
-              {i === view.stops.length - 1 && view.stops.length > 1 && <span className="itinerary-stop-tag">{formatRouteDistance(view.total, false)}</span>}
+              {i === view.stops.length - 1 && view.stops.length > 1 && (
+                <span className="itinerary-stop-tag">
+                  {formatRouteDistance(view.total, false)}
+                  {view.totalDuration !== null && view.status === 'ok' ? ` · ${formatRouteDuration(view.totalDuration)}` : ''}
+                </span>
+              )}
               <button type="button" className="itinerary-remove" aria-label={`Retirer ${stop.name}`} onClick={() => removeItineraryStop(store, train, stop.index)}>
                 ✕
               </button>

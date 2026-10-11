@@ -8,7 +8,7 @@ import type { Point, StationId } from '@domain/models/types'
 import { afterCall, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStop, type StationRef } from '@domain/services/itinerary'
 import { openPassage } from '@domain/models/junction'
 import { findJunctionAtNode } from '@domain/models/routing'
-import { findRouteGuide, guideLeft, pointsAgainstGuide, type GuidePoints, type RouteGuide } from '@domain/services/routeGuide'
+import { findRouteGuide, guideDurationLeft, guideDurations, guideLeft, pointsAgainstGuide, type GuidePoints, type RouteGuide } from '@domain/services/routeGuide'
 import { aidReach } from './drivingAid'
 import { trackSpansEnds } from '@domain/services/trackPath'
 
@@ -31,6 +31,8 @@ export interface RouteGuideState {
   guide: RouteGuide | null
   /** Metres left on the guide at the last look */
   left: number | null
+  /** Seconds each stretch of `guide` is from its end (`guideDurations`), worked out when the time is first asked */
+  durations?: { guide: RouteGuide; seconds: number[] }
   /** The nearest points ahead that lead off the way and were left as they are (aid `guide`, or held by another train) */
   against: GuidePoints | null
 }
@@ -162,6 +164,12 @@ export interface ItineraryStopView {
 }
 
 export interface ItineraryView extends ConsoleRoute {
+  /**
+   * Seconds to the next station and to the destination, run at the limits of the track; where the
+   * way is only known as the crow flies, at the speed of the line. Null when the distance is not known
+   */
+  duration: number | null
+  totalDuration: number | null
   /** Metres to the nearest points ahead that lead off the way; null when the way is set, or not watched */
   pointsAgainst: number | null
   /** The station called at last, if any */
@@ -183,25 +191,39 @@ export function buildItineraryView(store: EditorStore, train: TrainSet): Itinera
   const origin = name(itinerary.stations[itinerary.next - 1])
   const next = stops[0]
   if (!next) {
-    return { origin, stops, platform: null, pointsAgainst: null, next: null, distance: null, exact: true, destination: null, total: null, status: itinerary.stations.length > 1 ? 'arrived' : 'ok' }
+    return { origin, stops, platform: null, pointsAgainst: null, duration: null, totalDuration: null, next: null, distance: null, exact: true, destination: null, total: null, status: itinerary.stations.length > 1 ? 'arrived' : 'ok' }
   }
   const state = store.routeGuides.get(train.id)
   const guide = state?.station === next.id ? state.guide : null
   const target = refs.get(next.id)
   let distance: number | null = null
+  let duration: number | null = null
   let exact = false
+  // What is only known as the crow flies is run at the speed of the line, or of the rake
+  const cruise = Math.min(store.lineSettings.lineSpeed / 3.6, train.maxSpeed)
+  const flown = (metres: number): number => (cruise > 0 ? metres / cruise : 0)
   if (guide && state?.left != null) {
+    if (state.durations?.guide !== guide) {
+      state.durations = { guide, seconds: guideDurations(store.network, guide, store.lineSettings, train.maxSpeed) }
+    }
+    const onTrack = guideDurationLeft(guide, state.durations.seconds, state.left)
     if (guide.target === 'platform') {
       distance = state.left
+      duration = onTrack
       exact = true
     } else {
       // To the gate along the track, then as the crow flies to the station
       const end = trackSpansEnds(store.network, guide.path.spans)?.b ?? leadPoint(store, train)
-      distance = state.left + (end && target ? Math.hypot(target.x - end.x, target.y - end.y) : 0)
+      const rest = end && target ? Math.hypot(target.x - end.x, target.y - end.y) : 0
+      distance = state.left + rest
+      duration = onTrack + flown(rest)
     }
   } else {
     const from = leadPoint(store, train)
-    if (from && target) distance = Math.hypot(target.x - from.x, target.y - from.y)
+    if (from && target) {
+      distance = Math.hypot(target.x - from.x, target.y - from.y)
+      duration = flown(distance)
+    }
   }
   const beyond = target ? straightLengthAhead({ stations: itinerary.stations, next: itinerary.next + 1 }, target, place) : 0
   return {
@@ -209,6 +231,8 @@ export function buildItineraryView(store: EditorStore, train: TrainSet): Itinera
     stops,
     platform: guide?.stop?.ref ?? null,
     pointsAgainst: guide && state?.against ? state.against.distance : null,
+    duration,
+    totalDuration: duration === null ? null : duration + flown(beyond),
     next: next.name,
     distance,
     exact,

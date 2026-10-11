@@ -15,6 +15,15 @@ export function formatRouteDistance(metres: number | null, exact: boolean): stri
   return exact ? text : `≈ ${text}`
 }
 
+/** A time left to run, always an estimate: « ≈ 14 min », « ≈ 1 h 05 »; « < 1 min » at the end */
+export function formatRouteDuration(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) return '—'
+  const minutes = Math.round(Math.max(0, seconds) / 60)
+  if (minutes < 1) return '< 1 min'
+  if (minutes < 60) return `≈ ${minutes} min`
+  return `≈ ${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`
+}
+
 /** What to tell the driver when the way is not simply ahead; null when it is */
 export function routeStatusNote(status: ConsoleRouteStatus): string | null {
   if (status === 'behind') return 'Le chemin part derrière la rame : changez de cabine.'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatRouteDistance, routeStatusNote, stationChoices } from './itineraryModel'
+import { formatRouteDistance, formatRouteDuration, routeStatusNote, stationChoices } from './itineraryModel'
 
 describe('the itinerary panel', () => {
   it('writes a distance in metres, then in kilometres, marked when estimated', () => {
@@ -8,6 +8,14 @@ describe('the itinerary panel', () => {
     expect(formatRouteDistance(12_430, true)).toBe('12,4 km')
     expect(formatRouteDistance(662_300, false)).toBe('≈ 662 km')
     expect(formatRouteDistance(-3, true)).toBe('0 m')
+  })
+
+  it('writes a time left in minutes, then in hours, always as an estimate', () => {
+    expect(formatRouteDuration(null)).toBe('—')
+    expect(formatRouteDuration(20)).toBe('< 1 min')
+    expect(formatRouteDuration(840)).toBe('≈ 14 min')
+    expect(formatRouteDuration(3900)).toBe('≈ 1 h 05')
+    expect(formatRouteDuration(-5)).toBe('< 1 min')
   })
 
   it('has a word for a way that is not ahead', () => {
