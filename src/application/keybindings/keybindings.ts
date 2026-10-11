@@ -48,7 +48,9 @@ export const ACTIONS = [
   { id: 'drive.emergencyBrake', label: 'Freinage d’urgence', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'Backspace' }, null] },
   { id: 'drive.steerLeft', label: 'Aiguille suivante à gauche', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'ArrowLeft' }, null] },
   { id: 'drive.steerRight', label: 'Aiguille suivante à droite', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'ArrowRight' }, null] },
-  { id: 'drive.exit', label: 'Quitter la conduite', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'Space' }, null] },
+  { id: 'drive.pause', label: 'Pause / reprendre', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'Space' }, null] },
+  // No key of its own: leaving stops every train, a key pressed by mistake must not do it
+  { id: 'drive.leave', label: 'Quitter la conduite', group: 'drive', contexts: DRIVE, by: 'code', defaults: [null, null] },
   { id: 'drive.flipLegacy', label: 'Inverser le sens (ancienne locomotive)', group: 'drive', contexts: DRIVE, by: 'code', defaults: [{ code: 'KeyR' }, null] },
 
   { id: 'tool.select', label: 'Outil Sélection', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'v' }, null] },

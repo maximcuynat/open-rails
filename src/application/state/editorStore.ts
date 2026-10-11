@@ -71,6 +71,8 @@ import {
   loadConsolePreference,
   loadDrivingAid,
   saveDrivingAid,
+  loadGameState,
+  saveGameState,
   loadTimeFactorPreference,
   loadKeyPreferences,
   loadRemoteHostPreference,
@@ -105,6 +107,7 @@ import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockMod
 import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
+import { applyGame, captureGame } from '@domain/models/runningState'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
 import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
 import type { SegmentId, StationId, StationStop } from '@domain/models/types'
@@ -287,6 +290,9 @@ export interface TrainDebugOptions {
  * fields mutated outside React for performance. A version counter + subscribe
  * lets UI panels re-render when something changes.
  */
+/** Under this speed (m/s) a train counts as at rest: it can be coupled, parted or taken out */
+const AT_REST_SPEED = 0.1
+
 export class EditorStore {
   // --- Mutable canvas state (not React state) ---
   network: Network = createNetwork()
@@ -382,6 +388,8 @@ export class EditorStore {
   locomotivePreview: Locomotive | null = null // Ghost preview along track on hover
   trainWagonCount = 2 // legacy: used only for loco preview during drag
   isPlayMode = false
+  /** The time of the simulation is stopped: every train stays as it is, handles and pilots included, until it is resumed */
+  isPaused = false
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
@@ -1138,6 +1146,7 @@ export class EditorStore {
     if (isTimeFactor(savedFactor)) this.timeFactor = savedFactor
     this.remoteDeskHost = loadRemoteHostPreference()
     this.loadPersistedState()
+    if (!this.datasetReloadPending) this.restoreSavedGame()
     this.pushHistorySnapshot()
   }
 
@@ -1153,6 +1162,7 @@ export class EditorStore {
     if (saved.dataset && saved.network.segments.size === 0) {
       // A recipe without its geometry: the application fetches the lines again and puts the trains back
       this.datasetReloadPending = true
+      this.savedGamePending = true
       this.datasetStoredProject = saved.stored
     }
     if (saved.projectName) {
@@ -1275,6 +1285,8 @@ export class EditorStore {
   private adoptLoadedProject(res: ReturnType<typeof deserializeNetwork>): void {
     this.locomotive = null
     this.restoreTrains(res.trains)
+    this.autopilots.clear()
+    this.savedGamePending = false
     if (res.projectName) this.projectName = res.projectName
     if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
     // Section names belong to the imported file: never keep those of the previous network
@@ -1347,6 +1359,9 @@ export class EditorStore {
     this.datasetPending.clear()
     this.datasetReloadPending = false
     this.adoptLoadedProject(res)
+    // A stored project found again (its trains come with it): they are in place only now, and get
+    // back what they were doing — each time, were the lines fetched twice
+    if (options.trains !== undefined) this.restoreSavedGame()
     if (options.name) this.projectName = options.name
     if (!options.camera && frame) this.frameBox(frame)
     this.selection = { nodes: new Set(), segments: new Set() }
@@ -1570,6 +1585,9 @@ export class EditorStore {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
+    // What the trains are doing goes with where they stand: a page loaded again finds the game as it was
+    // (not while the lines of a real network are still being fetched again: the game written then is the one to find)
+    if (!this.savedGamePending) saveGameState(captureGame(this.trains, new Set(this.autopilots.keys()), this.isFreeView || (!this.isPlayMode && this.leftInFreeView)))
     // Putting a project the browser has no room for into text again at every edit is time spent
     // for nothing: it is tried again once the project is smaller
     // A dataset project is saved as its recipe: the lines are fetched again, never written
@@ -1616,6 +1634,8 @@ export class EditorStore {
     this.network = createNetwork()
     this.locomotive = null
     this.restoreTrains([])
+    this.autopilots.clear()
+    this.savedGamePending = false
     this.restoreSignallingSettings({})
     this.restoreSignalDisplay({})
     this.flatLevels = false
@@ -3193,7 +3213,13 @@ export class EditorStore {
   /** Toggle play mode on/off */
   togglePlayMode = (): void => {
     if (!this.locomotive && this.trains.length === 0) return
+    // A real network has nothing to build: its game is never left, what asks for it stops the time
+    if (this.isPlayMode && !this.hasBuildMode) {
+      this.togglePause()
+      return
+    }
     this.isPlayMode = !this.isPlayMode
+    this.isPaused = false
     this.forgetBrakeHolds(null)
     if (this.isPlayMode) {
       // Switch away from any tool interaction
@@ -3210,11 +3236,14 @@ export class EditorStore {
       this.sidePanelOpenBeforeDriving = this.isSidePanelOpen
       this.isSidePanelOpen = false
       this.closeContextMenu()
-      if (this.trains.length > 0 && !this.selectedTrain) {
+      // Back as it was left: on no train when the view was free, and a pilot still has a train to hold
+      for (const id of [...this.autopilots.keys()]) if (!this.trains.some((t) => t.id === id)) this.autopilots.delete(id)
+      if (this.trains.length > 0 && !this.selectedTrain && !(this.leftInFreeView && this.autopilots.size > 0)) {
         this.selectTrainById(this.trains[0].id)
       }
-      // Every train starts at rest with its brakes applied: the driver releases them to leave
-      for (const t of this.trains) resetTrainControls(t)
+      this.leftInFreeView = false
+      // The trains go on as they were left (speed, handles, pilots): a train just laid is at rest,
+      // brakes applied (`makeTrainSet`), and `haltAllTrains` puts every one of them back there
       this.impactReported.clear()
       // Signals show their state from the first frame
       resetSignalling(this.signalling)
@@ -3224,15 +3253,17 @@ export class EditorStore {
       }
       this.startSimulationLoop()
     } else {
-      this.trainDrivers.clear()
-      this.autopilots.clear()
+      // Nothing of the trains is reset: the simulation is held, and goes on from here when
+      // driving starts again. The desks let go: no phone drives while the time is stopped
+      this.leftInFreeView = this.selectedTrainId === null && this.trains.length > 0
+      this.couplingArmed = false
+      for (const desk of new Set(this.trainDrivers.values())) this.releaseTrain(desk)
       this.rakePlacement = null
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       resetSignalling(this.signalling)
       this.locomotiveCurrentSpeed = 0
       this.locomotiveThrottle = 0
-      for (const t of this.trains) resetTrainControls(t)
       // Where the trains were driven to is one undo step, and survives a reload
       const lastSaved = this.history[this.historyIndex]?.trains ?? []
       if (JSON.stringify(serializeTrains(this.trains)) !== JSON.stringify(lastSaved)) {
@@ -3241,6 +3272,67 @@ export class EditorStore {
     }
     this.notify()
   }
+
+  /**
+   * Whether there is a mode to build in besides the game. Not on a real network: its track is
+   * locked, and its trains are set down, coupled and removed while the game runs.
+   */
+  get hasBuildMode(): boolean {
+    return this.dataset === null
+  }
+
+  /**
+   * Give the trains back what they were doing when the project was last written (speed, handles,
+   * brakes, pilots), once the trains of the stored project are in place. A train
+   * that is not where it was then stays at rest. Returns how many trains got their state back.
+   */
+  restoreSavedGame = (): number => {
+    this.savedGamePending = false
+    const game = applyGame(this.trains, loadGameState())
+    for (const id of game.piloted) this.autopilots.set(id, newPilotMemory())
+    this.leftInFreeView = game.freeView
+    if (game.freeView) this.releaseTrainSelection()
+    return game.restored
+  }
+
+  /** The game written before the page was loaded again is still to be given back: the trains of a real network come with its lines */
+  private savedGamePending = false
+
+  /** A game found again (a page loaded again): it starts with the time stopped, for the player to look before the trains move */
+  enterGamePaused = (): void => {
+    if (this.isPlayMode || this.trains.length === 0) return
+    this.togglePlayMode()
+    this.setPaused(true)
+  }
+
+  /** Driving was left from the free view: it starts again there, on no train */
+  private leftInFreeView = false
+
+  /**
+   * Out of play mode with trains that were left running: a train still has speed, or a pilot holds
+   * one. Driving again goes on from there; `haltAllTrains` is the way to start from rest instead.
+   */
+  get isSimulationHeld(): boolean {
+    return !this.isPlayMode && (this.autopilots.size > 0 || this.trains.some((t) => Math.abs(t.currentSpeed) > 0.1))
+  }
+
+  /** Every train at rest, brakes applied, handles at neutral, and no pilot: the simulation starts afresh, the trains where they stand */
+  haltAllTrains = (): void => {
+    for (const t of this.trains) resetTrainControls(t)
+    this.autopilots.clear()
+    this.leftInFreeView = false
+    this.forgetBrakeHolds(null)
+    this.notify()
+  }
+
+  /** Stop the time of the simulation, or let it run again. Nothing is reset: speeds, handles, pilots and signals stay as they are */
+  setPaused = (paused: boolean): void => {
+    if (!this.isPlayMode || this.isPaused === paused) return
+    this.isPaused = paused
+    this.notify()
+  }
+
+  togglePause = (): void => this.setPaused(!this.isPaused)
 
   /** Set the throttle state of the legacy locomotive: 1 = accelerate, -1 = brake/decelerate, 0 = coast/inertia */
   setLocomotiveThrottle = (throttle: 1 | 0 | -1): void => {
@@ -3321,6 +3413,7 @@ export class EditorStore {
    * traction and brakes taking hold, the signalling, the collisions) exactly as at ×1.
    */
   simulateFrame = (dt: number): void => {
+    if (this.isPaused) return
     for (let i = 0; i < this.timeFactor; i++) {
       if (this.trains.length > 0) this.tickAllTrains(dt)
       else if (this.locomotive) this.tickSimulation(dt)
@@ -3527,6 +3620,8 @@ export class EditorStore {
       this.isPlayMode = false
       this.stopSimulationLoop()
     }
+    this.isPaused = false
+    this.couplingArmed = false
     resetSignalling(this.signalling)
     this.trains = trains
     this.locomotiveCurrentSpeed = 0
@@ -3642,7 +3737,43 @@ export class EditorStore {
 
   armRakePlacement = (rake: RakeChoice | null): void => {
     this.rakePlacement = rake
+    if (rake) this.couplingArmed = false
     this.notify()
+  }
+
+  /** While trains run: the next click on a coupling couples two rakes at rest, or parts one */
+  couplingArmed = false
+
+  armCoupling = (on: boolean): void => {
+    if (!this.isPlayMode || this.couplingArmed === on) return
+    this.couplingArmed = on
+    if (on) this.rakePlacement = null
+    this.hoveredCouplerPoint = null
+    this.notify()
+  }
+
+  /** The couplings of the trains where they stand now, for the canvas while coupling is armed in the game */
+  liveCouplerPoints = (): CouplerPoint[] => getAllCouplerPoints(this.network, this.trains)
+
+  /**
+   * Take a train out of the game while it runs. Refused for a train that moves, and for the last
+   * one (a game has a train). This screen goes to the free view when it was on that train.
+   */
+  removeTrainInGame = (id: string): 'done' | 'moving' | 'last' | 'unknown' => {
+    const train = this.trains.find((t) => t.id === id)
+    if (!this.isPlayMode || !train) return 'unknown'
+    if (this.trains.length < 2) return 'last'
+    if (Math.abs(train.currentSpeed) > AT_REST_SPEED) return 'moving'
+    this.autopilots.delete(id)
+    this.trainDrivers.delete(id)
+    this.routeGuides.delete(id)
+    if (this.selectedTrainId === id) {
+      this.releaseTrainSelection()
+      this.followLocomotiveCamera = false
+    }
+    this.trains = this.trains.filter((t) => t.id !== id)
+    this.commitTrainChange()
+    return 'done'
   }
 
   /**
@@ -4676,6 +4807,8 @@ export class EditorStore {
       this.tool = 'locomotive'
       this.trainToolSubMode = 'select'
     } else {
+      // On a real network the game is not left: coupling is armed in it (`armCoupling`)
+      if (this.isPlayMode && !this.hasBuildMode) return
       if (this.isPlayMode) this.togglePlayMode()
       this.tool = 'coupling'
       this.hoveredTrainDeleteVehicle = null
@@ -4730,10 +4863,10 @@ export class EditorStore {
   }
 
   /** Handle a click in coupling mode: couple two nearby ends or split at a joint (one undo step) */
-  handleCouplingClick = (worldPos: Point): void => {
-    if (this.isPlayMode) return
+  handleCouplingClick = (worldPos: Point): 'done' | 'moving' | 'nothing' => {
+    if (this.isPlayMode) return this.couplingArmed ? this.coupleInGame(worldPos) : 'nothing'
     const updated = handleCouplingClick(this.network, this.trains, worldPos)
-    if (updated === this.trains) return
+    if (updated === this.trains) return 'nothing'
     this.trains = updated
     // The selected train may have been merged or split into trains with new ids
     if (!this.selectedTrain) {
@@ -4742,6 +4875,43 @@ export class EditorStore {
     this.repairTrainSelection()
     this.refreshCouplerPoints()
     this.commitTrainChange()
+    return 'done'
+  }
+
+  /**
+   * The same click while trains run: only between rakes at rest. A rake made of others takes
+   * their place: the one that keeps the head of a rake keeps its pilot, its desk and this
+   * screen; the rake coupled behind another gives up its own.
+   */
+  private coupleInGame(worldPos: Point): 'done' | 'moving' | 'nothing' {
+    const before = this.trains
+    const updated = handleCouplingClick(this.network, before, worldPos)
+    if (updated === before) return 'nothing'
+    const gone = before.filter((t) => !updated.includes(t))
+    if (gone.some((t) => Math.abs(t.currentSpeed) > AT_REST_SPEED)) return 'moving'
+    const made = updated.filter((t) => !before.includes(t))
+    const watched = this.selectedTrainVehicleId
+    const wasSelected = gone.some((t) => t.id === this.selectedTrainId)
+    for (const old of gone) {
+      const heir = made.find((t) => t.vehicles[0].id === old.vehicles[0].id)
+      const pilot = this.autopilots.get(old.id)
+      const desk = this.trainDrivers.get(old.id)
+      this.autopilots.delete(old.id)
+      this.trainDrivers.delete(old.id)
+      this.routeGuides.delete(old.id)
+      if (heir && pilot) this.autopilots.set(heir.id, pilot)
+      if (heir && desk !== undefined) this.trainDrivers.set(heir.id, desk)
+    }
+    // The part let go has no journey of its own: it stands where it was parted
+    for (const t of made) if (!gone.some((old) => old.vehicles[0].id === t.vehicles[0].id)) delete t.itinerary
+    this.trains = updated
+    if (wasSelected) {
+      const now = made.find((t) => t.vehicles.some((v) => v.id === watched)) ?? made[0]
+      this.selectTrainById(now.id, now.vehicles.some((v) => v.id === watched) ? watched ?? undefined : undefined)
+    }
+    this.hoveredCouplerPoint = null
+    this.commitTrainChange()
+    return 'done'
   }
 
   /** Find nearest coupler to a world position for hover highlight */

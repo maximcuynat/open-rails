@@ -195,14 +195,49 @@ describe('keyboard shortcuts', () => {
     expect(store.showTrainDebug).toBe(false)
   })
 
-  it('leaves play mode on Space and Escape, and enters it on F5', () => {
+  it('pauses on Space and Escape without leaving play mode, and leaves or enters it on F5', () => {
     const store = drivingStore()
     handleKeyDown(store, keyEvent('Space', ' '))
+    expect(store.isPlayMode).toBe(true)
+    expect(store.isPaused).toBe(true)
+    handleKeyDown(store, keyEvent('Space', ' '))
+    expect(store.isPaused).toBe(false)
+    handleKeyDown(store, keyEvent('Escape', 'Escape'))
+    expect(store.isPlayMode).toBe(true)
+    expect(store.isPaused).toBe(true)
+    handleKeyDown(store, keyEvent('F5', 'F5'))
     expect(store.isPlayMode).toBe(false)
     handleKeyDown(store, keyEvent('F5', 'F5'))
     expect(store.isPlayMode).toBe(true)
+    expect(store.isPaused).toBe(false)
+  })
+
+  it('puts away a train about to be set down on Escape, before it pauses', () => {
+    const store = drivingStore()
+    store.armRakePlacement({ model: 'duplex' })
     handleKeyDown(store, keyEvent('Escape', 'Escape'))
-    expect(store.isPlayMode).toBe(false)
+    expect(store.rakePlacement).toBeNull()
+    expect(store.isPaused).toBe(false)
+  })
+
+  it('keeps every train as it is through a pause: speed, handles, pilot', () => {
+    const store = drivingStore()
+    const train = store.selectedTrain!
+    train.reverser = 'forward'
+    train.notch = 3
+    train.currentSpeed = 12
+    store.setAutopilot(train.id, true)
+    const lead = { ...train.vehicles[0].front }
+    store.setPaused(true)
+    for (let i = 0; i < 50; i++) store.simulateFrame(0.05)
+    expect(train.vehicles[0].front).toEqual(lead)
+    expect(train.currentSpeed).toBe(12)
+    expect(train.notch).toBe(3)
+    expect(train.reverser).toBe('forward')
+    expect(store.autopilots.has(train.id)).toBe(true)
+    store.setPaused(false)
+    store.simulateFrame(0.05)
+    expect(train.vehicles[0].front).not.toEqual(lead)
   })
 
   it('ignores driving keys pressed with Ctrl and editing keys while driving', () => {

@@ -114,3 +114,26 @@ export function saveDrivingAid(aid: string): void {
     // Storage full or denied: the choice still applies for this session
   }
 }
+
+/** What the trains were doing when the project was last written (see `domain/models/runningState.ts`); kept apart from the project */
+export const GAME_STATE_KEY = 'open-rail:game'
+
+/** The saved game as it was written: the caller validates it. Null when there is none, or when it does not read */
+export function loadGameState(): unknown {
+  try {
+    const raw = getStorage()?.getItem(GAME_STATE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+/** Write the game, or forget it (null) */
+export function saveGameState(game: unknown): void {
+  try {
+    if (game === null) getStorage()?.removeItem(GAME_STATE_KEY)
+    else getStorage()?.setItem(GAME_STATE_KEY, JSON.stringify(game))
+  } catch {
+    // Storage full or denied: the trains come back at rest
+  }
+}

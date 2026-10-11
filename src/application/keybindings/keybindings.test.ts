@@ -102,14 +102,14 @@ describe('keybindings — rebinding', () => {
     expect(findConflict(bindings, 'drive.emergencyBrake', press('KeyF', 'f'))).toBe('view.fit')
     expect(findConflict(bindings, 'drive.notchUp', press('KeyA', 'a'))).toBeNull()
     // Shift+↑ and ↑ are distinct chords
-    expect(findConflict(bindings, 'drive.exit', press('ArrowUp', 'ArrowUp', true))).toBe('drive.reverserForward')
+    expect(findConflict(bindings, 'drive.pause', press('ArrowUp', 'ArrowUp', true))).toBe('drive.reverserForward')
   })
 
   it('refuses the keys the editor keeps for itself', () => {
     expect(isBindable('drive.notchUp', press('Escape', 'Escape'))).toBe(false)
     expect(isBindable('drive.notchUp', press('Tab', 'Tab'))).toBe(false)
     expect(isBindable('drive.notchUp', press('ShiftLeft', 'Shift'))).toBe(false)
-    expect(isBindable('drive.exit', press('Space', ' '))).toBe(true)
+    expect(isBindable('drive.pause', press('Space', ' '))).toBe(true)
     expect(isBindable('drive.notchUp', press('Digit1', '1'))).toBe(true)
     expect(isBindable('tool.select', press('Space', ' '))).toBe(false)
     expect(isBindable('tool.select', press('Backspace', 'Backspace'))).toBe(false)

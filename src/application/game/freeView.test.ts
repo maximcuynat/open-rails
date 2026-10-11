@@ -46,8 +46,9 @@ describe('leaving a train to its pilot and looking elsewhere', () => {
     expect(store.autopilots.has(train.id)).toBe(true)
     for (let i = 0; i < 200; i++) store.tickAllTrains(0.05)
     expect(train.currentSpeed).toBeGreaterThan(0)
+    // A real network has no other mode: what would leave the game stops the time, the view stays free
     store.togglePlayMode()
-    expect(store.isFreeView).toBe(false)
+    expect([store.isFreeView, store.isPaused]).toEqual([true, true])
   })
 
   it('takes a train back with the view on it', async () => {

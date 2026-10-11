@@ -11,6 +11,7 @@ import { ToastContainer, showToast } from '@presentation/components/common/Toast
 import { DrivingDock } from '@presentation/components/hud/DrivingDock'
 import { ItineraryPanel } from '@presentation/components/hud/ItineraryPanel'
 import { FreeViewPanel } from '@presentation/components/hud/FreeViewPanel'
+import { PauseControl } from '@presentation/components/hud/PauseControl'
 import { MapLegend } from '@presentation/components/hud/MapLegend'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
@@ -56,6 +57,7 @@ export default function App() {
     if (store.datasetReloadPending) {
       showToast('Rechargement de la ligne…', 'info')
       void reloadDataset(store)
+        .then(() => store.enterGamePaused())
         .then(() => showToast(`Ligne « ${store.projectName} » rechargée`, 'success'))
         .catch((error: unknown) => showToast(datasetErrorMessage(error), 'error', 8000))
     } else if (store.dataset && !store.datasetIndex) {
@@ -142,6 +144,7 @@ export default function App() {
           <MapLegend store={store} />
           <ItineraryPanel store={store} />
           <FreeViewPanel store={store} />
+          <PauseControl store={store} />
           <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>
