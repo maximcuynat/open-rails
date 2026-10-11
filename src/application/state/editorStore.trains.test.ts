@@ -296,7 +296,7 @@ describe('EditorStore trains', () => {
   })
 
   describe('persistence', () => {
-    it('restores the trains, stopped, after a reload', () => {
+    it('restores the trains after a reload where they were driven to, held as they were left', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
       store.setTrainPlacementKind('tgv_wagon')
@@ -319,14 +319,20 @@ describe('EditorStore trains', () => {
       expect(reloaded.trains).toHaveLength(1)
       expect(reloaded.trains[0].vehicles.map(v => v.kind)).toEqual(['loco', 'wagon'])
       expect(reloaded.trains[0].vehicles[0].front.t).toBeCloseTo(drivenT, 9)
-      expect(reloaded.trains[0].currentSpeed).toBe(0)
-      expect(reloaded.trains[0].notch).toBe(0)
-      expect(reloaded.trains[0].reverser).toBe('neutral')
+      // Leaving the driving resets nothing, and neither does loading the page again
+      expect(reloaded.trains[0].currentSpeed).toBe(20)
+      expect(reloaded.trains[0].notch).toBe(5)
+      expect(reloaded.trains[0].reverser).toBe('forward')
       expect(reloaded.isPlayMode).toBe(false)
+      expect(reloaded.isSimulationHeld).toBe(true)
       expect(reloaded.locomotive).toBeNull()
+      // Put at rest, they come back at rest
+      reloaded.haltAllTrains()
+      reloaded.flushPersistedState()
+      expect(new EditorStore().trains[0].currentSpeed).toBe(0)
     })
 
-    it('does not restore a train as moving when the page closes while driving', () => {
+    it('holds the simulation, out of play mode, when the page closed while driving', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
       runAtConstantSpeed()
@@ -339,9 +345,12 @@ describe('EditorStore trains', () => {
       store.savePersistedState()
 
       const reloaded = new EditorStore()
-      expect(reloaded.trains[0].currentSpeed).toBe(0)
-      expect(reloaded.trains[0].notch).toBe(0)
-      expect(reloaded.trains[0].reverser).toBe('neutral')
+      // Nothing moves by itself after a reload: the trains are as they were, the time is not running
+      expect(reloaded.isPlayMode).toBe(false)
+      expect(reloaded.isSimulationHeld).toBe(true)
+      expect(reloaded.trains[0].currentSpeed).toBe(20)
+      expect(reloaded.trains[0].notch).toBe(5)
+      expect(reloaded.trains[0].reverser).toBe('forward')
     })
 
     it('exports the trains and loads them back, and loads an old file without trains', () => {

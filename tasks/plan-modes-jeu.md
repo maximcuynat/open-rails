@@ -35,8 +35,12 @@ dont Échap et Espace.
   pupitre, itinéraire et cet écran), `removeTrainInGame` (jamais le dernier, jamais un train qui
   roule). `hud/YardTools.tsx` dans les deux panneaux. Une partie retrouvée après un rechargement
   reprend en pause (`enterGamePaused`).
-- [ ] **Lot 4 — plus tard.** État en cours enregistré (vitesses, pilotes) pour reprendre après un
-  rechargement.
+- [x] **Lot 4 — partie retrouvée après un rechargement.** `domain/models/runningState.ts`
+  (`captureGame`, `applyGame`) : vitesse, manettes, freins, pilote et vue libre de chaque train,
+  écrits à part du projet (`open-rail:game`, à chaque écriture du projet) — ni les fichiers ni
+  l'annulation ne les portent. Rendus au chargement à un train resté où il était
+  (`restoreSavedGame`) ; tout ce qui ne se relit pas est ignoré. Sur un réseau de son cru, la
+  simulation revient « suspendue » ; sur un réseau réel, en jeu et en pause.
 
 ## Reste des lots 1 à 3
 
@@ -48,7 +52,10 @@ dont Échap et Espace.
 
 - Un train laissé en marche garde sa vitesse même si on modifie la voie devant lui en édition :
   seuls les trains recréés (annulation, attelage, véhicules retirés avec leur rail) repartent à l'arrêt.
-- Après un rechargement de page, les trains sont à l'arrêt et sans pilote (lot 4).
+- Après un rechargement : le temps d'arrêt en gare du pilote repart de zéro, l'état des signaux est
+  recalculé, un train déraillé ou en survitesse ne le retrouve pas, les pupitres téléphone sont à reprendre.
+- L'état est écrit quand le projet l'est (fermeture de la page, pose d'un train…) : après un
+  plantage du navigateur, la partie revient à la dernière écriture.
 
 - Le pupitre téléphone ne sait pas que le jeu est en pause (pas de champ dans `ConsoleState`) : ses
   manettes bougent, le train ne part pas.

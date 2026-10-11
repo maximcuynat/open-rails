@@ -71,6 +71,8 @@ import {
   loadConsolePreference,
   loadDrivingAid,
   saveDrivingAid,
+  loadGameState,
+  saveGameState,
   loadTimeFactorPreference,
   loadKeyPreferences,
   loadRemoteHostPreference,
@@ -105,6 +107,7 @@ import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockMod
 import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
+import { applyGame, captureGame } from '@domain/models/runningState'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
 import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
 import type { SegmentId, StationId, StationStop } from '@domain/models/types'
@@ -1143,6 +1146,7 @@ export class EditorStore {
     if (isTimeFactor(savedFactor)) this.timeFactor = savedFactor
     this.remoteDeskHost = loadRemoteHostPreference()
     this.loadPersistedState()
+    if (!this.datasetReloadPending) this.restoreSavedGame()
     this.pushHistorySnapshot()
   }
 
@@ -1158,6 +1162,7 @@ export class EditorStore {
     if (saved.dataset && saved.network.segments.size === 0) {
       // A recipe without its geometry: the application fetches the lines again and puts the trains back
       this.datasetReloadPending = true
+      this.savedGamePending = true
       this.datasetStoredProject = saved.stored
     }
     if (saved.projectName) {
@@ -1281,6 +1286,7 @@ export class EditorStore {
     this.locomotive = null
     this.restoreTrains(res.trains)
     this.autopilots.clear()
+    this.savedGamePending = false
     if (res.projectName) this.projectName = res.projectName
     if (res.camera) this.camera = createCamera(res.camera.x, res.camera.y, res.camera.scale)
     // Section names belong to the imported file: never keep those of the previous network
@@ -1353,6 +1359,9 @@ export class EditorStore {
     this.datasetPending.clear()
     this.datasetReloadPending = false
     this.adoptLoadedProject(res)
+    // A stored project found again (its trains come with it): they are in place only now, and get
+    // back what they were doing — each time, were the lines fetched twice
+    if (options.trains !== undefined) this.restoreSavedGame()
     if (options.name) this.projectName = options.name
     if (!options.camera && frame) this.frameBox(frame)
     this.selection = { nodes: new Set(), segments: new Set() }
@@ -1576,6 +1585,9 @@ export class EditorStore {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
+    // What the trains are doing goes with where they stand: a page loaded again finds the game as it was
+    // (not while the lines of a real network are still being fetched again: the game written then is the one to find)
+    if (!this.savedGamePending) saveGameState(captureGame(this.trains, new Set(this.autopilots.keys()), this.isFreeView || (!this.isPlayMode && this.leftInFreeView)))
     // Putting a project the browser has no room for into text again at every edit is time spent
     // for nothing: it is tried again once the project is smaller
     // A dataset project is saved as its recipe: the lines are fetched again, never written
@@ -1623,6 +1635,7 @@ export class EditorStore {
     this.locomotive = null
     this.restoreTrains([])
     this.autopilots.clear()
+    this.savedGamePending = false
     this.restoreSignallingSettings({})
     this.restoreSignalDisplay({})
     this.flatLevels = false
@@ -3267,6 +3280,23 @@ export class EditorStore {
   get hasBuildMode(): boolean {
     return this.dataset === null
   }
+
+  /**
+   * Give the trains back what they were doing when the project was last written (speed, handles,
+   * brakes, pilots), once the trains of the stored project are in place. A train
+   * that is not where it was then stays at rest. Returns how many trains got their state back.
+   */
+  restoreSavedGame = (): number => {
+    this.savedGamePending = false
+    const game = applyGame(this.trains, loadGameState())
+    for (const id of game.piloted) this.autopilots.set(id, newPilotMemory())
+    this.leftInFreeView = game.freeView
+    if (game.freeView) this.releaseTrainSelection()
+    return game.restored
+  }
+
+  /** The game written before the page was loaded again is still to be given back: the trains of a real network come with its lines */
+  private savedGamePending = false
 
   /** A game found again (a page loaded again): it starts with the time stopped, for the player to look before the trains move */
   enterGamePaused = (): void => {
