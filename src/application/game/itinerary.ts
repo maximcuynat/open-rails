@@ -1,6 +1,7 @@
 import type { ConsoleRoute } from '@application/console/consoleContract'
 import type { EditorStore } from '@application/state/editorStore'
-import { gatesToward, routeThroughStations, shortestLineRoute, buildLineGraph } from '@domain/dataset/lineRoute'
+import { gatesToward, routeThroughStations, shortestLineRoute, buildLineGraph, travelWeightFor, type TrainAbility } from '@domain/dataset/lineRoute'
+import { consistMaxSpeed, stockSpec } from '@domain/models/rollingStock'
 import { positionOnSegment } from '@domain/models/locomotive'
 import { networkCheckToken } from '@domain/models/networkWatch'
 import { isTrainStopped, type TrainSet } from '@domain/models/train'
@@ -46,6 +47,11 @@ export function stationRefs(store: EditorStore): Map<StationId, StationRef> {
   return refs
 }
 
+/** What a train can do on the lines: what its journeys are worked out with */
+export function trainAbility(train: TrainSet): TrainAbility {
+  return { maxKmh: consistMaxSpeed(train.vehicles) * 3.6, cabSignalling: train.vehicles.every((veh) => stockSpec(veh).cabSignalling) }
+}
+
 function leadPoint(store: EditorStore, train: TrainSet): Point | null {
   const lead = train.vehicles[0]
   return lead ? positionOnSegment(store.network, lead.front.segId, lead.front.t) : null
@@ -69,12 +75,14 @@ export function addItineraryStop(store: EditorStore, train: TrainSet, stationId:
     const ahead = stopsAhead(itinerary).filter(known)
     // From what is loaded to the first station ahead, then from station to station
     const first = index.stations.find((s) => s.id === ahead[0])
-    if (first && !shortestLineRoute(buildLineGraph(index), new Set(store.dataset.lines), new Set(first.lines))) {
-      return `Aucune ligne du jeu de données ne mène d’ici à ${first.name}.`
+    const weight = travelWeightFor(trainAbility(train))
+    const under = store.linesUnder(train)
+    if (first && !shortestLineRoute(buildLineGraph(index), under.size > 0 ? under : new Set(store.dataset.lines), new Set(first.lines), weight)) {
+      return `Aucune ligne que ce train peut emprunter ne mène d’ici à ${first.name}.`
     }
     if (ahead.length >= 2) {
-      const route = routeThroughStations(index, ahead)
-      if ('error' in route) return `Aucune ligne ne relie ${refs.get(ahead[route.at - 1])?.name ?? '?'} à ${refs.get(ahead[route.at])?.name ?? '?'}.`
+      const route = routeThroughStations(index, ahead, weight)
+      if ('error' in route) return `Aucune ligne que ce train peut emprunter ne relie ${refs.get(ahead[route.at - 1])?.name ?? '?'} à ${refs.get(ahead[route.at])?.name ?? '?'}.`
     }
   }
   train.itinerary = itinerary
@@ -135,12 +143,13 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
     const indexed = index?.stations.find((s) => s.id === station)
     const loaded = new Set(store.dataset?.lines ?? [])
     const under = store.linesUnder(train)
-    const gates = index && indexed && store.dataset ? gatesToward(index, loaded, indexed.lines, under) : []
+    const weight = travelWeightFor(trainAbility(train))
+    const gates = index && indexed && store.dataset ? gatesToward(index, loaded, indexed.lines, under, weight) : []
     // A call on the way to somewhere else: a platform the train can go on from
     const after = train.itinerary?.stations[train.itinerary.next + 1]
     const afterIndexed = after === undefined ? undefined : index?.stations.find((s) => s.id === after)
-    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, loaded, afterIndexed.lines, under) : [] }
-    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond)
+    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, loaded, afterIndexed.lines, under, weight) : [] }
+    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond, store.railsBlockedFor(train))
     state.left = state.guide ? state.guide.path.length : null
     state.failedOn = state.guide ? null : lead.segId
   }

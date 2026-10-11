@@ -20,6 +20,8 @@ Branche : `feature/jeu-conduite` (poussée). Rien n'est fusionné dans `develope
 - [x] Étapes : quai traversant, rebroussement en terminus, rame tournée vers son chemin
 - [x] **H** — Pilote automatique : vitesse, limites, signaux, arrêt à quai, arrêts en gare
 - [x] Trajet choisi au temps de parcours (la LGV plutôt que la ligne classique à côté)
+- [x] **M1** — TER Régiolis 4 caisses (quatre voitures sur cinq bogies, 160 km/h), au choix dans le bac à sable
+- [x] Trajets selon le train : sans signalisation de cabine, pas de ligne à grande vitesse
 - [x] Par une autre session, sur la même branche : temps de trajet estimé dans la fenêtre
       d'itinéraire, cause du signal fermé au pupitre, courbes d'import compatibles avec la
       vitesse de la ligne
@@ -68,8 +70,10 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 
 ### Trains
 
-- [ ] **M1** — Matériel TER (annoncé « bientôt disponible » dans le bac à sable)
-- [ ] **M2** — Matériel Intercités
+- [ ] **M2** — Matériel Intercités (une locomotive et des voitures Corail : pas articulé, à voir avec le modèle de rame)
+- [ ] **M3** — Autres TER (Régiolis 6 caisses, Regio 2N) : des fiches de plus
+- [ ] **M4** — Livrée propre au TER (il est dessiné comme les TGV, aux proportions près)
+- [ ] **M5** — Électrification : le jeu ne sait pas quelles lignes ont une caténaire
 
 ### Divers
 

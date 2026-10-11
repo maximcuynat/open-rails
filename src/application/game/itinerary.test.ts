@@ -161,6 +161,45 @@ describe('a train sent the way it does not face', () => {
   })
 })
 
+describe('the journeys a train can make', () => {
+  beforeEach(() => {
+    resetMemoryStorage()
+    resetDatasetIndexCache()
+    resetIdCounter()
+  })
+
+  /** The small dataset with line b — where « Gare Deux » is — made a high-speed line */
+  async function withHighSpeedLine(model: 'duplex' | 'regiolis') {
+    const { index, files } = fakeDataset()
+    const fast = { ...index, lines: index.lines.map((line) => ({ ...line, highSpeed: line.id === 'b', category: line.id === 'b' ? ('highSpeed' as const) : ('main' as const) })) }
+    const options = { fetch: serving(files), baseUrl: '/' }
+    const store = new EditorStore()
+    await prepareSandbox(store, fast, 's1', model, options)
+    return { store, index: fast, options, train: store.trains[0] }
+  }
+
+  it('lets a TGV go to a station of a high-speed line, not a TER', async () => {
+    const tgv = await withHighSpeedLine('duplex')
+    expect(addItineraryStop(tgv.store, tgv.train, 's2')).toBeNull()
+    const ter = await withHighSpeedLine('regiolis')
+    expect(addItineraryStop(ter.store, ter.train, 's2')).toMatch(/que ce train peut emprunter.*Gare Deux/)
+    expect(ter.train.itinerary!.stations).toEqual(['s1'])
+  })
+
+  it('keeps the way of a TER off the rails of a high-speed line even when they are loaded', async () => {
+    const { store, index, options, train } = await withHighSpeedLine('regiolis')
+    store.addDatasetLines(await fetchLineFiles(index, ['b'], undefined, options))
+    const blocked = store.railsBlockedFor(train)!
+    const onB = [...store.network.segments.values()].filter((seg) => store.network.nodes.get(seg.from)!.pos.x >= 1000 && store.network.nodes.get(seg.to)!.pos.y === 0 && store.network.nodes.get(seg.to)!.pos.x > 1000)
+    expect(onB.length).toBeGreaterThan(0)
+    for (const seg of onB) expect(blocked(seg.id)).toBe(true)
+    expect(blocked(train.vehicles[0].front.segId)).toBe(false)
+    // A TGV may go anywhere
+    const tgv = await withHighSpeedLine('duplex')
+    expect(tgv.store.railsBlockedFor(tgv.train)).toBeUndefined()
+  })
+})
+
 describe('the driving aid along an itinerary', () => {
   beforeEach(() => {
     resetMemoryStorage()

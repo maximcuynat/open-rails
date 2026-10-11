@@ -265,6 +265,24 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
   (plus courte) au lieu de la LGV, et pouvait faire sortir la rame vers un morceau chargé à côté :
   le trajet est maintenant choisi au temps de parcours, et part du morceau où se trouve la rame.
 
+### Matériel TER — Régiolis (2026-10-11)
+
+- **Fait.** Un TER au choix dans le bac à sable et dans l'outil de pose : Régiolis 4 caisses
+  bimode. Chiffres publiés : 71,82 m, 2,85 m de large, 4,295 m de haut, 160 km/h, 1 800 kW,
+  environ 149 t, cinq bogies (un moteur sous chaque cabine, trois partagés). Estimés et marqués
+  comme tels : répartition entre les caisses, effort au démarrage, frein électrique, résistance
+  à l'avancement.
+- **Rame articulée de bout en bout.** Ses voitures d'extrémité partagent un bogie avec leur
+  voisine, ce qu'une motrice de TGV ne fait pas (`articulatedEnds`).
+- **Trajets selon le train.** Sans la signalisation de cabine des lignes à grande vitesse
+  (`cabSignalling`), l'itinéraire n'y entre pas : ni au choix des lignes, ni rail à rail quand
+  elles sont chargées à côté. Le temps de parcours compte la vitesse maximale du train.
+- **Vérifié par.** Tests (fiche, articulation, refus d'une gare de LGV, rails évités) et en
+  navigateur : un TER au pilote automatique de Marseille vers Toulon par la ligne classique,
+  120 km/h au plus sous une limite de 120, jamais sur la LGV, aucun signal franchi fermé.
+- **Reste.** Dessiné comme les TGV, aux proportions près. Pas d'Intercités : une locomotive et
+  des voitures ne sont pas une rame articulée.
+
 ### Où on en est (2026-10-11)
 
 Les lots A à G sont faits, sur la branche `feature/jeu-conduite` ; les lignes classiques ont
@@ -279,7 +297,7 @@ Le détail et les cases à cocher sont dans `tasks/plan-jeu-conduite.md`.
    LGV Rhône-Alpes et PACA), puis l'Île-de-France, puis les autres. L'essai de toute la France
    en une fois n'a pas abouti (serveurs d'OpenStreetMap surchargés) ; sept régions sont en cache.
 2. **Pupitre téléphone** : y afficher l'itinéraire, y régler l'aide, essai sur de vrais téléphones.
-3. **Matériel TER et Intercités** : aujourd'hui seuls des TGV roulent, même sur les lignes classiques.
+3. **Matériel** : le TER Régiolis est fait (voir ci-dessous) ; restent l'Intercités et d'autres TER.
 
 ---
 

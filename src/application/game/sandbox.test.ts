@@ -82,8 +82,20 @@ describe('starting a sandbox game', () => {
     expect(store.trains).toHaveLength(0)
   })
 
-  it('offers the TGV rakes, and the TER as a train to come', () => {
-    expect(SANDBOX_TRAINS.filter((t) => t.model).map((t) => t.model)).toEqual(['duplex', 'tgvm'])
-    expect(SANDBOX_TRAINS[SANDBOX_TRAINS.length - 1]).toMatchObject({ id: 'ter', detail: 'Bientôt disponible' })
+  it('offers the TGV rakes and the TER, each a rake of the table', () => {
+    expect(SANDBOX_TRAINS.map((t) => t.model)).toEqual(['duplex', 'tgvm', 'regiolis'])
+    for (const train of SANDBOX_TRAINS) expect(ROLLING_STOCK[train.model!].label).toContain(train.name.replace('TER ', '').replace('TGV ', ''))
+  })
+
+  it('starts a game with a TER: four cars on five bogies at the platform', async () => {
+    const { index, files } = fakeDataset()
+    const store = new EditorStore()
+    await prepareSandbox(store, index, 's1', 'regiolis', { fetch: serving(files), baseUrl: '/' })
+    const train = store.trains[0]
+    expect(train.vehicles.map((v) => v.kind)).toEqual(['loco', 'wagon', 'wagon', 'loco'])
+    expect(train.vehicles.every((v) => v.model === 'regiolis')).toBe(true)
+    expect(train.maxSpeed).toBeCloseTo(160 / 3.6, 6)
+    store.togglePlayMode()
+    store.togglePlayMode()
   })
 })

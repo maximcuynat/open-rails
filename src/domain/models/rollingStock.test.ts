@@ -192,3 +192,36 @@ describe('physical data of a rake', () => {
     expect(consistMass(mixed)).toBe(884_000)
   })
 })
+
+describe('the Régiolis, a multiple unit articulated from end to end', () => {
+  const rake = referenceConsist('regiolis')
+
+  it('is four cars on five bogies, as long and as heavy as published', () => {
+    expect(rake.map((v) => v.kind)).toEqual(['loco', 'wagon', 'wagon', 'loco'])
+    expect(consistLength(rake)).toBeCloseTo(71.82, 2)
+    expect(bogieCount(rake)).toBe(5)
+    expect(consistMass(rake)).toBe(149_000)
+    expect(consistPower(rake)).toBe(1_800_000)
+    expect(consistMaxSpeed(rake) * 3.6).toBeCloseTo(160, 6)
+  })
+
+  it('shares a bogie between an end car and the trailer its inner end faces, not on its nose side', () => {
+    const [head, trailer, , tail] = rake
+    expect(jointKind(head, trailer)).toBe('articulated')
+    expect(jointKind(trailer, tail)).toBe('articulated')
+    expect(jointSpacing(head, trailer)).toBe(0)
+    // Turned nose to the trailer, an end car is only coupled to it
+    expect(jointKind({ ...head, flipped: true }, trailer)).toBe('coupled')
+    // Two units nose to nose are coupled as two TGV trainsets are
+    expect(jointKind(tail, head)).toBe('unit')
+    // A TGV power car still stands on its own two bogies
+    expect(jointKind({ kind: 'loco', model: 'duplex' }, { kind: 'wagon', model: 'duplex' })).toBe('coupled')
+    expect(bogieCount(referenceConsist('duplex'))).toBe(13)
+  })
+
+  it('has no cab signalling, where the TGVs have it', () => {
+    expect(ROLLING_STOCK.regiolis.cabSignalling).toBe(false)
+    expect(ROLLING_STOCK.duplex.cabSignalling).toBe(true)
+    expect(ROLLING_STOCK.tgvm.cabSignalling).toBe(true)
+  })
+})

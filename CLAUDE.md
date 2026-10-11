@@ -80,6 +80,7 @@ Two cross-component signals travel as `window` CustomEvents rather than through 
 There are two generations of train model, and both are live:
 
 - `models/locomotive.ts` — the original single `Locomotive` (fixed TGV consist). It also owns the shared track-walking primitives everything else builds on: `TrackPosition` (`segId`, `t`, `forward`), `walkForward` / `walkBackward`, `snapToNearestTrack`, `computeBogieFrame`, junction steering.
+- `models/rollingStock.ts` — the table of train models (`ROLLING_STOCK`: TGV Duplex, TGV M, TER Régiolis) and the joint rules every rake is laid out by (`jointKind`, `vehicleEndOverhang`, `jointSpacing`). A model with `articulatedEnds` (the Régiolis) shares a bogie between an end car and the trailer next to it; `cabSignalling` says whether its journeys may take a high-speed line (`travelWeightFor`, `store.railsBlockedFor`).
 - `models/train.ts` — `TrainSet`, an ordered list of `Vehicle`s (`loco` / `wagon`) that can be coupled and decoupled at runtime. `vehicles[0]` is the lead; `advanceTrainSet` moves it and re-derives every follower with `walkBackward`.
 
 The store carries both (`store.locomotive` and `store.trains`). The simulation loop (`startSimulationLoop`, a `requestAnimationFrame` loop in the store) ticks `trains` when any exist and falls back to the legacy locomotive otherwise, and `tickAllTrains` copies the selected train's speed and throttle back into the legacy `locomotive*` fields because the legacy console state still reads those. New train work should target `TrainSet`.

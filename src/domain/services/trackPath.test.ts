@@ -201,4 +201,11 @@ describe('findTrackPathToAny', () => {
     expect(findTrackPathToAny(net, from, behind, { leaving: 0 })!.length).toBeCloseTo(200, 9)
     expect(findTrackPathToAny(net, from, behind, { leaving: 1 })).toBeNull()
   })
+
+  it('keeps off the rails it is told to, and still leaves the rail it starts on', () => {
+    const { net, first, second } = line()
+    const goal = [{ segId: second.id, t: 0.5 }]
+    expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, goal, { blocked: (id) => id === second.id })).toBeNull()
+    expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, goal, { blocked: (id) => id === first.id })!.length).toBeCloseTo(500, 9)
+  })
 })

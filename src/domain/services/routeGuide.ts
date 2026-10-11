@@ -3,7 +3,7 @@ import { findJunctionAtNode, isPassageOpen } from '../models/routing'
 import type { Network, NodeId, SegmentId, Station, StationStop, TrackSpan } from '../models/types'
 import type { LineSettings } from '../models/speedLimits'
 import { speedLimitOverSpans } from '../models/trackSpeed'
-import { findTrackPathToAny, type TrackPath, type TrackPoint } from './trackPath'
+import { findTrackPathToAny, type TrackPath, type TrackPathOptions, type TrackPoint } from './trackPath'
 
 // ─────────────────── The way to the next station, rail by rail ───────────────────
 //
@@ -61,18 +61,18 @@ const TERMINUS_PLATFORMS = 4
  * way onward runs through; or, at a terminus (no way runs through), the nearest ones from which
  * there is a way out towards it — the train changes ends there.
  */
-function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: readonly StationStop[], beyond: Beyond): StationStop[] {
+function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: readonly StationStop[], beyond: Beyond, blocked: TrackPathOptions['blocked']): StationStop[] {
   const onward = (beyond.station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
   const goals: TrackPoint[] = onward.length > 0 ? onward : (beyond.gates ?? []).flatMap((nodeId) => railEndsAt(net, nodeId))
   if (goals.length === 0) return []
-  const way = findTrackPathToAny(net, from, goals, { leaving })
+  const way = findTrackPathToAny(net, from, goals, { leaving, blocked })
   const through = way ? stops.filter((stop) => way.spans.some((span) => span.segId === stop.segId && within(span.t0, span.t1, stop.t))) : []
   if (through.length > 0) return through
   // A way runs the same both ways: the platforms reached from beyond are those it is reached from
   const reached: StationStop[] = []
   const pool = [...stops]
   while (pool.length > 0 && reached.length < TERMINUS_PLATFORMS) {
-    const back = findTrackPathToAny(net, goals[0], pool)
+    const back = findTrackPathToAny(net, goals[0], pool, { blocked })
     if (!back) break
     reached.push(pool[back.goal])
     pool.splice(back.goal, 1)
@@ -88,19 +88,27 @@ function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: read
  * rather than the nearest one, which may be a bay it could only leave backwards.
  * At a terminus, a platform it can leave towards it from the other cab.
  */
-export function findRouteGuide(net: Network, lead: TrackPosition, station: Station | undefined, gates: readonly NodeId[] = [], beyond?: Beyond): RouteGuide | null {
+export function findRouteGuide(
+  net: Network,
+  lead: TrackPosition,
+  station: Station | undefined,
+  gates: readonly NodeId[] = [],
+  beyond?: Beyond,
+  /** Rails the train must keep off (see `TrackPathOptions.blocked`) */
+  blocked?: TrackPathOptions['blocked'],
+): RouteGuide | null {
   let stops = (station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
   const target: RouteGuide['target'] = stops.length > 0 ? 'platform' : 'gate'
   const from = { segId: lead.segId, t: lead.t }
   if (beyond && stops.length > 1) {
-    const onward = onwardStops(net, from, lead.forward ? 1 : 0, stops, beyond)
+    const onward = onwardStops(net, from, lead.forward ? 1 : 0, stops, beyond, blocked)
     // Unless the train cannot get to any of them: the nearest platform then, as without a beyond
-    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0 }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1 }))) stops = onward
+    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0, blocked }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1, blocked }))) stops = onward
   }
   const goals: TrackPoint[] = target === 'platform' ? stops : gates.flatMap((nodeId) => railEndsAt(net, nodeId))
   if (goals.length === 0) return null
-  const ahead = findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 1 : 0 })
-  const found = ahead ?? findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 0 : 1 })
+  const ahead = findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 1 : 0, blocked })
+  const found = ahead ?? findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 0 : 1, blocked })
   if (!found) return null
   return guideOf(net, { spans: found.spans, length: found.length }, target, !ahead, target === 'platform' ? stops[found.goal] : undefined)
 }

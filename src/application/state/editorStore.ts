@@ -51,7 +51,7 @@ import { LINE_SPEED_RANGE, overlapsOfZone, rerailTrain } from '@domain/models/sp
 import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
-import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
+import { lineCategory, type BBox, type DatasetIndex, type LineId } from '@domain/dataset/datasetIndex'
 import { connectionsToward, linesToDrop } from '@domain/dataset/lineRoute'
 import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
 import type { MergeOutcome } from '@application/import/mergeReport'
@@ -100,7 +100,7 @@ import {
   type TrainHitResult,
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
-import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import { DEFAULT_ROLLING_STOCK, stockSpec, type RollingStockModel } from '@domain/models/rollingStock'
 import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
@@ -416,6 +416,21 @@ export class EditorStore {
   private datasetFilesRevision = 0
   private railTintCache: { index: DatasetIndex; revision: number; tint: (segId: string) => string | undefined } | null = null
   private railLineCache: { revision: number; lineOf: Map<SegmentId, LineId> } | null = null
+
+  /**
+   * The rails of a dataset project a train must keep off: those of the high-speed lines, for a
+   * train without their cab signalling. Undefined when it may go anywhere.
+   */
+  railsBlockedFor = (train: TrainSet): ((segId: SegmentId) => boolean) | undefined => {
+    const index = this.datasetIndex
+    if (!this.dataset || !index || train.vehicles.every((veh) => stockSpec(veh).cabSignalling)) return undefined
+    const highSpeed = new Set(index.lines.filter((line) => lineCategory(line) === 'highSpeed').map((line) => line.id))
+    const railLine = this.railLine
+    return (segId) => {
+      const line = railLine.get(segId)
+      return line !== undefined && highSpeed.has(line)
+    }
+  }
 
   /** The lines (or pieces of lines) of the dataset a train stands on */
   linesUnder = (train: TrainSet): Set<LineId> => {

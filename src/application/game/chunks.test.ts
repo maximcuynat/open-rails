@@ -4,7 +4,7 @@ import { fakeDataset } from '@application/dataset/dataset.testkit'
 import { fetchLineFiles, resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { reloadDataset } from '@application/dataset/journeyLoader'
 import { recipeLines } from '@domain/dataset/datasetRecipe'
-import { distanceToBox, gatesToward, linesToDrop, travelWeight } from '@domain/dataset/lineRoute'
+import { distanceToBox, gatesToward, linesToDrop, routeThroughStations, travelWeight, travelWeightFor } from '@domain/dataset/lineRoute'
 import { resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { prepareSandbox } from './sandbox'
@@ -116,5 +116,21 @@ describe('lines of the dataset coming and going as the trains run', () => {
     const [a] = index.lines
     expect(travelWeight({ ...a, category: 'highSpeed' })).toBeLessThan(travelWeight({ ...a, category: 'main' }))
     expect(travelWeight({ ...a, category: 'main' })).toBeLessThan(travelWeight({ ...a, category: 'regional' }))
+  })
+
+  it('costs a train its own time on a line, and keeps one without cab signalling off the high-speed lines', () => {
+    const { index } = fakeDataset()
+    const [a] = index.lines
+    const tgv = travelWeightFor({ maxKmh: 320, cabSignalling: true })
+    const ter = travelWeightFor({ maxKmh: 160, cabSignalling: false })
+    // The same classic line at the same speed; a slow train takes longer on a fast line
+    expect(ter({ ...a, category: 'main' })).toBe(tgv({ ...a, category: 'main' }))
+    expect(travelWeightFor({ maxKmh: 100, cabSignalling: true })({ ...a, category: 'highSpeed' })).toBeGreaterThan(tgv({ ...a, category: 'highSpeed' }))
+    expect(ter({ ...a, category: 'highSpeed' })).toBe(Infinity)
+    // « Gare Deux » is on a high-speed line: a journey there for the one, none for the other
+    const classicThenFast = { ...index, lines: index.lines.map((line) => ({ ...line, highSpeed: line.id === 'b', category: line.id === 'b' ? ('highSpeed' as const) : ('main' as const) })) }
+    expect('error' in routeThroughStations(classicThenFast, ['s1', 's2'], tgv)).toBe(false)
+    expect(routeThroughStations(classicThenFast, ['s1', 's2'], ter)).toMatchObject({ error: 'no-route' })
+    expect(gatesToward(classicThenFast, new Set(['a']), ['b'], new Set(['a']), ter)).toEqual([])
   })
 })

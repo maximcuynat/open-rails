@@ -13,7 +13,7 @@ export interface SandboxTrain {
   id: string
   name: string
   detail: string
-  /** The rake it is; absent for a train announced and not yet playable */
+  /** The rake it is; absent for a train announced and not yet playable (none at the moment) */
   model?: RollingStockModel
 }
 
@@ -21,7 +21,7 @@ export interface SandboxTrain {
 export const SANDBOX_TRAINS: readonly SandboxTrain[] = [
   { id: 'tgv-duplex', name: 'TGV Duplex', detail: '320 km/h · 200 m', model: 'duplex' },
   { id: 'tgv-m', name: 'TGV M', detail: '320 km/h · 202 m', model: 'tgvm' },
-  { id: 'ter', name: 'TER', detail: 'Bientôt disponible' },
+  { id: 'ter-regiolis', name: 'TER Régiolis', detail: '160 km/h · 72 m', model: 'regiolis' },
 ]
 
 /** A start that failed once the station was loaded: the message is for the user */

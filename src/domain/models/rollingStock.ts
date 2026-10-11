@@ -10,7 +10,7 @@
 
 import type { LineType } from './speedLimits'
 
-export type RollingStockModel = 'duplex' | 'tgvm'
+export type RollingStockModel = 'duplex' | 'tgvm' | 'regiolis'
 
 export const DEFAULT_ROLLING_STOCK: RollingStockModel = 'duplex'
 
@@ -57,6 +57,18 @@ export interface RollingStockSpec {
   }
   /** Trailers between the two power cars of the complete trainset */
   trailerCount: number
+  /**
+   * A multiple unit whose end cars rest, on their inner side, on the bogie of the car next to them:
+   * the joint between an end car and a trailer is articulated like the one between two trailers
+   * (a TGV power car stands on two bogies of its own). Its « power cars » are those end cars:
+   * they carry the cab, the motor bogie and passengers.
+   */
+  articulatedEnds?: boolean
+  /**
+   * Fitted with the cab signalling of the high-speed lines (TVM): without it a train has no
+   * business there, and its journeys keep to the classic lines
+   */
+  cabSignalling: boolean
   /**
    * Running resistance R = a + b·v + c·v² of the complete trainset on level straight track
    * (N, N·s/m, N·s²/m², v in m/s). See `consistResistanceCoefficients` for other rakes.
@@ -143,6 +155,7 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
     trailerCount: 8,
     resistance: { a: 2680, b: 115, c: 6.93 }, // Dasye coefficients scaled to 424 t
     maxSpeed: 320 / 3.6,
+    cabSignalling: true,
     cantDeficiency: TGV_CANT_DEFICIENCY,
     overturningDeficiency: TGV_OVERTURNING_DEFICIENCY,
     rollCoefficient: TGV_ROLL_COEFFICIENT, // estimated: the figure of TGVs in general
@@ -175,9 +188,47 @@ export const ROLLING_STOCK: Record<RollingStockModel, RollingStockSpec> = {
     // estimated: Dasye coefficients scaled to 460 t, aerodynamic term reduced by 13 %
     resistance: { a: 2910, b: 125, c: 6.03 },
     maxSpeed: 320 / 3.6,
+    cabSignalling: true,
     cantDeficiency: TGV_CANT_DEFICIENCY, // estimated: same as Duplex
     overturningDeficiency: TGV_OVERTURNING_DEFICIENCY, // estimated: same as Duplex
     rollCoefficient: TGV_ROLL_COEFFICIENT, // estimated: same as Duplex
+  },
+  // Régiolis (Alstom Coradia Polyvalent), four cars, bi-mode regional (B 84500): the TER of the
+  // game. Published: 71.82 m over couplers, 2.85 m wide, 4.295 m high, 160 km/h, four motors of
+  // 450 kW, five bogies Bo′(2)′(2)′(2)′Bo′ — a motor bogie under each cab, three shared bogies
+  // between the cars — and about 149 t. The split between the cars is not published.
+  regiolis: {
+    label: 'TER Régiolis',
+    bogieWheelbase: 2.7, // estimated
+    powerCar: {
+      length: 19.5, // deduced: nose overhang + bogie distance, the body ends on the shared bogie
+      bogieDistance: 16.0, // estimated: motor bogie to the first shared bogie
+      noseOverhang: 3.5, // estimated
+      rearOverhang: 0, // articulated: the body stops on the pivot of the shared bogie
+      width: 2.85,
+      height: 4.295,
+      mass: 40_000, // estimated share of the 149 t: the end cars carry the traction equipment
+      power: 900_000, // two motors of 450 kW per end car, 1 800 kW per trainset
+      maxEffort: 85_000, // estimated: 170 kN per trainset, a quarter of the weight on its four driven axles
+      electricBrakeEffort: 50_000, // estimated
+      adhesiveMass: 35_000, // estimated: 17.5 t on each of the two driven axles
+    },
+    trailer: {
+      pitch: 16.41, // deduced: (71.82 − 2 × 19.5) / 2
+      endExtension: 0, // articulated at both ends
+      width: 2.85,
+      height: 4.295,
+      mass: 34_500, // deduced: (149 t − 2 × 40 t) / 2
+    },
+    trailerCount: 2,
+    articulatedEnds: true,
+    // estimated: a regional multiple unit of 149 t and 72 m, nothing is published
+    resistance: { a: 1500, b: 50, c: 4.0 },
+    maxSpeed: 160 / 3.6,
+    cabSignalling: false,
+    cantDeficiency: TGV_CANT_DEFICIENCY, // estimated: the same category of the SNCF rules
+    overturningDeficiency: TGV_OVERTURNING_DEFICIENCY, // estimated: same as a TGV
+    rollCoefficient: 0.25, // the figure given for a multiple unit in general (Noblet)
   },
 }
 
@@ -220,6 +271,10 @@ export function bodyHeight(veh: StockVehicle): number {
 export function jointKind(prev: StockVehicle, next: StockVehicle): JointKind {
   if (prev.kind === 'wagon' && next.kind === 'wagon') return 'articulated'
   if (prev.kind === 'loco' && next.kind === 'loco') return 'unit'
+  // An end car of a multiple unit shares the bogie of the trailer its inner end faces
+  const endCar = prev.kind === 'loco' ? prev : next
+  const innerEndFaces = prev.kind === 'loco' ? !prev.flipped : next.flipped === true
+  if (innerEndFaces && stockSpec(endCar).articulatedEnds && stockSpec(prev) === stockSpec(next)) return 'articulated'
   return 'coupled'
 }
 

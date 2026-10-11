@@ -102,6 +102,8 @@ export function findTrackPath(net: Network, a: TrackPoint, b: TrackPoint): Track
 export interface TrackPathOptions {
   /** Leave `a` towards the `to` end of its rail only (1) or its `from` end only (0): the way a train faces */
   leaving?: 0 | 1
+  /** Rails the way must not take (track the train has no business on); the rail of `a` itself is always left freely */
+  blocked?: (segId: SegmentId) => boolean
 }
 
 /**
@@ -123,7 +125,7 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
     goalsOn.set(seg.id, on)
   })
   if (goalsOn.size === 0) return null
-  const { leaving } = options
+  const { leaving, blocked } = options
 
   const key = (node: NodeId, inSeg: SegmentId): string => `${inSeg}>${node}`
   const heap = new MinHeap()
@@ -158,6 +160,7 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
       if (sid === current.inSeg) continue
       const seg = net.segments.get(sid)
       if (!seg || seg.from === seg.to) continue
+      if (blocked?.(sid)) continue
       if (!isPassageOpen(net, current.node, current.inSeg, sid, { anyPosition: true })) continue
       const entry = seg.from === current.node ? 0 : 1
       const here = goalsOn.get(sid)
