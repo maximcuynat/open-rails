@@ -133,11 +133,13 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
   if (state.left === null && state.failedOn !== lead.segId) {
     const index = store.datasetIndex
     const indexed = index?.stations.find((s) => s.id === station)
-    const gates = index && indexed && store.dataset ? gatesToward(index, new Set(store.dataset.lines), indexed.lines) : []
+    const loaded = new Set(store.dataset?.lines ?? [])
+    const under = store.linesUnder(train)
+    const gates = index && indexed && store.dataset ? gatesToward(index, loaded, indexed.lines, under) : []
     // A call on the way to somewhere else: a platform the train can go on from
     const after = train.itinerary?.stations[train.itinerary.next + 1]
     const afterIndexed = after === undefined ? undefined : index?.stations.find((s) => s.id === after)
-    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, new Set(store.dataset.lines), afterIndexed.lines) : [] }
+    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, loaded, afterIndexed.lines, under) : [] }
     state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond)
     state.left = state.guide ? state.guide.path.length : null
     state.failedOn = state.guide ? null : lead.segId

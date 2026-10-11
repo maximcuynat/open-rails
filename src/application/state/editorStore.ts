@@ -405,6 +405,19 @@ export class EditorStore {
   private railTintCache: { index: DatasetIndex; revision: number; tint: (segId: string) => string | undefined } | null = null
   private railLineCache: { revision: number; lineOf: Map<SegmentId, LineId> } | null = null
 
+  /** The lines (or pieces of lines) of the dataset a train stands on */
+  linesUnder = (train: TrainSet): Set<LineId> => {
+    const railLine = this.railLine
+    const under = new Set<LineId>()
+    for (const veh of train.vehicles) {
+      for (const pos of [veh.front, veh.rear]) {
+        const line = railLine.get(pos.segId)
+        if (line) under.add(line)
+      }
+    }
+    return under
+  }
+
   /** The file (line, or piece of a line) each rail of a dataset project came with; the first that holds it */
   private get railLine(): Map<SegmentId, LineId> {
     const cache = this.railLineCache

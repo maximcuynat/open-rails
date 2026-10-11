@@ -4,7 +4,7 @@ import { fakeDataset } from '@application/dataset/dataset.testkit'
 import { fetchLineFiles, resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { reloadDataset } from '@application/dataset/journeyLoader'
 import { recipeLines } from '@domain/dataset/datasetRecipe'
-import { distanceToBox, linesToDrop } from '@domain/dataset/lineRoute'
+import { distanceToBox, gatesToward, linesToDrop, travelWeight } from '@domain/dataset/lineRoute'
 import { resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { prepareSandbox } from './sandbox'
@@ -101,5 +101,20 @@ describe('lines of the dataset coming and going as the trains run', () => {
     await reloadDataset(again, options)
     expect(again.dataset!.lines).toEqual(['a', 'b'])
     expect(again.trains).toHaveLength(1)
+  })
+
+  it('leaves what is loaded from where the train is, by the way that takes least time', () => {
+    const { index } = fakeDataset()
+    const gate = index.connections[0].nodeId
+    // On line a, bound for « Gare Deux » on line b: out by the node the two lines share
+    expect(gatesToward(index, new Set(['a']), ['b'])).toEqual([gate])
+    expect(gatesToward(index, new Set(['a', 'd']), ['b'], new Set(['a']))).toEqual([gate])
+    // Loaded to the end, or no way there: no gate
+    expect(gatesToward(index, new Set(['a', 'b']), ['b'], new Set(['a']))).toEqual([])
+    expect(gatesToward(index, new Set(['a']), ['d'], new Set(['a']))).toEqual([])
+    // A kilometre of high-speed line costs less time than one of classic line
+    const [a] = index.lines
+    expect(travelWeight({ ...a, category: 'highSpeed' })).toBeLessThan(travelWeight({ ...a, category: 'main' }))
+    expect(travelWeight({ ...a, category: 'main' })).toBeLessThan(travelWeight({ ...a, category: 'regional' }))
   })
 })
