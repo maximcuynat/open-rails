@@ -104,7 +104,7 @@ export function DispatcherPanel({ store, linked, onCutLink }: DispatcherPanelPro
         <button
           type="button"
           className="spectator-action is-danger"
-          title={`Quitter la conduite${store.shortcutHint('drive.exit')} : tous les trains s’arrêtent`}
+          title={`Quitter la conduite${store.shortcutHint('drive.leave')} : tous les trains s’arrêtent`}
           onClick={() => applyConsoleCommand(store, { type: 'releaseControls' })}
         >
           Quitter

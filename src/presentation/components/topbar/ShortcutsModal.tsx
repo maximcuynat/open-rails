@@ -100,8 +100,8 @@ export function ShortcutsModal({ store, isOpen, onClose }: ShortcutsModalProps) 
         <div className="shortcuts-section">Conduite</div>
         <div>{keys('sim.togglePlay')}</div>
         <div>Entrer en mode conduite / le quitter</div>
-        <div>{keys('drive.exit')} ou <span className="shortcut-kbd">Échap</span></div>
-        <div>Quitter la conduite</div>
+        <div>{keys('drive.pause')} ou <span className="shortcut-kbd">Échap</span></div>
+        <div>Pause : le temps s’arrête, les trains restent comme ils sont ; la même touche reprend</div>
         <div>{keys('drive.notchUp')}</div>
         <div>Manipulateur : un cran de plus (traction, jusqu’à P10) ; maintenue, les crans défilent jusqu’à N</div>
         <div>{keys('drive.notchDown')}</div>

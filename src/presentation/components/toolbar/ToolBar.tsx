@@ -369,7 +369,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
             {hoverId === 'play' && (
               <div className="tb-tooltip">
                 Arrêter la conduite
-                {kbd('drive.exit')}
+                {kbd('drive.leave')}
               </div>
             )}
           </div>

@@ -25,7 +25,7 @@ const KEY_ACTIONS: Record<keyof ConsoleKeys, ActionId> = {
   emergencyBrake: 'drive.emergencyBrake',
   steerLeft: 'drive.steerLeft',
   steerRight: 'drive.steerRight',
-  exit: 'drive.exit',
+  exit: 'drive.leave',
   flipLegacy: 'drive.flipLegacy',
 }
 

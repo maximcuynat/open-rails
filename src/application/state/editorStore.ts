@@ -382,6 +382,8 @@ export class EditorStore {
   locomotivePreview: Locomotive | null = null // Ghost preview along track on hover
   trainWagonCount = 2 // legacy: used only for loco preview during drag
   isPlayMode = false
+  /** The time of the simulation is stopped: every train stays as it is, handles and pilots included, until it is resumed */
+  isPaused = false
   locomotiveLength = 20 // meters (adjustable)
   locomotiveSpeed = 0.5 // meters per step (fallback keyboard advance increment)
   followLocomotiveCamera = true // Automatically center camera on locomotive in play mode
@@ -3194,6 +3196,7 @@ export class EditorStore {
   togglePlayMode = (): void => {
     if (!this.locomotive && this.trains.length === 0) return
     this.isPlayMode = !this.isPlayMode
+    this.isPaused = false
     this.forgetBrakeHolds(null)
     if (this.isPlayMode) {
       // Switch away from any tool interaction
@@ -3241,6 +3244,15 @@ export class EditorStore {
     }
     this.notify()
   }
+
+  /** Stop the time of the simulation, or let it run again. Nothing is reset: speeds, handles, pilots and signals stay as they are */
+  setPaused = (paused: boolean): void => {
+    if (!this.isPlayMode || this.isPaused === paused) return
+    this.isPaused = paused
+    this.notify()
+  }
+
+  togglePause = (): void => this.setPaused(!this.isPaused)
 
   /** Set the throttle state of the legacy locomotive: 1 = accelerate, -1 = brake/decelerate, 0 = coast/inertia */
   setLocomotiveThrottle = (throttle: 1 | 0 | -1): void => {
@@ -3321,6 +3333,7 @@ export class EditorStore {
    * traction and brakes taking hold, the signalling, the collisions) exactly as at ×1.
    */
   simulateFrame = (dt: number): void => {
+    if (this.isPaused) return
     for (let i = 0; i < this.timeFactor; i++) {
       if (this.trains.length > 0) this.tickAllTrains(dt)
       else if (this.locomotive) this.tickSimulation(dt)

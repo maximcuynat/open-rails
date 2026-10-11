@@ -35,8 +35,8 @@ const HELD_BRAKE_COMMAND = { 'drive.brakeApply': 'apply', 'drive.brakeRelease': 
 
 /** Run a rebindable action. The caller has already checked that it is live in the current context. */
 function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void {
-  // A phone holds the desk: this keyboard no longer drives, it can only leave the drive
-  if (store.isSpectating && action.startsWith('drive.') && action !== 'drive.exit') {
+  // A phone holds the desk: this keyboard no longer drives, it can only pause or leave the drive
+  if (store.isSpectating && action.startsWith('drive.') && action !== 'drive.pause' && action !== 'drive.leave') {
     e.preventDefault()
     return
   }
@@ -73,7 +73,11 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
       e.preventDefault()
       store.steerUpcomingTurnout(action === 'drive.steerLeft' ? 'left' : 'right')
       return
-    case 'drive.exit':
+    case 'drive.pause':
+      e.preventDefault()
+      store.togglePause()
+      return
+    case 'drive.leave':
       e.preventDefault()
       store.togglePlayMode()
       return
@@ -140,7 +144,9 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
   // --- Play mode controls (highest priority when active) ---
   if (store.isPlayMode) {
     if (e.key === 'Escape') {
-      store.togglePlayMode()
+      // Never out of the game on this key: a train about to be set down is put away, else the time stops
+      if (store.rakePlacement) store.armRakePlacement(null)
+      else store.togglePause()
       return
     } else if (e.key === 'Tab') {
       e.preventDefault()
