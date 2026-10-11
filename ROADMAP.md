@@ -74,8 +74,8 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 | E | Mode bac à sable et écran de lancement | **Fait**, téléphone à essayer en vrai | Moyenne | v0.6 |
 | F | Destination et itinéraire | **Fait** | Grande | v0.6 |
 | G | Niveaux d'aide à la conduite | **Fait** | Moyenne | v0.7 |
-| A | Catégories de réseau et couleurs | Un booléen « grande vitesse » par ligne dans l'index | Moyenne | v0.7 |
-| C | Vue d'ensemble grossière au dézoom | Quatre paliers de détail, vue schéma | Moyenne | v0.7 |
+| A | Catégories de réseau et couleurs | **Fait** pour le jeu de données ; import OSM à faire | Moyenne | v0.7 |
+| C | Vue d'ensemble grossière au dézoom | **Fait** | Moyenne | v0.7 |
 | B | Chargement et déchargement par morceaux | Chargement par ligne entière, jamais déchargé | Grande | v0.8 |
 | H | Pilote automatique | Rien | Grande | Non planifié |
 
@@ -168,12 +168,16 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
   voie sera celle de l'infrastructure (grande vitesse, ligne classique principale, ligne
   régionale, raccordement et voies de service), déduite des attributs OSM (`highspeed`, `usage`,
   `maxspeed`, `service`).
-- **À faire.**
-  1. Catégorie par ligne dans l'index et par section dans le projet, lue à l'import OSM.
-  2. Une couleur par catégorie aux paliers Ligne et Schéma, avec légende ; aspect inchangé de près.
-  3. Extension du jeu de données aux lignes classiques (régénération hors CI), par régions.
-- **Vérifié par.** Tests de classement sur des extraits OSM, test du rendu par catégorie,
-  mesure d'une image au dézoom avant et après.
+- **Fait le 2026-10-12 (étapes 1 et 2, pour les projets du jeu de données).**
+  1. Catégorie par ligne dans l'index (`IndexLine.category` : grande vitesse, classique,
+     régionale, raccordement et service ; le jeu actuel n'a que les deux premières).
+  2. Aux paliers Ligne et Schéma, chaque voie chargée prend la couleur de la catégorie de sa
+     ligne ; de près (paliers Rails et Détail) rien ne change. Légende en bas à gauche.
+- **Reste.**
+  - Un import OpenStreetMap ordinaire n'a pas de catégorie : il faut la lire des attributs à
+    l'import et la garder par section.
+  - Étape 3 : extension du jeu de données aux lignes classiques, par régions (après le lot B).
+- **Vérifié par.** Tests du rendu par palier (`lodTracks.test.ts`), et en navigateur.
 
 ### Lot C — Vue d'ensemble grossière au dézoom
 
@@ -181,13 +185,18 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
   Rails, Ligne, Schéma), et au palier Schéma une polyligne par section dont les points à moins
   d'un pixel sont écartés à chaque image. **Il ne couvre pas la demande sur deux points** : rien
   n'est dessiné pour le réseau non chargé, et la simplification ne réduit pas la géométrie stockée.
-- **À faire.**
-  1. Tracé simplifié de chaque ligne dans l'index (quelques centaines de points par ligne,
-     calculé à la génération du jeu de données), dessiné pour les lignes non chargées.
-  2. Au plus large, points grossiers pour les gares et trait unique par ligne, voies parallèles
-     confondues.
-  3. Minimap dessinée à partir de ces mêmes tracés.
-- **Vérifié par.** Mesure d'une image France entière ; test du tracé simplifié (écart maximal borné).
+- **Fait le 2026-10-12.**
+  1. Tracé simplifié de chaque ligne dans l'index (`lineOutline` : le plus long chemin de la
+     ligne, puis ses branches, une voie valant pour toutes celles qui la longent ; écart maximal
+     de 40 m). 16 lignes en 2 000 points, l'index passe de 25 à 55 ko.
+  2. Les lignes non chargées sont dessinées à partir de ces tracés, à tout zoom, avec leurs
+     gares : la France des LGV est visible dès le lancement, avec une seule gare chargée.
+  3. La minimap d'un projet du jeu de données montre tout le réseau, les lignes non chargées
+     par leur tracé.
+- **Reste.** Les lignes *chargées* gardent leur dessin par section au palier Schéma : à ce zoom
+  deux voies parallèles sont déjà à moins d'un pixel, le gain serait de temps de calcul, pas
+  d'aspect. Une image tient dans 16,7 ms (limite de l'écran) aux trois zooms essayés.
+- **Vérifié par.** Tests (`lineOutline.test.ts`, `datasetOverview.test.ts`), et en navigateur.
 
 ### Lot B — Chargement et déchargement par morceaux
 

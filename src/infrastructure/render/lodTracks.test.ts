@@ -351,3 +351,38 @@ describe('schematic tier', () => {
     expect(calls.save).toBe(calls.restore)
   })
 })
+
+describe('rails in the colour of their kind of line', () => {
+  const TINT = '#ea580c'
+
+  /** Two straights apart, the first of a kind of line that has a colour */
+  function draw(scale: number, selected: string[] = []) {
+    const net = createNetwork()
+    const rails = [0, 200].map((y) => addSegment(net, addNode(net, { x: -300, y }).id, addNode(net, { x: 300, y }).id)!)
+    const rec = recorder()
+    const selection = { nodes: new Set<string>(), segments: new Set(selected.map((i) => rails[Number(i)].id)) }
+    renderNetwork(rec.ctx, createCamera(0, 100, scale), VW, VH, net, selection, {}, { tool: 'select', railTint: (id) => (id === rails[0].id ? TINT : undefined) })
+    const of = (color: string) => rec.strokes.filter((stroke) => stroke.strokeStyle === color && stroke.path.length > 0).length
+    return { tinted: of(TINT), accent: of(ACCENT) }
+  }
+
+  it('applies from the line tier out, one stroke for all the rails of a kind', () => {
+    expect(trackLod(1, GAUGE)).toBe('line')
+    expect(draw(1).tinted).toBe(1)
+    expect(trackLod(0.1, GAUGE)).toBe('schematic')
+    expect(draw(0.1).tinted).toBe(1)
+  })
+
+  it('leaves the rails as they are close up', () => {
+    expect(trackLod(3, GAUGE)).toBe('rails')
+    expect(draw(3).tinted).toBe(0)
+    expect(trackLod(8, GAUGE)).toBe('detail')
+    expect(draw(8).tinted).toBe(0)
+  })
+
+  it('gives way to the colour of the selection', () => {
+    const picked = draw(1, ['0'])
+    expect(picked.tinted).toBe(0)
+    expect(picked.accent).toBeGreaterThan(0)
+  })
+})

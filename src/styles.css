@@ -4003,6 +4003,36 @@ select.cb-step-select {
   padding: 2px 8px;
   min-width: 0;
 }
+.map-legend {
+  position: absolute;
+  left: 12px;
+  bottom: calc(12px + var(--minimap-lift, 0px) + 26px);
+  z-index: var(--z-minimap);
+  margin: 0;
+  padding: 4px 8px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  color: var(--ink);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+}
+.map-legend.above-minimap {
+  bottom: calc(12px + var(--minimap-lift, 0px) + 120px + 6px + 26px);
+}
+.map-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.map-legend-swatch {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+}
 .itinerary-panel {
   position: absolute;
   top: 12px;

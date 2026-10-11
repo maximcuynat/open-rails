@@ -1,3 +1,4 @@
+import { renderDatasetOverview } from '@infrastructure/render/datasetOverview'
 import { renderRouteGuide, routeGuideReach } from '@infrastructure/render/routeGuideRender'
 import { guideAhead } from '@domain/services/routeGuide'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -354,6 +355,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       renderBaseboard(ctx, cam, rect.width, rect.height, store.boardWidth, store.boardHeight, store.unit, store.scalePreset)
     }
 
+    // A project of the dataset: the lines that are not loaded, as the index outlines them
+    if (store.datasetIndex && store.dataset) {
+      renderDatasetOverview(ctx, cam, rect.width, rect.height, store.datasetIndex, new Set(store.dataset.lines))
+    }
+
     // The gizmo is drawn last, on the selection anchor: section badges keep clear of it
     const gizmoAnchor = store.tool === 'select' && store.canEditNetwork ? getGizmoAnchor(store.network, store.selection) : null
     const gizmoScreen = gizmoAnchor
@@ -373,6 +379,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       // Driving: clean view, only the track (turnout positions included) and the trains
       ...(store.isPlayMode ? { hideConstructionNodes: true, hideSectionBadges: true } : {}),
       ...(plainView ? { hideSectionCenterline: true, hideSpeedZoneBands: true, plainRails: true } : {}),
+      railTint: store.railTint,
       badgeExclusion: gizmoScreen ? gizmoFootprint(gizmoScreen) : undefined,
       quietNodeIds: pendingNodeId ? new Set([pendingNodeId]) : undefined,
       // Zones are only picked in the signalling mode; in its delete sub-mode the hovered one turns red

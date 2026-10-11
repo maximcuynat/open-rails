@@ -101,6 +101,7 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, type RollingStockModel } from '@domain/models/rollingStock'
+import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
@@ -399,6 +400,18 @@ export class EditorStore {
   datasetIndex: DatasetIndex | null = null
   /** The files of the lines loaded, kept to be put together again when a line is added */
   datasetFiles = new Map<LineId, SerializedProject>()
+  private railTintCache: { index: DatasetIndex; lines: number; tint: (segId: string) => string | undefined } | null = null
+
+  /** The colour of the kind of line each rail of a dataset project belongs to; undefined on any other project */
+  get railTint(): ((segId: string) => string | undefined) | undefined {
+    const index = this.datasetIndex
+    if (!this.dataset || !index || this.datasetFiles.size === 0) return undefined
+    const cache = this.railTintCache
+    if (cache && cache.index === index && cache.lines === this.datasetFiles.size) return cache.tint
+    const tint = railTintOf(index, this.datasetFiles)
+    this.railTintCache = { index, lines: this.datasetFiles.size, tint }
+    return tint
+  }
   /** Fetches the files of some lines; set by the application layer (the store does not fetch) */
   datasetLoader: ((lines: LineId[]) => Promise<Map<LineId, SerializedProject>>) | null = null
   /** Lines asked for and not arrived yet */

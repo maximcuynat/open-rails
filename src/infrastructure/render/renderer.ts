@@ -16,7 +16,7 @@ import { networkCheckToken } from '@domain/models/networkWatch'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { renderStations, type StationRenderOptions } from './stationRender'
-import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type SectionStripeStyle } from './lodTracks'
+import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type RailTint, type SectionStripeStyle } from './lodTracks'
 import { renderCantMarks } from './cantRender'
 import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGradientChevrons, type GradientColors } from './gradientRender'
 import { trackProfile } from '@domain/models/trackSpeed'
@@ -514,6 +514,8 @@ export interface RenderNetworkOptions {
    * strokes, without their head nor their joints (plain driving view)
    */
   plainRails?: boolean
+  /** The colour of the kind of line each rail belongs to: applied from the line tier out, never close up */
+  railTint?: RailTint
   /** No section badge at all, selected section included (driving view) */
   hideSectionBadges?: boolean
   /**
@@ -907,12 +909,12 @@ export function renderNetwork(
     if (lod === 'schematic') {
       for (const group of levelGroups) drawTrackUnderlays(group.pieces, group.level)
       // Once for the whole network: the levels are not layered in this tier
-      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { rail: railColor, accent })
+      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { rail: railColor, accent, category: options?.railTint })
     } else if (lod === 'line') {
       const paper = levelGroups.some((g) => g.level > 0) ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
       for (const group of levelGroups) {
         drawTrackUnderlays(group.pieces, group.level)
-        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper, category: options?.railTint }, GAUGE)
       }
     } else if (lod === 'rails') {
       // The two rails of every track in a handful of strokes, then the stripe of the sections
