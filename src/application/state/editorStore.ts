@@ -105,6 +105,7 @@ import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
+import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
 import type { SegmentId, StationId, StationStop } from '@domain/models/types'
 import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
@@ -388,6 +389,17 @@ export class EditorStore {
   /** The way of each train to the next station of its itinerary, found on the track loaded; never saved */
   routeGuides = new Map<string, RouteGuideState>()
   private routeGuideElapsed = 0
+  /** The trains the automatic pilot drives, with what it remembers of each; never saved */
+  autopilots = new Map<string, PilotMemory>()
+
+  /** Hand a train to the automatic pilot, or take it back */
+  setAutopilot = (trainId: string, on: boolean): void => {
+    if (on === this.autopilots.has(trainId)) return
+    if (on) this.autopilots.set(trainId, newPilotMemory())
+    else this.autopilots.delete(trainId)
+    this.notify()
+  }
+
   /** How much the game helps along an itinerary: way drawn and points set, way drawn only, or nothing */
   drivingAid: DrivingAid = 'full'
   /** The desks seated in the room and the name each driver gave, by desk number */
@@ -3175,6 +3187,7 @@ export class EditorStore {
       this.startSimulationLoop()
     } else {
       this.trainDrivers.clear()
+      this.autopilots.clear()
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       resetSignalling(this.signalling)
@@ -4658,8 +4671,9 @@ export class EditorStore {
     this.drivenDynamics = null
     const occupancy: TrainOccupancyCache = new Map()
     const env = this.drivingEnvironment
-    // Driven: held by a desk, or the train of this screen
-    const isDriven = (train: TrainSet): boolean => train.id === this.selectedTrainId || this.trainDrivers.has(train.id)
+    // Driven: held by a desk, the train of this screen, or one the automatic pilot holds
+    const isDriven = (train: TrainSet): boolean => train.id === this.selectedTrainId || this.trainDrivers.has(train.id) || this.autopilots.has(train.id)
+    runAutopilots(this, dt)
     for (const train of this.trains) {
       if (!isDriven(train)) {
         // Nobody holds the brake handle of a train that is not driven

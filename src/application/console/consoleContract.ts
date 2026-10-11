@@ -159,6 +159,8 @@ export interface ConsoleState {
   ahead?: ConsoleTrainAhead | null
   /** Where the train is going; absent when it has no itinerary, and from an older PC */
   route?: ConsoleRoute
+  /** True while the automatic pilot holds the handles; absent from an older PC */
+  autopilot?: boolean
 }
 
 /** The itinerary of the driven train, as its driver needs it */

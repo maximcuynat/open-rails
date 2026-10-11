@@ -265,6 +265,7 @@ export function buildTrainConsoleState(store: EditorStore, train: TrainSet): Con
   if (store.trains.length > 1) state.ahead = trainAheadState(store, train)
   const route = consoleRoute(store, train)
   if (route) state.route = route
+  if (store.autopilots.has(train.id)) state.autopilot = true
   return state
 }
 

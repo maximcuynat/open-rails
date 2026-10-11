@@ -145,6 +145,10 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
           </button>
         ))}
       </div>
+      <label className="itinerary-pilot" title="Tient la vitesse, freine pour les limites et les signaux, s’arrête à quai. Toute action sur les manettes le coupe.">
+        <input type="checkbox" checked={store.autopilots.has(train.id)} onChange={(e) => store.setAutopilot(train.id, e.target.checked)} />
+        Pilote automatique
+      </label>
     </aside>
   )
 }

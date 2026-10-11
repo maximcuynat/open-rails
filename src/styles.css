@@ -4177,6 +4177,13 @@ select.cb-step-select {
   border-left-color: var(--accent);
   background: var(--panel);
 }
+.itinerary-pilot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
 .itinerary-aid {
   display: flex;
   align-items: center;

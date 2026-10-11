@@ -20,6 +20,9 @@ function driveTrain(store: EditorStore, trainId: string): void {
  * no other: `selectTrain` takes one that is free, `releaseControls` lets go of it (the simulation
  * goes on for the others), and everything else moves the handles of that train.
  */
+/** The commands that move a handle: a driver who gives one takes the train back from the automatic pilot */
+const HANDLE_COMMANDS: ReadonlySet<ConsoleCommand['type']> = new Set(['notchStep', 'notchSet', 'brake', 'reverser', 'emergencyBrake', 'switchCab'])
+
 export function applyDeskCommand(store: EditorStore, desk: number, command: ConsoleCommand): void {
   if (command.type === 'selectTrain') {
     store.takeTrain(command.trainId, desk)
@@ -39,6 +42,7 @@ export function applyDeskCommand(store: EditorStore, desk: number, command: Cons
     return
   }
   if (!train) return
+  if (HANDLE_COMMANDS.has(command.type)) store.setAutopilot(train.id, false)
   switch (command.type) {
     case 'notchStep':
       store.setTrainNotch(train, train.notch + command.step)
@@ -86,6 +90,7 @@ export function applyConsoleCommand(store: EditorStore, command: ConsoleCommand,
   // A desk holds the train this screen looks at: it can pick another train or end the drive, nothing else
   if (store.isSpectating && command.type !== 'releaseControls' && command.type !== 'selectTrainByOffset') return
   const train = store.selectedTrain
+  if (train && HANDLE_COMMANDS.has(command.type)) store.setAutopilot(train.id, false)
 
   switch (command.type) {
     case 'notchStep':

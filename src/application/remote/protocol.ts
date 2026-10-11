@@ -494,6 +494,10 @@ function readState(value: unknown): ConsoleState | null {
     if (route.total !== null && !isFiniteNumber(route.total)) return null
     state.route = { next: route.next, distance: route.distance, exact: route.exact, destination: route.destination, total: route.total, status: route.status }
   }
+  if (v.autopilot !== undefined) {
+    if (typeof v.autopilot !== 'boolean') return null
+    state.autopilot = v.autopilot
+  }
   return state
 }
 
