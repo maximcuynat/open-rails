@@ -77,7 +77,7 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 | A | Catégories de réseau et couleurs | **Fait** pour le jeu de données ; import OSM à faire | Moyenne | v0.7 |
 | C | Vue d'ensemble grossière au dézoom | **Fait** | Moyenne | v0.7 |
 | B | Chargement et déchargement par morceaux | **Fait** | Grande | v0.8 |
-| H | Pilote automatique | Rien | Grande | Non planifié |
+| H | Pilote automatique | **Fait** | Grande | v0.8 |
 
 ### Lot D — Bogies visibles en conduite
 
@@ -242,19 +242,44 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
   - L'entrée de Paris reste un gros morceau : la grille pourrait être plus fine en zone dense.
   - Hors conduite rien n'est déchargé (la fenêtre « Ligne entre gares » charge tout un trajet).
 
-### Lot H — Pilote automatique (non planifié)
+### Lot H — Pilote automatique
 
-Inscrit au plan, **affecté à aucune version**. Une rame conduite par le jeu : tenue de la
-vitesse limite, freinage de service vers un signal ou une limite, arrêt à quai, suivi d'un
-itinéraire. S'appuiera sur les lots F et G. Il ouvrira aussi les trains pilotés par le jeu
-(circulation autour du joueur) et le régulateur de vitesse du TGV.
+- **Fait le 2026-10-11**, à la demande (il était hors des versions à venir).
+- **Ce qu'il fait.** Case « Pilote automatique » dans la fenêtre d'itinéraire. Il tient la vitesse
+  juste sous la limite, freine à temps pour une limite plus basse, un signal fermé, une rame
+  devant et le quai de la prochaine gare ; il s'y arrête au mètre près, y reste 30 s, repart vers
+  l'étape suivante, change de cabine dans un terminus, et reste à l'arrêt une fois arrivé. Sans
+  itinéraire il tient seulement la vitesse de la ligne et obéit aux signaux. Toute action sur les
+  manettes le coupe.
+- **Comment.** Il conduit comme un pupitre : il lit le `ConsoleState` de la rame et règle les
+  manettes (`application/console/autopilot.ts`, `application/game/autopilot.ts`), dix fois par
+  seconde. Les aiguilles ne sont pas son affaire : c'est l'aide complète qui les oriente.
+- **Vérifié par.** Tests sur des trajets simulés (arrêt à quai sans dépassement, arrêt
+  intermédiaire, reprise en main) et en navigateur : Marseille Saint-Charles → Avignon TGV par la
+  LGV, 287 km/h au plus, arrivée à quai, aucun dépassement de limite, aucun signal franchi fermé,
+  aucun freinage d'urgence.
+- **Reste.** Sur LGV il ralentit parfois fortement puis réaccélère (prudence devant ce que le
+  signal de cabine annonce) : à affiner. Pas de commande depuis le pupitre téléphone (il y est
+  seulement signalé dans l'état). Pas encore de trains pilotés par le jeu autour du joueur.
+- **Corrigé au passage.** Avec les lignes classiques, l'itinéraire prenait la ligne classique
+  (plus courte) au lieu de la LGV, et pouvait faire sortir la rame vers un morceau chargé à côté :
+  le trajet est maintenant choisi au temps de parcours, et part du morceau où se trouve la rame.
 
-### Ordre
+### Où on en est (2026-10-11)
 
-1. **v0.6 — Bac à sable** : D, puis E, puis F. On peut lancer une partie et savoir où l'on va.
-2. **v0.7 — Lisibilité et aides** : G, A (étapes 1 et 2), C.
-3. **v0.8 — Grand réseau** : B, puis A étape 3 (lignes classiques, qui n'ont de sens qu'une fois
-   le déchargement en place).
+Les lots A à G sont faits, sur la branche `feature/jeu-conduite` ; les lignes classiques ont
+commencé par une région pilote (Provence-Alpes-Côte d'Azur). Rien n'est encore fusionné dans
+`developement` ni publié.
+
+### Suite, en petits lots
+
+Le détail et les cases à cocher sont dans `tasks/plan-jeu-conduite.md`.
+
+1. **Lignes classiques, une région par lot** : Auvergne-Rhône-Alpes d'abord (elle relie Lyon, la
+   LGV Rhône-Alpes et PACA), puis l'Île-de-France, puis les autres. L'essai de toute la France
+   en une fois n'a pas abouti (serveurs d'OpenStreetMap surchargés) ; sept régions sont en cache.
+2. **Pupitre téléphone** : y afficher l'itinéraire, y régler l'aide, essai sur de vrais téléphones.
+3. **Matériel TER et Intercités** : aujourd'hui seuls des TGV roulent, même sur les lignes classiques.
 
 ---
 
