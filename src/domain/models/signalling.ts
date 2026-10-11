@@ -161,12 +161,23 @@ export interface RailReservation extends TrackSpan {
   trainId: TrainSetId
 }
 
+/**
+ * Why a signal is closed for the train that meets it. `parked`: a path signal, and the train asks
+ * for nothing (at rest, reverser on neutral). `not-asked`: a path signal the train has not asked
+ * the route from yet (too far, or behind another closed signal). `points-against`: the route stops
+ * on points set against it. `occupied`, `reserved`: another train stands on the route or the
+ * block, or holds it. `opposed`: a train runs or is routed the other way on the track that follows.
+ */
+export type ClosedCause = 'parked' | 'not-asked' | 'points-against' | 'occupied' | 'reserved' | 'opposed'
+
 /** A signal ahead of a train */
 export interface SignalAhead {
   id: SignalId
   /** Distance from the leading end of the train, m */
   distance: number
   state: SignalState
+  /** Only there for a closed signal the train may be let past one day (not `against`) */
+  cause?: ClosedCause
   /** Only there when true: a one-way path signal met from behind, a stop the train may not pass */
   against?: true
   /** Only there when the signal shows them (see `SignalStatus`) */
@@ -255,6 +266,8 @@ export interface TrainSignalling {
   grants: Set<SignalId>
   /** The path signal it has asked the route from without getting it */
   waitingAt: SignalId | null
+  /** Why the route from `waitingAt` was refused; null when it waits at no signal */
+  waitingCause: ClosedCause | null
   /** Pro level: it passed a closed block signal after a stop and runs on sight until the next signal */
   onSight: boolean
   /** The signal it came to a stand before, while that signal is still its next one */
@@ -349,6 +362,7 @@ function newRecord(train: TrainSet): TrainSignalling {
     reservation: { spans: [], nodes: [] },
     grants: new Set(),
     waitingAt: null,
+    waitingCause: null,
     onSight: false,
     stoppedBefore: null,
     holdsToNextSignal: false,
@@ -374,29 +388,39 @@ interface TickContext {
   leads: Map<SegmentId, { trainId: TrainSetId; ascending: boolean }[]>
 }
 
-function spanFree(ctx: TickContext, trainId: TrainSetId, segId: SegmentId, a: number, b: number): boolean {
+/** What refuses a stretch to a train: another train standing on it, or holding it; null when it is free */
+function spanTaken(ctx: TickContext, trainId: TrainSetId, segId: SegmentId, a: number, b: number): 'occupied' | 'reserved' | null {
   const lo = Math.min(a, b)
   const hi = Math.max(a, b)
   const occupied = ctx.occupied.get(segId)
   if (occupied) {
     for (const occ of occupied) {
-      if (occ.trainId !== trainId && overlaps(lo, hi, occ.lo, occ.hi)) return false
+      if (occ.trainId !== trainId && overlaps(lo, hi, occ.lo, occ.hi)) return 'occupied'
     }
   }
   const reserved = ctx.state.railReservations.get(segId)
   if (reserved) {
     for (const res of reserved) {
-      if (res.trainId !== trainId && overlaps(lo, hi, Math.min(res.t0, res.t1), Math.max(res.t0, res.t1))) return false
+      if (res.trainId !== trainId && overlaps(lo, hi, Math.min(res.t0, res.t1), Math.max(res.t0, res.t1))) return 'reserved'
     }
   }
-  return true
+  return null
+}
+
+function spanFree(ctx: TickContext, trainId: TrainSetId, segId: SegmentId, a: number, b: number): boolean {
+  return spanTaken(ctx, trainId, segId, a, b) === null
+}
+
+/** What refuses points or a crossing to a train (see `spanTaken`) */
+function nodeTaken(ctx: TickContext, trainId: TrainSetId, nodeId: NodeId): 'occupied' | 'reserved' | null {
+  const standing = ctx.occupiedNodes.get(nodeId)
+  if (standing && standing.some((id) => id !== trainId)) return 'occupied'
+  const holder = ctx.state.nodeReservations.get(nodeId)
+  return holder !== undefined && holder !== trainId ? 'reserved' : null
 }
 
 function nodeFree(ctx: TickContext, trainId: TrainSetId, nodeId: NodeId): boolean {
-  const holder = ctx.state.nodeReservations.get(nodeId)
-  if (holder !== undefined && holder !== trainId) return false
-  const standing = ctx.occupiedNodes.get(nodeId)
-  return !standing || standing.every((id) => id === trainId)
+  return nodeTaken(ctx, trainId, nodeId) === null
 }
 
 function claimSpan(ctx: TickContext, record: TrainSignalling, segId: SegmentId, t0: number, t1: number): void {
@@ -464,22 +488,24 @@ function opposedBeyond(ctx: TickContext, route: SignalRoute, trainId: TrainSetId
  * May the train be given the route past this signal — or, when it `held` it already, keep it? (see
  * the rules at the top of the file). A route held is only lost when its own track is no longer
  * free, or no longer leads on (points thrown against it): what happens elsewhere in the block does
- * not close a signal in front of a train.
+ * not close a signal in front of a train. Returns what refuses it, null when it is given.
  */
-function canGrant(ctx: TickContext, trainId: TrainSetId, signal: Signal, route: SignalRoute, held: boolean): boolean {
+function grantRefusal(ctx: TickContext, trainId: TrainSetId, signal: Signal, route: SignalRoute, held: boolean): ClosedCause | null {
   // A route that stops on points set against it leads nowhere: never given, and taken back if it was
-  if (route.blockedAt !== null) return false
+  if (route.blockedAt !== null) return 'points-against'
   for (const span of route.spans) {
-    if (!spanFree(ctx, trainId, span.segId, span.t0, span.t1)) return false
+    const taken = spanTaken(ctx, trainId, span.segId, span.t0, span.t1)
+    if (taken) return taken
   }
   for (const nodeId of route.nodes) {
-    if (!nodeFree(ctx, trainId, nodeId)) return false
+    const taken = nodeTaken(ctx, trainId, nodeId)
+    if (taken) return taken
   }
-  if (held) return true
-  if (signal.role === 'protection') return !opposedBeyond(ctx, route, trainId)
+  if (held) return null
+  if (signal.role === 'protection') return opposedBeyond(ctx, route, trainId) ? 'opposed' : null
   const block = ctx.topology.blocks.get(signal.id)
-  if (!block) return false
-  return !ctx.occupiedBlocks.has(block) && !blockHeldByOther(ctx, block, trainId)
+  if (!block || ctx.occupiedBlocks.has(block)) return 'occupied'
+  return blockHeldByOther(ctx, block, trainId) ? 'reserved' : null
 }
 
 // ─────────────────── Route ahead of a train ───────────────────
@@ -698,6 +724,19 @@ function sameAsLastUpdate(
   return same
 }
 
+/** Why a closed signal is closed for the train that has it ahead (see `ClosedCause`); null when the signalling cannot say */
+function closedCauseFor(train: TrainSet, record: TrainSignalling, signal: Signal, status: SignalStatus | undefined): ClosedCause | null {
+  if (signal.role !== 'protection') {
+    const cause = status?.cause
+    return cause === 'occupied' || cause === 'reserved' || cause === 'points-against' ? cause : null
+  }
+  if (!isActive(train)) return 'parked'
+  if (record.waitingAt === signal.id) return record.waitingCause
+  // Given to another train: the route is theirs until they have passed
+  if (status?.clearedFor != null && status.clearedFor !== record.trainId) return 'reserved'
+  return 'not-asked'
+}
+
 /** Take the track ahead of a train and ask for the routes past the signals it nears. */
 function reserveAhead(
   ctx: TickContext,
@@ -716,6 +755,7 @@ function reserveAhead(
   const ahead = route.signals.filter((met) => met.distance > headAt + DISTANCE_EPSILON)
   const granted = new Set<SignalId>()
   record.waitingAt = null
+  record.waitingCause = null
 
   const first = route.spanIndex
 
@@ -738,8 +778,12 @@ function reserveAhead(
         const within = signal.role === 'protection' || held ? approach : reach
         if (distance > within) break
         const beyond = signalRouteIn(net, topology, signal.id)
-        if (!beyond || !canGrant(ctx, trainId, signal, beyond, held)) {
-          if (signal.role === 'protection') record.waitingAt = signal.id
+        const refusal = beyond ? grantRefusal(ctx, trainId, signal, beyond, held) : null
+        if (!beyond || refusal) {
+          if (signal.role === 'protection') {
+            record.waitingAt = signal.id
+            record.waitingCause = refusal
+          }
           break
         }
         granted.add(signal.id)
@@ -931,6 +975,7 @@ export function updateSignalling(
     if (!record.route || !start) {
       record.grants.clear()
       record.waitingAt = null
+      record.waitingCause = null
       record.holdsToNextSignal = false
       continue
     }
@@ -1048,6 +1093,10 @@ export function updateSignalling(
       if (!record.nextSignal) {
         record.nextSignal = { id: met.signal.id, distance, state: signalState }
         if (met.against) record.nextSignal.against = true
+        else if (signalState === 'stop') {
+          const cause = closedCauseFor(train, record, met.signal, status)
+          if (cause) record.nextSignal.cause = cause
+        }
         if (status?.reminder) record.nextSignal.reminder = status.reminder
         if (status?.slowdown) record.nextSignal.slowdown = status.slowdown
       }

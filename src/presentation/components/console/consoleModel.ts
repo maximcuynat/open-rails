@@ -8,7 +8,7 @@ import type {
   ConsoleTurnout,
   FleetEntry,
 } from '@application/console/consoleContract'
-import type { SignalColor } from '@domain/models/signalling'
+import type { ClosedCause, SignalColor } from '@domain/models/signalling'
 import {
   BRAKE_CYLINDER_MAX_BAR,
   BRAKE_PIPE_FIRST_REDUCTION,
@@ -476,6 +476,20 @@ export function signalPassedNote(braked: boolean): string {
   return braked ? 'Signal fermé franchi · urgence' : 'Signal fermé franchi'
 }
 
+/** Why the next signal is closed, in one short line */
+const CLOSED_CAUSE_NOTES: Record<ClosedCause, SignalNote> = {
+  parked: { tone: 'warning', text: 'Engagez l’inverseur pour partir' },
+  'not-asked': { tone: 'info', text: 'Itinéraire donné à l’approche' },
+  'points-against': { tone: 'warning', text: 'Aiguille contre l’itinéraire' },
+  occupied: { tone: 'warning', text: 'Voie occupée par un autre train' },
+  reserved: { tone: 'warning', text: 'Voie réservée à un autre train' },
+  opposed: { tone: 'warning', text: 'Train en sens contraire' },
+}
+
+export function closedCauseNote(cause: ClosedCause): SignalNote {
+  return CLOSED_CAUSE_NOTES[cause]
+}
+
 export function overspeedNote(braked: boolean): string {
   return braked ? 'Survitesse · urgence' : 'Survitesse'
 }
@@ -513,7 +527,9 @@ export function signalsView(signals: ConsoleSignals): SignalsView {
   if (signals.passed) notes.push({ tone: 'alert', text: signalPassedNote(signals.passed.braked) })
   if (signals.overspeed) notes.push({ tone: 'alert', text: overspeedNote(signals.overspeed.braked) })
   if (signals.onSight) notes.push({ tone: 'warning', text: `Marche à vue — ${signals.onSightSpeed} km/h` })
-  if (signals.waiting) notes.push({ tone: 'warning', text: 'Attente de l’itinéraire' })
+  // The cause says more than the wait: it takes its place when the signalling knows it
+  if (next?.cause && !signals.cab) notes.push(closedCauseNote(next.cause))
+  else if (signals.waiting) notes.push({ tone: 'warning', text: 'Attente de l’itinéraire' })
   if (signals.closedDistance !== null && !signals.brakeAlert) {
     notes.push({ tone: 'info', text: `Signal fermé à ${stoppingDistanceLabel(signals.closedDistance)}` })
   }

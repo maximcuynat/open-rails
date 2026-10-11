@@ -2,7 +2,7 @@ import type { Reverser } from '@domain/models/train'
 import type { BrakeCommand } from '@domain/models/trainDynamics'
 import type { CurveState, Derailment, UpcomingSpeedLimit } from '@domain/models/speedLimits'
 import type { SignallingLevel } from '@domain/models/signals'
-import type { SignalColor, SignalIndication, SlowdownSpeed } from '@domain/models/signalling'
+import type { ClosedCause, SignalColor, SignalIndication, SlowdownSpeed } from '@domain/models/signalling'
 import type { CabIndicationKind } from '@domain/models/cabSignalling'
 
 /**
@@ -48,6 +48,9 @@ export interface ConsoleGuidance {
   derailed: Derailment | null
 }
 
+/** Every `ClosedCause`, for what reads a state from the wire */
+export const CLOSED_CAUSES: readonly ClosedCause[] = ['parked', 'not-asked', 'points-against', 'occupied', 'reserved', 'opposed']
+
 /** A signal ahead of the train, as its signalling level shows it (`signalAspect`) */
 export interface ConsoleSignal {
   /** Distance from the head of the train, m */
@@ -69,6 +72,8 @@ export interface ConsoleSignal {
   slowdown?: SlowdownSpeed
   /** Pro level, only there when lit: the reminder of that speed before the points (two yellow lamps one above the other) */
   reminder?: SlowdownSpeed
+  /** Only there for a closed signal: why it is closed for this train */
+  cause?: ClosedCause
 }
 
 /** The target speed shown in the cab of a high-speed line (see `cabSignalling.ts`) */

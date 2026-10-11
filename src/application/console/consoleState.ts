@@ -121,6 +121,7 @@ export function trainSignals(
     // Only there when lit: the state of a signal that shows neither is what it always was
     if (aspect.slowdown) next.slowdown = aspect.slowdown
     if (aspect.reminder) next.reminder = aspect.reminder
+    if (ahead.cause) next.cause = ahead.cause
   }
   const closed = view.closedSignal
   const signals: ConsoleSignals = {

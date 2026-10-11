@@ -1,4 +1,4 @@
-import { CONSOLE_ROUTE_STATUSES } from '../console/consoleContract'
+import { CLOSED_CAUSES, CONSOLE_ROUTE_STATUSES } from '../console/consoleContract'
 import type {
   ConsoleBrake,
   ConsoleCommand,
@@ -343,6 +343,7 @@ function readSignal(value: unknown): ConsoleSignal | null {
   // Only there when lit; absent from a PC of an older version
   if (value.slowdown !== undefined && !isOneOf(value.slowdown, SLOWDOWN_SPEEDS)) return null
   if (value.reminder !== undefined && !isOneOf(value.reminder, SLOWDOWN_SPEEDS)) return null
+  if (value.cause !== undefined && !isOneOf(value.cause, CLOSED_CAUSES)) return null
   const signal: ConsoleSignal = {
     distance: value.distance,
     color: value.color,
@@ -353,6 +354,7 @@ function readSignal(value: unknown): ConsoleSignal | null {
   }
   if (value.slowdown !== undefined) signal.slowdown = value.slowdown
   if (value.reminder !== undefined) signal.reminder = value.reminder
+  if (value.cause !== undefined) signal.cause = value.cause
   return signal
 }
 
