@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { convertOsm } from '@domain/import/osmImport'
@@ -17,6 +17,7 @@ import type { DatasetIndex } from '@domain/dataset/datasetIndex'
 import { buildIndex } from './datasetIndex'
 import { fetchAll } from './fetch'
 import { assignLines, groupOfRail, type LineId } from './lines'
+import { cutIntoPieces } from './pieces'
 import { readManifest, type DatasetManifest } from './manifest'
 
 // The « LGV France » dataset: the whole high-speed network converted once, in the national frame,
@@ -72,7 +73,8 @@ export function buildDataset(
   const net = result.network
   matchStationRegistry(net, registry, projectionFor('lambert93', LAMBERT93_ORIGIN))
   const reconcile = reconcileNetworkIntersections(net, placementThresholds(GAUGE).reconcileTolerance)
-  const assignment = assignLines(result, merged, manifest, approachWays)
+  // The lines, then their pieces: what is written, one file each
+  const assignment = cutIntoPieces(net, assignLines(result, merged, manifest, approachWays))
   const zonesCut = splitSpeedZonesBy(net, groupOfRail(assignment))
   const whole = buildOsmProject(result, { levels: true, now })
 
@@ -170,6 +172,16 @@ export async function main(argv: string[]): Promise<number> {
     writeFileSync(join(OUT_DIR, line.file), text)
     total += text.length
     log(`  ${line.file}: ${line.rails} rails, ${line.lengthKm.toFixed(1)} km, ${(text.length / 1024).toFixed(0)} ko`)
+  }
+  // The files of a previous run that the index no longer names (lines since cut otherwise) go
+  if (!only) {
+    const kept = new Set(['index.json', 'README.md', ...built.index.lines.map((line) => line.file)])
+    for (const name of readdirSync(OUT_DIR)) {
+      if (name.endsWith('.json') && !kept.has(name)) {
+        unlinkSync(join(OUT_DIR, name))
+        log(`  ${name}: removed (no longer in the index)`)
+      }
+    }
   }
   writeFileSync(join(OUT_DIR, 'index.json'), indexText(built.index))
   writeFileSync(join(OUT_DIR, 'README.md'), readme(built.index))

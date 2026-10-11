@@ -61,13 +61,9 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
 
   // Lines of the dataset fetched as a train nears them, or not
   useEffect(() => {
-    store.onDatasetLinesAdded = (lines) => {
-      const names = lines.map((id) => store.datasetIndex?.lines.find((line) => line.id === id)?.name ?? id)
-      showToast(`${names.join(', ')} : ligne${lines.length > 1 ? 's' : ''} chargée${lines.length > 1 ? 's' : ''} en route`, 'info')
-    }
+    // The pieces of line that come and go as the train runs do so in silence: only a failure is said
     store.onDatasetError = (error) => showToast(datasetErrorMessage(error), 'warning', 6000)
     return () => {
-      store.onDatasetLinesAdded = null
       store.onDatasetError = null
     }
   }, [store])

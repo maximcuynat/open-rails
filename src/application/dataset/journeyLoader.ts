@@ -1,5 +1,5 @@
 import type { DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
-import { recipeName, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
+import { recipeLines, recipeName, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { routeBbox, routeThroughStations, type JourneyRoute } from '@domain/dataset/lineRoute'
 import type { SerializedProject } from '@infrastructure/persistence/persistence'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
@@ -69,9 +69,10 @@ export async function loadStation(store: EditorStore, index: DatasetIndex, stati
  * with `datasetReloadPending`): the trains and the camera it saved come back with them.
  */
 export async function reloadDataset(store: EditorStore, options: JourneyLoadOptions = {}): Promise<void> {
-  const recipe = store.dataset
-  if (!recipe) return
+  const saved = store.dataset
+  if (!saved) return
   const index = await loadDatasetIndex(options)
+  const recipe: DatasetRecipe = { ...saved, lines: recipeLines(index, saved.lines) }
   const files = await fetchLineFiles(index, recipe.lines, options.onProgress, options)
   const union = unionOf(files, recipe.lines)
   const stored = store.datasetStoredProject

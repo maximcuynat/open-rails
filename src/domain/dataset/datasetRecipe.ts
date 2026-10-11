@@ -30,7 +30,22 @@ export function recipeName(index: DatasetIndex, recipe: DatasetRecipe): string {
   if (names.length >= 2) return `${names[0]} → ${names[names.length - 1]}`
   if (names.length === 1) return names[0]
   const lines = recipe.lines.map((id) => index.lines.find((l) => l.id === id)?.name ?? id)
-  return lines.join(' + ')
+  return [...new Set(lines)].join(' + ')
+}
+
+/**
+ * The lines of a recipe as the index knows them today: a line saved whole before the lines were
+ * cut into pieces stands for all its pieces. An id the index does not know at all is kept (the
+ * loader says which one is missing).
+ */
+export function recipeLines(index: DatasetIndex, lines: readonly LineId[]): LineId[] {
+  const known = new Set(index.lines.map((line) => line.id))
+  const resolved: LineId[] = []
+  for (const id of lines) {
+    const pieces = known.has(id) ? [id] : index.lines.filter((line) => line.partOf === id).map((line) => line.id)
+    for (const piece of pieces.length > 0 ? pieces : [id]) if (!resolved.includes(piece)) resolved.push(piece)
+  }
+  return resolved
 }
 
 /** The tools a locked project still accepts: looking, measuring, trains */

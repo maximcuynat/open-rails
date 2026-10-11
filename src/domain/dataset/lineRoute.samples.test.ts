@@ -27,21 +27,24 @@ function parts(net: Network): string[] {
 describe.runIf(present)('the route over the published index', () => {
   const index: DatasetIndex = present ? readDatasetIndex(read<unknown>('index.json')) : (null as unknown as DatasetIndex)
   const station = (query: string) => searchStations(index, query, 1)[0]?.station.id
+  /** The lines the pieces of a route are pieces of, each once */
+  const wholeLines = (pieces: readonly string[]): string[] => [...new Set(pieces.map((id) => index.lines.find((line) => line.id === id)?.partOf ?? id))]
 
   it('goes from Marseille Saint-Charles to Lyon Part-Dieu over the four known lines', () => {
     const route = routeThroughStations(index, [station('marseille saint charles'), station('lyon part dieu')])
     if ('error' in route) throw new Error(route.error)
-    expect(route.lines[0]).toBe('racc-marseille-saint-charles')
-    expect([...route.lines].sort()).toEqual(['lgv-mediterranee', 'lgv-rhone-alpes', 'racc-lyon-part-dieu-sud', 'racc-marseille-saint-charles'])
-    expect(route.lengthKm).toBeGreaterThan(900)
-    expect(route.bytes).toBeGreaterThan(1_500_000)
+    expect(wholeLines(route.lines)[0]).toBe('racc-marseille-saint-charles')
+    expect(wholeLines(route.lines).sort()).toEqual(['lgv-mediterranee', 'lgv-rhone-alpes', 'racc-lyon-part-dieu-sud', 'racc-marseille-saint-charles'])
+    // Only the pieces on the way: two tracks over some 325 km, and their crossovers
+    expect(route.lengthKm).toBeGreaterThan(600)
+    expect(route.lines.length).toBeGreaterThan(4)
   })
 
   it('goes from Paris Gare de Lyon to Marseille through the LGV Sud-Est', () => {
     const route = routeThroughStations(index, [station('paris gare de lyon'), station('marseille saint charles')])
     if ('error' in route) throw new Error(route.error)
-    expect(route.lines).toContain('lgv-sud-est')
-    expect(route.lines).toContain('lgv-mediterranee')
+    expect(wholeLines(route.lines)).toContain('lgv-sud-est')
+    expect(wholeLines(route.lines)).toContain('lgv-mediterranee')
   })
 
   it('lists the two stations of the airport of Roissy as homonyms', () => {

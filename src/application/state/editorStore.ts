@@ -52,7 +52,7 @@ import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
-import { connectionsToward } from '@domain/dataset/lineRoute'
+import { connectionsToward, linesToDrop } from '@domain/dataset/lineRoute'
 import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
 import type { MergeOutcome } from '@application/import/mergeReport'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
@@ -105,7 +105,7 @@ import { railTintOf } from '@infrastructure/render/datasetOverview'
 import { createRakeAtStation } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
-import type { StationId, StationStop } from '@domain/models/types'
+import type { SegmentId, StationId, StationStop } from '@domain/models/types'
 import { setBrakeCommand, trainDynamics, trainSlope, type BrakeCommand, type DrivingEnvironment, type TrainDynamics } from '@domain/models/trainDynamics'
 import {
   TRAIN_CHAIN_SNAP_DISTANCE,
@@ -400,16 +400,29 @@ export class EditorStore {
   datasetIndex: DatasetIndex | null = null
   /** The files of the lines loaded, kept to be put together again when a line is added */
   datasetFiles = new Map<LineId, SerializedProject>()
-  private railTintCache: { index: DatasetIndex; lines: number; tint: (segId: string) => string | undefined } | null = null
+  /** Bumped whenever a file comes or goes: what is worked out from the files is worked out again */
+  private datasetFilesRevision = 0
+  private railTintCache: { index: DatasetIndex; revision: number; tint: (segId: string) => string | undefined } | null = null
+  private railLineCache: { revision: number; lineOf: Map<SegmentId, LineId> } | null = null
+
+  /** The file (line, or piece of a line) each rail of a dataset project came with; the first that holds it */
+  private get railLine(): Map<SegmentId, LineId> {
+    const cache = this.railLineCache
+    if (cache && cache.revision === this.datasetFilesRevision) return cache.lineOf
+    const lineOf = new Map<SegmentId, LineId>()
+    for (const [id, file] of this.datasetFiles) for (const seg of file.segments) if (!lineOf.has(seg.id)) lineOf.set(seg.id, id)
+    this.railLineCache = { revision: this.datasetFilesRevision, lineOf }
+    return lineOf
+  }
 
   /** The colour of the kind of line each rail of a dataset project belongs to; undefined on any other project */
   get railTint(): ((segId: string) => string | undefined) | undefined {
     const index = this.datasetIndex
     if (!this.dataset || !index || this.datasetFiles.size === 0) return undefined
     const cache = this.railTintCache
-    if (cache && cache.index === index && cache.lines === this.datasetFiles.size) return cache.tint
+    if (cache && cache.index === index && cache.revision === this.datasetFilesRevision) return cache.tint
     const tint = railTintOf(index, this.datasetFiles)
-    this.railTintCache = { index, lines: this.datasetFiles.size, tint }
+    this.railTintCache = { index, revision: this.datasetFilesRevision, tint }
     return tint
   }
   /** Fetches the files of some lines; set by the application layer (the store does not fetch) */
@@ -420,6 +433,8 @@ export class EditorStore {
   datasetReloadPending = false
   /** How long the last addition of lines took, in ms (read by the measuring scripts) */
   datasetLastAddMs = 0
+  /** How long the last drop of lines took, ms (measures) */
+  datasetLastRemoveMs = 0
   /** The stored recipe-only project, kept until its lines are fetched again (trains and camera to put back) */
   datasetStoredProject: SerializedProject | null = null
   /** Seconds since the trains were last checked against the connections to lines not loaded */
@@ -1329,17 +1344,31 @@ export class EditorStore {
     if (this.datasetCheckElapsed < DATASET_CHECK_PERIOD_S) return
     this.datasetCheckElapsed = 0
     const gates = connectionsToward(this.datasetIndex, new Set(this.dataset.lines))
-    if (gates.length === 0) return
     const wanted = new Set<LineId>()
+    const leads: Point[] = []
     for (const train of this.trains) {
       const lead = train.vehicles[0]
       const pos = lead ? positionOnSegment(this.network, lead.front.segId, lead.front.t) : null
       if (!pos) continue
+      leads.push(pos)
       for (const gate of gates) {
         if (Math.hypot(gate.x - pos.x, gate.y - pos.y) > DATASET_LOOKAHEAD_M) continue
         for (const id of gate.lines) if (!this.datasetPending.has(id)) wanted.add(id)
       }
     }
+    // What every train has left far behind is dropped: never what a train stands on, nor what
+    // was just asked for. Further than what is fetched, so that nothing comes and goes
+    const held = new Set<LineId>([...wanted, ...this.datasetPending])
+    const railLine = this.railLine
+    for (const train of this.trains) {
+      for (const veh of train.vehicles) {
+        for (const pos of [veh.front, veh.rear]) {
+          const line = railLine.get(pos.segId)
+          if (line) held.add(line)
+        }
+      }
+    }
+    this.removeDatasetLines(linesToDrop(this.datasetIndex, new Set(this.dataset.lines), leads, DATASET_KEEP_M, held))
     if (wanted.size === 0) return
     const ids = [...wanted]
     for (const id of ids) this.datasetPending.add(id)
@@ -1370,6 +1399,7 @@ export class EditorStore {
       this.datasetFiles.set(id, project)
     }
     if (added.length === 0) return 0
+    this.datasetFilesRevision++
     const before = this.network.segments.size
     const t0 = performance.now()
     const union = unionProjects([...this.datasetFiles.values()])
@@ -1385,6 +1415,40 @@ export class EditorStore {
     this.savePersistedState()
     this.notify()
     return this.network.segments.size - before
+  }
+
+  /**
+   * Drop some lines (or pieces of lines) of the dataset project, in place: what is left is put
+   * back onto the live network, the rails of the lines dropped go and everything else stays the
+   * object it is. A line a vehicle stands on is kept whatever is asked, and so is the last one.
+   * Returns how many rails went.
+   */
+  removeDatasetLines = (ids: readonly LineId[]): number => {
+    if (!this.dataset || ids.length === 0) return 0
+    const railLine = this.railLine
+    const occupied = new Set<LineId>()
+    for (const train of this.trains) {
+      for (const veh of train.vehicles) {
+        for (const pos of [veh.front, veh.rear]) {
+          const line = railLine.get(pos.segId)
+          if (line) occupied.add(line)
+        }
+      }
+    }
+    const going = ids.filter((id) => this.datasetFiles.has(id) && !occupied.has(id))
+    if (going.length === 0 || going.length >= this.datasetFiles.size) return 0
+    for (const id of going) this.datasetFiles.delete(id)
+    this.datasetFilesRevision++
+    const before = this.network.segments.size
+    const t0 = performance.now()
+    const union = unionProjects([...this.datasetFiles.values()])
+    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
+    deserializeNetwork(union, tolerance, this.network)
+    this.dataset = { ...this.dataset, lines: this.dataset.lines.filter((id) => !going.includes(id)) }
+    this.datasetLastRemoveMs = performance.now() - t0
+    this.savePersistedState()
+    this.notify()
+    return before - this.network.segments.size
   }
 
   /**
@@ -4658,6 +4722,8 @@ export type TimeFactor = (typeof TIME_FACTORS)[number]
 export const isTimeFactor = (v: unknown): v is TimeFactor => (TIME_FACTORS as readonly number[]).includes(v as number)
 /** How close (m) a train's lead comes to a connection before the line beyond it is fetched */
 export const DATASET_LOOKAHEAD_M = 5000
+/** A loaded line every train is further than this (m) from is dropped; well beyond `DATASET_LOOKAHEAD_M` */
+export const DATASET_KEEP_M = 20_000
 /** How often (s) the trains are checked against the connections */
 const DATASET_CHECK_PERIOD_S = 1
 /** How often (s) the trains are placed on the way to their next station */

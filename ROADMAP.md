@@ -76,7 +76,7 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 | G | Niveaux d'aide à la conduite | **Fait** | Moyenne | v0.7 |
 | A | Catégories de réseau et couleurs | **Fait** pour le jeu de données ; import OSM à faire | Moyenne | v0.7 |
 | C | Vue d'ensemble grossière au dézoom | **Fait** | Moyenne | v0.7 |
-| B | Chargement et déchargement par morceaux | Chargement par ligne entière, jamais déchargé | Grande | v0.8 |
+| B | Chargement et déchargement par morceaux | **Fait** | Grande | v0.8 |
 | H | Pilote automatique | Rien | Grande | Non planifié |
 
 ### Lot D — Bogies visibles en conduite
@@ -203,17 +203,28 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 - **Constat.** L'unité chargée est une ligne entière (54 ko à 1,1 Mo). Une ligne est chargée
   quand une rame arrive à 5 km d'un raccordement. **Rien n'est jamais déchargé**, chaque ajout
   refond tous les fichiers déjà tenus, et il n'y a aucun cache hors mémoire.
-- **À faire.**
-  1. Découpe du jeu de données en dalles sur une grille fixe en Lambert-93 (génération), rails
-     coupés aux bords avec des nœuds de couture stables.
-  2. Gestionnaire de dalles : charge celles qui entourent chaque rame et celles de son
-     itinéraire devant elle ; décharge celles qui sont loin de toute rame, avec une marge pour
-     éviter les allers-retours. Une dalle occupée par une rame n'est jamais déchargée.
-  3. Ajout et retrait d'une dalle en place, sans refondre le reste.
-  4. Cache local des dalles (IndexedDB) avec version du jeu de données.
-  5. Signaux, cantons et réservations aux bords d'une dalle absente : voie fermée, jamais vide.
-- **Vérifié par.** Trajet Marseille → Paris automatisé : mémoire et nombre de rails bornés,
-  aucune rame sur une dalle déchargée ; mesure du temps d'ajout et de retrait d'une dalle.
+- **Fait le 2026-10-12.**
+  1. Chaque ligne est découpée en morceaux sur une grille de 40 km (`tools/lgv-dataset/pieces.ts`).
+     Un rail va entier au morceau où tombe son milieu : rien n'est coupé, une frontière tombe
+     toujours sur un nœud, comme entre deux lignes. 16 lignes deviennent 77 morceaux (médiane
+     347 rails et 82 ko ; le plus gros, l'entrée de Paris, 4 235 rails et 1 Mo). Un morceau est
+     pour l'application ce qu'était une ligne : un fichier, une entrée de l'index.
+  2. En conduite, une fois par seconde : un morceau est chargé quand une rame arrive à 5 km de
+     sa jonction, et déchargé quand toutes les rames en sont à plus de 20 km. Un morceau où se
+     trouve un véhicule n'est jamais déchargé, ni un morceau en cours de téléchargement.
+  3. Ajout et retrait en place, la conduite continue. Les arrivées et départs sont silencieux.
+  4. Un projet enregistré avant la découpe se recharge : une ligne entière vaut pour ses morceaux.
+- **Mesuré** en navigateur, Marseille vers Lyon à vitesse de ligne sur 130 km : 4 morceaux
+  chargés, 3 déchargés, jamais plus de 2 450 rails en mémoire (1 à 2 morceaux le plus souvent),
+  ajout en 14 ms au plus, retrait en 11 ms au plus, mémoire stable à 58 Mo, aucun arrêt
+  d'urgence ni signal franchi fermé.
+- **Reste.**
+  - Pas de cache local à part celui du navigateur (les fichiers sont statiques, il les garde) :
+    IndexedDB n'apporterait que le jeu hors connexion.
+  - Au bord d'un morceau absent la voie s'arrête, comme au bord d'une ligne absente jusqu'ici ;
+    pas de signal dédié.
+  - L'entrée de Paris reste un gros morceau : la grille pourrait être plus fine en zone dense.
+  - Hors conduite rien n'est déchargé (la fenêtre « Ligne entre gares » charge tout un trajet).
 
 ### Lot H — Pilote automatique (non planifié)
 

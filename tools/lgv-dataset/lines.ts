@@ -23,6 +23,8 @@ export interface LineInfo {
   /** RFN line code of the relation, when it came from one */
   ref?: string
   highSpeed: boolean
+  /** For a piece of a line (`cutIntoPieces`): the line it is a piece of */
+  partOf?: LineId
 }
 
 export const OTHER_LINE: LineInfo = { id: 'autres', name: 'Autres voies', highSpeed: false }

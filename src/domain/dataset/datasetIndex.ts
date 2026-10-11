@@ -34,6 +34,8 @@ export interface IndexLine {
   bbox: BBox
   /** Ids of the stations with a platform on this line */
   stations: string[]
+  /** For a piece of a line: the id of that line (the pieces of a line share its name); absent when the line is whole */
+  partOf?: LineId
   /** What kind of line it is; absent from an older index (`lineCategory` then goes by `highSpeed`) */
   category?: LineCategory
   /** Its course as a few strokes (`lineOutline`), each `[x0, y0, x1, y1, …]` in metres; absent from an older index */

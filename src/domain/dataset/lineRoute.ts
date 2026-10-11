@@ -139,6 +139,26 @@ export function gatesToward(index: DatasetIndex, loaded: ReadonlySet<LineId>, st
   return index.connections.filter((c) => c.lines.includes(beyond) && c.lines.some((id) => loaded.has(id))).map((c) => c.nodeId)
 }
 
+/** Metres from a point to a box; 0 inside it */
+export function distanceToBox(x: number, y: number, box: BBox): number {
+  return Math.hypot(Math.max(box.minX - x, 0, x - box.maxX), Math.max(box.minY - y, 0, y - box.maxY))
+}
+
+/**
+ * The loaded lines that every one of `points` (where the trains are) is further than `keep`
+ * metres from, those in `held` left out (a train stands on them, or they are being fetched):
+ * what can be dropped.
+ */
+export function linesToDrop(index: DatasetIndex, loaded: ReadonlySet<LineId>, points: readonly { x: number; y: number }[], keep: number, held: ReadonlySet<LineId>): LineId[] {
+  if (points.length === 0) return []
+  const drop: LineId[] = []
+  for (const line of index.lines) {
+    if (!loaded.has(line.id) || held.has(line.id)) continue
+    if (points.every((p) => distanceToBox(p.x, p.y, line.bbox) > keep)) drop.push(line.id)
+  }
+  return drop
+}
+
 /** The connections that lead from a loaded line to one not loaded: where a train leaves what it has */
 export function connectionsToward(index: DatasetIndex, loaded: ReadonlySet<LineId>): LineGate[] {
   const gates: LineGate[] = []
