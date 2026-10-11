@@ -58,27 +58,43 @@ function turnedToLeave(net: Network, arrived: TrainSet): TrainSet | null {
  * the stops when they are equal. Null when the rake fits at none.
  */
 export function createRakeAtStation(net: Network, station: Station, model: RollingStockModel, others: readonly TrainSet[] = []): RakeAtStation | null {
-  const taken = new Set<SegmentId>()
-  for (const other of others) for (const veh of other.vehicles) taken.add(veh.front.segId).add(veh.rear.segId)
   let best: RakeAtStation | null = null
   let bestAhead = -Infinity
   for (const stop of station.stops) {
-    if (!net.segments.has(stop.segId)) continue
-    for (const direction of [1, -1] as const) {
-      const arrived = createRake(net, stop.segId, stop.t, direction, model)
-      if (!arrived) continue
-      if (arrived.vehicles.some((veh) => taken.has(veh.front.segId) || taken.has(veh.rear.segId))) continue
-      for (const train of [arrived, turnedToLeave(net, arrived)]) {
-        if (!train) continue
-        const ahead = trackLeftAhead(net, train, DEPARTURE_REACH) ?? DEPARTURE_REACH
-        if (ahead > bestAhead) {
-          best = { train, stop }
-          bestAhead = ahead
-        }
-      }
+    const here = bestRakeAt(net, stop.segId, stop.t, model, others)
+    if (here && here.ahead > bestAhead) {
+      best = { train: here.train, stop }
+      bestAhead = here.ahead
     }
   }
   return best
+}
+
+/** The rake that fits at a place of the track with most track ahead, of both headings and both cabs, clear of `others` */
+function bestRakeAt(net: Network, segId: SegmentId, t: number, model: RollingStockModel, others: readonly TrainSet[]): { train: TrainSet; ahead: number } | null {
+  if (!net.segments.has(segId)) return null
+  const taken = new Set<SegmentId>()
+  for (const other of others) for (const veh of other.vehicles) taken.add(veh.front.segId).add(veh.rear.segId)
+  let best: { train: TrainSet; ahead: number } | null = null
+  for (const direction of [1, -1] as const) {
+    const arrived = createRake(net, segId, t, direction, model)
+    if (!arrived) continue
+    if (arrived.vehicles.some((veh) => taken.has(veh.front.segId) || taken.has(veh.rear.segId))) continue
+    for (const train of [arrived, turnedToLeave(net, arrived)]) {
+      if (!train) continue
+      const ahead = trackLeftAhead(net, train, DEPARTURE_REACH) ?? DEPARTURE_REACH
+      if (!best || ahead > best.ahead) best = { train, ahead }
+    }
+  }
+  return best
+}
+
+/**
+ * A complete rake of `model` at a place of the track — anywhere, not only at a platform — facing
+ * the way with most track ahead, clear of `others`. Null when the whole rake does not fit there.
+ */
+export function createRakeAtTrack(net: Network, segId: SegmentId, t: number, model: RollingStockModel, others: readonly TrainSet[] = []): TrainSet | null {
+  return bestRakeAt(net, segId, t, model, others)?.train ?? null
 }
 
 /** Length of the complete rake of a model, m: what a platform track must hold */

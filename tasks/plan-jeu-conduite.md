@@ -22,6 +22,8 @@ Branche : `feature/jeu-conduite` (poussée). Rien n'est fusionné dans `develope
 - [x] Trajet choisi au temps de parcours (la LGV plutôt que la ligne classique à côté)
 - [x] **M1** — TER Régiolis 4 caisses (quatre voitures sur cinq bogies, 160 km/h), au choix dans le bac à sable
 - [x] Trajets selon le train : sans signalisation de cabine, pas de ligne à grande vitesse
+- [x] Plusieurs trains : ajouter un train à la partie en cours (gare, ou clic sur la voie)
+- [x] Vue libre : quitter un train laissé au pilote automatique, en reprendre un, en poser un autre ; aucun outil de voie tant que des trains roulent
 - [x] Par une autre session, sur la même branche : temps de trajet estimé dans la fenêtre
       d'itinéraire, cause du signal fermé au pupitre, courbes d'import compatibles avec la
       vitesse de la ligne
@@ -81,6 +83,11 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 - [ ] **O2** — Grille plus fine en zone dense (l'entrée de Paris est un morceau de 1 Mo)
 - [ ] **O3** — Décharger aussi hors conduite ; ne plus charger tout un trajet dans « Ligne entre gares »
 - [ ] **O4** — Une gare traversée sans arrêt n'est pas comptée comme desservie
+
+### Plusieurs trains, suites
+
+- [ ] **V1** — Faire tourner les trains hors conduite (Échap arrête encore toute la simulation)
+- [ ] **V2** — Donner un itinéraire à un train posé sur la voie hors d'une gare (il n'a pas de gare de départ)
 
 ### Pilote automatique, suites
 

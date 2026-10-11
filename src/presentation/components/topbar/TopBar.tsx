@@ -1,4 +1,5 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
+import { OPEN_SANDBOX_EVENT } from '../hud/FreeViewPanel'
 import { MenuBar, type MenuDef } from './Menu'
 import { AboutModal, REPO_URL, RELEASE_NOTES_URL } from './AboutModal'
 import { ShortcutsModal } from './ShortcutsModal'
@@ -45,6 +46,12 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showLineBetween, setShowLineBetween] = useState(false)
   // The game is offered at start on a blank page; with a project to come back to, from the menu
   const [showSandbox, setShowSandbox] = useState(() => store.network.segments.size === 0 && !store.dataset)
+  // The free view asks for it too: a train to set down at a station while the others run
+  useEffect(() => {
+    const open = () => setShowSandbox(true)
+    window.addEventListener(OPEN_SANDBOX_EVENT, open)
+    return () => window.removeEventListener(OPEN_SANDBOX_EVENT, open)
+  }, [])
   const [mergeOutcome, setMergeOutcome] = useState<MergeOutcome | null>(null)
 
   const commitName = () => {

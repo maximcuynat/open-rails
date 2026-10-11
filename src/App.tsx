@@ -10,6 +10,7 @@ import { MiniMap } from '@presentation/components/minimap/MiniMap'
 import { ToastContainer, showToast } from '@presentation/components/common/Toast'
 import { DrivingDock } from '@presentation/components/hud/DrivingDock'
 import { ItineraryPanel } from '@presentation/components/hud/ItineraryPanel'
+import { FreeViewPanel } from '@presentation/components/hud/FreeViewPanel'
 import { MapLegend } from '@presentation/components/hud/MapLegend'
 import { arrangeConsole } from '@presentation/components/console/consoleLayout'
 import { createRemoteSession, type RemoteSession } from '@application/remote/remoteSession'
@@ -140,6 +141,7 @@ export default function App() {
           )}
           <MapLegend store={store} />
           <ItineraryPanel store={store} />
+          <FreeViewPanel store={store} />
           <DrivingDock store={store} remote={remote} arrangement={arrangement} />
         </div>
       </div>

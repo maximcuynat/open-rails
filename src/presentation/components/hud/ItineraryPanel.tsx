@@ -149,6 +149,15 @@ export function ItineraryPanel({ store }: ItineraryPanelProps) {
         <input type="checkbox" checked={store.autopilots.has(train.id)} onChange={(e) => store.setAutopilot(train.id, e.target.checked)} />
         Pilote automatique
       </label>
+      <button
+        type="button"
+        className="itinerary-leave"
+        disabled={!store.autopilots.has(train.id)}
+        title={store.autopilots.has(train.id) ? 'Le pilote garde ce train ; la vue devient libre' : 'Seul un train sous pilote automatique peut être quitté'}
+        onClick={() => store.leaveTrain()}
+      >
+        Quitter ce train
+      </button>
     </aside>
   )
 }

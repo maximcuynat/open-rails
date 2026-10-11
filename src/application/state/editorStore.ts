@@ -103,7 +103,7 @@ import {
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, stockSpec, type RollingStockModel } from '@domain/models/rollingStock'
 import { railTintOf } from '@infrastructure/render/datasetOverview'
-import { createRakeAtStation } from '@domain/models/rakePlacement'
+import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
 import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
@@ -1746,6 +1746,8 @@ export class EditorStore {
   setTool = (t: Tool): void => {
     // A dataset project keeps its track as it is: only the looking and train tools apply
     if (this.isNetworkLocked && !DATASET_LOCKED_TOOLS.has(t)) return
+    // While trains run nothing is laid nor cut: the track is what they run on
+    if (this.isPlayMode && !DATASET_LOCKED_TOOLS.has(t)) return
     // If transitioning away from an active creation without finishing, clean up abandoned degree 0 nodes
     this.discardPendingPlacement()
 
@@ -3224,6 +3226,7 @@ export class EditorStore {
     } else {
       this.trainDrivers.clear()
       this.autopilots.clear()
+      this.rakePlacement = null
       this.isSidePanelOpen = this.sidePanelOpenBeforeDriving
       this.stopSimulationLoop()
       resetSignalling(this.signalling)
@@ -3588,23 +3591,72 @@ export class EditorStore {
     const placed = createRakeAtStation(this.network, station, model, this.trains)
     if (!placed) return null
     startItineraryAt(placed.train, stationId)
+    this.adoptRake(placed.train)
+    return placed.stop
+  }
+
+  /**
+   * Set a complete rake of `model` down on the track nearest to a place of the world, facing the
+   * way with most track ahead: a train put anywhere, while the others run. False when there is no
+   * track near enough, or when the whole rake does not fit there clear of the other trains.
+   */
+  placeRakeAt = (worldPos: Point, model: RollingStockModel): boolean => {
+    const snap = snapToNearestTrack(this.network, worldPos, Math.max(12, 45 / this.camera.scale))
+    const train = snap ? createRakeAtTrack(this.network, snap.segId, snap.t, model, this.trains) : null
+    if (!train) return false
+    this.rakePlacement = null
+    this.adoptRake(train)
+    return true
+  }
+
+  /** A rake just set down joins the trains: selected, in view close enough for its bogies, at rest when the others are driven */
+  private adoptRake(train: TrainSet): void {
     if (this.isPlayMode) {
-      resetTrainControls(placed.train)
+      resetTrainControls(train)
       this.centreSelectedTrainBrake()
       this.followLocomotiveCamera = true
     }
-    this.trains = [...this.trains, placed.train]
+    this.trains = [...this.trains, train]
     this.trainChainId = null
-    this.selectTrainById(placed.train.id)
+    this.selectTrainById(train.id)
     this.refreshCouplerPoints()
-    const head = trainAnchors(this.network, [placed.train]).get(placed.train.id)
+    const head = trainAnchors(this.network, [train]).get(train.id)
     if (head) {
       this.camera.x = head.x
       this.camera.y = head.y
       this.camera.scale = clampScale(RAKE_START_SCALE)
     }
     this.commitTrainChange()
-    return placed.stop
+  }
+
+  /**
+   * No train of this screen while the simulation runs: the view is free, the trains go on under
+   * their pilots, and a train can be taken, or a new one set down.
+   */
+  get isFreeView(): boolean {
+    return this.isPlayMode && this.selectedTrainId === null
+  }
+
+  /** The model of the rake the next click on the track sets down; null when no placing is armed */
+  rakePlacement: RollingStockModel | null = null
+
+  armRakePlacement = (model: RollingStockModel | null): void => {
+    if (this.rakePlacement === model) return
+    this.rakePlacement = model
+    this.notify()
+  }
+
+  /**
+   * Leave the train of this screen to its automatic pilot and look elsewhere. Only a train the
+   * pilot holds can be left: nobody would drive it otherwise. Returns false when it was not.
+   */
+  leaveTrain = (): boolean => {
+    const train = this.selectedTrain
+    if (!this.isPlayMode || !train || !this.autopilots.has(train.id)) return false
+    this.releaseTrainSelection()
+    this.followLocomotiveCamera = false
+    this.notify()
+    return true
   }
 
   setDrivingAid = (aid: DrivingAid): void => {

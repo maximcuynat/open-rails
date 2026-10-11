@@ -1269,6 +1269,23 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      // Free view, a train armed: the click sets it down on the track there
+      if (e.button === 0 && store.isPlayMode && store.rakePlacement) {
+        const model = store.rakePlacement
+        if (!store.placeRakeAt(getWorldPos(e.clientX, e.clientY), model)) showToast('Pas de voie ici assez longue et libre pour la rame.', 'warning')
+        redraw()
+        return
+      }
+      // Free view: a click on a train takes it
+      if (e.button === 0 && store.isFreeView) {
+        const hit = store.findVehicleAt(getWorldPos(e.clientX, e.clientY))
+        if (hit) {
+          store.spectateTrain(hit.train.id)
+          redraw()
+          return
+        }
+      }
+
       if (e.button === 0 && store.tool === 'coupling') {
         const world = getWorldPos(e.clientX, e.clientY)
         store.handleCouplingClick(world)

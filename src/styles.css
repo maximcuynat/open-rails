@@ -4177,6 +4177,37 @@ select.cb-step-select {
   border-left-color: var(--accent);
   background: var(--panel);
 }
+.itinerary-leave {
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.itinerary-leave:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.free-view-place {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.free-view-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.free-view-panel .spectator-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .itinerary-pilot {
   display: flex;
   align-items: center;
