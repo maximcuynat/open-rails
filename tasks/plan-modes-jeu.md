@@ -1,6 +1,8 @@
 # Modes édition et jeu : ne plus perdre la partie en cours
 
-Branche `feature/modes-jeu`, ouverte le 2026-10-11 depuis `developement`.
+Branche `feature/modes-jeu`, ouverte le 2026-10-11 depuis `developement`. Les quatre lots sont
+faits et fusionnés dans `developement` (2026-10-12). Les finitions qui restent sont reprises
+dans `tasks/plan-jeu-conduite.md` (J1 à J4).
 
 ## Constat
 
