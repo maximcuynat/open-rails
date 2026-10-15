@@ -212,6 +212,28 @@ describe('keyboard shortcuts', () => {
     expect(store.isPaused).toBe(false)
   })
 
+  // Regression: ISSUE-006 — Escape with a dialog open paused the game and left the dialog open
+  // Found by /qa on 2026-10-16
+  // Report: .gstack/qa-reports/qa-report-localhost-2026-10-16.md
+  it('leaves Escape and the driving keys to a dialog open over the game', () => {
+    const store = drivingStore()
+    const notch = store.selectedTrain!.notch
+    vi.stubGlobal('document', { querySelector: (selector: string) => (selector.includes('.modal-backdrop') ? {} : null) })
+    try {
+      handleKeyDown(store, keyEvent('Escape', 'Escape'))
+      handleKeyDown(store, keyEvent('Space', ' '))
+      handleKeyDown(store, keyEvent('KeyA', 'a'))
+      expect(store.isPaused).toBe(false)
+      expect(store.isPlayMode).toBe(true)
+      expect(store.selectedTrain!.notch).toBe(notch)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    // The dialog closed, Escape stops the time again
+    handleKeyDown(store, keyEvent('Escape', 'Escape'))
+    expect(store.isPaused).toBe(true)
+  })
+
   it('puts away a train about to be set down on Escape, before it pauses', () => {
     const store = drivingStore()
     store.armRakePlacement({ model: 'duplex' })
