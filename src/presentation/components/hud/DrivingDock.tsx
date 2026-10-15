@@ -130,6 +130,7 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
           fleet={buildFleet(store)}
           keys={consoleKeys(store)}
           onCommand={onCommand}
+          canExit={store.hasBuildMode}
           extraTools={
             <>
               {phoneConnected && (
@@ -153,9 +154,14 @@ export function DrivingDock({ store, remote, arrangement }: DrivingDockProps) {
               <button
                 type="button"
                 className="console-tool"
-                title="Mode couplage (quitte la conduite)"
+                title={store.hasBuildMode ? 'Mode couplage (quitte la conduite)' : 'Atteler / dételer : cliquez ensuite sur un attelage'}
                 aria-label="Mode couplage"
                 onClick={() => {
+                  // A real network has no building mode to go to: the rakes are coupled in the game
+                  if (!store.hasBuildMode) {
+                    store.armCoupling(!store.couplingArmed)
+                    return
+                  }
                   applyConsoleCommand(store, { type: 'releaseControls' })
                   store.toggleCouplingMode()
                 }}
