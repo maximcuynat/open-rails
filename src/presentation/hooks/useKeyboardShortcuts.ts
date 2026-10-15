@@ -132,6 +132,11 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
   }
 }
 
+/** A menu or a dialog is open on the page (none outside a browser) */
+function menuOrDialogOpen(): boolean {
+  return typeof document !== 'undefined' && document.querySelector('.menu-dropdown, .modal-backdrop') !== null
+}
+
 export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
   // Don't intercept when typing in an input/textarea
   const target = e.target as HTMLElement | null
@@ -143,6 +148,8 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
 
   // --- Play mode controls (highest priority when active) ---
   if (store.isPlayMode) {
+    // An open dialog owns the keyboard: Escape closes it, and nothing drives a train behind it
+    if (menuOrDialogOpen()) return
     if (e.key === 'Escape') {
       // Never out of the game on this key: a train about to be set down is put away, else the time stops
       if (store.rakePlacement) store.armRakePlacement(null)
@@ -199,7 +206,7 @@ export function handleKeyDown(store: EditorStore, e: KeyboardEvent): void {
   } else if (e.key === 'Escape') {
     // An open menu or dialog closes itself on Escape: that press must not also cancel a
     // placement or leave the current tool
-    if (!document.querySelector('.menu-dropdown, .modal-backdrop')) store.cancelInteraction()
+    if (!menuOrDialogOpen()) store.cancelInteraction()
     return
   }
 
