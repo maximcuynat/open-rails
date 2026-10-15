@@ -38,7 +38,7 @@ export function BandConsole(props: ConsolePartProps) {
             Accél.<b>{view.acceleration} m/s²</b>Pente<b>{view.gradient}</b>
           </div>
           <div className="console-side is-right">
-            Arrêt en<b>{view.stopping}</b>{view.rank !== null ? `Train ${view.rank}/${view.fleetSize}` : view.model ?? 'Train'}
+            Arrêt en<b>{view.stopping}</b>{view.model ?? 'Train'}
             <b>{view.composition}</b>
           </div>
           <HalfDial ratio={view.speedRatio} maxKmh={view.maxKmh} guide={view} />
