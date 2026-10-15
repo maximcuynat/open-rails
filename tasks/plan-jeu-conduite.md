@@ -32,6 +32,10 @@ ce fichier dit où on en est et ce qui reste, en petits lots.
       qui garde vitesses, manettes et pilotes, sélecteur « Édition | Jeu », réseau réel sans mode
       édition (atteler, dételer, retirer un train en jeu), partie retrouvée après un rechargement
 - [x] Fenêtre du bac à sable : le message de longueur de rame ne clignote plus
+- [x] QA du 2026-10-16 (gstack, navigateur sans tête, branche `fix/qa-jeu`) : 8 défauts corrigés —
+      ligne regardée gardée en vue libre, plus de « quitter » qui met en pause sur réseau réel,
+      Échap laissé aux fenêtres ouvertes, panneau d'itinéraire au-dessus de l'écran de bord, textes.
+      Rapport : `.gstack/qa-reports/qa-report-localhost-2026-10-16.md` (non versionné)
 - [x] Par une autre session, sur la même branche : temps de trajet estimé dans la fenêtre
       d'itinéraire, cause du signal fermé au pupitre, courbes d'import compatibles avec la
       vitesse de la ligne
@@ -107,7 +111,7 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 
 ### Modes de jeu, finitions
 
-- [ ] **J1** — Sur un réseau réel, les boutons ⏹ (barre d'outils) et ✕ (console) disent « quitter » alors qu'ils mettent en pause
+- [x] **J1** — Sur un réseau réel, les boutons ⏹ (barre d'outils) et ✕ (console) disaient « quitter » et mettaient en pause : retirés (QA du 2026-10-16)
 - [ ] **J2** — Dire la pause au pupitre téléphone (champ à ajouter à `ConsoleState` et à `protocol.ts`)
 - [ ] **J3** — Un train laissé en marche dont la voie est modifiée en édition : le remettre à l'arrêt
 - [ ] **J4** — Après un rechargement : temps d'arrêt en gare du pilote, train déraillé ou en survitesse
