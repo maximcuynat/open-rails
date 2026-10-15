@@ -16,7 +16,7 @@ export interface ModeSwitchView {
   status: 'running' | 'paused' | 'held' | null
 }
 
-export const MODE_STATUS_LABELS = { running: 'en marche', paused: 'en pause', held: 'suspendue' } as const
+export const MODE_STATUS_LABELS = { running: 'en marche', paused: 'en pause', held: 'suspendu' } as const
 
 /**
  * The two modes of the application as the top bar shows them, always: building (the track and the
