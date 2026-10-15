@@ -10,6 +10,7 @@ import {
   renderTrainSet,
   visibleTrackLevels,
   vehicleLevel,
+  trackPositionLevel,
   inLevelBand,
   DECK_WIDTH,
   DECK_PARAPET_WIDTH,
@@ -359,6 +360,45 @@ describe('track levels — trains', () => {
     expect(inLevelBand(0, { above: -Infinity, upTo: 0 })).toBe(true)
     expect(inLevelBand(1, { above: -Infinity, upTo: 0 })).toBe(false)
     expect(inLevelBand(1, { above: 0, upTo: Infinity })).toBe(true)
+  })
+
+  it('draws the bogies of a vehicle in the same pass as its body when only its nose has reached the bridge', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 100, y: 0 })
+    const c = addNode(net, { x: 200, y: 0 }, 1)
+    addSegment(net, a.id, b.id)
+    // The upper level begins at x = 150; the lead bogie stands at 148, the nose overhangs past 150
+    addSegment(net, b.id, c.id)
+    const train = createTrainSet(net, { x: 148, y: 0 }, 'loco')!
+    const [veh] = train.vehicles
+    expect(Math.max(trackPositionLevel(net, veh.front), trackPositionLevel(net, veh.rear))).toBe(0)
+
+    const BOGIE_FILL = '#1e293b'
+    const bogieFills = (band: LevelBand): number => {
+      let fills = 0
+      const state: Record<string, unknown> = { globalAlpha: 1 }
+      const ctx = new Proxy({} as Record<string, unknown>, {
+        get(_target, key) {
+          if (typeof key !== 'string') return undefined
+          if (key === 'canvas') return undefined
+          if (key === 'measureText') return () => ({ width: 40 })
+          if (key in state) return state[key]
+          return () => {
+            if (key === 'fill' && state.fillStyle === BOGIE_FILL) fills++
+          }
+        },
+        set(_target, key, value) {
+          state[key as string] = value
+          return true
+        },
+      }) as unknown as CanvasRenderingContext2D
+      renderTrainSet(ctx, createCamera(140, 0, 8), VW, VH, net, train, false, false, false, undefined, null, null, band)
+      return fills
+    }
+    // Nothing of its bogies under the deck, both of them with the body above it
+    expect(bogieFills({ above: -Infinity, upTo: 0 })).toBe(0)
+    expect(bogieFills({ above: 0, upTo: Infinity })).toBeGreaterThan(0)
   })
 
   it('a vehicle on level 0 is drawn before the deck of level 1 that passes over it', () => {

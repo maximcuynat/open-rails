@@ -4,7 +4,8 @@ Programme demandé le 2026-10-11 (bac à sable, itinéraire, aides, réseau char
 couleurs par type de ligne, lignes classiques). La vue d'ensemble est dans `ROADMAP.md` § 2 ;
 ce fichier dit où on en est et ce qui reste, en petits lots.
 
-Branche : `feature/jeu-conduite` (poussée). Rien n'est fusionné dans `developement`.
+État au 2026-10-12 : tout est fusionné dans `developement` (branches `feature/jeu-conduite` puis
+`feature/modes-jeu`), rien n'est publié. Ce fichier sert de base au plan de la prochaine version.
 
 ## Fait
 
@@ -27,14 +28,19 @@ Branche : `feature/jeu-conduite` (poussée). Rien n'est fusionné dans `develope
 - [x] Composition au choix : TGV de 5 voitures à la rame complète ou deux rames accouplées, TER de 3, 4 ou 6 caisses ou deux unités
 - [x] Indication avant le lancement : la rame tient-elle sur les voies de la gare (longueur entre aiguilles)
 - [x] Vue libre : le clic gauche maintenu déplace la vue
+- [x] Modes de jeu (`tasks/plan-modes-jeu.md`) : pause sur Échap et Espace, sortie de la conduite
+      qui garde vitesses, manettes et pilotes, sélecteur « Édition | Jeu », réseau réel sans mode
+      édition (atteler, dételer, retirer un train en jeu), partie retrouvée après un rechargement
+- [x] Fenêtre du bac à sable : le message de longueur de rame ne clignote plus
 - [x] Par une autre session, sur la même branche : temps de trajet estimé dans la fenêtre
       d'itinéraire, cause du signal fermé au pupitre, courbes d'import compatibles avec la
       vitesse de la ligne
 
-## En cours, non commité
+## En cours, non commité (autres sessions)
 
-- `tools/lgv-dataset/build.ts` : un fichier de ligne est daté par ses données et non par l'heure
-  de génération, pour qu'une régénération sur les mêmes données ne change aucun fichier.
+- Voie unique et croisements — `tasks/plan-voie-unique.md` (`crossingRules.ts`, `routeGuide.ts`,
+  `trackPath.ts`, `itinerary.ts`) : typage et tests passent, à commiter.
+- Bogies près d'un pont (`renderer.ts`, `trackLevels.test.ts`) : à commiter.
 
 ## Reste, en petits lots
 
@@ -96,8 +102,22 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 
 ### Plusieurs trains, suites
 
-- [ ] **V1** — Faire tourner les trains hors conduite (Échap arrête encore toute la simulation)
+- [x] **V1** — Réglé autrement : Échap met en pause, quitter la conduite ne remet plus rien à zéro, et la partie reprend d'où elle était (`tasks/plan-modes-jeu.md`)
 - [ ] **V2** — Donner un itinéraire à un train posé sur la voie hors d'une gare (il n'a pas de gare de départ)
+
+### Modes de jeu, finitions
+
+- [ ] **J1** — Sur un réseau réel, les boutons ⏹ (barre d'outils) et ✕ (console) disent « quitter » alors qu'ils mettent en pause
+- [ ] **J2** — Dire la pause au pupitre téléphone (champ à ajouter à `ConsoleState` et à `protocol.ts`)
+- [ ] **J3** — Un train laissé en marche dont la voie est modifiée en édition : le remettre à l'arrêt
+- [ ] **J4** — Après un rechargement : temps d'arrêt en gare du pilote, train déraillé ou en survitesse
+
+### Voie unique, suites (`tasks/plan-voie-unique.md`)
+
+- [ ] **U1** — Une place à l'arrivée : ne s'engager vers un évitement que s'il y restera une voie libre
+- [ ] **U2** — Réseau sans signaux : le pilote ne sait pas se protéger seul
+- [ ] **U3** — Nice – Breil, Cannes – Grasse
+- [ ] **U4** — Train parti de Château-Arnoux qui n'a gardé que Sisteron dans son itinéraire, sans message
 
 ### Pilote automatique, suites
 
@@ -119,3 +139,9 @@ Vérifié en navigateur sans tête et par les tests, jamais par un humain :
 - [ ] Pilote automatique sur un trajet entier, et sa coupure dès qu'on touche une manette
 - [ ] Échelle à 21 crans du bandeau et des manettes, touche maintenue qui s'arrête sur N
 - [ ] Bouton « Pilote » du pupitre téléphone
+- [ ] Pause (Échap, Espace, bouton ⏸), bandeau « En pause », reprise
+- [ ] Quitter la conduite puis « Reprendre » ; « Tout remettre à l'arrêt » ; sélecteur « Édition | Jeu »
+- [ ] Atteler, dételer et retirer un train en jeu sur un réseau réel
+- [ ] Partie retrouvée après un rechargement de la page, en vue libre comprise
+- [ ] Choix de la composition et message de longueur dans la fenêtre du bac à sable
+- [ ] Plusieurs trains : en ajouter un, quitter le sien, vue libre au clic gauche

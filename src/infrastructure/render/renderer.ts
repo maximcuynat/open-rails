@@ -4837,6 +4837,18 @@ export function renderTrainSet(
     if (level > topLevel) topLevel = level
   })
   const levelOf = (vehicleId: string): number => levelById.get(vehicleId) ?? 0
+  // A bogie goes with the body it carries: the level of its vehicle (the higher of the two that
+  // share it), which reaches a bridge before the bogie does — its own rail would have it drawn
+  // under the deck while the body above it is already drawn over
+  const levelOfBogieAt = new Map<string, number>()
+  for (const veh of train.vehicles) {
+    for (const pos of [veh.front, veh.rear]) {
+      const key = `${pos.segId}|${pos.t}`
+      levelOfBogieAt.set(key, Math.max(levelOfBogieAt.get(key) ?? -Infinity, levelOf(veh.id)))
+    }
+  }
+  const bogieLevel = (pos: { segId: string; t: number } | null | undefined): number =>
+    pos ? Math.max(trackPositionLevel(net, pos), levelOfBogieAt.get(`${pos.segId}|${pos.t}`) ?? -Infinity) : topLevel
   // A gangway hangs between two vehicles: it follows the higher one
   const gangwayLevel = (index: number): number =>
     visuals.accordions.length === train.vehicles.length - 1
@@ -4934,13 +4946,13 @@ export function renderTrainSet(
   }
 
   // 1. Bogies: each physical bogie once (two trailers share one), the first is the lead bogie
-  // A bogie is at the level of its own rail
+  // A bogie is at the level of the vehicle it carries (see `bogieLevel`)
   // Bogies and gangways are close-up detail: below it a vehicle is its plain silhouette.
   // The plain driving view keeps the bogies (asked for), not the gangways
   for (let i = 0; i < visuals.bogies.length; i++) {
     const bogie = visuals.bogies[i]
     if (tier !== 'detail' || !inView(bogie.polygon)) continue
-    atLevel(bogie.pos ? trackPositionLevel(net, bogie.pos) : topLevel, () => {
+    atLevel(bogieLevel(bogie.pos), () => {
       drawTrainSetBogie(ctx, cam, toSx, toSy, bogie, i === 0, isGhost)
     })
   }

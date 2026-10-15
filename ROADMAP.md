@@ -2,7 +2,8 @@
 
 > Éditeur de voies ferrées et simulateur de conduite sur canvas infini.
 > React 18 + TypeScript + Vite, rendu Canvas 2D natif, sans bibliothèque de rendu ni d'état.
-> Dernière version publiée : **v0.5.0**. Point d'étape du 2026-10-11, fait en relisant le code.
+> Dernière version publiée : **v0.5.0**. Point d'étape du 2026-10-12, fait en relisant le code.
+> Tout le programme « jeu de conduite » (§ 2) est fusionné dans `developement`, non publié.
 
 Ce fichier donne la vue d'ensemble. Le détail de chaque chantier est dans `tasks/plan-*.md`,
 les défauts connus dans `tasks/todo.md`, l'organisation du code dans `CLAUDE.md`.
@@ -283,21 +284,63 @@ Huit lots. Chacun se livre et se vérifie seul, sauf le lot G qui a besoin de l'
 - **Reste.** Dessiné comme les TGV, aux proportions près. Pas d'Intercités : une locomotive et
   des voitures ne sont pas une rame articulée.
 
-### Où on en est (2026-10-11)
+### Plusieurs trains, compositions (2026-10-11)
 
-Les lots A à G sont faits, sur la branche `feature/jeu-conduite` ; les lignes classiques ont
-commencé par une région pilote (Provence-Alpes-Côte d'Azur). Rien n'est encore fusionné dans
-`developement` ni publié.
+- **Fait.** Un train s'ajoute à la partie en cours (à une gare, ou d'un clic sur la voie) ; un
+  train tenu par le pilote automatique peut être quitté : l'écran passe en vue libre, les trains
+  continuent, on en reprend un ou on en pose un autre. Aucun outil de voie tant que des trains
+  roulent.
+- **Composition au choix** dans la fenêtre du bac à sable : TGV de 5 voitures à la rame complète
+  ou deux rames accouplées, TER de 3, 4 ou 6 caisses ou deux unités, avec l'indication « la rame
+  tient sur N voies de la gare » (longueur entre aiguilles : les données n'ont pas celle des quais).
 
-### Suite, en petits lots
+### Modes de jeu : ne plus perdre la partie (2026-10-11)
+
+Détail dans `tasks/plan-modes-jeu.md`.
+
+- **Pause.** Échap et Espace arrêtent le temps sans rien remettre à zéro ; bandeau « En pause ».
+- **Quitter sans effacer.** Sortir de la conduite garde vitesses, manettes et pilotes ; bandeau
+  « Simulation suspendue » avec « Reprendre » et « Tout remettre à l'arrêt ».
+- **Mode toujours visible.** Sélecteur « Édition | Jeu » dans la barre du haut, avec l'état du temps.
+- **Réseau réel sans mode édition.** Atteler, dételer et retirer un train se font en jeu, à
+  l'arrêt ; ce qui quittait la conduite y met en pause.
+- **Partie retrouvée.** Après un rechargement de la page : vitesses, manettes, freins, pilotes et
+  vue libre reviennent, le temps arrêté.
+
+### Voie unique et croisements (2026-10-11, autre session)
+
+Détail dans `tasks/plan-voie-unique.md`. Travail présent dans le dossier, **pas encore commité**.
+
+- **Fait.** Là où la voie se dédouble (évitement, quais), le trajet d'un train évite la voie d'un
+  train en face ou à l'arrêt ; essais sur Sisteron – Laragne (18,9 km à une voie).
+- **Reste.** Un évitement qui se remplit bloque encore ; le pilote ne se protège pas sans signaux.
+
+### Où on en est (2026-10-12)
+
+Les huit lots sont faits, avec le TER, les compositions, plusieurs trains et les modes de jeu.
+Tout est dans `developement` (branches `feature/jeu-conduite` puis `feature/modes-jeu`), sauf la
+voie unique et un correctif des bogies près d'un pont, encore à commiter. Rien n'est publié :
+la dernière version reste la v0.5.0.
+
+**Presque rien de tout cela n'a été vu par un humain** : les contrôles ont été faits par les
+tests et dans un navigateur sans écran. La liste à passer à la main est dans
+`tasks/plan-jeu-conduite.md`.
+
+### Ce qui reste, matière de la prochaine version
 
 Le détail et les cases à cocher sont dans `tasks/plan-jeu-conduite.md`.
 
-1. **Lignes classiques, une région par lot** : Auvergne-Rhône-Alpes d'abord (elle relie Lyon, la
+1. **Essai à la main** de tout le programme, et correction de ce qu'il fait remonter.
+2. **Finitions des modes de jeu** : boutons ⏹ et ✕ qui disent encore « quitter » sur un réseau
+   réel, pupitre téléphone qui ignore la pause, composition pour un train posé au clic.
+3. **Voie unique** : la commiter, puis une place à l'arrivée dans l'évitement, et le cas sans signaux.
+4. **Lignes classiques, une région par lot** : Auvergne-Rhône-Alpes d'abord (elle relie Lyon, la
    LGV Rhône-Alpes et PACA), puis l'Île-de-France, puis les autres. L'essai de toute la France
    en une fois n'a pas abouti (serveurs d'OpenStreetMap surchargés) ; sept régions sont en cache.
-2. **Pupitre téléphone** : y afficher l'itinéraire, y régler l'aide, essai sur de vrais téléphones.
-3. **Matériel** : le TER Régiolis est fait (voir ci-dessous) ; restent l'Intercités et d'autres TER.
+5. **Quais** : leur longueur réelle lue d'OpenStreetMap.
+6. **Pupitre téléphone** : itinéraire, aide, essai sur de vrais téléphones, hébergement du relais.
+7. **Matériel** : Intercités, autres TER, livrée du TER, électrification des lignes.
+8. **Jeu** : trains pilotés par le jeu autour du joueur, itinéraire pour un train posé hors d'une gare.
 
 ---
 
