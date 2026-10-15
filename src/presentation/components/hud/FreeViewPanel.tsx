@@ -18,7 +18,7 @@ export function FreeViewPanel({ store }: { store: EditorStore }) {
     <aside className="itinerary-panel free-view-panel" aria-label="Vue libre">
       <div className="itinerary-head">
         <span className="itinerary-title">Vue libre</span>
-        <span className="itinerary-origin">les trains continuent</span>
+        <span className="itinerary-origin">{store.isPaused ? 'en pause' : 'les trains continuent'}</span>
       </div>
 
       <ul className="spectator-list" aria-label="Trains en marche">

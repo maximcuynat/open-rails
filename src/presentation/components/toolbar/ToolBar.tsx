@@ -349,7 +349,9 @@ export function ToolBar({ store }: { store: EditorStore }) {
     </>
   )
 
-  // Driving: clean view, the toolbar is reduced to the stop control
+  // Driving: clean view, the toolbar is reduced to the stop control. A real network has nothing
+  // to stop to: its time stops with the pause, which has its own button
+  if (store.isPlayMode && !store.hasBuildMode) return null
   if (store.isPlayMode) {
     return (
       <div className="toolbar-container">

@@ -84,6 +84,27 @@ describe('lines of the dataset coming and going as the trains run', () => {
     store.togglePlayMode()
   })
 
+  // Regression: ISSUE-002 — in the free view the line on screen was dropped, the screen went blank
+  // Found by /qa on 2026-10-16
+  // Report: .gstack/qa-reports/qa-report-localhost-2026-10-16.md
+  it('in the free view, keeps the line the screen looks at though no train is near it', async () => {
+    const { store, index, options, train } = await started()
+    store.addDatasetLines(await fetchLineFiles(index, ['b', 'd'], undefined, options))
+    store.togglePlayMode()
+    store.setAutopilot(train.id, true)
+    expect(store.leaveTrain()).toBe(true)
+    // The screen looks at Gare Isolée, on d, 50 km from the train
+    store.camera.x = 250
+    store.camera.y = 50_000
+    store.tickAllTrains(1.1)
+    expect(store.dataset!.lines).toEqual(['a', 'b', 'd'])
+    // Driving a train again, the screen is the train's: d goes
+    store.spectateTrain(train.id)
+    store.tickAllTrains(1.1)
+    expect(store.dataset!.lines).toEqual(['a', 'b'])
+    store.togglePlayMode()
+  })
+
   it('reads a recipe saved before the lines were cut: a whole line stands for its pieces', async () => {
     const { index } = fakeDataset()
     const cut = { ...index, lines: index.lines.map((line) => (line.id === 'a' ? line : { ...line, id: `x-${line.id}`, partOf: 'x' })) }

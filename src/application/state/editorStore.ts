@@ -1424,7 +1424,9 @@ export class EditorStore {
         }
       }
     }
-    this.removeDatasetLines(linesToDrop(this.datasetIndex, new Set(this.dataset.lines), leads, DATASET_KEEP_M, held))
+    // In the free view the screen follows no train: what it looks at stays, though no train is near
+    const kept = this.isFreeView ? [...leads, { x: this.camera.x, y: this.camera.y }] : leads
+    this.removeDatasetLines(linesToDrop(this.datasetIndex, new Set(this.dataset.lines), kept, DATASET_KEEP_M, held))
     if (wanted.size === 0) return
     const ids = [...wanted]
     for (const id of ids) this.datasetPending.add(id)

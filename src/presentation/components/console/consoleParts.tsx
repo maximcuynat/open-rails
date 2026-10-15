@@ -37,6 +37,8 @@ export interface ConsoleProps {
   onCommand: (command: ConsoleCommand) => void
   /** Buttons of the host added to the tools of the console (debug, coupling…) */
   extraTools?: ReactNode
+  /** False where there is no driving to leave (a real network: its time stops with the pause) */
+  canExit?: boolean
 }
 
 export interface ConsolePartProps extends ConsoleProps {
@@ -46,7 +48,7 @@ export interface ConsolePartProps extends ConsoleProps {
 const hint = (key?: string): string => (key ? ` (${key})` : '')
 
 /** Train switcher, next turnout, the host's own tools and the way out */
-export function ConsoleTools({ state, view, keys, onCommand, extraTools, className }: ConsolePartProps & { className?: string }) {
+export function ConsoleTools({ state, view, keys, onCommand, extraTools, canExit = true, className }: ConsolePartProps & { className?: string }) {
   const turnout = view.turnout
   return (
     <div className={`console-tools${className ? ` ${className}` : ''}`}>
@@ -99,10 +101,12 @@ export function ConsoleTools({ state, view, keys, onCommand, extraTools, classNa
         </button>
       )}
       {extraTools}
-      <button type="button" className="console-tool is-danger" title={`Quitter la conduite${hint(keys?.exit)}`} aria-label="Quitter la conduite" onClick={() => onCommand({ type: 'releaseControls' })}>
-        <ConsoleIcon name="close" />
-        <KeyCap label={keys?.exit} />
-      </button>
+      {canExit && (
+        <button type="button" className="console-tool is-danger" title={`Quitter la conduite${hint(keys?.exit)}`} aria-label="Quitter la conduite" onClick={() => onCommand({ type: 'releaseControls' })}>
+          <ConsoleIcon name="close" />
+          <KeyCap label={keys?.exit} />
+        </button>
+      )}
     </div>
   )
 }
