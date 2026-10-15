@@ -2,14 +2,16 @@ import type { ConsoleRoute } from '@application/console/consoleContract'
 import type { EditorStore } from '@application/state/editorStore'
 import { gatesToward, routeThroughStations, shortestLineRoute, buildLineGraph, travelWeightFor, type TrainAbility } from '@domain/dataset/lineRoute'
 import { consistMaxSpeed, stockSpec } from '@domain/models/rollingStock'
-import { positionOnSegment } from '@domain/models/locomotive'
+import { positionOnSegment, segmentPartialLength } from '@domain/models/locomotive'
 import { networkCheckToken } from '@domain/models/networkWatch'
 import { isTrainStopped, type TrainSet } from '@domain/models/train'
 import type { Point, StationId } from '@domain/models/types'
 import { afterCall, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStop, type StationRef } from '@domain/services/itinerary'
 import { openPassage } from '@domain/models/junction'
+import { rakeOccupancy } from '@domain/models/occupancy'
 import { findJunctionAtNode } from '@domain/models/routing'
-import { findRouteGuide, guideDurationLeft, guideDurations, guideLeft, pointsAgainstGuide, type GuidePoints, type RouteGuide } from '@domain/services/routeGuide'
+import { crossingToll, holdRail, holdWay, type TracksHeld } from '@domain/services/crossingRules'
+import { findRouteGuide, guideAhead, guideDurationLeft, guideDurations, guideLeft, pointsAgainstGuide, type GuidePoints, type RouteGuide } from '@domain/services/routeGuide'
 import { aidReach } from './drivingAid'
 import { trackSpansEnds } from '@domain/services/trackPath'
 
@@ -20,6 +22,58 @@ import { trackSpansEnds } from '@domain/services/trackPath'
 
 /** A train stopped within this of the stop it was heading for has called at the station, m */
 export const ARRIVAL_DISTANCE = 60
+
+/**
+ * The track under the other trains: run the way each of them is heading — a train that waits at a
+ * platform will leave it that way — and either way under a train with nowhere to go.
+ */
+function tracksUnderOthers(store: EditorStore, train: TrainSet): TracksHeld {
+  const held: TracksHeld = new Map()
+  for (const other of store.trains) {
+    if (other.id === train.id) continue
+    const guide = store.routeGuides.get(other.id)?.guide
+    const going = !!guide && !guide.behind
+    const heading = new Map(other.vehicles.flatMap((vehicle) => [vehicle.front, vehicle.rear]).map((bogie) => [bogie.segId, bogie.forward]))
+    for (const span of rakeOccupancy(store.network, other.vehicles).spans) {
+      const forward = heading.get(span.segId)
+      // A rail between two bogies, with none on it: in the way whichever way it is run
+      if (!going || forward === undefined) holdRail(held, span.segId)
+      else holdWay(held, [{ segId: span.segId, t0: forward ? 0 : 1, t1: forward ? 1 : 0 }])
+    }
+  }
+  return held
+}
+
+/** What the other trains stand on and will run, as far as their own ways say: a way is found clear of it where the track doubles (`crossingRules.ts`) */
+function tracksHeldByOthers(store: EditorStore, train: TrainSet): TracksHeld {
+  const held = tracksUnderOthers(store, train)
+  for (const other of store.trains) {
+    if (other.id === train.id) continue
+    const guide = store.routeGuides.get(other.id)?.guide
+    const lead = other.vehicles[0]?.front
+    if (guide && lead && !guide.behind) holdWay(held, guideAhead(store.network, guide, lead, Infinity))
+  }
+  return held
+}
+
+/** The way ahead is looked at this far for a train standing in it, m */
+const WAY_WATCHED = 4000
+/** Looks (one a second) between two searches for a way round a train standing in it */
+const LOOKS_BETWEEN_WAYS_ROUND = 5
+
+/** True when another train stands on the way ahead, facing this one or with nowhere to go: a platform taken, a loop track not left yet */
+function standsInTheWay(store: EditorStore, train: TrainSet, guide: RouteGuide): boolean {
+  const lead = train.vehicles[0]?.front
+  if (!lead || store.trains.length < 2) return false
+  const toll = crossingToll(store.network, tracksUnderOthers(store, train))
+  return guideAhead(store.network, guide, lead, WAY_WATCHED).some((span) => {
+    const rail = store.network.segments.get(span.segId)
+    return !!rail && toll(span.t1 >= span.t0 ? rail.from : rail.to, '', span.segId) > 0
+  })
+}
+
+/** A train held this many looks in a row (one a second) short of its stop looks for its way again: the track ahead may have filled */
+export const HELD_LOOKS_BEFORE_ANOTHER_WAY = 15
 
 /** What is kept per train between two looks at its itinerary */
 export interface RouteGuideState {
@@ -36,6 +90,10 @@ export interface RouteGuideState {
   durations?: { guide: RouteGuide; seconds: number[] }
   /** The nearest points ahead that lead off the way and were left as they are (aid `guide`, or held by another train) */
   against: GuidePoints | null
+  /** Looks in a row the train was found at a stand short of its stop */
+  held: number
+  /** Looks since a way round a train standing in the way was last looked for */
+  watched: number
 }
 
 /** The stations an itinerary can name, by id */
@@ -134,10 +192,21 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
   const token = networkCheckToken(net)
   let state = guides.get(train.id)
   if (!state || state.station !== station || state.token !== token) {
-    state = { station, token, failedOn: null, guide: null, left: null, against: null }
+    state = { station, token, failedOn: null, guide: null, left: null, against: null, held: 0, watched: 0 }
     guides.set(train.id, state)
   }
   state.left = state.guide ? guideLeft(net, state.guide, lead) : null
+  // Held on the way (a platform taken since, a train standing where it was to pass): another way may be clear
+  state.held = isTrainStopped(train) && state.left !== null && state.left > ARRIVAL_DISTANCE ? state.held + 1 : 0
+  if (state.held >= HELD_LOOKS_BEFORE_ANOTHER_WAY) {
+    state.held = 0
+    state.left = null
+  }
+  // A train stands where this one was to go — its platform, its track of the loop: round it, before having to stop for it
+  if (state.left !== null && state.guide && ++state.watched >= LOOKS_BETWEEN_WAYS_ROUND) {
+    state.watched = 0
+    if (standsInTheWay(store, train, state.guide)) state.left = null
+  }
   if (state.left === null && state.failedOn !== lead.segId) {
     const index = store.datasetIndex
     const indexed = index?.stations.find((s) => s.id === station)
@@ -149,7 +218,8 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
     const after = train.itinerary?.stations[train.itinerary.next + 1]
     const afterIndexed = after === undefined ? undefined : index?.stations.find((s) => s.id === after)
     const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, loaded, afterIndexed.lines, under, weight) : [] }
-    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond, store.railsBlockedFor(train))
+    const toll = crossingToll(net, tracksHeldByOthers(store, train))
+    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond, store.railsBlockedFor(train), toll)
     state.left = state.guide ? state.guide.path.length : null
     state.failedOn = state.guide ? null : lead.segId
   }
@@ -163,10 +233,45 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
   return false
 }
 
+/** The plain track beyond a set of points is looked at this far for a train coming, m */
+const MET_BEYOND_REACH = 4000
+
+/**
+ * True when another train is on the plain track these points lead `train` to — as far as the next
+ * points — heading for them: the way is not free, the points are theirs.
+ */
+function metBeyond(store: EditorStore, train: TrainSet, points: GuidePoints): boolean {
+  const net = store.network
+  const leads = new Map<string, TrainSet['vehicles'][number]['front'][]>()
+  for (const other of store.trains) {
+    const lead = other.vehicles[0]?.front
+    if (other.id === train.id || !lead) continue
+    leads.set(lead.segId, [...(leads.get(lead.segId) ?? []), lead])
+  }
+  if (leads.size === 0) return false
+  let near = points.nodeId
+  let rail = net.segments.get(points.outSeg)
+  for (let run = 0; rail && run < MET_BEYOND_REACH; ) {
+    const towards = near
+    if (leads.get(rail.id)?.some((lead) => (lead.forward ? rail!.to : rail!.from) === towards)) return true
+    run += segmentPartialLength(net, rail.id, 0, 1)
+    const far = rail.from === near ? rail.to : rail.from
+    const onward = [...(net.adjacency.get(far) ?? [])]
+    // The next points, or the end of the track: the plain track stops there
+    if (onward.length !== 2) return false
+    const next = onward[0] === rail.id ? onward[1] : onward[0]
+    near = far
+    rail = net.segments.get(next)
+  }
+  return false
+}
+
 /**
  * The points ahead of a train on its way: set for it under the full aid, unless a train stands on
- * them or they are held for another. Returns the nearest ones left leading off the way (what the
- * driver has to see to), null when there are none or no aid is wanted.
+ * them, they are held for another, or a train is coming to them on the track they would lead to
+ * (two trains each setting the same points for itself would throw them back and forth). Returns
+ * the nearest ones left leading off the way (what the driver has to see to), null when there are
+ * none or no aid is wanted.
  */
 function applyDrivingAid(store: EditorStore, train: TrainSet, guide: RouteGuide | null): GuidePoints | null {
   const lead = train.vehicles[0]?.front
@@ -177,7 +282,7 @@ function applyDrivingAid(store: EditorStore, train: TrainSet, guide: RouteGuide 
   let thrown = false
   for (const points of against) {
     const junction = findJunctionAtNode(store.network, points.nodeId)
-    if (junction && store.junctionLock(junction, train.id) === null && openPassage(junction, points.inSeg, points.outSeg)) thrown = true
+    if (junction && store.junctionLock(junction, train.id) === null && !metBeyond(store, train, points) && openPassage(junction, points.inSeg, points.outSeg)) thrown = true
     else left ??= points
   }
   if (thrown) store.pointsThrownByAid()

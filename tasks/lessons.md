@@ -18,6 +18,12 @@
 - **Cause** : j'ai lu « rendu des voies » comme une demande visuelle et mis en avant le gain d'aspect.
 - **Règle** : sur le rendu, la performance d'abord et l'aspect ne bouge pas sans demande explicite. Ne pas proposer de rebrancher ballast, traverses ou éclisses. Toute optimisation qui déplace un pixel (ordre de superposition, regroupement de tracés) est signalée avant d'être faite.
 
+## 2026-10-11 — Croisement : un train à l'arrêt occupe la voie sous lui, pas seulement devant lui
+
+- **Correction reçue** : après ma première version du croisement sur voie unique, deux trains se retrouvaient encore sur la même voie : l'un visait le quai où l'autre attendait, la voie d'à côté libre.
+- **Cause** : je ne comptais comme « prise » que la voie du trajet à venir de l'autre train, à partir de son bogie de tête ; les rails sous sa rame n'y étaient pas. Et mes essais faisaient toujours partir les deux trains en même temps : aucun n'attendait à quai pendant que l'autre arrivait. Le trajet n'était par ailleurs revu qu'une fois le train arrêté.
+- **Règle** : pour tout ce qui choisit une voie ou un quai, l'occupation d'un train est sa rame entière plus son trajet. Dans les essais de circulation, toujours un cas où un train attend à l'arrêt, et un cas sur les données réelles (rails de 60 m), pas seulement sur le tracé d'essai fait d'un seul long rail.
+
 ## 2026-10-11 — Fenêtre du bac à sable : un message qui clignote, c'est un effet relancé à chaque rendu
 
 - **Correction reçue** : gare choisie sans toucher à la composition, le message « la rame tient sur N voies » apparaissait et disparaissait sans fin.

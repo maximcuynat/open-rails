@@ -104,6 +104,11 @@ export interface TrackPathOptions {
   leaving?: 0 | 1
   /** Rails the way must not take (track the train has no business on); the rail of `a` itself is always left freely */
   blocked?: (segId: SegmentId) => boolean
+  /**
+   * Metres a way is counted longer by for passing from `inSeg` to `outSeg` at `node`: what makes
+   * one of two ways as good as each other the one to take. The length returned is the real one
+   */
+  toll?: (node: NodeId, inSeg: SegmentId, outSeg: SegmentId) => number
 }
 
 /**
@@ -125,7 +130,7 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
     goalsOn.set(seg.id, on)
   })
   if (goalsOn.size === 0) return null
-  const { leaving, blocked } = options
+  const { leaving, blocked, toll } = options
 
   const key = (node: NodeId, inSeg: SegmentId): string => `${inSeg}>${node}`
   const heap = new MinHeap()
@@ -163,17 +168,18 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
       if (blocked?.(sid)) continue
       if (!isPassageOpen(net, current.node, current.inSeg, sid, { anyPosition: true })) continue
       const entry = seg.from === current.node ? 0 : 1
+      const reached = current.dist + (toll ? Math.max(0, toll(current.node, current.inSeg, sid)) : 0)
       const here = goalsOn.get(sid)
       if (here) {
         // Running the whole of a goal's rail to come back to it is never shorter, and a goal
         // beyond it is further than the one on it: the rail is only entered
         for (const goal of here) {
-          offer({ key: GOAL, node: current.node, inSeg: sid, dist: current.dist + segmentPartialLength(net, sid, entry, goal.t), parent: current.key, goalEntry: entry, goalIndex: goal.index })
+          offer({ key: GOAL, node: current.node, inSeg: sid, dist: reached + segmentPartialLength(net, sid, entry, goal.t), parent: current.key, goalEntry: entry, goalIndex: goal.index })
         }
         continue
       }
       const next = entry === 0 ? seg.to : seg.from
-      offer({ key: key(next, sid), node: next, inSeg: sid, dist: current.dist + segmentPartialLength(net, sid, 0, 1), parent: current.key })
+      offer({ key: key(next, sid), node: next, inSeg: sid, dist: reached + segmentPartialLength(net, sid, 0, 1), parent: current.key })
     }
   }
   if (!goal) return null
@@ -195,5 +201,6 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
     }
     spans.reverse()
   }
-  return { spans: tidyTrackSpans(spans), length: goal.dist, goal: goal.goalIndex! }
+  const tidy = tidyTrackSpans(spans)
+  return { spans: tidy, length: toll ? trackSpansLength(net, tidy) : goal.dist, goal: goal.goalIndex! }
 }
