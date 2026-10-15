@@ -1663,6 +1663,13 @@ select.cb-step-select {
   pointer-events: none;
   z-index: var(--z-toast);
 }
+/* Under the pause button or notice, at the same place at the top of the canvas, never over them */
+body:has(.pause-button) .toast-container {
+  top: 90px;
+}
+body:has(.pause-notice) .toast-container {
+  top: 148px;
+}
 
 .toast-item {
   pointer-events: auto;
