@@ -4099,6 +4099,12 @@ select.cb-step-select {
   box-shadow: var(--shadow);
   font-size: var(--font-size-sm);
 }
+/* The screen console stands below it on the right (12 px from the bottom, 468 px high, its signal
+   box 68 px over it 6 px away): the panel stops 8 px above and scrolls */
+.app-canvas-area:has(.console-screen) .itinerary-panel {
+  max-height: calc(100% - 574px);
+  overflow-y: auto;
+}
 .itinerary-head {
   display: flex;
   align-items: baseline;
