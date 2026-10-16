@@ -90,6 +90,7 @@ import { signalFlashOn } from '@infrastructure/render/signalRender'
 import { renderSignalToolPreview } from './signalToolPreview'
 import { commitSignalGesture } from '../common/signalActions'
 import { hitShownNode } from './nodePicking'
+import { notePaint } from '../../dev/frameTiming'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -979,7 +980,14 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     if (pendingFrameRef.current !== null) return
     pendingFrameRef.current = requestAnimationFrame(() => {
       pendingFrameRef.current = null
+      if (!import.meta.env.DEV) {
+        paint()
+        return
+      }
+      // The frame bench (`presentation/dev/frameBench.ts`) reads how long each paint takes
+      const started = performance.now()
       paint()
+      notePaint(performance.now() - started)
     })
   }, [paint])
   useEffect(() => {

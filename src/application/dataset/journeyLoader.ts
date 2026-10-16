@@ -57,10 +57,26 @@ export async function loadJourney(store: EditorStore, index: DatasetIndex, stati
 export async function loadStation(store: EditorStore, index: DatasetIndex, stationId: string, options: JourneyLoadOptions = {}): Promise<void> {
   const station = index.stations.find((s) => s.id === stationId)
   if (!station || station.lines.length === 0) throw new DatasetError('missing-line', DATASET_ERROR_MESSAGES.missingLine(station?.name ?? stationId))
-  const files = await fetchLineFiles(index, station.lines, options.onProgress, options)
-  const union = unionOf(files, station.lines)
-  const recipe: DatasetRecipe = { version: 1, dataDate: index.dataDate, lines: [...station.lines], stations: [stationId] }
-  store.loadDataset(recipe, union, files, index, routeBbox(index, station.lines), { name: recipeName(index, recipe) })
+  await loadLines(store, index, station.lines, [stationId], options)
+}
+
+/** Every line of the dataset at once, as one locked project: the measuring bench of the renderer */
+export async function loadAllLines(store: EditorStore, index: DatasetIndex, options: JourneyLoadOptions = {}): Promise<void> {
+  await loadLines(store, index, index.lines.map((line) => line.id), [], options, 'Réseau entier')
+}
+
+async function loadLines(
+  store: EditorStore,
+  index: DatasetIndex,
+  lines: readonly LineId[],
+  stations: readonly string[],
+  options: JourneyLoadOptions,
+  name?: string,
+): Promise<void> {
+  const files = await fetchLineFiles(index, lines, options.onProgress, options)
+  const union = unionOf(files, lines)
+  const recipe: DatasetRecipe = { version: 1, dataDate: index.dataDate, lines: [...lines], stations: [...stations] }
+  store.loadDataset(recipe, union, files, index, routeBbox(index, lines), { name: name ?? recipeName(index, recipe) })
   installLineStreaming(store, index, options)
 }
 

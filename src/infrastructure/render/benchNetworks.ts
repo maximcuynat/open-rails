@@ -1,9 +1,9 @@
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
+import { stationGrid } from './stationGrid'
 import type { Network } from '@domain/models/types'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { SerializedProject } from '@infrastructure/persistence/persistence'
-import { syncJunctions } from '@domain/models/junction'
 
 /** Networks of the benches (`*.bench.ts`): never imported by the application. */
 
@@ -37,25 +37,9 @@ export const STATION_PITCH = 1400
 export const STATION_CENTRE = { x: 500, y: -540 }
 
 /**
- * `copies` × `copies` stations side by side, `pitch` metres apart: the same track, turnouts
- * included, at the size of a whole region. Speed zones are left out.
+ * `copies` × `copies` Marseille Saint-Charles side by side, `pitch` metres apart: the same track,
+ * turnouts included, at the size of a whole region. Speed zones are left out.
  */
 export function buildStations(copies: number, pitch = STATION_PITCH): Network {
-  const net = createNetwork()
-  for (let row = 0; row < copies; row++) {
-    for (let col = 0; col < copies; col++) {
-      const ids = new Map<string, string>()
-      for (const node of marseille.nodes) {
-        ids.set(node.id, addNode(net, { x: node.x + col * pitch, y: node.y + row * pitch }).id)
-      }
-      for (const seg of marseille.segments) {
-        const from = ids.get(seg.from)!
-        const to = ids.get(seg.to)!
-        if (seg.via) addCurveSegment(net, from, to, { x: seg.via.x + col * pitch, y: seg.via.y + row * pitch })
-        else addSegment(net, from, to)
-      }
-    }
-  }
-  syncJunctions(net)
-  return net
+  return stationGrid(marseille, copies, pitch)
 }

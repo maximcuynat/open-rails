@@ -4,7 +4,7 @@ import { resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { fakeDataset } from './dataset.testkit'
 import { resetDatasetIndexCache } from './datasetClient'
-import { loadJourney, reloadDataset } from './journeyLoader'
+import { loadAllLines, loadJourney, reloadDataset } from './journeyLoader'
 
 function serving(bodies: Record<string, unknown>, fail = false): typeof fetch {
   return (async (input: RequestInfo | URL) => {
@@ -42,6 +42,17 @@ describe('loading a journey of the dataset', () => {
       { done: 1, total: 2 },
       { done: 2, total: 2 },
     ])
+  })
+
+  it('loads every line of the dataset as one locked project, for the renderer bench', async () => {
+    const { index, files } = fakeDataset()
+    const store = new EditorStore()
+    await loadAllLines(store, index, { fetch: serving(files), baseUrl: '/' })
+    expect(store.dataset).toEqual({ version: 1, dataDate: index.dataDate, lines: ['a', 'b', 'd'], stations: [] })
+    expect(store.isNetworkLocked).toBe(true)
+    expect(store.projectName).toBe('Réseau entier')
+    // Gare Isolée is on d, 50 km from the others: it came too
+    expect(store.network.stations.has('s3')).toBe(true)
   })
 
   it('refuses a journey without a route and leaves the store as it was', async () => {

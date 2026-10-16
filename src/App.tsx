@@ -19,13 +19,19 @@ import { createHostLink } from '@infrastructure/remote/remoteLinks'
 import { OSM_ATTRIBUTION, OSM_COPYRIGHT_URL } from '@domain/import/osmTypes'
 import { installLineStreaming, reloadDataset } from '@application/dataset/journeyLoader'
 import { datasetErrorMessage, loadDatasetIndex } from '@application/dataset/datasetClient'
+import type { BenchOptions } from './presentation/dev/frameBench'
 
 export default function App() {
   const storeRef = useRef<EditorStore | null>(null)
   if (storeRef.current === null) storeRef.current = new EditorStore()
   const store = storeRef.current
   // Under `npm run dev` only: the measuring scripts of tools/perf drive the store directly
-  if (import.meta.env.DEV) (window as unknown as { __openRailsStore?: EditorStore }).__openRailsStore = store
+  if (import.meta.env.DEV) {
+    const devWindow = window as unknown as { __openRailsStore?: EditorStore; __frameBench?: (options?: BenchOptions) => Promise<unknown> }
+    devWindow.__openRailsStore = store
+    // The frame bench of the renderer, loaded only when it is called (`presentation/dev/frameBench.ts`)
+    devWindow.__frameBench = (options) => import('./presentation/dev/frameBench').then((bench) => bench.runFrameBench(store, options))
+  }
 
   // The phone desk belongs to this page: opened from the Simulation menu, gone with the page
   const remoteRef = useRef<RemoteSession | null>(null)
