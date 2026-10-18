@@ -548,7 +548,15 @@ describe('contextual bar — trains', () => {
     store.setTrainPlacementKind('tgv_loco')
 
     let items = bar(store)
-    expect(label(items)).toBe('Motrice TGV')
+    expect(label(items)).toBe('Motrice TGV Duplex')
+    // The label says the model chosen, which is a setting of the tool, not another tool
+    store.setTrainPlacementModel('regiolis')
+    expect(label(bar(store))).toBe('Motrice TER Régiolis')
+    store.setTrainPlacementKind('tgv_wagon')
+    expect(label(bar(store))).toBe('Remorque TER Régiolis')
+    store.setTrainPlacementModel('duplex')
+    store.setTrainPlacementKind('tgv_loco')
+    items = bar(store)
     expect(value(items, 'train-target').text).toBe('Nouveau train T1')
     expect(actionLabels(items)).toEqual(['Inverser le sens', 'Terminer'])
 
@@ -563,7 +571,7 @@ describe('contextual bar — trains', () => {
     store.updateLocomotivePreview({ x: 60, y: 0 })
     expect(store.couplerSnapTarget).not.toBeNull()
     items = bar(store)
-    expect(label(items)).toBe('Voiture')
+    expect(label(items)).toBe('Remorque TGV Duplex')
     expect(value(items, 'train-target').text).toBe('Attelé au train T1 · 2 véhicules')
     expect(value(items, 'train-target').tone).toBe('accent')
 

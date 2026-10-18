@@ -8,6 +8,7 @@ import { findSectionBySegment, type SectionDirection } from '@domain/models/sect
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
 import { signalBlock } from '@domain/models/signalBlocks'
+import { ROLLING_STOCK } from '@domain/models/rollingStock'
 import { SIGNAL_ROW_SPACINGS } from '@application/state/editorStore'
 import {
   SIGNAL_ONE_WAY_TITLE,
@@ -87,7 +88,7 @@ const DIRECTION_NAME: Record<SectionDirection, string> = {
   backward: 'sens unique, à contresens de la pose',
 }
 
-const VEHICLE_LABEL = { tgv_loco: 'Motrice TGV', tgv_wagon: 'Voiture' } as const
+const VEHICLE_LABEL = { tgv_loco: 'Motrice', tgv_wagon: 'Remorque' } as const
 
 /** Angle of a world vector in degrees, 0–360 (the convention of the measure tool). */
 function headingDeg(dx: number, dy: number): number {
@@ -303,7 +304,7 @@ function trainBar(store: EditorStore): ContextBarItem[] {
   if (store.trainToolSubMode === 'place') {
     const snap = store.couplerSnapTarget
     return [
-      { kind: 'label', text: VEHICLE_LABEL[store.trainPlacementKind] },
+      { kind: 'label', text: `${VEHICLE_LABEL[store.trainPlacementKind]} ${ROLLING_STOCK[store.trainPlacementModel].label}` },
       snap
         ? {
             kind: 'value',

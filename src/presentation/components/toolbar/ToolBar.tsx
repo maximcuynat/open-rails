@@ -573,7 +573,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 onDragEnd={() => store.cancelTrainDrag()}
                 onClick={() => store.setTrainPlacementKind('tgv_loco')}
                 className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'place' && store.trainPlacementKind === 'tgv_loco' ? ' active' : ''}`}
-                aria-label="Locomotive"
+                aria-label={`Motrice ${ROLLING_STOCK[store.trainPlacementModel].label}`}
                 style={{ cursor: 'grab' }}
               >
                 <svg viewBox="0 0 24 24" width="22" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -585,7 +585,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
               </div>
               {hoverId === 'train-loco' && (
                 <div className="tb-tooltip">
-                  Motrice TGV
+                  Motrice {ROLLING_STOCK[store.trainPlacementModel].label}
                   <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
                     Cliquer puis poser sur la voie, clic après clic · ou glisser sur la voie
                   </span>
@@ -605,7 +605,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                 onDragEnd={() => store.cancelTrainDrag()}
                 onClick={() => store.setTrainPlacementKind('tgv_wagon')}
                 className={`tb-train-btn${store.tool === 'locomotive' && store.trainToolSubMode === 'place' && store.trainPlacementKind === 'tgv_wagon' ? ' active' : ''}`}
-                aria-label="Wagon"
+                aria-label={`Remorque ${ROLLING_STOCK[store.trainPlacementModel].label}`}
                 style={{ cursor: 'grab' }}
               >
                 <svg viewBox="0 0 24 24" width="22" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -619,7 +619,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
               </div>
               {hoverId === 'train-wagon' && (
                 <div className="tb-tooltip">
-                  Wagon voyageurs
+                  Remorque {ROLLING_STOCK[store.trainPlacementModel].label}
                   <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
                     Cliquer puis poser sur la voie, clic après clic · ou glisser sur la voie
                   </span>
@@ -627,7 +627,9 @@ export function ToolBar({ store }: { store: EditorStore }) {
               )}
             </div>
 
-            {/* Matériel des véhicules posés : TGV Duplex / TGV M */}
+            {/* Matériel des véhicules posés : un réglage de l'outil, pas un outil, d'où son allure à part */}
+            <div className="tb-sep" />
+            <div className="tb-group-label">Modèle</div>
             {(Object.keys(ROLLING_STOCK) as RollingStockModel[]).map((model) => (
               <div
                 key={model}
@@ -637,7 +639,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
               >
                 <button
                   onClick={() => store.setTrainPlacementModel(model)}
-                  className={`tb-train-btn${store.trainPlacementModel === model ? ' active' : ''}`}
+                  className={`tb-train-btn tb-choice-btn${store.trainPlacementModel === model ? ' active' : ''}`}
                   aria-label={ROLLING_STOCK[model].label}
                   aria-pressed={store.trainPlacementModel === model}
                 >
@@ -647,7 +649,7 @@ export function ToolBar({ store }: { store: EditorStore }) {
                   <div className="tb-tooltip">
                     {ROLLING_STOCK[model].label}
                     <span style={{ fontSize: '10px', opacity: 0.8, display: 'block' }}>
-                      Matériel des motrices et remorques posées ensuite
+                      Matériel des motrices et remorques posées ensuite, sans changer d’outil
                     </span>
                   </div>
                 )}

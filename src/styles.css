@@ -793,8 +793,9 @@ kbd {
   color: #111827;
 }
 
-/* Display toggles of the signalling mode: lighter than a tool in hand */
-.tb-train-btn.tb-display-btn.active {
+/* Display toggles of the signalling mode, and the model of the vehicles placed: lighter than a tool in hand */
+.tb-train-btn.tb-display-btn.active,
+.tb-train-btn.tb-choice-btn.active {
   background: var(--panel-2);
   color: var(--accent);
   border-color: var(--accent);
@@ -808,6 +809,19 @@ kbd {
 
 .tb-btn-wrap {
   position: relative;
+}
+
+/* Caption over a group of settings of the tool in hand */
+.tb-group-label {
+  width: 100%;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--ink);
+  opacity: 0.7;
+  user-select: none;
 }
 
 .tb-btn {
