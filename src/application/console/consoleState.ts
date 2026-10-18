@@ -1,6 +1,7 @@
 import { consoleRoute } from '@application/game/itinerary'
 import type { EditorStore } from '@application/state/editorStore'
-import { trainAhead } from '@domain/models/train'
+import { trainAhead, trainRouteStart } from '@domain/models/train'
+import { runsAgainst } from '@domain/models/running'
 import { TRAIN_AHEAD_REACH, type ConsoleTrainAhead } from './consoleContract'
 import {
   MAX_NOTCH,
@@ -267,7 +268,15 @@ export function buildTrainConsoleState(store: EditorStore, train: TrainSet): Con
   if (route) state.route = route
   if (store.autopilots.has(train.id)) state.autopilot = true
   if (store.isPaused) state.paused = true
+  if (runsAgainstItsTrack(store.network, train)) state.wrongTrack = true
   return state
+}
+
+/** True when the end of the train that leads the move is on a rail run against its normal direction */
+function runsAgainstItsTrack(net: Network, train: TrainSet): boolean {
+  const start = trainRouteStart(train)
+  const rail = start && net.segments.get(start.segId)
+  return !!rail && runsAgainst(rail, start.forward)
 }
 
 /**

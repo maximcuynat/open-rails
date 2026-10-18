@@ -163,6 +163,8 @@ export interface ConsoleState {
   autopilot?: boolean
   /** True while the time of the game is stopped; absent from an older PC */
   paused?: boolean
+  /** True while the train runs its track against the normal direction of running (« contre-sens »); absent otherwise and from an older PC */
+  wrongTrack?: boolean
 }
 
 /** The itinerary of the driven train, as its driver needs it */
