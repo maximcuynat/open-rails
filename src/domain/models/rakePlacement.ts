@@ -1,13 +1,18 @@
 import { generateId } from './ids'
 import { segmentShapeLength } from '../geometry/segmentGeometry'
-import { consistLength, consistOf, rakeChoice, type RakeChoice, type RollingStockModel } from './rollingStock'
+import { stationStopTargets } from '../services/stopMarkers'
+import { walkBackward } from './locomotive'
+import { edgeLength, platformsOf } from './platforms'
+import { consistLength, consistOf, endOverhang, rakeChoice, type RakeChoice, type RollingStockModel } from './rollingStock'
 import { advanceTrainSet, createVehicle, makeTrainSet, switchDrivingCab, trackLeftAhead, type TrainSet, type Vehicle } from './train'
-import type { Network, SegmentId, Station, StationStop } from './types'
+import type { Network, Platform, PlatformEdge, SegmentId, Station, StationStop } from './types'
 
 // ─────────────────── A complete rake set down at once ───────────────────
 //
 // The train tool lays vehicles one at a time. A game that starts at a station needs the whole
-// rake standing at a platform: the lead bogie at the stop, the rest behind it along the track.
+// rake standing at a platform: its nose at the stop — the stop marker of a platform edge that
+// speaks to its length (`stopMarkers.ts`), or a stop of a station without platforms — the rest
+// behind it along the track.
 
 /** How far ahead of a rake the track is looked at to tell which way out of a station is open */
 const DEPARTURE_REACH = 2000
@@ -34,9 +39,19 @@ export function createRake(net: Network, segId: SegmentId, t: number, direction:
   return advanceTrainSet(net, train, 0) ? train : null
 }
 
+/**
+ * The complete trainset of `model` with its nose (the front end of its lead vehicle) at
+ * (segId, t), towards the end of the rail (`direction` 1) or its start (-1). Null when the track
+ * behind is too short for all of it.
+ */
+export function createRakeWithNoseAt(net: Network, segId: SegmentId, t: number, direction: 1 | -1, rake: RollingStockModel | RakeChoice): TrainSet | null {
+  const bogie = walkBackward(net, segId, t, direction === 1, endOverhang(consistOf(rake), 0, 'front'))
+  return bogie ? createRake(net, bogie.segId, bogie.t, bogie.forward ? 1 : -1, rake) : null
+}
+
 export interface RakeAtStation {
   train: TrainSet
-  /** The stop of the station its lead bogie stands at */
+  /** The stop of the station the nose of the rake that arrived there stands at */
   stop: StationStop
 }
 
@@ -53,22 +68,47 @@ function turnedToLeave(net: Network, arrived: TrainSet): TrainSet | null {
   return turned
 }
 
+/** A place a rake may be set down at a station: its stop, the ways its nose may face, the length of its platform track */
+interface StationPlace {
+  stop: StationStop
+  directions: readonly (1 | -1)[]
+  trackLength: number
+}
+
 /**
- * A complete rake of `model` at a platform of `station`, facing the way out: of every stop and
- * both headings where the whole rake fits clear of `others`, driven from either cab, the one
- * with most track ahead (a terminus has its buffers behind the train), the first in the order of
- * the stops when they are equal. Null when the rake fits at none.
+ * Where a rake of `length` metres may stand at a station: at a station with platforms, the stop
+ * marker each platform edge has for it in each direction, the nose facing that way, the edge for
+ * its length; at one without, each stop facing either way, the track from points to points.
+ */
+function stationPlaces(net: Network, station: Station, length: number): StationPlace[] {
+  const platforms = platformsOf(net, station.id)
+  if (platforms.length === 0) return station.stops.map((stop) => ({ stop, directions: [1, -1] as const, trackLength: platformTrackLength(net, stop) }))
+  return stationStopTargets(net, station, length).map((target) => {
+    const platform = net.platforms.get(target.platformId)!
+    const stop: StationStop = target.ref !== undefined ? { segId: target.segId, t: target.t, ref: target.ref } : { segId: target.segId, t: target.t }
+    const edge = platform.edges[target.edge]
+    return { stop, directions: [target.forward ? 1 : -1] as const, trackLength: edge ? edgeLength(net, edge) : 0 }
+  })
+}
+
+/**
+ * A complete rake of `model` at a platform of `station`, facing the way out: of every place it
+ * may stand at (`stationPlaces`: the nose on a stop marker, or on a stop) where the whole rake
+ * fits clear of `others`, driven from either cab, the one with most track ahead (a terminus has
+ * its buffers behind the train), the first in the order of the places when they are equal — a
+ * platform track that holds the whole rake before one it would stick out of. Null when the rake
+ * fits at none.
  */
 export function createRakeAtStation(net: Network, station: Station, rake: RollingStockModel | RakeChoice, others: readonly TrainSet[] = []): RakeAtStation | null {
   const length = rakeLength(rake)
   let best: RakeAtStation | null = null
   let bestFits = false
   let bestAhead = -Infinity
-  for (const stop of station.stops) {
-    const here = bestRakeAt(net, stop.segId, stop.t, rake, others)
+  for (const { stop, directions, trackLength } of stationPlaces(net, station, length)) {
+    const here = bestRakeAt(net, stop.segId, stop.t, rake, others, directions, true)
     if (!here) continue
     // A platform track that holds the whole rake before one it would stick out of
-    const fits = platformTrackLength(net, stop) >= length
+    const fits = trackLength >= length
     if (!best || (fits && !bestFits) || (fits === bestFits && here.ahead > bestAhead)) {
       best = { train: here.train, stop }
       bestFits = fits
@@ -79,13 +119,18 @@ export function createRakeAtStation(net: Network, station: Station, rake: Rollin
 }
 
 /**
- * Length (m) of the track a stop is on, from points to points (or to an end of track): the rails
- * walked both ways from the stop through the plain joints. What a platform track can hold — the
- * data has no length for the platform itself.
+ * Length (m) of the platform track a stop is on: the longest platform edge along its rail when
+ * there is one (« le quai fait 220 m »), else the track from points to points (or to an end of
+ * track) — the rails walked both ways from the stop through the plain joints.
  */
 export function platformTrackLength(net: Network, stop: Pick<StationStop, 'segId'>): number {
   const start = net.segments.get(stop.segId)
   if (!start) return 0
+  let edge = -1
+  for (const platform of net.platforms.values()) {
+    for (const e of platform.edges) if (e.track.some((span) => span.segId === stop.segId)) edge = Math.max(edge, edgeLength(net, e))
+  }
+  if (edge >= 0) return edge
   let length = segmentShapeLength(net, start)
   const seen = new Set<SegmentId>([start.id])
   for (const end of [start.from, start.to]) {
@@ -120,9 +165,37 @@ export interface StationFit {
   placeable: boolean
 }
 
+/**
+ * The platform tracks of a station with platforms, by their length: one per track its platforms
+ * run along — the edges that share a rail are one track (a platform on either side of it), as
+ * long as the longest of them.
+ */
+function platformTracks(net: Network, platforms: readonly Platform[]): number[] {
+  const tracks: { rails: Set<SegmentId>; length: number }[] = []
+  for (const edge of platforms.flatMap((platform): PlatformEdge[] => platform.edges)) {
+    const rails = edge.track.map((span) => span.segId).filter((segId) => net.segments.has(segId))
+    if (rails.length === 0) continue
+    const length = edgeLength(net, edge)
+    const same = tracks.find((track) => rails.some((segId) => track.rails.has(segId)))
+    if (!same) {
+      tracks.push({ rails: new Set(rails), length })
+      continue
+    }
+    for (const segId of rails) same.rails.add(segId)
+    same.length = Math.max(same.length, length)
+  }
+  return tracks.map((track) => track.length)
+}
+
+/**
+ * How a rake compares with the platform tracks of a station: at a station with platforms, the
+ * tracks they run along and the length of their platforms; at one without, its stops and their
+ * tracks from points to points.
+ */
 export function stationFit(net: Network, station: Station, rake: RollingStockModel | RakeChoice, others: readonly TrainSet[] = []): StationFit {
   const length = rakeLength(rake)
-  const lengths = station.stops.filter((stop) => net.segments.has(stop.segId)).map((stop) => platformTrackLength(net, stop))
+  const platforms = platformsOf(net, station.id)
+  const lengths = platforms.length > 0 ? platformTracks(net, platforms) : station.stops.filter((stop) => net.segments.has(stop.segId)).map((stop) => platformTrackLength(net, stop))
   return {
     rakeLength: length,
     tracks: lengths.length,
@@ -132,14 +205,26 @@ export function stationFit(net: Network, station: Station, rake: RollingStockMod
   }
 }
 
-/** The rake that fits at a place of the track with most track ahead, of both headings and both cabs, clear of `others` */
-function bestRakeAt(net: Network, segId: SegmentId, t: number, rake: RollingStockModel | RakeChoice, others: readonly TrainSet[]): { train: TrainSet; ahead: number } | null {
+/**
+ * The rake that fits at a place of the track with most track ahead, of the headings given and
+ * both cabs, clear of `others`. The place is that of the lead bogie, or of the nose (`nose`) of
+ * the rake as it arrived there, before it is driven from its other cab.
+ */
+function bestRakeAt(
+  net: Network,
+  segId: SegmentId,
+  t: number,
+  rake: RollingStockModel | RakeChoice,
+  others: readonly TrainSet[],
+  directions: readonly (1 | -1)[] = [1, -1],
+  nose = false,
+): { train: TrainSet; ahead: number } | null {
   if (!net.segments.has(segId)) return null
   const taken = new Set<SegmentId>()
   for (const other of others) for (const veh of other.vehicles) taken.add(veh.front.segId).add(veh.rear.segId)
   let best: { train: TrainSet; ahead: number } | null = null
-  for (const direction of [1, -1] as const) {
-    const arrived = createRake(net, segId, t, direction, rake)
+  for (const direction of directions) {
+    const arrived = nose ? createRakeWithNoseAt(net, segId, t, direction, rake) : createRake(net, segId, t, direction, rake)
     if (!arrived) continue
     if (arrived.vehicles.some((veh) => taken.has(veh.front.segId) || taken.has(veh.rear.segId))) continue
     for (const train of [arrived, turnedToLeave(net, arrived)]) {

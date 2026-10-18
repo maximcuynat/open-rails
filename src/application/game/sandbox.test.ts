@@ -36,8 +36,8 @@ describe('starting a sandbox game', () => {
     expect(train.vehicles).toHaveLength(ROLLING_STOCK.duplex.trailerCount + 2)
     expect(train.vehicles[0].front.segId).toBe(start.stop.segId)
     expect(store.selectedTrain).toBe(train)
-    // The camera on the head of the rake (the stop, at x = 250), close enough for the bogies
-    expect(store.camera.x).toBeCloseTo(250, 3)
+    // The camera on the lead bogie of the rake, its nose on the stop at x = 250, close enough for the bogies
+    expect(store.camera.x).toBeCloseTo(250 - ROLLING_STOCK.duplex.powerCar.noseOverhang, 3)
     expect(store.camera.y).toBeCloseTo(0, 3)
     expect(store.camera.scale).toBeGreaterThanOrEqual(3.5)
     // Not driving yet: the player chooses a console first, then takes the controls

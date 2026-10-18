@@ -3,8 +3,9 @@ import { addNode, addSegment, createNetwork, resetIdCounter } from './network'
 import { createRake, createRakeAtStation, platformTrackLength, rakeLength, stationFit } from './rakePlacement'
 import { ROLLING_STOCK, referenceConsist } from './rollingStock'
 import { addStation } from './stations'
-import { advanceTrainSet, getTrainSetVisuals, trackLeftAhead, vehicleRearEndPos } from './train'
-import type { Network } from './types'
+import { addPlatform, defaultMarkers, settlePlatforms } from './platforms'
+import { advanceTrainSet, getTrainSetVisuals, trackLeftAhead, vehicleFrontEndPos, vehicleRearEndPos } from './train'
+import type { Network, PlatformEdge } from './types'
 
 /** A straight from x = 0 to x = `length`, its only rail returned */
 function straight(length: number): { net: Network; segId: string } {
@@ -57,20 +58,22 @@ describe('a complete rake set down at once', () => {
     expect(vehicles[0].kind).toBe('loco')
     expect(vehicles[0].front.t).toBeGreaterThan(vehicles[vehicles.length - 1].rear.t)
     expect(trackLeftAhead(net, placed.train, 2000)).toBeNull()
-    // The tail end stands a metre from the buffers, not over them
+    // The tail end stands where the nose of the train that arrived came to rest, not over the buffers
     const tailEnd = vehicleRearEndPos(net, vehicles[vehicles.length - 1])!
-    expect(tailEnd.x).toBeCloseTo(1, 1)
+    expect(tailEnd.x).toBeCloseTo(2, 1)
     // It drives away, nose first
     expect(placed.train.direction).toBe(1)
     expect(advanceTrainSet(net, placed.train, 50)).toBe(true)
     expect(vehicles[0].flipped ?? false).toBe(false)
   })
 
-  it('on a through track, the lead bogie stays at the stop', () => {
+  it('on a through track, the nose stands at the stop, the lead bogie behind it', () => {
     const { net, segId } = straight(6000)
     const station = addStation(net, { name: 'Passante', pos: { x: 3000, y: 0 }, stops: [{ segId, t: 0.5 }] })
     const placed = createRakeAtStation(net, station, 'duplex')!
-    expect(placed.train.vehicles[0].front.t).toBeCloseTo(0.5, 6)
+    const lead = placed.train.vehicles[0]
+    expect(vehicleFrontEndPos(net, lead)!.x).toBeCloseTo(3000, 6)
+    expect(Math.abs(lead.front.t * 6000 - 3000)).toBeCloseTo(ROLLING_STOCK.duplex.powerCar.noseOverhang, 6)
   })
 
   it('takes the first stop when both are as open, and leaves a taken track alone', () => {
@@ -157,5 +160,62 @@ describe('a complete rake set down at once', () => {
     const double = createRake(net, segId, 0.9, 1, { model: 'regiolis', trailers: 2, units: 2 })!
     expect(double.vehicles).toHaveLength(8)
     expect(rakeLength({ model: 'regiolis', trailers: 2, units: 2 })).toBeCloseTo(2 * 71.82 + 0.8, 2)
+  })
+})
+
+describe('a rake set down at a station with platforms', () => {
+  beforeEach(() => resetIdCounter())
+
+  /**
+   * A straight from x = 0 to x = `length` and a platform of 220 m beside it from x = 3000 to
+   * x = 3220, its markers laid by default (10 m short of either end); `other` lays a second one on
+   * the other side of the track, of 150 m.
+   */
+  function platformStation(length: number, other = false) {
+    const { net, segId } = straight(length)
+    const station = addStation(net, { name: 'Quai', pos: { x: 3100, y: 10 }, stops: [] })
+    const lay = (from: number, to: number, side: 'left' | 'right') => {
+      const edges: [PlatformEdge] = [{ track: [{ segId, t0: from / length, t1: to / length }], side, ref: side === 'left' ? '1' : '2' }]
+      addPlatform(net, { stationId: station.id, edges, width: 6, markers: defaultMarkers(net, edges, 10) })
+    }
+    lay(3000, 3220, 'left')
+    if (other) lay(3000, 3150, 'right')
+    settlePlatforms(net)
+    return { net, segId, station }
+  }
+
+  it('puts the nose of the rake on the marker for its length, facing its way', () => {
+    const { net, station } = platformStation(6000)
+    const placed = createRakeAtStation(net, station, 'duplex')!
+    const lead = placed.train.vehicles[0]
+    // The first marker is for trains running eastwards, 10 m short of the end of the platform
+    expect(vehicleFrontEndPos(net, lead)!.x).toBeCloseTo(3210, 6)
+    expect(placed.train.vehicles[placed.train.vehicles.length - 1].rear.t * 6000).toBeLessThan(3210)
+    expect(placed.stop.ref).toBe('1')
+    expect(placed.stop.t * 6000).toBeCloseTo(3210, 6)
+    expect(trackLeftAhead(net, placed.train, 2000)).toBeNull()
+  })
+
+  it('at a terminus, takes the marker towards the buffers and drives the rake from its other cab', () => {
+    // The track ends at the end of the platform: buffers at x = 3220
+    const { net, station } = platformStation(3220)
+    const placed = createRakeAtStation(net, station, 'duplex')!
+    const { vehicles } = placed.train
+    // Arrived with its nose on the marker 10 m from the buffers, it leaves westwards, the tail where that nose was
+    expect(placed.stop.t * 3220).toBeCloseTo(3210, 6)
+    expect(vehicleRearEndPos(net, vehicles[vehicles.length - 1])!.x).toBeCloseTo(3210, 1)
+    expect(vehicles[0].front.t).toBeLessThan(vehicles[vehicles.length - 1].rear.t)
+    expect(trackLeftAhead(net, placed.train, 2000)).toBeNull()
+  })
+
+  it('measures the platform track by its platform, and counts a track with a platform on either side once', () => {
+    const { net, segId, station } = platformStation(6000, true)
+    // The track runs 6 km from end to end; the longest platform along it is 220 m
+    expect(platformTrackLength(net, { segId })).toBeCloseTo(220, 6)
+    const fit = stationFit(net, station, 'duplex')
+    expect(fit).toMatchObject({ tracks: 1, fitting: 1, placeable: true })
+    expect(fit.longest).toBeCloseTo(220, 6)
+    // Two trainsets coupled, 401 m: longer than the platform, set down sticking out of it all the same
+    expect(stationFit(net, station, { model: 'duplex', trailers: 8, units: 2 })).toMatchObject({ tracks: 1, fitting: 0, placeable: true })
   })
 })
