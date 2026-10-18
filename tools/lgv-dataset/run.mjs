@@ -3,7 +3,10 @@
  * Builds the « LGV France » dataset under `public/data/lgv/` (the pipeline is `build.ts`; this file
  * is named differently so that `import './build'` never resolves to it).
  *
- *   node tools/lgv-dataset/run.mjs [--offline] [--only <lineId>] [--round] [--dry]
+ *   node tools/lgv-dataset/run.mjs [--offline] [--only <lineId>] [--round] [--dry] [--no-platforms]
+ *
+ * `--no-platforms` leaves the platforms out (a cache made before them then serves whole);
+ * `LGV_CACHE_DIR` reads and writes the Overpass cache elsewhere than `tools/lgv-dataset/cache/`.
  *
  * The pipeline is the TypeScript of the application (domain import, persistence): it runs here
  * through Vite's module runner, which resolves the `@domain/*` aliases of `vite.config.ts` and

@@ -1,5 +1,6 @@
 import type { Approach, Region } from './manifest'
 import type { Tile } from './tiles'
+import { platformQuery } from '@infrastructure/osm/overpassClient'
 
 /** Seconds a server is given for one of these queries: a tile of high-speed track is small, a busy server slow */
 export const QUERY_TIMEOUT_S = 180
@@ -71,4 +72,14 @@ export function regionQuery(region: Region): string {
     'rel(bw.w)[type=route][route~"^(tracks|railway)$"];',
     'out body;',
   ].join('\n')
+}
+
+/**
+ * The platforms of the trains within a tile of France (the ways and the multipolygons the in-app
+ * import asks for, `platformQuery`) and their nodes. Asked apart from the tracks, so that the
+ * answers cached before the platforms still serve; most are far from any track kept, and left out
+ * by the import.
+ */
+export function platformTileQuery(tile: Tile): string {
+  return [`[out:json][timeout:${QUERY_TIMEOUT_S}];`, `area(${FRANCE_AREA})->.fr;`, `(${platformQuery(`(area.fr)${bbox(tile)}`)});`, '(._;>;);', 'out body qt;'].join('\n')
 }
