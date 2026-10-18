@@ -76,6 +76,8 @@ export interface OsmImportOptions {
    * is read whatever this says.
    */
   keepLeft?: boolean
+  /** Hold the rule of keeping left against the tags, in the report (`OsmRunningReport.check`). Off when absent. */
+  checkKeepLeft?: boolean
 }
 
 export const DEFAULT_OSM_IMPORT_OPTIONS: OsmImportOptions = {
@@ -248,6 +250,11 @@ export interface OsmRunningReport {
   taggedKm: number
   inferredKm: number
   noneKm: number
+  /**
+   * The rule of keeping left held against the tags, with `checkKeepLeft`: of the tagged track it
+   * can tell, the km where it says what the tag says, and where it says the other way
+   */
+  check?: { agreeKm: number; disagreeKm: number }
 }
 
 /** Where imported data comes from. Stored in the project: the ODbL asks for it. */

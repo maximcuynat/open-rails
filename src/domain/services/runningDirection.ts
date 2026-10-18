@@ -1,4 +1,4 @@
-import type { Network, NodeId, Point, Segment, SegmentId } from '../models/types'
+import type { Network, NodeId, Point, RunningDirection, Segment, SegmentId } from '../models/types'
 import { segmentPartialLength } from '../models/locomotive'
 import { runsAgainst, setRunning } from '../models/running'
 import { closestParamOnShape, leaveDirectionOnShape, pointOnShape, shapeBounds, segmentEnds, segmentShapeLength, tangentOnShape, type SegmentEnds } from '../geometry/segmentGeometry'
@@ -97,17 +97,29 @@ const MIN_AGREE = 0.9
  * (see the head of this file). Returns how many rails got one.
  */
 export function inferKeepLeft(net: Network, options: KeepLeftOptions = {}): number {
+  let laid = 0
+  for (const [segId, running] of keepLeftDecisions(net, options)) {
+    if (setRunning(net, net.segments.get(segId)!, running)) laid++
+  }
+  return laid
+}
+
+/**
+ * What the rule of keeping left says of each rail it can tell, without setting anything: of the
+ * rails without a normal direction, or with `all` of every rail (to hold the rule against the data).
+ */
+export function keepLeftDecisions(net: Network, options: KeepLeftOptions = {}, all = false): Map<SegmentId, RunningDirection> {
   const spacing = options.spacing ?? DEFAULT_SPACING
   const crowded = Math.max(options.crowdedWithin ?? DEFAULT_CROWDED, spacing.max)
   const step = options.sampleStep ?? DEFAULT_SAMPLE_STEP
   const minRun = options.minDoubleRun ?? DEFAULT_MIN_DOUBLE_RUN
-  const decided = new Map<SegmentId, 'forward' | 'backward'>()
+  const decided = new Map<SegmentId, RunningDirection>()
   /** Rails with no other track alongside: single track */
   const single = new Set<SegmentId>()
   const grid = new RailGrid(net)
   for (const seg of net.segments.values()) {
     const skipped = options.skip?.(seg) ?? false
-    if (seg.running) continue
+    if (seg.running && !all) continue
     const ends = grid.ends.get(seg.id)
     if (!ends) continue
     const length = grid.lengths.get(seg.id)!
@@ -130,14 +142,10 @@ export function inferKeepLeft(net: Network, options: KeepLeftOptions = {}): numb
     else if (left >= MIN_AGREE * seen) decided.set(seg.id, 'backward')
   }
   // A short double track between two single ones is a passing loop: run both ways (see `crossingRules.ts`)
-  let laid = 0
-  for (const [segId, running] of decided) {
-    const seg = net.segments.get(segId)!
-    if (doubleRunLength(net, grid, seg, single, minRun) < minRun) continue
-    setRunning(net, seg, running)
-    laid++
+  for (const segId of [...decided.keys()]) {
+    if (doubleRunLength(net, grid, net.segments.get(segId)!, single, minRun) < minRun) decided.delete(segId)
   }
-  return laid
+  return decided
 }
 
 /** Deflection (rad) up to which a rail carries a track on through a node */

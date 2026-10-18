@@ -5,7 +5,7 @@ import { findJunctionAtNode, syncJunctions } from '../models/junction'
 import { generateId, resetIdCounter, segmentBand, syncIdCounter } from '../models/network'
 import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { analyzeKinematics } from '../services/kinematicDiagnostics'
-import { inferKeepLeft } from '../services/runningDirection'
+import { inferKeepLeft, keepLeftDecisions } from '../services/runningDirection'
 import { setRunning } from '../models/running'
 import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
 import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
@@ -297,6 +297,7 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   // Where OSM gives none, the rule of keeping left on a double line (the rails are settled)
   const tagged = new Set<SegmentId>()
   for (const seg of net.segments.values()) if (seg.running) tagged.add(seg.id)
+  const keepLeftCheck = options.checkKeepLeft ? keepLeftDecisions(net, {}, true) : null
   if (options.keepLeft !== false) inferKeepLeft(net, { skip: (seg) => runBothWays.has(seg.parentSegmentId ?? seg.id) })
 
   const junctions = syncJunctions(net)
@@ -324,7 +325,17 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     else if (tagged.has(seg.id)) running.taggedKm += km
     else running.inferredKm += km
   }
-  report.running = running
+  if (keepLeftCheck) {
+    const check = { agreeKm: 0, disagreeKm: 0 }
+    for (const [segId, rule] of keepLeftCheck) {
+      const seg = net.segments.get(segId)
+      if (!seg?.running || !tagged.has(segId)) continue
+      const km = segmentShapeLength(net, seg) / 1000
+      if (seg.running === rule) check.agreeKm += km
+      else check.disagreeKm += km
+    }
+    report.running = { ...running, check }
+  } else report.running = running
   for (const seg of net.segments.values()) {
     report.lengthKm += segmentShapeLength(net, seg) / 1000
     const band = segmentBand(net, seg)
