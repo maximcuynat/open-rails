@@ -116,14 +116,14 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
 - [ ] Thème sombre ; rien ne bouge au dessin des voies (règle : l'aspect ne change pas sans demande)
 
 ### Q2 — Outil « Quai » (pose)
-- [ ] Deux clics le long d'une voie (début, fin), comme une zone de vitesse ; le côté suit le
+- [x] Deux clics le long d'une voie (début, fin), comme une zone de vitesse ; le côté suit le
       curseur ; une touche pose des deux côtés
-- [ ] Curseur entre deux voies assez écartées : l'outil propose l'îlot ; trop proches : il dit pourquoi
-- [ ] **Repères de construction** : longueur en direct (`formatDistance`), aimantation aux
+- [x] Curseur entre deux voies assez écartées : l'outil propose l'îlot ; trop proches : il dit pourquoi
+- [x] **Repères de construction** : longueur en direct (`formatDistance`), aimantation aux
       extrémités d'un quai voisin et aux aiguilles, alignement avec le quai d'en face, rames
       qui y tiennent (`stationFit`) affichées pendant la pose
-- [ ] Gare : celle du quai voisin, sinon une nouvelle gare à nommer
-- [ ] Barre contextuelle, raccourci, barre d'outils (style « réglage » vs « outil », vu le 2026-10-18)
+- [x] Gare : celle du quai voisin, sinon une nouvelle gare à nommer (« Gare n » ; le renommage est en Q3)
+- [x] Barre contextuelle, raccourci, barre d'outils (style « réglage » vs « outil », vu le 2026-10-18)
 
 ### Q3 — Édition
 - [ ] Sélection d'un quai ; bornes déplacées à la souris, le long de la voie
