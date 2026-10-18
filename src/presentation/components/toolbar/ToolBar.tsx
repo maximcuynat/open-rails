@@ -115,6 +115,18 @@ const TOOLS: ToolDef[] = [
     ),
   },
   {
+    id: 'platform',
+    label: 'Quai (deux clics le long d’une voie · Maj : des deux côtés)',
+    group: 4,
+    icon: (
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="2" y1="19" x2="22" y2="19" />
+        <rect x="4" y="7" width="16" height="7" rx="1" />
+        <path d="M4 14v-7M8 14v-7" />
+      </svg>
+    ),
+  },
+  {
     id: 'signal',
     label: 'Signalisation (signaux et limites de vitesse)',
     group: 4,

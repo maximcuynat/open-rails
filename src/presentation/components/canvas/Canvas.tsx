@@ -90,6 +90,8 @@ import { signalFlashOn } from '@infrastructure/render/signalRender'
 import { renderSignalToolPreview } from './signalToolPreview'
 import { commitSignalGesture } from '../common/signalActions'
 import { hitShownNode } from './nodePicking'
+import { clickPlatformTool, PLATFORM_OFF_TRACK, platformPreviewDrawing } from '@application/tools/platformTool'
+import { renderPlatformPreview } from '@infrastructure/render/platformPreviewRender'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -945,6 +947,10 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.restore()
     }
 
+    // 7b. Platform tool preview: the start, the platform along the track to the cursor, its length
+    const platformDrawing = store.tool === 'platform' ? platformPreviewDrawing(store) : null
+    if (platformDrawing) renderPlatformPreview(ctx, cam, rect.width, rect.height, store.network, platformDrawing)
+
     // 8. Signal tool preview: the signal under the cursor with its arrow and its two blocks, or the row being drawn
     renderSignalToolPreview(ctx, cam, rect.width, rect.height, store)
 
@@ -1167,6 +1173,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       const active = e.shiftKey || e.ctrlKey || e.metaKey
       if (active !== isModifierDownRef.current) {
         isModifierDownRef.current = active
+        draw()
+      }
+      // The platform tool lays on both sides while Shift is held: its preview follows the key
+      if (store.tool === 'platform' && e.key === 'Shift') {
+        store.setPlatformShiftHeld(e.type === 'keydown')
         draw()
       }
 
@@ -1774,6 +1785,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         return
       }
 
+      // Platform tool: the start of the platform, then its end (Shift: one on each side of the track)
+      if (e.button === 0 && store.tool === 'platform') {
+        const world = getWorldPos(e.clientX, e.clientY)
+        store.cursorWorld = world
+        store.setPlatformShiftHeld(e.shiftKey)
+        if (clickPlatformTool(store, world).result === 'off-track') showToast(PLATFORM_OFF_TRACK, 'warning')
+        redraw()
+        return
+      }
+
       // Signalling mode: the speed limit tool lays a zone in two clicks; the two other sub-modes
       // pick or remove the zone under the cursor, and a click on nothing drags the view
       if (e.button === 0 && store.tool === 'signal' && !store.isPlayMode) {
@@ -2326,10 +2347,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           store.tool === 'split' ||
           store.tool === 'measure' ||
           store.isSpeedZoneTool ||
+          store.tool === 'platform' ||
           store.signalPlacementMode !== null ||
           store.tool === 'locomotive' ||
           store.hoverSegSteps !== null
         if (followsPointer) {
+          if (store.tool === 'platform') {
+            store.setPlatformShiftHeld(e.shiftKey)
+            canvas.style.cursor = 'crosshair'
+          }
           if (store.tool === 'locomotive') {
             if (store.trainToolSubMode === 'delete') {
               store.updateTrainDeleteHover(rawWorld)
@@ -2387,7 +2413,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (segId) {
             store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
           } else {
-            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart || store.signalRowStart || store.signalDrag) {
+            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart || store.platformStart || store.signalRowStart || store.signalDrag) {
               store.cancelInteraction()
             } else {
               store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })

@@ -157,6 +157,7 @@ export type Tool =
   | 'locomotive'
   | 'coupling'
   | 'signal'
+  | 'platform'
 
 /**
  * Sub-modes of the signalling mode (tool `signal`), in the order of the toolbar; `select` and
@@ -719,6 +720,12 @@ export class EditorStore {
   signalToolSubMode: SignalSubMode = 'select'
   /** First click of the speed limit tool: where the zone starts */
   speedZoneStart: TrackPoint | null = null
+  /** First click of the platform tool: where the platform starts (see `application/tools/platformTool.ts`) */
+  platformStart: TrackPoint | null = null
+  /** Platform tool: lay one platform on each side of the track (the toggle of the bar) */
+  platformBothSides = false
+  /** Platform tool: Shift is held, which turns « both sides » the other way while it is */
+  platformShiftHeld = false
   /** Speed (km/h) of the next zone the speed limit tool lays */
   speedZoneToolSpeed = DEFAULT_ZONE_TOOL_SPEED
   /** Speed zone picked in the signalling mode */
@@ -870,6 +877,7 @@ export class EditorStore {
     this.measureEnd = null
     this.isMeasuring = false
     this.speedZoneStart = null
+    this.platformStart = null
     this.signalRowStart = null
     this.signalRowEnd = null
     this.numericInput = ''
@@ -2310,6 +2318,7 @@ export class EditorStore {
       hadPlacement ||
       this.measureStart !== null ||
       this.speedZoneStart !== null ||
+      this.platformStart !== null ||
       hadSignalGesture ||
       this.isNumericInputActive ||
       this.isDraggingNode ||
@@ -4225,6 +4234,25 @@ export class EditorStore {
   toggleSelectedTrainEmergencyBrake = (): void => {
     const train = this.hostTrain
     if (train) this.toggleTrainEmergencyBrake(train)
+  }
+
+  // ─────────────────── Platform tool ───────────────────
+
+  /** The platform tool lays one platform on each side of the track: the toggle, turned over by Shift */
+  get platformBothSidesActive(): boolean {
+    return this.platformBothSides !== this.platformShiftHeld
+  }
+
+  setPlatformBothSides = (on: boolean): void => {
+    this.platformBothSides = on
+    this.notify()
+  }
+
+  /** Shift went down or up: the platform tool shows what it would lay then */
+  setPlatformShiftHeld = (held: boolean): void => {
+    if (this.platformShiftHeld === held) return
+    this.platformShiftHeld = held
+    if (this.tool === 'platform') this.notify()
   }
 
   // ─────────────────── Signalling mode: speed zones ───────────────────
