@@ -139,10 +139,10 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
 - [ ] Le pupitre : distance au repère dans « Prochain arrêt »
 
 ### Q5 — Quais d'OpenStreetMap
-- [ ] Overpass : `railway=platform` et `public_transport=platform` + `train=yes` (lignes et surfaces)
-- [ ] Rattacher chaque quai aux voies qu'il longe : échantillons du contour projetés sur les
+- [x] Overpass : `railway=platform` et `public_transport=platform` + `train=yes` (lignes et surfaces)
+- [x] Rattacher chaque quai aux voies qu'il longe : échantillons du contour projetés sur les
       rails, côté par le signe, îlot quand il y a des voies des deux côtés, longueur par recouvrement
-- [ ] `ref` (« 1;2 ») → numéros de voie ; les `railway=stop` existants → repères
+- [x] `ref` (« 1;2 ») → numéros de voie ; les `railway=stop` existants → repères
 - [ ] Jeu de données régénéré à la main (`node tools/lgv-dataset/run.mjs --dry` d'abord : poids
       des morceaux, gares sans quai trouvé) ; `stationFit` dit enfin « trop court » dans une halte
 

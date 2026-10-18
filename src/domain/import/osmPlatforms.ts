@@ -388,7 +388,7 @@ export function layOsmPlatforms(input: PlatformLayInput): { report: OsmPlatformR
     let edges = sides.slice(0, 1)
     if (sides.length === 2) {
       const [one, two] = sides
-      const apart = ![...two.edge.track].some((span) => one.edge.track.some((s) => s.segId === span.segId))
+      const apart = !two.edge.track.some((span) => one.edge.track.some((s) => s.segId === span.segId))
       if (apart && two.length >= MIN_ISLAND_SHARE * one.length) edges = [one, two]
     }
     if (edges.length === 0) {
