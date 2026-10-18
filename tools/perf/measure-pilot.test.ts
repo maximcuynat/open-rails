@@ -5,18 +5,23 @@ import { pilotSpeed } from '@application/console/autopilot'
 import { addItineraryStop } from '@application/game/itinerary'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
 import { addStation } from '@domain/models/stations'
+import { addPlatform, defaultMarkers, platformDimensions } from '@domain/models/platforms'
+import { vehicleFrontEndPos } from '@domain/models/train'
+import type { PlatformEdge } from '@domain/models/types'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 
 // How the automatic pilot drives, in figures: how close it holds the speed it aims at, how much it
 // moves the handle, how it comes to a platform. On a straight line of rails of 500 m, level or
-// with a ramp.
+// with a ramp. Where it stops is that of the nose of the train (the front end of its lead vehicle).
+// `platforms` lays at each station of those ids a platform of 220 m ending at its kilometre, with
+// its stop markers laid by default (10 m short of either end): the mark is then the marker.
 //
 // Run by hand: PROFILE=1 npx vitest run tools/perf/measure-pilot.test.ts --silent=false
 
 const RAIL = 500
 
 /** A straight line; `climb` gives the kilometres between which it rises one level per rail (12 ‰) */
-function line(km: number, stations: Record<string, number>, climb?: [number, number]) {
+function line(km: number, stations: Record<string, number>, climb?: [number, number], platforms: readonly string[] = []) {
   resetMemoryStorage()
   resetIdCounter()
   const store = new EditorStore()
@@ -32,20 +37,26 @@ function line(km: number, stations: Record<string, number>, climb?: [number, num
   }
   const at = (m: number) => ({ segId: rails[Math.min(rails.length - 1, Math.floor(m / RAIL))], t: (m % RAIL) / RAIL })
   addStation(net, { id: 'depart', name: 'Départ', pos: { x: RAIL, y: 0 }, stops: [at(RAIL + 250)] })
-  for (const [id, where] of Object.entries(stations)) addStation(net, { id, name: id, pos: { x: where * 1000, y: 0 }, stops: [at(where * 1000)] })
+  for (const [id, where] of Object.entries(stations)) {
+    addStation(net, { id, name: id, pos: { x: where * 1000, y: 0 }, stops: [at(where * 1000)] })
+    if (!platforms.includes(id)) continue
+    const from = at(where * 1000 - PLATFORM)
+    const to = at(where * 1000 - 1e-6)
+    const track = from.segId === to.segId ? [{ segId: from.segId, t0: from.t, t1: to.t }] : [{ segId: from.segId, t0: from.t, t1: 1 }, { segId: to.segId, t0: 0, t1: to.t }]
+    const edges: [PlatformEdge] = [{ track, side: 'left' }]
+    addPlatform(net, { stationId: id, edges, width: 6, markers: defaultMarkers(net, edges, platformDimensions().markerMargin) })
+  }
   store.notify()
   if (!store.placeRakeAtStation('depart', 'duplex')) throw new Error('no rake')
   store.togglePlayMode()
   return store
 }
 
-const headX = (store: EditorStore): number => {
-  const lead = store.trains[0].vehicles[0].front
-  const rail = store.network.segments.get(lead.segId)!
-  const a = store.network.nodes.get(rail.from)!.pos.x
-  const b = store.network.nodes.get(rail.to)!.pos.x
-  return a + (b - a) * lead.t
-}
+/** Length of the platform laid at a station of `platforms`, m */
+const PLATFORM = 220
+
+/** Where the nose of the train is along the line */
+const headX = (store: EditorStore): number => vehicleFrontEndPos(store.network, store.trains[0].vehicles[0])!.x
 
 interface Sample { t: number; x: number; v: number; aim: number; notch: number; cylinder: number; brake: string; gradient: number }
 
@@ -119,9 +130,10 @@ test.runIf(process.env.PROFILE)('measure the automatic pilot', { timeout: 600_00
     drive(store, 3600, () => headX(store) > 15_000)
     cruise('ramp 12 ‰, km 15 to 24', drive(store, 3600, () => headX(store) > 24_000))
   }
-  // To a platform 11,5 km away
-  {
-    const store = line(14, { arrivee: 12 })
+  // To a platform 11,5 km away: a station without platforms (its stop at km 12), then one with a
+  // platform of 220 m ending at km 12 (its marker for the train 10 m short of it)
+  for (const [label, platforms, mark] of [['to a platform', [], 12_000], ['to a stop marker', ['arrivee'], 12_000 - 10]] as const) {
+    const store = line(14, { arrivee: 12 }, undefined, platforms)
     const train = store.trains[0]
     addItineraryStop(store, train, 'arrivee')
     store.setAutopilot(train.id, true)
@@ -130,12 +142,12 @@ test.runIf(process.env.PROFILE)('measure the automatic pilot', { timeout: 600_00
     const top = Math.max(...run.map((s) => s.v))
     const braking = run.map((s) => s.v >= top - 1.5).lastIndexOf(true)
     const slow = run.filter((s) => s.v < 2 && s.x > 11_000).length / 20
-    const tail = run.filter((s) => s.x > 12_000 - 200)
+    const tail = run.filter((s) => s.x > mark - 200)
     const decel = run.slice(1).map((s, i) => (run[i].v - s.v) / 0.05)
-    out('to a platform', {
+    out(label, {
       'journey s': last.t,
-      'stops at m from the mark': last.x - 12_000,
-      'brakes from m before': 12_000 - (run[braking]?.x ?? 0),
+      'stops at m from the mark': last.x - mark,
+      'brakes from m before': mark - (run[braking]?.x ?? 0),
       'for s': last.t - (run[braking]?.t ?? 0),
       'air brake at most bar': Math.max(...run.map((s) => s.cylinder)),
       'under 2 m/s for s': slow,

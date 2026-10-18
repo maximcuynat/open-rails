@@ -131,12 +131,12 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
 - [x] Gares dans l'éditeur : créer, renommer, déplacer l'étiquette (le panneau actuel est en lecture seule)
 
 ### Q4 — Repères d'arrêt et conduite
-- [ ] Repères posés d'office (un par sens au bout du quai, moins la marge), ajoutés, déplacés,
+- [x] Repères posés d'office (un par sens au bout du quai, moins la marge), ajoutés, déplacés,
       bornés en longueur de train
-- [ ] Le pilote arrête **le nez** du train sur le repère qui lui convient (le plus proche qui
+- [x] Le pilote arrête **le nez** du train sur le repère qui lui convient (le plus proche qui
       accepte sa longueur), plus le bogie avant ; mesurer avec `tools/perf/measure-pilot.test.ts`
-- [ ] `stationFit` et `createRakeAtStation` prennent la longueur du quai quand il y en a un
-- [ ] Le pupitre : distance au repère dans « Prochain arrêt »
+- [x] `stationFit` et `createRakeAtStation` prennent la longueur du quai quand il y en a un
+- [x] Le pupitre : distance au repère dans « Prochain arrêt »
 
 ### Q5 — Quais d'OpenStreetMap
 - [ ] Overpass : `railway=platform` et `public_transport=platform` + `train=yes` (lignes et surfaces)
