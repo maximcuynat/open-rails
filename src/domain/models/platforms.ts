@@ -177,3 +177,18 @@ export function platformOutline(net: Network, platform: Platform, dims: Platform
 }
 
 const distance = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y)
+
+/**
+ * The stop markers laid with a new platform: on each edge, one per direction of travel, `margin`
+ * metres short of the end a train runs towards — or in the middle of an edge too short for that.
+ */
+export function defaultMarkers(net: Network, edges: readonly PlatformEdge[], margin: number): StopMarker[] {
+  const markers: StopMarker[] = []
+  edges.forEach((edge, index) => {
+    const length = edgeLength(net, edge)
+    const inset = Math.min(margin, length / 2)
+    const at = index === 0 ? 0 : 1
+    markers.push({ edge: at, at: length - inset, heading: 'forward' }, { edge: at, at: inset, heading: 'backward' })
+  })
+  return markers
+}

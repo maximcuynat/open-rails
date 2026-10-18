@@ -4,6 +4,7 @@ import { generateId } from './ids'
 import type { Network, PlatformEdge } from './types'
 import {
   addPlatform,
+  defaultMarkers,
   edgeLength,
   edgeLine,
   PLATFORM_EDGE_OFFSET,
@@ -116,6 +117,18 @@ describe('platforms', () => {
     expect(platformOutline(net, island, dims)).toEqual([
       { x: close(0), y: close(1.7) }, { x: close(50), y: close(1.7) },
       { x: close(50), y: close(8.3) }, { x: close(0), y: close(8.3) },
+    ])
+  })
+
+  it('get a stop marker per edge and per direction, short of the end a train runs towards', () => {
+    const { net, a1, b } = twoTracks()
+    const edges: PlatformEdge[] = [{ track: [{ segId: a1, t0: 0, t1: 1 }], side: 'right' }, { track: [{ segId: b, t0: 0.05, t1: 0 }], side: 'right' }]
+    expect(defaultMarkers(net, edges, 10)).toEqual([
+      { edge: 0, at: close(40), heading: 'forward' },
+      { edge: 0, at: close(10), heading: 'backward' },
+      // 5 m of edge: both in the middle
+      { edge: 1, at: close(2.5), heading: 'forward' },
+      { edge: 1, at: close(2.5), heading: 'backward' },
     ])
   })
 
