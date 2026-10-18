@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { convertOsm } from '@domain/import/osmImport'
 import { LAMBERT93_ORIGIN, projectionFor } from '@domain/import/osmProjection'
-import type { OverpassResponse } from '@domain/import/osmTypes'
+import type { OsmPlatformReport, OverpassResponse } from '@domain/import/osmTypes'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { placementThresholds } from '@domain/geometry/scale'
 import { resetIdCounter } from '@domain/models/network'
@@ -41,6 +41,13 @@ export interface BuiltDataset {
     slowUnderSpeedKm: number
     /** Rails whose limit falls well under that of both their neighbours, over all the files (`speedDips`) */
     speedDips: { dips: number; underZone: number; withoutZone: number }
+    /** What the import did about the platforms (`OsmImportReport.platforms`) */
+    platforms: OsmPlatformReport | null
+    /** Stations without a platform, and their names (sorted), the ones the data gave platforms apart */
+    stationsWithoutPlatform: string[]
+    /** Bytes of the files, and the part of them the platforms take */
+    bytes: number
+    platformBytes: number
   }
 }
 
@@ -100,6 +107,14 @@ export function buildDataset(
     written.set(id, { file: fileName(id), bytes: JSON.stringify(slice).length, project: slice })
   }
   const dips = { dips: 0, underZone: 0, withoutZone: 0 }
+  let bytes = 0
+  let platformBytes = 0
+  for (const { bytes: size, project } of written.values()) {
+    bytes += size
+    if (project.platforms) platformBytes += JSON.stringify(project.platforms).length + ',"platforms":'.length
+  }
+  const platformed = new Set([...net.platforms.values()].map((platform) => platform.stationId))
+  const stationsWithoutPlatform = [...net.stations.values()].filter((station) => !platformed.has(station.id)).map((station) => station.name).sort((a, b) => a.localeCompare(b, 'fr'))
   for (const project of files.values()) {
     const found = speedDips(project)
     dips.dips += found.dips
@@ -122,6 +137,10 @@ export function buildDataset(
       lengthWithoutSpeedKm: result.report.lengthWithoutSpeedKm,
       slowUnderSpeedKm: result.report.slowUnderSpeedKm ?? 0,
       speedDips: dips,
+      platforms: result.report.platforms ?? null,
+      stationsWithoutPlatform,
+      bytes,
+      platformBytes,
     },
   }
 }
@@ -172,12 +191,14 @@ export async function main(argv: string[]): Promise<number> {
   const manifest = readManifest()
   const registry = readStationRegistry(JSON.parse(readFileSync(REGISTRY_FILE, 'utf8')))
   const servers = [...OVERPASS_SERVERS, 'https://overpass.kumi.systems/api/interpreter']
-  const fetched = await fetchAll(manifest, CACHE_DIR, {
+  const fetched = await fetchAll(manifest, process.env.LGV_CACHE_DIR ?? CACHE_DIR, {
     offline,
+    // `--no-platforms`: without them, a cache made before them serves whole
+    platforms: !argv.includes('--no-platforms'),
     log,
     ask: (query) => askOverpass(query, { servers, rounds: 2, pauseMs: 20_000, timeoutMs: 240_000 }),
   })
-  log(`${fetched.tiles} tiles, ${fetched.asked} queries sent, ${fetched.merged.elements.length} elements merged`)
+  log(`${fetched.tiles} tiles, ${fetched.platformTiles} tiles of platforms, ${fetched.asked} queries sent, ${fetched.merged.elements.length} elements merged`)
 
   const built = buildDataset(fetched.merged, manifest, registry, fetched.approachWays, new Date(), fetched.regionWays)
   const r = built.report
@@ -186,6 +207,12 @@ export async function main(argv: string[]): Promise<number> {
   log(`${r.unlistedHighSpeedWays} high-speed ways in no listed relation (taken from a neighbour, else « autres »)`)
 
   log(`speeds: ${r.lengthWithoutSpeedKm.toFixed(1)} km of main track without maxspeed, ${r.slowUnderSpeedKm.toFixed(2)} km laid slower than its maxspeed; ${r.speedDips.dips} rails well under both their neighbours (${r.speedDips.underZone} under a zone, ${r.speedDips.withoutZone} under none)`)
+  if (r.platforms) {
+    const p = r.platforms
+    const skipped = Object.entries(p.skipped).map(([why, count]) => `${count} ${why}`).join(', ')
+    log(`platforms: ${p.found} read, ${p.placed} laid (${p.islands} islands)${skipped ? `, left out: ${skipped}` : ''}; ${(r.platformBytes / 1024).toFixed(0)} KiB of ${(r.bytes / 1048576).toFixed(2)} MiB of line files`)
+  }
+  log(`${r.stationsWithoutPlatform.length} of ${r.stations} stations without a platform${r.stationsWithoutPlatform.length > 0 ? `: ${r.stationsWithoutPlatform.slice(0, 40).join(', ')}${r.stationsWithoutPlatform.length > 40 ? '…' : ''}` : ''}`)
   // `--dry`: the figures only, nothing written
   if (argv.includes('--dry')) return 0
 

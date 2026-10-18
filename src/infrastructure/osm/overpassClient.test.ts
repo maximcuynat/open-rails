@@ -54,11 +54,14 @@ async function failure(promise: Promise<unknown>): Promise<OsmError> {
 }
 
 describe('the Overpass query', () => {
-  it('asks for the tracks and the stations around a point, then the nodes of the tracks, in one output', () => {
+  it('asks for the tracks, the stations and the platforms around a point, then the nodes of the tracks, in one output', () => {
     expect(buildOverpassQuery(AREA, { extraKinds: [], disused: false })).toBe(
       [
         '[out:json][timeout:60];',
-        '(way[railway~"^(rail)$"](around:2000,48.8443,2.3744);node[railway~"^(station|halt)$"](around:2000,48.8443,2.3744););',
+        '(way[railway~"^(rail)$"](around:2000,48.8443,2.3744);node[railway~"^(station|halt)$"](around:2000,48.8443,2.3744);' +
+          'way[railway=platform][subway!=yes][tram!=yes][light_rail!=yes](around:2000,48.8443,2.3744);' +
+          'way[public_transport=platform][train=yes](around:2000,48.8443,2.3744);' +
+          'rel[railway=platform][type=multipolygon](around:2000,48.8443,2.3744););',
         '(._;>;);',
         'out body qt;',
       ].join('\n'),
@@ -80,9 +83,11 @@ describe('the Overpass query', () => {
     expect(query).toContain('way[railway~"^(rail)$"](44.79,5.59,44.86,5.67);')
   })
 
-  it('never asks for tracks under construction, nor for relations', () => {
+  it('never asks for tracks under construction, nor for a relation but the outline of a platform', () => {
     const query = buildOverpassQuery(AREA)
-    expect(query).not.toMatch(/construction|proposed|razed|rel/)
+    expect(query).not.toMatch(/construction|proposed|razed/)
+    expect(query.match(/rel/g)).toEqual(['rel'])
+    expect(query).toContain('rel[railway=platform][type=multipolygon]')
   })
 
   it('rounds the radius to the metre and the position to the precision of the data', () => {

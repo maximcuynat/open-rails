@@ -9,6 +9,7 @@ import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
 import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
 import { createTrackPlacer } from './osmPlace'
 import { countStations, layStations } from './osmStations'
+import { layOsmPlatforms } from './osmPlatforms'
 import { buildChains, buildGraph, chainEnds, components, restrictGraph, type Chain, type TrackGraph } from './osmGraph'
 import { findChainCrossings, type ChainCrossing } from './osmCrossings'
 import { planLevels, separateStructures, trackAt } from './osmLevels'
@@ -347,6 +348,11 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     const stations = layStations({ net, read, graph, project, placer })
     report.stations = stations.report
     issues.push(...stations.issues)
+    if (options.platforms !== false) {
+      const platforms = layOsmPlatforms({ net, outlines: read.platforms, nodes: read.nodes, project, placer })
+      report.platforms = platforms.report
+      issues.push(...platforms.issues)
+    }
   }
 
   const result: OsmImportResult = { network: net, highSpeed, origin, frame, report }

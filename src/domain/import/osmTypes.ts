@@ -61,6 +61,8 @@ export interface OsmImportOptions {
   signals?: OsmSignalMode
   /** Read the stations and the stop positions into stations with their platform tracks. On when absent. */
   stations?: boolean
+  /** Lay the platforms the data draws (`railway=platform`) along their tracks, with the stations. On when absent. */
+  platforms?: boolean
   /** Remember the OpenStreetMap way each rail was laid from (`OsmImportResult.wayOfRail`). Off when absent. */
   traceWays?: boolean
   /**
@@ -118,6 +120,7 @@ export interface OsmImportIssue {
     | 'cut-by-area' // a track end that is the edge of the imported area, not a buffer stop
     | 'signal-not-placed' // a real signal the import reads but could not lay
     | 'station-not-placed' // a station with no track near enough to stand at
+    | 'platform-not-placed' // a platform along the track with no station near enough to belong to
   /** World position, metres. */
   x: number
   y: number
@@ -185,6 +188,22 @@ export interface OsmStationReport {
   skipped: Partial<Record<OsmStationSkip, number>>
 }
 
+/** Why a platform the data draws was not laid */
+export type OsmPlatformSkip =
+  | 'no-track' // no track of the heavy rail kept runs along it
+  | 'no-station' // no station within reach to belong to
+  | 'duplicate' // the same platform drawn twice (an area and a line)
+  | 'uncovered-stops' // its station has stops no platform of the data covers: it keeps them, without platforms
+
+export interface OsmPlatformReport {
+  /** Platforms of the heavy rail the data draws */
+  found: number
+  /** Platforms laid, and how many of them are islands (between two tracks) */
+  placed: number
+  islands: number
+  skipped: Partial<Record<OsmPlatformSkip, number>>
+}
+
 export interface OsmImportReport {
   nodes: number
   rails: number
@@ -212,6 +231,8 @@ export interface OsmImportReport {
   signals?: OsmSignalReport
   /** What the import did about the stations; absent when they were not asked for */
   stations?: OsmStationReport
+  /** What the import did about the platforms; absent when they were not asked for */
+  platforms?: OsmPlatformReport
   issues: OsmImportIssue[]
 }
 

@@ -1,6 +1,7 @@
 import type { OsmExtraTrackKind, OsmImportOptions, OverpassElement, OverpassResponse } from './osmTypes'
 import { MAX_LEVEL, MIN_LEVEL } from '../models/network'
 import { MIN_ZONE_SPEED, SPEED_ZONE_STEP } from '../models/speedZones'
+import { readPlatformOutlines, type OsmPlatformOutline } from './osmPlatforms'
 
 // Reading of an Overpass answer: which elements are tracks, and what their tags say. Everything
 // here is tolerant: a missing tag, an unknown value or a malformed element is skipped, never thrown.
@@ -54,6 +55,8 @@ export interface OsmRead {
   allTracks: OsmTrack[]
   /** The tracks the options keep */
   tracks: OsmTrack[]
+  /** The platforms of the heavy rail the answer draws (ways and multipolygons), whatever the options */
+  platforms: OsmPlatformOutline[]
 }
 
 const EXTRA_KINDS: readonly OsmExtraTrackKind[] = ['light_rail', 'subway', 'tram', 'narrow_gauge']
@@ -222,5 +225,10 @@ export function readOsm(data: OverpassResponse, options: OsmImportOptions): OsmR
     flush(false)
   }
 
-  return { nodes, allTracks, tracks: allTracks.filter((track) => keeps(options, track.kind, track.service)) }
+  return {
+    nodes,
+    allTracks,
+    tracks: allTracks.filter((track) => keeps(options, track.kind, track.service)),
+    platforms: readPlatformOutlines(elements, nodes),
+  }
 }
