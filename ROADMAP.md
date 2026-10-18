@@ -331,8 +331,8 @@ tests et dans un navigateur sans écran. La liste à passer à la main est dans
 Le détail et les cases à cocher sont dans `tasks/plan-jeu-conduite.md`.
 
 1. **Essai à la main** de tout le programme, et correction de ce qu'il fait remonter.
-2. **Finitions des modes de jeu** : boutons ⏹ et ✕ qui disent encore « quitter » sur un réseau
-   réel, pupitre téléphone qui ignore la pause, composition pour un train posé au clic.
+2. **Finitions des modes de jeu** : composition pour un train posé au clic (les boutons
+   « quitter » d'un réseau réel et la pause au pupitre téléphone sont faits).
 3. **Voie unique** : la commiter, puis une place à l'arrivée dans l'évitement, et le cas sans signaux.
 4. **Lignes classiques, une région par lot** : Auvergne-Rhône-Alpes d'abord (elle relie Lyon, la
    LGV Rhône-Alpes et PACA), puis l'Île-de-France, puis les autres. L'essai de toute la France

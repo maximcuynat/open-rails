@@ -112,7 +112,7 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 ### Modes de jeu, finitions
 
 - [x] **J1** — Sur un réseau réel, les boutons ⏹ (barre d'outils) et ✕ (console) disaient « quitter » et mettaient en pause : retirés (QA du 2026-10-16)
-- [ ] **J2** — Dire la pause au pupitre téléphone (champ à ajouter à `ConsoleState` et à `protocol.ts`)
+- [x] **J2** — Dire la pause au pupitre téléphone : `ConsoleState.paused`, validé dans `protocol.ts`, avis « En pause » sur le pupitre
 - [ ] **J3** — Un train laissé en marche dont la voie est modifiée en édition : le remettre à l'arrêt
 - [ ] **J4** — Après un rechargement : temps d'arrêt en gare du pilote, train déraillé ou en survitesse
 
@@ -121,7 +121,7 @@ convertir région par région et réunir les résultats. La Corse est en voie m�
 - [ ] **U1** — Une place à l'arrivée : ne s'engager vers un évitement que s'il y restera une voie libre
 - [ ] **U2** — Réseau sans signaux : le pilote ne sait pas se protéger seul
 - [ ] **U3** — Nice – Breil, Cannes – Grasse
-- [ ] **U4** — Train parti de Château-Arnoux qui n'a gardé que Sisteron dans son itinéraire, sans message
+- [x] **U4** — Train parti de Château-Arnoux qui n'a gardé que Sisteron dans son itinéraire : changer de cabine remplace le train dans le store, les étapes suivantes allaient à l'ancien objet. `addItineraryStop` / `removeItineraryStop` reprennent le train par son id ; l'essai arrive à Serres en 2 406 s
 
 ### Pilote automatique, suites
 

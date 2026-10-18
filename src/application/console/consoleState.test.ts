@@ -47,6 +47,18 @@ describe('console state', () => {
     expect(buildConsoleState(store)).toBeNull()
   })
 
+  it('says the game is paused, and the phone reads it too', () => {
+    const store = makeDrivingStore()
+    expect(buildConsoleState(store)!.paused).toBeUndefined()
+    store.setPaused(true)
+    const state = buildConsoleState(store)!
+    expect(state.paused).toBe(true)
+    const read = decodeMessage(encodeMessage({ t: 'state', state, ack: 0 }))
+    expect(read.ok && read.message.t === 'state' ? read.message.state?.paused : null).toBe(true)
+    store.setPaused(false)
+    expect(buildConsoleState(store)!.paused).toBeUndefined()
+  })
+
   it('shows a train that starts at rest with its brake applied', () => {
     const store = makeDrivingStore()
     const state = buildConsoleState(store)!

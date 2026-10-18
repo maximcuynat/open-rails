@@ -500,6 +500,10 @@ function readState(value: unknown): ConsoleState | null {
     if (typeof v.autopilot !== 'boolean') return null
     state.autopilot = v.autopilot
   }
+  if (v.paused !== undefined) {
+    if (typeof v.paused !== 'boolean') return null
+    state.paused = v.paused
+  }
   return state
 }
 

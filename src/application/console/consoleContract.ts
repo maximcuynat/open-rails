@@ -161,6 +161,8 @@ export interface ConsoleState {
   route?: ConsoleRoute
   /** True while the automatic pilot holds the handles; absent from an older PC */
   autopilot?: boolean
+  /** True while the time of the game is stopped; absent from an older PC */
+  paused?: boolean
 }
 
 /** The itinerary of the driven train, as its driver needs it */

@@ -44,6 +44,11 @@ export function TwoThumbDesk({ state, fleet, canSwitchCab, cut, bar, onCommand }
           <span className="console-lbl">{trainTitle(state, fleet)}</span>
           <span className="console-lbl">{view.composition}</span>
         </div>
+        {state.paused && (
+          <p className="phone-paused" role="status">
+            <b>⏸ En pause</b> — les trains restent comme ils sont
+          </p>
+        )}
         <div className="phone-info-row">
           <div className="phone-speed-num">
             <div className={`phone-speed-value speed-${view.speedTone}`}>{view.kmh}</div>

@@ -126,6 +126,7 @@ describe('protocol: round trip', () => {
       { t: 'state', state: null, ack: 0 },
       { t: 'state', state: { ...STATE, trainId: null, brake: null, legacyThrottle: -1 }, ack: 3 },
       { t: 'state', state: { ...STATE, stoppingDistance: null }, ack: 3 },
+      { t: 'state', state: { ...STATE, autopilot: true, paused: true }, ack: 3 },
       { t: 'state', state: { ...STATE, upcomingTurnout: { distance: 240.5, side: 'left', locked: false } }, ack: 3 },
       { t: 'state', state: { ...STATE, upcomingTurnout: { distance: 0, side: null, locked: true }, canSwitchCab: true }, ack: 3 },
       { t: 'state', state: { ...STATE, guidance: { speedLimit: 160, nextLimit: null, curve: 'ok', derailed: null } }, ack: 3 },
@@ -348,6 +349,8 @@ describe('protocol: rejection', () => {
     expect(state({ upcomingTurnout: { ...turnout, locked: 1 } })).toEqual(malformed)
     expect(state({ canSwitchCab: undefined })).toEqual(malformed)
     expect(state({ canSwitchCab: 'yes' })).toEqual(malformed)
+    expect(state({ paused: 1 })).toEqual(malformed)
+    expect(state({ paused: null })).toEqual(malformed)
     expect(decode({ t: 'state', state: STATE })).toEqual(malformed)
     expect(decode({ t: 'state', ack: 0 })).toEqual(malformed)
     expect(decode({ t: 'state', ack: 0, state: [] })).toEqual(malformed)

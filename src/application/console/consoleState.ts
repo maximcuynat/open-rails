@@ -266,6 +266,7 @@ export function buildTrainConsoleState(store: EditorStore, train: TrainSet): Con
   const route = consoleRoute(store, train)
   if (route) state.route = route
   if (store.autopilots.has(train.id)) state.autopilot = true
+  if (store.isPaused) state.paused = true
   return state
 }
 
