@@ -4,7 +4,8 @@ import type { Camera } from '@infrastructure/render/camera'
 export type { Selection } from '@domain/models/types'
 import type { Network, Point, Selection, RailNode, Segment, NodeId } from '@domain/models/types'
 import { bezierNormal, bezierPoint, bezierTangent, curveLength, curveSamples, discretizeCurve } from '@domain/geometry/curve'
-import { leaveVectorOnShape, pointOnShape, segmentEnds, segmentShapeLength, shapeBoundsMeet, shapePieces, tangentOnShape, type SegmentEnds } from '@domain/geometry/segmentGeometry'
+import { closestParamOnShape, leaveVectorOnShape, pointOnShape, segmentEnds, segmentShapeLength, shapeBoundsMeet, shapeLengthBetween, shapePieces, tangentOnShape, type SegmentEnds } from '@domain/geometry/segmentGeometry'
+import { segmentEndLevels } from '@domain/models/network'
 import { lineLineIntersection, type DiamondCrossing } from '@domain/models/crossing'
 import { segmentTangentAt } from '@domain/geometry/tangent'
 import { isRenamedSection, type SectionMetadata, type TrackSection } from '@domain/models/sections'
@@ -44,6 +45,7 @@ import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } 
 import {
   deckAbutments,
   groupPiecesByLevel,
+  heightBand,
   nodeJointBand,
   segmentLevelPieces,
   trackPositionBand,
@@ -627,6 +629,103 @@ export function vehicleLevel(
   return level
 }
 
+/**
+ * How far beyond the ends of a vehicle (m) a track crossing over it is looked for: a body meets a
+ * deck that crosses its track at a slant before the track under it does
+ */
+const OVER_REACH = 3
+/**
+ * The track under a vehicle is looked at this often (m) for a deck crossing it: less than the width
+ * of a deck, so that a deck passing between two looks still comes within half a deck of one
+ */
+const OVER_STEP = 2
+
+/** Drawing level of each vehicle where it last stood, kept until it moves or the network changes */
+const vehicleDrawLevels = new WeakMap<object, { token: number; key: string; level: number }>()
+
+/**
+ * Level of the pass a vehicle is drawn in (see `renderNetworkWithTrains`): over everything — the
+ * last pass, `Infinity` — unless a track of a higher level passes over the track under it, and only
+ * then with its own level (`vehicleLevel`), under that bridge.
+ *
+ * A level's drawing reaches beyond its rails: the round ends of the rails in the plain driving
+ * view, the wing walls of an abutment — those of the next track on a double-track bridge too. Drawn
+ * with the ground, a vehicle at the foot of a bridge went partly under them until it reached the
+ * deck; it now stays on top of the track it runs on, and a bridge alone covers it.
+ */
+export function vehicleDrawLevel(
+  net: Network,
+  vehicle: { front: TrackPosition; rear: TrackPosition },
+  extent: VehicleExtent,
+): number {
+  const level = vehicleLevel(net, vehicle, extent)
+  if (vehicle.front.forward === undefined || !hasLevels(net)) return level
+  const { front, rear } = vehicle
+  const token = networkCheckToken(net)
+  const key = `${front.segId}|${front.t}|${rear.segId}|${rear.t}|${level}`
+  const known = vehicleDrawLevels.get(vehicle)
+  if (token !== undefined && known && known.token === token && known.key === key) return known.level
+  const drawLevel = trackPassedOver(net, vehicle, extent, level) ? level : Infinity
+  if (token !== undefined) vehicleDrawLevels.set(vehicle, { token, key, level: drawLevel })
+  return drawLevel
+}
+
+/** Where a bogie stands, in the world; null when its rail is gone */
+function trackPoint(net: Network, pos: TrackPosition): Point | null {
+  const seg = net.segments.get(pos.segId)
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? pointOnShape(ends, pos.t) : null
+}
+
+/**
+ * Whether a rail of a level above `level` — not one of the track the vehicle runs on — comes within
+ * half a deck of that track, from `OVER_REACH` ahead of its nose to as far behind its tail: a bridge
+ * over it. The track next to it on a double-track bridge stays further away.
+ */
+function trackPassedOver(net: Network, vehicle: { front: TrackPosition; rear: TrackPosition }, extent: VehicleExtent, level: number): boolean {
+  const { front } = vehicle
+  const halfDeck = DECK_WIDTH / 2
+  // The rails of a higher level around the vehicle, found once on the grid of the network: on most
+  // of a line there are none, and nothing more is looked at
+  const a = trackPoint(net, front)
+  const b = trackPoint(net, vehicle.rear)
+  if (!a || !b) return false
+  const margin = Math.max(extent.front, extent.rear) + OVER_REACH + halfDeck
+  const higher: { seg: Segment; ends: SegmentEnds }[] = []
+  const around = { minX: Math.min(a.x, b.x) - margin, minY: Math.min(a.y, b.y) - margin, maxX: Math.max(a.x, b.x) + margin, maxY: Math.max(a.y, b.y) + margin }
+  for (const seg of railsInBox(net, around)) {
+    const heights = segmentEndLevels(net, seg)
+    if (heightBand(Math.max(heights.from, heights.to)) <= level) continue
+    const ends = segmentEnds(net, seg)
+    if (ends) higher.push({ seg, ends })
+  }
+  if (higher.length === 0) return false
+
+  // The track under the vehicle and beyond its ends, looked at every `OVER_STEP`
+  const trace: WalkTrace = { spans: [], nodes: [] }
+  walkForward(net, front.segId, front.t, front.forward, extent.front + OVER_REACH, { trace })
+  walkBackward(net, front.segId, front.t, front.forward, extent.wheelbase + extent.rear + OVER_REACH, { trace })
+  const own = new Set<string>()
+  const looks: Point[] = []
+  for (const span of trace.spans) {
+    own.add(span.segId)
+    const seg = net.segments.get(span.segId)
+    const ends = seg && segmentEnds(net, seg)
+    if (!ends) continue
+    const steps = Math.max(1, Math.ceil(shapeLengthBetween(ends, Math.min(span.t0, span.t1), Math.max(span.t0, span.t1)) / OVER_STEP))
+    for (let k = 0; k <= steps; k++) looks.push(pointOnShape(ends, span.t0 + ((span.t1 - span.t0) * k) / steps))
+  }
+  for (const { seg, ends } of higher) {
+    if (own.has(seg.id)) continue
+    for (const p of looks) {
+      const t = closestParamOnShape(ends, p)
+      const q = pointOnShape(ends, t)
+      if (Math.hypot(q.x - p.x, q.y - p.y) < halfDeck && trackPositionBand(net, { segId: seg.id, t }) > level) return true
+    }
+  }
+  return false
+}
+
 /** The rails in view (`isSegmentInBounds`), in the order of the network, found on its grid */
 function segmentsInBounds(net: Network, bounds: ViewportBounds): Segment[] {
   return railsInBox(net, bounds)
@@ -780,8 +879,10 @@ export function renderBridgeDecks(
  * The network and the trains together. On a single visible level this is what it always was:
  * the whole network, `drawOverTracks`, then the trains on top. As soon as two levels are in
  * view the drawing is interleaved, lowest level first — the rails of a level, then the vehicles
- * standing on it — so that a train passing under a bridge is hidden by its deck; the overlays of
- * the network (badges, signs, nodes, diagnostics) and `drawOverTracks` then come once, last.
+ * drawn in its pass — so that a train passing under a bridge is hidden by its deck. Once the rails
+ * of the last level are drawn come the overlays of the network (badges, signs, nodes, diagnostics)
+ * and `drawOverTracks`, then the vehicles of the last pass — every one that no bridge passes over
+ * (`vehicleDrawLevel`): on top of the track as on a single level.
  */
 export function renderNetworkWithTrains(
   ctx: CanvasRenderingContext2D,
@@ -805,14 +906,17 @@ export function renderNetworkWithTrains(
   }
   levels.forEach((level, i) => {
     renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'tracks', level })
+    const last = i === levels.length - 1
+    if (last) {
+      renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'overlays' })
+      drawOverTracks?.()
+    }
     // The outer bands are open-ended: a vehicle whose own rail is out of view is still drawn
     drawTrains({
       above: i === 0 ? -Infinity : levels[i - 1],
-      upTo: i === levels.length - 1 ? Infinity : level,
+      upTo: last ? Infinity : level,
     })
   })
-  renderNetwork(ctx, cam, vw, vh, net, selection, sectionMeta, { ...options, part: 'overlays' })
-  drawOverTracks?.()
 }
 
 export function renderNetwork(
@@ -2812,7 +2916,7 @@ export function renderBufferStop(
 
 // ─────────────────── Locomotive Rendering ───────────────────
 
-import type { Locomotive, TrackPosition } from '@domain/models/locomotive'
+import type { Locomotive, TrackPosition, WalkTrace } from '@domain/models/locomotive'
 import {
   getFullTGVTrain,
   getTrackCurvatureAt,
@@ -4824,40 +4928,58 @@ export function renderTrainSet(
     ctx.globalAlpha = 0.45
   }
 
-  // Track level of each vehicle, and of the train as a whole (its highest vehicle)
-  const levelById = new Map<string, number>()
-  let topLevel = -Infinity
+  // Each vehicle: the level of the track under it (`depth`: below ground it is dimmed) and the pass
+  // it is drawn in (`vehicleDrawLevel`: the last one, over every track, unless a bridge passes over
+  // it). The train as a whole goes with its highest vehicle.
+  const depthById = new Map<string, number>()
+  const passById = new Map<string, number>()
+  let topDepth = -Infinity
+  let topPass = -Infinity
   train.vehicles.forEach((veh, i) => {
-    const level = vehicleLevel(net, veh, {
+    const extent = {
       front: endOverhang(train.vehicles, i, 'front'),
       rear: endOverhang(train.vehicles, i, 'rear'),
       wheelbase: bogieDistance(veh),
-    })
-    levelById.set(veh.id, level)
-    if (level > topLevel) topLevel = level
+    }
+    const pass = vehicleDrawLevel(net, veh, extent)
+    const depth = vehicleLevel(net, veh, extent)
+    depthById.set(veh.id, depth)
+    passById.set(veh.id, pass)
+    if (depth > topDepth) topDepth = depth
+    if (pass > topPass) topPass = pass
   })
-  const levelOf = (vehicleId: string): number => levelById.get(vehicleId) ?? 0
+  const depthOf = (vehicleId: string): number => depthById.get(vehicleId) ?? 0
+  const levelOf = (vehicleId: string): number => passById.get(vehicleId) ?? 0
   // A bogie goes with the body it carries: the level of its vehicle (the higher of the two that
   // share it), which reaches a bridge before the bogie does — its own rail would have it drawn
   // under the deck while the body above it is already drawn over
-  const levelOfBogieAt = new Map<string, number>()
+  const bogieAt = new Map<string, { depth: number; pass: number }>()
   for (const veh of train.vehicles) {
     for (const pos of [veh.front, veh.rear]) {
       const key = `${pos.segId}|${pos.t}`
-      levelOfBogieAt.set(key, Math.max(levelOfBogieAt.get(key) ?? -Infinity, levelOf(veh.id)))
+      const known = bogieAt.get(key)
+      bogieAt.set(key, {
+        depth: Math.max(known?.depth ?? -Infinity, depthOf(veh.id)),
+        pass: Math.max(known?.pass ?? -Infinity, levelOf(veh.id)),
+      })
     }
   }
-  const bogieLevel = (pos: { segId: string; t: number } | null | undefined): number =>
-    pos ? Math.max(trackPositionLevel(net, pos), levelOfBogieAt.get(`${pos.segId}|${pos.t}`) ?? -Infinity) : topLevel
+  const bogieLevel = (pos: { segId: string; t: number } | null | undefined, of: 'depth' | 'pass'): number =>
+    pos
+      ? Math.max(trackPositionLevel(net, pos), bogieAt.get(`${pos.segId}|${pos.t}`)?.[of] ?? -Infinity)
+      : of === 'depth' ? topDepth : topPass
   // A gangway hangs between two vehicles: it follows the higher one
-  const gangwayLevel = (index: number): number =>
+  const gangwayLevel = (index: number, levelOfVehicle: (vehicleId: string) => number, top: number): number =>
     visuals.accordions.length === train.vehicles.length - 1
-      ? Math.max(levelOf(train.vehicles[index].id), levelOf(train.vehicles[index + 1].id))
-      : topLevel
-  /** Draw a part standing on `level`: skipped outside the band of this pass, dimmed in a tunnel */
-  const atLevel = (level: number, draw: () => void): void => {
+      ? Math.max(levelOfVehicle(train.vehicles[index].id), levelOfVehicle(train.vehicles[index + 1].id))
+      : top
+  /**
+   * Draw a part in the pass of `level`: skipped outside the band of this pass, dimmed when the
+   * track under it (`depth`) is below ground
+   */
+  const atLevel = (level: number, draw: () => void, depth = level): void => {
     if (!inLevelBand(level, band)) return
-    if (level >= 0) {
+    if (depth >= 0) {
       draw()
       return
     }
@@ -4871,7 +4993,7 @@ export function renderTrainSet(
   if (lod === 'schematic') {
     drawTrainMarker(
       ctx, toSx, toSy,
-      visuals.bogies.map(b => ({ pos: b.center, level: b.pos ? trackPositionLevel(net, b.pos) : topLevel })),
+      visuals.bogies.map(b => ({ pos: b.center, level: b.pos ? trackPositionLevel(net, b.pos) : topDepth })),
       trainMarkerStyle(ctx, isSelected && !isGhost, !!deleteVehicleId && !isGhost),
       atLevel,
     )
@@ -4952,18 +5074,18 @@ export function renderTrainSet(
   for (let i = 0; i < visuals.bogies.length; i++) {
     const bogie = visuals.bogies[i]
     if (tier !== 'detail' || !inView(bogie.polygon)) continue
-    atLevel(bogieLevel(bogie.pos), () => {
+    atLevel(bogieLevel(bogie.pos, 'pass'), () => {
       drawTrainSetBogie(ctx, cam, toSx, toSy, bogie, i === 0, isGhost)
-    })
+    }, bogieLevel(bogie.pos, 'depth'))
   }
 
   // 2. Accordions
   for (let i = 0; i < visuals.accordions.length; i++) {
     const acc = visuals.accordions[i]
     if (lod !== 'detail' || !inView([...acc.frontFrame, ...acc.rearFrame])) continue
-    atLevel(gangwayLevel(i), () => {
+    atLevel(gangwayLevel(i, levelOf, topPass), () => {
       drawTrainSetAccordion(ctx, cam, toSx, toSy, visuals.accordions[i], isGhost)
-    })
+    }, gangwayLevel(i, depthOf, topDepth))
   }
 
   // 3. Vehicles
@@ -4975,7 +5097,7 @@ export function renderTrainSet(
       if (v.roof && v.lying) drawTrainSetFlank(ctx, cam, toSx, toSy, v.roof, isGhost)
       else if (v.roof && v.flank && v.flank.length > 0) drawTrainSetFlank(ctx, cam, toSx, toSy, v.flank, isGhost)
       if (!v.lying) drawTrainSetBody(ctx, cam, toSx, toSy, v.roof ?? v.polygon, isDebugSkeleton, telemetry)
-    })
+    }, depthOf(v.id))
   }
 
   // The whole train first, the picked vehicle over it: the order they have under upright bodies
@@ -5031,7 +5153,7 @@ export function renderTrainSet(
   }
 
   // 4. Debug skeleton
-  if (isDebugSkeleton && inLevelBand(topLevel, band)) {
+  if (isDebugSkeleton && inLevelBand(topPass, band)) {
     ctx.save()
     const fontSize = Math.max(8.5, Math.min(10.5, 9.5 * Math.sqrt(cam.scale)))
     ctx.font = `600 ${fontSize}px Archivo, system-ui, sans-serif`
