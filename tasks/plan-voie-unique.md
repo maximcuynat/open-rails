@@ -71,7 +71,8 @@ paires tous les 1 600 m environ.
   renvoyaient l'aiguille. La parade ne regardait que le rail voisin de l'aiguille, or les rails
   importés font 60 m : elle suit maintenant la voie jusqu'à la prochaine aiguille (4 km au plus).
 - À voir : dans le dernier essai, le train parti de Château-Arnoux n'a gardé que Sisteron dans
-  son itinéraire (Laragne et Serres n'y sont pas entrés, sans message). Non cherché.
+  son itinéraire (Laragne et Serres n'y sont pas entrés, sans message). Corrigé (U4 de
+  `plan-jeu-conduite.md`) : les étapes allaient au train d'avant le changement de cabine.
 
 ## Reste
 

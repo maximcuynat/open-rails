@@ -110,6 +110,14 @@ export function trainAbility(train: TrainSet): TrainAbility {
   return { maxKmh: consistMaxSpeed(train.vehicles) * 3.6, cabSignalling: train.vehicles.every((veh) => stockSpec(veh).cabSignalling) }
 }
 
+/**
+ * The train as the store has it now: changing ends (`faceTheWay`) replaces it, and whoever held
+ * the one before would write its stops where nothing reads them.
+ */
+function liveTrain(store: EditorStore, train: TrainSet): TrainSet | undefined {
+  return store.trains.find((t) => t.id === train.id)
+}
+
 function leadPoint(store: EditorStore, train: TrainSet): Point | null {
   const lead = train.vehicles[0]
   return lead ? positionOnSegment(store.network, lead.front.segId, lead.front.t) : null
@@ -119,7 +127,9 @@ function leadPoint(store: EditorStore, train: TrainSet): Point | null {
  * Add a station to the itinerary of a train, where it lengthens the journey least. Returns why
  * not, in French, when the lines of the dataset do not join it to its neighbours; null when done.
  */
-export function addItineraryStop(store: EditorStore, train: TrainSet, stationId: StationId): string | null {
+export function addItineraryStop(store: EditorStore, held: TrainSet, stationId: StationId): string | null {
+  const train = liveTrain(store, held)
+  if (!train) return 'Ce train n’est plus sur la voie.'
   const refs = stationRefs(store)
   const added = refs.get(stationId)
   const from = leadPoint(store, train)
@@ -162,8 +172,9 @@ function faceTheWay(store: EditorStore, train: TrainSet): void {
 }
 
 /** Take a station ahead out of the itinerary of a train (`index` in its list of stations) */
-export function removeItineraryStop(store: EditorStore, train: TrainSet, index: number): void {
-  if (!train.itinerary) return
+export function removeItineraryStop(store: EditorStore, held: TrainSet, index: number): void {
+  const train = liveTrain(store, held)
+  if (!train?.itinerary) return
   const itinerary = withoutStop(train.itinerary, index)
   if (itinerary === train.itinerary) return
   train.itinerary = itinerary

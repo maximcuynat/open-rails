@@ -153,6 +153,18 @@ describe('a train sent the way it does not face', () => {
     expect(store.trains).toHaveLength(1)
   })
 
+  it('takes the next stops on the train turned round, not on the one held before', async () => {
+    const { store } = await facingAway('full')
+    // Changing ends replaces the train in the store: whoever held it keeps the one before
+    const held = store.trains[0]
+    expect(addItineraryStop(store, held, 's1')).toBeNull()
+    expect(store.trains[0]).not.toBe(held)
+    removeItineraryStop(store, held, 1)
+    expect(store.trains[0].itinerary).toEqual({ stations: ['s2'], next: 1 })
+    expect(addItineraryStop(store, held, 's1')).toBeNull()
+    expect(store.trains[0].itinerary).toEqual({ stations: ['s2', 's1'], next: 1 })
+  })
+
   it('is left as it is under guidance: the driver is told to change ends', async () => {
     const { store, headX, east } = await facingAway('guide')
     addItineraryStop(store, store.trains[0], 's1')
