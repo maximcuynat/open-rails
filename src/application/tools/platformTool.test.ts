@@ -52,7 +52,7 @@ describe('the platform tool', () => {
     expect(store.network.stations.size).toBe(0)
   })
 
-  it.skip('undo takes the platform back (waits for the platforms in the saved project, lot Q0)', () => {
+  it('undo takes the platform back, redo lays it again', () => {
     const store = storeWithTrack()
     clickPlatformTool(store, { x: 20, y: -4 })
     clickPlatformTool(store, { x: 220, y: -4 })

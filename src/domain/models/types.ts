@@ -176,7 +176,7 @@ export interface StationStop {
 
 /**
  * A railway station: a name, a place, and the rails trains stop at (its platform tracks). Laid by
- * the OpenStreetMap import, read by the canvas and the panels; nothing edits one yet. It names
+ * the OpenStreetMap import or made in the editor; with platforms, its stops come from their markers. It names
  * rails, so the domain keeps its stops in place when a rail is cut or merged and drops them with
  * the rail (see `replaceRail`). Change it only through the helpers of `models/stations.ts`.
  */

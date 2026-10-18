@@ -15,7 +15,31 @@ import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geom
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
 import { cleanStations, stationAt } from '@domain/models/stations'
-import { settlePlatforms } from '@domain/models/platforms'
+import { setStationIdentity } from '@domain/models/stations'
+import {
+  addMarker,
+  createStation,
+  moveEdgeEnd,
+  moveMarker,
+  moveStationLabel,
+  MIN_PLATFORM_LENGTH,
+  platformAt,
+  platformCentre,
+  platformEndAt,
+  platformMarkerAt,
+  platformShape,
+  removeMarker,
+  restorePlatformShape,
+  setMarkerOptions,
+  setPlatformRef,
+  setPlatformStation,
+  setPlatformWidth,
+  type PlatformEnd,
+  type PlatformMarkerHit,
+  type PlatformShape,
+} from '@domain/models/platformEdit'
+import { edgeLength, platformDimensions, removePlatform, settlePlatforms, type PlatformDimensions } from '@domain/models/platforms'
+import type { Platform, StopMarker } from '@domain/models/types'
 import {
   addSignal,
   addSignalPair,
@@ -218,6 +242,17 @@ export const SPEED_ZONE_OVERLAP = 'Cette zone en chevauche une autre : la limite
 
 /** What a click of the speed limit tool did */
 export type SpeedZoneClick = 'started' | 'placed' | 'off-track' | 'no-path' | 'refused'
+
+/** What the selection tool drags of a platform: one of its ends, or one of its stop markers */
+export type PlatformDrag =
+  | ({ kind: 'end'; origin: PlatformShape } & PlatformEnd)
+  | ({ kind: 'marker'; origin: PlatformShape } & PlatformMarkerHit)
+
+/** What the selection tool finds of a platform under the cursor, the handles before the body */
+export type PlatformHit =
+  | ({ kind: 'end' } & PlatformEnd)
+  | ({ kind: 'marker' } & PlatformMarkerHit)
+  | { kind: 'body'; platformId: string }
 
 export type TrackMode = 'catalog' | 'freeform'
 
@@ -749,6 +784,14 @@ export class EditorStore {
   selectedStationId: string | null = null
   /** Station under the cursor with the selection tool */
   hoveredStationId: string | null = null
+  /** The station mark being dragged with the selection tool, and where it stood */
+  stationDrag: { id: string; origin: Point } | null = null
+  /** Platform picked with the selection tool */
+  selectedPlatformId: string | null = null
+  /** Platform under the cursor with the selection tool */
+  hoveredPlatformId: string | null = null
+  /** An end (« borne ») or a stop marker of a platform being dragged, and the platform as it was */
+  platformDrag: PlatformDrag | null = null
   /** Signal picked in the signalling mode */
   selectedSignalId: string | null = null
   /** Signal under the cursor in the signalling mode (select and delete sub-modes) */
@@ -1002,6 +1045,7 @@ export class EditorStore {
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.selectedStationId = null
+        this.selectedPlatformId = null
         this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
@@ -1038,6 +1082,7 @@ export class EditorStore {
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.selectedStationId = null
+        this.selectedPlatformId = null
         this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
@@ -1236,6 +1281,7 @@ export class EditorStore {
     this.adoptLoadedProject(res)
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     this.resetPendingToolState()
     if (res.dataset) {
       this.history = []
@@ -1655,6 +1701,7 @@ export class EditorStore {
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     this.tool = 'pan'
     this.resetPendingToolState()
     this.projectName = DEFAULT_PROJECT_NAME
@@ -1789,12 +1836,16 @@ export class EditorStore {
     if (this.tool !== t && (this.tool === 'place' || this.tool === 'curve' || this.tool === 'turnout')) {
       this.selection = { nodes: new Set(), segments: new Set() }
       this.selectedStationId = null
+      this.selectedPlatformId = null
     }
 
-    // A station is only picked with the selection tool
+    // A station or a platform is only picked with the selection tool
     if (t !== 'select') {
       this.selectedStationId = null
+      this.selectedPlatformId = null
       this.hoveredStationId = null
+      this.hoveredPlatformId = null
+      this.cancelPlatformGesture()
     }
     // Zones are only picked inside the signalling mode, which always opens on its selection
     if (t !== 'signal' || this.tool !== 'signal') {
@@ -2284,6 +2335,7 @@ export class EditorStore {
   clearSelection = (): void => {
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     this.notify()
   }
 
@@ -2317,8 +2369,11 @@ export class EditorStore {
     const hadPlacement = this.hasPendingPlacement
     // A signal being laid or dragged is dropped first (the dragged one goes back where it stood)
     const hadSignalGesture = this.cancelSignalGesture()
+    // So is a platform end, a stop marker or a station mark being dragged (it goes back where it was)
+    const hadPlatformGesture = this.cancelPlatformGesture()
     const hadPending =
       hadPlacement ||
+      hadPlatformGesture ||
       this.measureStart !== null ||
       this.speedZoneStart !== null ||
       this.platformStart !== null ||
@@ -2424,6 +2479,11 @@ export class EditorStore {
     // Signalling mode: the only thing Delete removes is the selected zone
     if (this.tool === 'signal') {
       if (!this.deleteSelectedSignal()) this.deleteSelectedSpeedZone()
+      return
+    }
+    // A platform picked with the selection tool: Delete removes it, and nothing else
+    if (this.tool === 'select' && this.selectedPlatform) {
+      this.deleteSelectedPlatform()
       return
     }
     if (this.isTrainSelected || this.tool === 'locomotive' || this.tool === 'coupling') {
@@ -2782,6 +2842,7 @@ export class EditorStore {
     if (this.isPlayMode || this.isNetworkLocked) return null
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     const result = mergeIntoLongRails(this.network, {
       fit: fitPath,
       // 30 cm at full size, and the same share of the gauge on a model scale
@@ -4666,7 +4727,10 @@ export class EditorStore {
   selectStation = (id: string | null): boolean => {
     if (id !== null && !this.network.stations.has(id)) return false
     if (id === this.selectedStationId) return true
-    if (id !== null) this.selection = { nodes: new Set(), segments: new Set() }
+    if (id !== null) {
+      this.selection = { nodes: new Set(), segments: new Set() }
+      this.selectedPlatformId = null
+    }
     this.selectedStationId = id
     this.notify()
     return true
@@ -4684,6 +4748,243 @@ export class EditorStore {
     this.hoveredStationId = hovered
     return true
   }
+
+  // ─────────────────── Stations and platforms in the editor (selection tool) ───────────────────
+
+  /** A new station named `name`, at `pos` (the centre of the view when left out). One undo step; it is selected. */
+  createStation = (name: string, pos?: Point): string | null => {
+    if (!this.canEditNetwork) return null
+    const station = createStation(this.network, name, pos ?? { x: this.camera.x, y: this.camera.y })
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedPlatformId = null
+    this.selectedStationId = station.id
+    this.markDirty()
+    return station.id
+  }
+
+  /**
+   * Name and SNCF code of a station; a field left out is kept, an empty code clears it, an empty
+   * name is refused. One undo step. False when refused or nothing changes.
+   */
+  renameStation = (id: string, identity: { name?: string; code?: string }): boolean => {
+    const station = this.network.stations.get(id)
+    if (!this.canEditNetwork || !station) return false
+    const next: { name?: string; code?: string } = {}
+    if (identity.name !== undefined) {
+      const name = identity.name.trim()
+      if (name === '') return false
+      if (name !== station.name) next.name = name
+    }
+    if ('code' in identity) {
+      const code = identity.code?.trim().toUpperCase() || undefined
+      if (code !== station.code) next.code = code
+    }
+    if (Object.keys(next).length === 0) return false
+    setStationIdentity(this.network, id, next)
+    this.markDirty()
+    return true
+  }
+
+  /** Start dragging the mark (label) of a station with the selection tool. False when the network cannot be edited. */
+  beginStationDrag = (id: string): boolean => {
+    const station = this.network.stations.get(id)
+    if (!this.canEditNetwork || this.tool !== 'select' || !station) return false
+    this.stationDrag = { id, origin: { x: station.pos.x, y: station.pos.y } }
+    return true
+  }
+
+  /** Move the dragged station mark to a world position. True when it moved. */
+  dragStationTo = (worldPos: Point): boolean => {
+    const drag = this.stationDrag
+    return drag ? moveStationLabel(this.network, drag.id, worldPos) : false
+  }
+
+  /** The button comes up: the move is one undo step. True when the station ended somewhere else. */
+  endStationDrag = (): boolean => {
+    const drag = this.stationDrag
+    if (!drag) return false
+    this.stationDrag = null
+    const station = this.network.stations.get(drag.id)
+    const moved = !!station && (station.pos.x !== drag.origin.x || station.pos.y !== drag.origin.y)
+    if (moved) this.markDirty()
+    return moved
+  }
+
+  /** Sizes of a platform at the scale of the project */
+  get platformDims(): PlatformDimensions {
+    return platformDimensions(this.gauge)
+  }
+
+  /** The platform picked, if it still exists */
+  get selectedPlatform(): Platform | null {
+    return this.selectedPlatformId ? this.network.platforms.get(this.selectedPlatformId) ?? null : null
+  }
+
+  /** Pick a platform (null: none) with the selection tool: its panel opens, the track and station selections go. */
+  selectPlatform = (id: string | null): boolean => {
+    if (id !== null && (this.tool !== 'select' || !this.network.platforms.has(id))) return false
+    if (id === this.selectedPlatformId) return true
+    if (id !== null) {
+      this.selection = { nodes: new Set(), segments: new Set() }
+      this.selectedStationId = null
+    }
+    this.selectedPlatformId = id
+    this.notify()
+    return true
+  }
+
+  /**
+   * What of a platform is under a world position, within `tolerance` metres: a stop marker of the
+   * selected platform, an end (« borne ») of the selected platform then of any other, and last the
+   * body of a platform. Null when there is none.
+   */
+  platformHitAt = (worldPos: Point, tolerance: number = 10 / this.camera.scale): PlatformHit | null => {
+    const dims = this.platformDims
+    const selected = this.selectedPlatform?.id
+    if (selected) {
+      const marker = platformMarkerAt(this.network, worldPos, dims, tolerance, selected)
+      if (marker) return { kind: 'marker', ...marker }
+      const end = platformEndAt(this.network, worldPos, dims, tolerance, selected)
+      if (end) return { kind: 'end', ...end }
+    }
+    const end = platformEndAt(this.network, worldPos, dims, tolerance)
+    if (end) return { kind: 'end', ...end }
+    const body = platformAt(this.network, worldPos, dims, 0)
+    return body ? { kind: 'body', platformId: body.id } : null
+  }
+
+  /** Remember the platform under the cursor (selection tool). True when it changed. */
+  updatePlatformHover = (worldPos: Point): boolean => {
+    const hovered = this.tool === 'select' && !this.isPlayMode && this.network.platforms.size > 0
+      ? this.platformHitAt(worldPos)?.platformId ?? null
+      : null
+    if (hovered === this.hoveredPlatformId) return false
+    this.hoveredPlatformId = hovered
+    return true
+  }
+
+  /** Start dragging an end or a stop marker of a platform (selection tool). False when the network cannot be edited. */
+  beginPlatformDrag = (hit: PlatformHit): boolean => {
+    const platform = this.network.platforms.get(hit.platformId)
+    if (!this.canEditNetwork || this.tool !== 'select' || !platform || hit.kind === 'body') return false
+    const origin = platformShape(platform)
+    this.platformDrag = hit.kind === 'end'
+      ? { kind: 'end', platformId: hit.platformId, edge: hit.edge, end: hit.end, origin }
+      : { kind: 'marker', platformId: hit.platformId, index: hit.index, origin }
+    return true
+  }
+
+  /** Slide what is dragged of a platform to the place of its track nearest to a world position. True when it moved. */
+  dragPlatformTo = (worldPos: Point): boolean => {
+    const drag = this.platformDrag
+    if (!drag) return false
+    if (drag.kind === 'marker') return moveMarker(this.network, drag.platformId, drag.index, worldPos)
+    const minLength = MIN_PLATFORM_LENGTH * (this.platformDims.width / platformDimensions().width)
+    return moveEdgeEnd(this.network, drag.platformId, drag.edge, drag.end, worldPos, minLength)
+  }
+
+  /**
+   * What the canvas writes beside a dragged platform: the length of the edge for an end, the
+   * distance from a stop marker to the end of the platform the train runs towards. Null without a drag.
+   */
+  get platformDragMeasure(): { kind: 'end' | 'marker'; length: number } | null {
+    const drag = this.platformDrag
+    const platform = drag && this.network.platforms.get(drag.platformId)
+    if (!drag || !platform) return null
+    if (drag.kind === 'end') {
+      const edge = platform.edges[drag.edge]
+      return edge ? { kind: 'end', length: edgeLength(this.network, edge) } : null
+    }
+    const marker = platform.markers[drag.index]
+    const edge = marker && platform.edges[marker.edge]
+    if (!marker || !edge) return null
+    return { kind: 'marker', length: marker.heading === 'forward' ? edgeLength(this.network, edge) - marker.at : marker.at }
+  }
+
+  /** The button comes up: the drag is one undo step. True when the platform changed. */
+  endPlatformDrag = (): boolean => {
+    const drag = this.platformDrag
+    if (!drag) return false
+    this.platformDrag = null
+    const platform = this.network.platforms.get(drag.platformId)
+    const changed = !!platform && JSON.stringify(platformShape(platform)) !== JSON.stringify(drag.origin)
+    if (changed) this.markDirty()
+    return changed
+  }
+
+  /** Drop a platform or station drag, putting back what moved. True when there was one. */
+  private cancelPlatformGesture(): boolean {
+    const platformDrag = this.platformDrag
+    const stationDrag = this.stationDrag
+    this.platformDrag = null
+    this.stationDrag = null
+    if (platformDrag) restorePlatformShape(this.network, platformDrag.platformId, platformDrag.origin)
+    if (stationDrag) moveStationLabel(this.network, stationDrag.id, stationDrag.origin)
+    return platformDrag !== null || stationDrag !== null
+  }
+
+  /** Remove a platform (one undo step). False when the network cannot be edited or there is no such platform. */
+  deletePlatform = (id: string): boolean => {
+    if (!this.canEditNetwork) return false
+    if (this.platformDrag?.platformId === id) this.platformDrag = null
+    if (!removePlatform(this.network, id)) return false
+    if (this.selectedPlatformId === id) this.selectedPlatformId = null
+    if (this.hoveredPlatformId === id) this.hoveredPlatformId = null
+    this.markDirty()
+    return true
+  }
+
+  deleteSelectedPlatform = (): boolean => {
+    const platform = this.selectedPlatform
+    return platform ? this.deletePlatform(platform.id) : false
+  }
+
+  /** One change of a platform through a domain helper: one undo step when it changed anything */
+  private editPlatform(change: () => boolean): boolean {
+    if (!this.canEditNetwork || !change()) return false
+    this.markDirty()
+    return true
+  }
+
+  /** Track number of an edge of a platform (empty: none). One undo step. */
+  setPlatformRef = (id: string, edge: 0 | 1, ref: string): boolean =>
+    this.editPlatform(() => setPlatformRef(this.network, id, edge, ref))
+
+  /** Width of a platform beside one track, metres at 1:1. One undo step. */
+  setPlatformWidth = (id: string, width: number): boolean =>
+    this.editPlatform(() => setPlatformWidth(this.network, id, width))
+
+  /** The station a platform belongs to. One undo step. */
+  setPlatformStation = (id: string, stationId: string): boolean =>
+    this.editPlatform(() => setPlatformStation(this.network, id, stationId))
+
+  /** A new station, set in the middle of a platform, which then belongs to it. One undo step. Returns its id. */
+  createStationForPlatform = (id: string, name: string): string | null => {
+    const platform = this.network.platforms.get(id)
+    if (!this.canEditNetwork || !platform) return null
+    const pos = platformCentre(this.network, platform, this.platformDims) ?? { x: this.camera.x, y: this.camera.y }
+    const station = createStation(this.network, name, pos)
+    setPlatformStation(this.network, id, station.id)
+    this.markDirty()
+    return station.id
+  }
+
+  /** A stop marker added to an edge, short of the end a train running `heading` comes to. One undo step. */
+  addPlatformMarker = (id: string, edge: 0 | 1, heading: StopMarker['heading']): boolean => {
+    const track = this.network.platforms.get(id)?.edges[edge]
+    if (!track) return false
+    const length = edgeLength(this.network, track)
+    const inset = Math.min(this.platformDims.markerMargin, length / 2)
+    return this.editPlatform(() => addMarker(this.network, id, { edge, at: heading === 'forward' ? length - inset : inset, heading }) !== null)
+  }
+
+  /** Remove a stop marker of a platform. One undo step. */
+  removePlatformMarker = (id: string, index: number): boolean =>
+    this.editPlatform(() => removeMarker(this.network, id, index))
+
+  /** Direction and longest train of a stop marker (`maxLength` undefined: every train). One undo step. */
+  setPlatformMarker = (id: string, index: number, options: { heading?: StopMarker['heading']; maxLength?: number }): boolean =>
+    this.editPlatform(() => setMarkerOptions(this.network, id, index, options))
 
   get selectedSignal(): Signal | null {
     if (this.tool !== 'signal' || !this.selectedSignalId) return null

@@ -408,6 +408,8 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         report: !store.isPlayMode && store.tool !== 'pan' && store.signalPlacementMode === null,
       },
       stations: { selectedId: store.selectedStationId, hoveredId: store.hoveredStationId },
+      // Platforms are picked with the selection tool (`platformRender.ts` marks them)
+      platforms: { selectedId: store.selectedPlatformId, hoveredId: store.hoveredPlatformId, unit: store.unit },
     }
 
     // Driving aid: route ahead of the driven train and the turnout the steering keys throw
@@ -953,6 +955,27 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     // 8. Signal tool preview: the signal under the cursor with its arrow and its two blocks, or the row being drawn
     renderSignalToolPreview(ctx, cam, rect.width, rect.height, store)
+
+    // 8b. A platform end or stop marker being dragged: its length, written by the cursor
+    const platformMeasure = store.platformDragMeasure
+    if (platformMeasure) {
+      const at = { x: (store.cursorWorld.x - cam.x) * cam.scale + rect.width / 2, y: (store.cursorWorld.y - cam.y) * cam.scale + rect.height / 2 }
+      const labelText = platformMeasure.kind === 'end'
+        ? `Quai : ${formatDistance(platformMeasure.length, store.unit)}`
+        : `Repère à ${formatDistance(platformMeasure.length, store.unit)} du bout`
+      ctx.save()
+      ctx.font = '600 11px Archivo, system-ui, sans-serif'
+      const lw = ctx.measureText(labelText).width
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)'
+      ctx.beginPath()
+      ctx.roundRect(at.x - lw / 2 - 6, at.y - 34, lw + 12, 18, 4)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(labelText, at.x, at.y - 24)
+      ctx.restore()
+    }
 
     // 2D Orthogonal Translation Gizmo on selected node(s) or selected section/track
     if (gizmoScreen) {
@@ -1891,11 +1914,22 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const station = store.stationAt(world, hitTol)
         if (station) {
           store.selectStation(station.id)
+          // Holding the button and moving carries its mark (label) elsewhere
+          if (store.beginStationDrag(station.id)) canvas.setPointerCapture(e.pointerId)
           redraw()
           return
         }
         if (store.selectedStationId) store.selectStation(null)
+        // Then the handles of a platform (its ends, the stop markers of the picked one): small, beside the track
+        const platformHit = store.network.platforms.size > 0 ? store.platformHitAt(world) : null
+        if (platformHit && platformHit.kind !== 'body') {
+          store.selectPlatform(platformHit.platformId)
+          if (store.beginPlatformDrag(platformHit)) canvas.setPointerCapture(e.pointerId)
+          redraw()
+          return
+        }
         const nodeId = hitShownNode(store.network, store.selection, world, hitTol, store.camera.scale)
+        if (nodeId && store.selectedPlatformId) store.selectPlatform(null)
         if (nodeId) {
           const existingJunc = findJunctionAtNode(store.network, nodeId)
           if (existingJunc && store.selection.nodes.has(nodeId) && !isMulti) {
@@ -1933,6 +1967,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           redraw()
           return
         }
+
+        // The body of a platform before the track: it starts 1.7 m off the axis, so a click on the
+        // rail itself is never in it, while at a low zoom the reach of the rail covers the platform
+        if (platformHit) {
+          store.selectPlatform(platformHit.platformId)
+          redraw()
+          return
+        }
+        if (store.selectedPlatformId) store.selectPlatform(null)
 
         const segId = hitSegment(store.network, world, 12 / store.camera.scale)
         if (segId) {
@@ -2196,6 +2239,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.notify()
         return
       }
+      // Selection tool: an end or a stop marker of a platform slid along its track, a station mark carried
+      if (store.platformDrag || store.stationDrag) {
+        if (store.platformDrag) store.dragPlatformTo(rawWorld)
+        else store.dragStationTo(rawWorld)
+        canvas.style.cursor = 'grabbing'
+        draw()
+        store.notify()
+        return
+      }
 
       // Dragging selected nodes in select tool
       if (store.isDraggingNode && store.dragStartWorld) {
@@ -2237,10 +2289,15 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           const hoveredNodeId = hitShownNode(store.network, store.selection, rawWorld, hitTol, store.camera.scale)
           const hoveredSegId = hitSegment(store.network, rawWorld, 12 / store.camera.scale)
           const hoveredVehicle = store.trains.length > 0 ? store.findVehicleAt(rawWorld) : null
-          if (store.updateStationHover(rawWorld)) draw()
-          if (hoveredNodeId || hoveredSegId || hoveredVehicle || store.hoveredStationId) {
+          const stationChanged = store.updateStationHover(rawWorld)
+          if (store.updatePlatformHover(rawWorld) || stationChanged) draw()
+          if (store.hoveredPlatformId && !store.hoveredStationId && store.canEditNetwork) {
+            // An end or a marker is grabbed and slid; the body is only picked
+            const hit = store.platformHitAt(rawWorld)
+            canvas.style.cursor = hit && hit.kind !== 'body' ? 'grab' : 'pointer'
+          } else if (hoveredNodeId || hoveredSegId || hoveredVehicle || store.hoveredStationId || store.hoveredPlatformId) {
             canvas.style.cursor = 'pointer'
-          } else if (canvas.style.cursor === 'pointer') {
+          } else if (canvas.style.cursor === 'pointer' || (canvas.style.cursor === 'grab' && !isSpaceDown)) {
             canvas.style.cursor = isSpaceDown ? 'grab' : ''
           }
         }
@@ -2413,7 +2470,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           } else if (segId) {
             store.openContextMenu(e.clientX, e.clientY, { type: 'segment', id: segId, worldPos: world })
           } else {
-            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart || store.platformStart || store.signalRowStart || store.signalDrag) {
+            if (store.hasPendingPlacement || store.measureStart || store.speedZoneStart || store.platformStart || store.signalRowStart || store.signalDrag || store.platformDrag || store.stationDrag) {
               store.cancelInteraction()
             } else {
               store.openContextMenu(e.clientX, e.clientY, { type: 'canvas', worldPos: world })
@@ -2437,6 +2494,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
         if (store.signalRowStart) commitSignalGesture(store)
         else store.endSignalDrag()
+        canvas.style.cursor = isSpaceDown ? 'grab' : ''
+        redraw()
+        return
+      }
+
+      // Selection tool: the button comes up on a dragged platform end, stop marker or station mark
+      if (store.platformDrag || store.stationDrag) {
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
+        if (store.platformDrag) store.endPlatformDrag()
+        else store.endStationDrag()
         canvas.style.cursor = isSpaceDown ? 'grab' : ''
         redraw()
         return

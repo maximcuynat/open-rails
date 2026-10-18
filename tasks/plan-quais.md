@@ -126,9 +126,9 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
 - [x] Barre contextuelle, raccourci, barre d'outils (style « réglage » vs « outil », vu le 2026-10-18)
 
 ### Q3 — Édition
-- [ ] Sélection d'un quai ; bornes déplacées à la souris, le long de la voie
-- [ ] Panneau : gare, numéros de voie, largeur ; suppression
-- [ ] Gares dans l'éditeur : créer, renommer, déplacer l'étiquette (le panneau actuel est en lecture seule)
+- [x] Sélection d'un quai ; bornes déplacées à la souris, le long de la voie
+- [x] Panneau : gare, numéros de voie, largeur ; suppression
+- [x] Gares dans l'éditeur : créer, renommer, déplacer l'étiquette (le panneau actuel est en lecture seule)
 
 ### Q4 — Repères d'arrêt et conduite
 - [ ] Repères posés d'office (un par sens au bout du quai, moins la marge), ajoutés, déplacés,

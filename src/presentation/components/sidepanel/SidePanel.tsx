@@ -18,8 +18,10 @@ import { showToast } from '../common/Toast'
 import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedLimits'
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
-import { formatDistance, formatRadius } from '@domain/models/units'
+import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
 import type { Signal, SpeedZone, Station } from '@domain/models/types'
+import type { Platform, StopMarker } from '@domain/models/types'
+import { edgeLength, platformsOf } from '@domain/models/platforms'
 import { signalBlock } from '@domain/models/signalBlocks'
 import { signalReport } from '@domain/models/signalReport'
 import { defaultSignalStatus, signalAspect } from '@domain/models/signalling'
@@ -189,15 +191,76 @@ function SpeedZonePanel({ store, zone }: { store: EditorStore; zone: SpeedZone }
   )
 }
 
-/** A station picked with the selection tool: what the import read of it, and its platform tracks */
+/**
+ * A text field that edits a copy and hands it over on Enter or when it loses the focus: one undo
+ * step per change, not one per key. Escape puts the value back.
+ */
+function CommitInput({ value, onCommit, placeholder, label, inputMode }: {
+  value: string
+  onCommit: (value: string) => void
+  placeholder?: string
+  label: string
+  inputMode?: 'decimal'
+}) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder={placeholder}
+      aria-label={label}
+      inputMode={inputMode}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          e.currentTarget.blur()
+        } else if (e.key === 'Escape') {
+          setDraft(value)
+          e.currentTarget.blur()
+        }
+      }}
+      onBlur={(e) => {
+        if (e.target.value !== value) onCommit(e.target.value)
+      }}
+    />
+  )
+}
+
+/** A station picked with the selection tool: its name and code (editable), its stops, its platforms */
 function StationPanel({ store, station }: { store: EditorStore; station: Station }) {
   const sections = networkDerived(store.network, store.sectionMeta).sections
+  const editable = store.canEditNetwork
+  const platforms = platformsOf(store.network, station.id)
   return (
     <>
       <PanelHeader>Gare</PanelHeader>
       <div className="sp-section">
-        <Field label="Nom" value={station.name} />
-        {station.code && <Field label="Code" value={station.code} />}
+        {editable ? (
+          <>
+            <label className="sp-input-row" style={{ marginBottom: '6px' }}>
+              <span style={{ width: '45px' }}>Nom</span>
+              <CommitInput
+                label="Nom de la gare"
+                value={station.name}
+                onCommit={(name) => {
+                  if (!store.renameStation(station.id, { name }) && name.trim() === '') showToast('Une gare a besoin d’un nom.', 'warning')
+                }}
+              />
+            </label>
+            <label className="sp-input-row" style={{ marginBottom: '6px' }}>
+              <span style={{ width: '45px' }}>Code</span>
+              <CommitInput label="Code de la gare (trigramme)" placeholder="ex : MSC" value={station.code ?? ''} onCommit={(code) => store.renameStation(station.id, { code })} />
+            </label>
+          </>
+        ) : (
+          <>
+            <Field label="Nom" value={station.name} />
+            {station.code && <Field label="Code" value={station.code} />}
+          </>
+        )}
         {station.uic && <Field label="UIC" value={station.uic} />}
         <Field label="Voies à quai" value={station.stops.length === 0 ? 'aucune' : String(station.stops.length)} />
         {station.stops.map((stop, i) => {
@@ -205,9 +268,214 @@ function StationPanel({ store, station }: { store: EditorStore; station: Station
           return <Field key={`${stop.segId}-${i}`} label={`Voie ${stop.ref ?? i + 1}`} value={section ? section.name : '—'} />
         })}
       </div>
+      <div className="sp-subheader">Quais</div>
+      {platforms.length === 0 ? (
+        <div className="sp-hint">Aucun quai n’est rattaché à cette gare.</div>
+      ) : (
+        <div className="sp-list">
+          {platforms.map((platform) => (
+            <button key={platform.id} className="sp-list-item" onClick={() => store.selectPlatform(platform.id)} title="Sélectionner ce quai">
+              <span className="sp-tag to">{platformRefs(platform)}</span>
+              {platformKindLabel(platform)} · {formatDistance(edgeLength(store.network, platform.edges[0]), store.unit)}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="sp-section">
-        <p className="sp-hint">Lue depuis OpenStreetMap et la liste des gares de la SNCF ; elle suit ses rails et ne se modifie pas ici.</p>
+        <p className="sp-hint">
+          {editable
+            ? 'Faites glisser la gare sur le plan pour déplacer son étiquette.'
+            : 'Elle suit ses rails ; elle ne se modifie pas ici.'}
+        </p>
       </div>
+    </>
+  )
+}
+
+/** « 1 », « 1 · 2 », « — »: the track numbers of a platform */
+function platformRefs(platform: Platform): string {
+  const refs = platform.edges.map((edge) => edge.ref).filter((ref): ref is string => !!ref)
+  return refs.length > 0 ? refs.join(' · ') : '—'
+}
+
+function platformKindLabel(platform: Platform): string {
+  return platform.edges.length === 2 ? 'Quai en îlot' : 'Quai latéral'
+}
+
+/** A length in metres shown in the unit of the project, as a number to type over */
+function lengthInUnit(meters: number, unit: EditorStore['unit']): string {
+  const value = meters / parseDistance(1, unit)
+  return String(Math.round(value * 100) / 100)
+}
+
+/** A platform picked with the selection tool: its station, its track numbers, its width, its stop markers */
+function PlatformPanel({ store, platform }: { store: EditorStore; platform: Platform }) {
+  const editable = store.canEditNetwork
+  const [newStation, setNewStation] = useState('')
+  const stations = [...store.network.stations.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+  const station = store.network.stations.get(platform.stationId)
+  const unitLabel = store.unit
+  return (
+    <>
+      <PanelHeader>{platformKindLabel(platform)}</PanelHeader>
+      <div className="sp-section">
+        <Field
+          label="Gare"
+          value={editable ? (
+            <select
+              className="settings-input"
+              style={{ maxWidth: '170px' }}
+              aria-label="Gare du quai"
+              value={station ? station.id : ''}
+              onChange={(e) => store.setPlatformStation(platform.id, e.target.value)}
+            >
+              {!station && <option value="">(aucune)</option>}
+              {stations.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          ) : station?.name ?? '—'}
+        />
+        {station && (
+          <button className="sp-btn-compact" style={{ marginBottom: '6px' }} onClick={() => store.selectStation(station.id)} title="Ouvrir la gare">
+            Voir la gare
+          </button>
+        )}
+        {editable && (
+          <div className="sp-input-row" style={{ marginBottom: '8px' }}>
+            <input
+              type="text"
+              value={newStation}
+              placeholder="Nouvelle gare…"
+              aria-label="Nom d’une nouvelle gare"
+              onChange={(e) => setNewStation(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <button
+              className="sp-btn-compact"
+              disabled={newStation.trim() === ''}
+              onClick={() => {
+                if (store.createStationForPlatform(platform.id, newStation)) setNewStation('')
+              }}
+              title="Créer une gare au milieu du quai et y rattacher le quai"
+            >
+              Créer
+            </button>
+          </div>
+        )}
+        {platform.edges.map((edge, index) => (
+          <div key={index}>
+            {editable ? (
+              <label className="sp-input-row" style={{ marginBottom: '4px' }}>
+                <span style={{ width: '90px' }}>{platform.edges.length === 2 ? `Voie (bord ${index + 1})` : 'Voie n°'}</span>
+                <CommitInput
+                  label={`Numéro de voie du bord ${index + 1}`}
+                  placeholder="ex : 1, A"
+                  value={edge.ref ?? ''}
+                  onCommit={(ref) => store.setPlatformRef(platform.id, index as 0 | 1, ref)}
+                />
+              </label>
+            ) : (
+              <Field label={platform.edges.length === 2 ? `Voie (bord ${index + 1})` : 'Voie n°'} value={edge.ref ?? '—'} />
+            )}
+            <Field label="Longueur" value={formatDistance(edgeLength(store.network, edge), store.unit)} />
+          </div>
+        ))}
+        {platform.edges.length === 1 && (
+          editable ? (
+            <label className="sp-input-row" style={{ marginBottom: '4px' }}>
+              <span style={{ width: '90px' }}>Largeur (m, 1:1)</span>
+              <CommitInput
+                label="Largeur du quai en mètres, grandeur nature"
+                inputMode="decimal"
+                value={String(platform.width)}
+                onCommit={(text) => {
+                  const width = parseFloat(text.replace(',', '.'))
+                  if (!store.setPlatformWidth(platform.id, width) && !(width > 0)) showToast('Largeur invalide.', 'warning')
+                }}
+              />
+            </label>
+          ) : (
+            <Field label="Largeur" value={`${platform.width} m (1:1)`} />
+          )
+        )}
+      </div>
+
+      <div className="sp-subheader">Repères d’arrêt</div>
+      {platform.markers.length === 0 ? (
+        <div className="sp-hint">Aucun repère : un train ne sait pas où s’arrêter à ce quai.</div>
+      ) : (
+        <div className="sp-section">
+          {platform.markers.map((marker, index) => (
+            <div key={index} style={{ borderTop: index > 0 ? '1px solid var(--border)' : undefined, paddingTop: index > 0 ? '6px' : 0, marginBottom: '6px' }}>
+              <Field
+                label={platform.edges.length === 2 ? `Bord ${marker.edge + 1}` : 'Position'}
+                value={`${formatDistance(marker.at, store.unit)} du début`}
+              />
+              <Field
+                label="Sens"
+                value={editable ? (
+                  <select
+                    className="settings-input"
+                    aria-label="Sens de marche du repère"
+                    value={marker.heading}
+                    onChange={(e) => store.setPlatformMarker(platform.id, index, { heading: e.target.value as StopMarker['heading'] })}
+                  >
+                    <option value="forward">Vers la fin du quai</option>
+                    <option value="backward">Vers le début du quai</option>
+                  </select>
+                ) : marker.heading === 'forward' ? 'Vers la fin du quai' : 'Vers le début du quai'}
+              />
+              {editable ? (
+                <label className="sp-input-row" style={{ marginBottom: '4px' }}>
+                  <span style={{ width: '90px' }}>Longueur max ({unitLabel})</span>
+                  <CommitInput
+                    label="Longueur de train la plus grande que ce repère arrête"
+                    placeholder="tous les trains"
+                    inputMode="decimal"
+                    value={marker.maxLength !== undefined ? lengthInUnit(marker.maxLength, store.unit) : ''}
+                    onCommit={(text) => {
+                      const meters = text.trim() === '' ? undefined : parseDistance(text, store.unit)
+                      store.setPlatformMarker(platform.id, index, { maxLength: meters !== undefined && meters > 0 ? meters : undefined })
+                    }}
+                  />
+                </label>
+              ) : (
+                <Field label="Longueur max" value={marker.maxLength !== undefined ? formatDistance(marker.maxLength, store.unit) : 'tous les trains'} />
+              )}
+              {editable && (
+                <button className="sp-btn-compact" onClick={() => store.removePlatformMarker(platform.id, index)} title="Retirer ce repère">
+                  Retirer
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {editable && (
+        <div className="sp-section" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {platform.edges.map((_, index) => (['forward', 'backward'] as const).map((heading) => (
+            <button
+              key={`${index}-${heading}`}
+              className="sp-btn-compact"
+              onClick={() => store.addPlatformMarker(platform.id, index as 0 | 1, heading)}
+              title="Ajouter un repère d’arrêt, à la marge du bout du quai ; faites-le glisser ensuite sur le plan"
+            >
+              + Repère {heading === 'forward' ? '→ fin' : '→ début'}{platform.edges.length === 2 ? ` (bord ${index + 1})` : ''}
+            </button>
+          )))}
+        </div>
+      )}
+      <div className="sp-section">
+        <p className="sp-hint">
+          {editable
+            ? 'Faites glisser une borne du quai sur le plan pour l’allonger ou le raccourcir le long de la voie, et un repère pour le déplacer.'
+            : 'Le réseau n’est pas modifiable : le quai se lit seulement.'}
+        </p>
+      </div>
+      {editable && (
+        <button className="sp-danger" onClick={() => store.deletePlatform(platform.id)}>
+          Supprimer le quai
+        </button>
+      )}
     </>
   )
 }
@@ -432,6 +700,21 @@ function NetworkPanel({ store }: { store: EditorStore }) {
         <Field label="Impasses / heurtoirs" value={deadEnds} />
         <Field label="Boucles détectées" value={loops} />
         <Field label="Réseaux disjoints" value={components} />
+      </div>
+
+      <div className="sp-subheader">Gares & quais</div>
+      <div className="sp-section">
+        <Field label="Gares" value={net.stations.size} />
+        <Field label="Quais" value={net.platforms.size} />
+        {store.canEditNetwork && (
+          <button
+            className="sp-btn-compact"
+            onClick={() => store.createStation('Nouvelle gare')}
+            title="Créer une gare au centre de la vue ; renommez-la dans son panneau et faites-la glisser où il faut"
+          >
+            Créer une gare
+          </button>
+        )}
       </div>
 
       <div className="sp-subheader">Grille & Aimantation</div>
@@ -1597,7 +1880,10 @@ function InspectorContent({ store }: { store: EditorStore }) {
   const speedZone = store.selectedSpeedZone
   const signal = store.selectedSignal
   const station = store.selectedStation
-  if (station) {
+  const platform = store.selectedPlatform
+  if (platform) {
+    content = <PlatformPanel key={platform.id} store={store} platform={platform} />
+  } else if (station) {
     content = <StationPanel key={station.id} store={store} station={station} />
   } else if (signal) {
     // Signalling mode: the picked signal comes before anything else
