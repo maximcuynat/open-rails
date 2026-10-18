@@ -15,6 +15,7 @@ import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geom
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
 import { cleanStations, stationAt } from '@domain/models/stations'
+import { settlePlatforms } from '@domain/models/platforms'
 import {
   addSignal,
   addSignalPair,
@@ -1706,6 +1707,8 @@ export class EditorStore {
       cleanSpeedZones(this.network)
       cleanSignals(this.network)
       cleanStations(this.network)
+      // After the stations: the stops of a station that has platforms are drawn from their markers
+      settlePlatforms(this.network)
       this.syncedNetwork = this.network
       this.syncedToken = networkCheckToken(this.network)
       // What the check itself changed (tables) is not to be checked again

@@ -1,5 +1,8 @@
 import { generateId } from './ids'
-import type { Network, Platform, PlatformEdge, PlatformId, Point, SegmentId, StationId, StopMarker, TrackSpan } from './types'
+import { touchNetwork } from './networkWatch'
+import { tidyTrackSpans } from './speedZones'
+import { remapTrackSpanParts, TRACK_T_EPSILON, type RailReplacement } from './trackObjects'
+import type { Network, Platform, PlatformEdge, PlatformId, Point, SegmentId, StationId, StationStop, StopMarker, TrackSpan } from './types'
 import { scaleFactor } from '../geometry/scale'
 import { pointOnShape, segmentEnds, shapeChordCount, shapeLengthBetween, shapeParamAtDistance, tangentOnShape } from '../geometry/segmentGeometry'
 
@@ -191,4 +194,293 @@ export function defaultMarkers(net: Network, edges: readonly PlatformEdge[], mar
     markers.push({ edge: at, at: length - inset, heading: 'forward' }, { edge: at, at: inset, heading: 'backward' })
   })
   return markers
+}
+
+/**
+ * Change a platform in place: each field given replaces the one it has (copied, as `addPlatform`
+ * does), `id` apart. False when there is no such platform. Tells the revision of the network.
+ */
+export function updatePlatform(net: Network, id: PlatformId, change: Partial<Omit<PlatformDraft, 'id'>>): boolean {
+  const platform = net.platforms.get(id)
+  if (!platform) return false
+  if (change.stationId !== undefined) platform.stationId = change.stationId
+  if (change.edges !== undefined) {
+    platform.edges = change.edges.length === 2 ? [copyEdge(change.edges[0]), copyEdge(change.edges[1])] : [copyEdge(change.edges[0])]
+  }
+  if (change.width !== undefined) platform.width = change.width
+  if (change.markers !== undefined) platform.markers = change.markers.map(copyMarker)
+  touchNetwork(net, null)
+  return true
+}
+
+// ─────────────────── Following the track ───────────────────
+//
+// A platform names rails, so `replaceRail` (`models/network.ts`) hands it every rail replacement
+// through `remapPlatforms`, and `settlePlatforms` (run by the store whenever the network changed,
+// and on loading) drops what is left on a rail taken out of the graph by other means. The rules,
+// for each edge of a platform:
+//
+// 1. Each stretch of the edge is carried onto the rails that stand for it (`remapTrackSpanParts`):
+//    a cut rail makes two consecutive stretches, merged rails make one (consecutive stretches that
+//    continue each other on one rail are joined), a removed rail leaves a gap.
+// 2. An edge with a gap is no longer one platform edge: it keeps its longest contiguous part, by
+//    length along the track (the first one on a tie).
+// 3. The markers are distances from the start of the edge: when the part kept does not start where
+//    the edge started, each marker moves back by the length of what was cut away before it — it
+//    stays at its place on the track. The length of a removed stretch is measured on the old rail
+//    while it is still in the network (`removeSegment` replaces it before it takes it out); a rail
+//    already gone counts for nothing.
+// 4. Every marker is then held to [0, length of its edge]; a marker of an edge the platform does
+//    not have is dropped.
+// 5. A platform one of whose edges has no track left is removed (an island that loses one of its
+//    tracks is not turned into a platform beside the other).
+//
+// Then the stops of a station that has platforms are its markers (see `stopsOfPlatforms`).
+
+/** One stretch of an edge after an edit, or a gap, and its length along the track */
+interface EdgePart {
+  span: TrackSpan | null
+  length: number
+}
+
+/** Length of a stretch on a rail of the network; nothing when the rail is not there */
+function spanLength(net: Network, span: TrackSpan): number {
+  const seg = net.segments.get(span.segId)
+  const ends = seg && segmentEnds(net, seg)
+  return ends ? shapeLengthBetween(ends, span.t0, span.t1) : 0
+}
+
+/** The longest contiguous part of an edge (rule 2) and the length cut away before it, null when nothing is left */
+function keptPart(parts: readonly EdgePart[]): { track: TrackSpan[]; shift: number } | null {
+  let best: { track: TrackSpan[]; shift: number; length: number } | null = null
+  let before = 0
+  let run: EdgePart[] = []
+  const close = (): void => {
+    const track = tidyTrackSpans(run.map((part) => part.span!))
+    const length = run.reduce((sum, part) => sum + part.length, 0)
+    if (track.length > 0 && (!best || length > best.length)) best = { track, shift: before, length }
+    before += length
+    run = []
+  }
+  for (const part of parts) {
+    if (part.span) {
+      run.push(part)
+      continue
+    }
+    close()
+    before += part.length
+  }
+  close()
+  return best
+}
+
+const sameSpan = (a: TrackSpan, b: TrackSpan): boolean => a.segId === b.segId && a.t0 === b.t0 && a.t1 === b.t1
+
+function sameTrack(a: readonly TrackSpan[], b: readonly TrackSpan[]): boolean {
+  return a.length === b.length && a.every((span, i) => sameSpan(span, b[i]))
+}
+
+/**
+ * Bring one platform to the parts of its edges (`null` for an edge left as it is): rules 2 to 5.
+ * Returns true when the platform changed (removed, or rewritten in place: the caller tells the revision).
+ */
+function rewritePlatform(net: Network, platform: Platform, partsOf: (edge: PlatformEdge) => EdgePart[] | null): boolean {
+  const tracks: TrackSpan[][] = []
+  const shifts: number[] = []
+  for (const edge of platform.edges) {
+    const parts = partsOf(edge)
+    if (!parts) {
+      tracks.push(edge.track)
+      shifts.push(0)
+      continue
+    }
+    const kept = keptPart(parts)
+    if (!kept) {
+      net.platforms.delete(platform.id)
+      return true
+    }
+    tracks.push(kept.track)
+    shifts.push(kept.shift)
+  }
+  const lengths = platform.edges.map((edge, i) => edgeLength(net, { ...edge, track: tracks[i] }))
+  const markers: StopMarker[] = []
+  for (const marker of platform.markers) {
+    if (marker.edge >= platform.edges.length) continue
+    const at = Math.min(lengths[marker.edge], Math.max(0, marker.at - shifts[marker.edge]))
+    markers.push(at === marker.at ? marker : { ...marker, at })
+  }
+  let changed = markers.length !== platform.markers.length || markers.some((marker, i) => marker !== platform.markers[i])
+  platform.edges.forEach((edge, i) => {
+    if (sameTrack(edge.track, tracks[i])) return
+    edge.track = tracks[i]
+    changed = true
+  })
+  if (changed) platform.markers = markers
+  return changed
+}
+
+/**
+ * Carry the platforms off a replaced rail and onto its pieces (called by `replaceRail`), by the
+ * rules above: each one stays where it is on the track; one that loses the whole track of an edge goes.
+ */
+export function remapPlatforms(net: Network, replacement: RailReplacement): void {
+  if (net.platforms.size === 0) return
+  let changed = false
+  const onOld = (edge: PlatformEdge): boolean => edge.track.some((span) => span.segId === replacement.oldId)
+  for (const platform of [...net.platforms.values()]) {
+    if (!platform.edges.some(onOld)) continue
+    const partsOf = (edge: PlatformEdge): EdgePart[] | null => {
+      if (!onOld(edge)) return null
+      const parts: EdgePart[] = []
+      for (const span of edge.track) {
+        if (span.segId !== replacement.oldId) {
+          parts.push({ span, length: spanLength(net, span) })
+          continue
+        }
+        const mapped = remapTrackSpanParts(span, replacement)
+        const lengths = mapped.map((part) => (part ? spanLength(net, part) : 0))
+        const gaps = mapped.filter((part) => part === null).length
+        // What the pieces do not stand for, measured on the old rail (rule 3)
+        const missing = gaps > 0 ? Math.max(0, spanLength(net, span) - lengths.reduce((sum, l) => sum + l, 0)) / gaps : 0
+        mapped.forEach((part, i) => parts.push({ span: part, length: part ? lengths[i] : missing }))
+      }
+      return parts
+    }
+    if (rewritePlatform(net, platform, partsOf)) changed = true
+  }
+  if (changed) touchNetwork(net, null)
+}
+
+/** True when a stretch lies on a rail of the network, within 0…1 (a hair beyond is held to it) */
+function onTrack(net: Network, span: TrackSpan): boolean {
+  const inRange = (t: number): boolean => Number.isFinite(t) && t >= -TRACK_T_EPSILON && t <= 1 + TRACK_T_EPSILON
+  return net.segments.has(span.segId) && inRange(span.t0) && inRange(span.t1)
+}
+
+const held = (t: number): number => Math.max(0, Math.min(1, t))
+
+/** The stops of a station drawn from the markers of its platforms: one per marker, in order */
+export function stopsOfPlatforms(net: Network, platforms: readonly Platform[]): StationStop[] {
+  const stops: StationStop[] = []
+  for (const platform of platforms) {
+    for (const marker of platform.markers) {
+      const edge = platform.edges[marker.edge]
+      const place = edge && pointOnEdge(net, edge, marker.at)
+      if (!place) continue
+      stops.push(edge.ref !== undefined ? { segId: place.segId, t: place.t, ref: edge.ref } : { segId: place.segId, t: place.t })
+    }
+  }
+  return stops
+}
+
+const sameStop = (a: StationStop, b: StationStop): boolean => a.segId === b.segId && a.t === b.t && a.ref === b.ref
+
+/**
+ * Bring the platforms in line with the network, and the stations with their platforms: a platform
+ * of a station that is gone goes; a stretch on a rail that is gone, or out of 0…1, is a gap (rules
+ * 2 to 5 above, a gap counting for nothing); the markers are held to their edge. The stops of every
+ * station that has platforms are then those of its markers (`stopsOfPlatforms`); a station without
+ * platform keeps its own. Writes only what differs. Returns true when anything changed.
+ */
+export function settlePlatforms(net: Network): boolean {
+  if (net.platforms.size === 0) return false
+  let changed = false
+  for (const platform of [...net.platforms.values()]) {
+    if (!net.stations.has(platform.stationId)) {
+      net.platforms.delete(platform.id)
+      changed = true
+      continue
+    }
+    const partsOf = (edge: PlatformEdge): EdgePart[] | null => {
+      if (edge.track.every((span) => onTrack(net, span) && span.t0 === held(span.t0) && span.t1 === held(span.t1))) return null
+      return edge.track.map((span) => {
+        if (!onTrack(net, span)) return { span: null, length: 0 }
+        const kept = { segId: span.segId, t0: held(span.t0), t1: held(span.t1) }
+        return { span: kept, length: spanLength(net, kept) }
+      })
+    }
+    if (rewritePlatform(net, platform, partsOf)) changed = true
+  }
+  const byStation = new Map<StationId, Platform[]>()
+  for (const platform of net.platforms.values()) {
+    const list = byStation.get(platform.stationId)
+    if (list) list.push(platform)
+    else byStation.set(platform.stationId, [platform])
+  }
+  for (const [stationId, platforms] of byStation) {
+    const station = net.stations.get(stationId)!
+    const stops = stopsOfPlatforms(net, platforms)
+    if (stops.length === station.stops.length && stops.every((stop, i) => sameStop(stop, station.stops[i]))) continue
+    station.stops = stops
+    changed = true
+  }
+  if (changed) touchNetwork(net, null)
+  return changed
+}
+
+// ─────────────────── Saves ───────────────────
+
+/** A platform as a save holds it; anything may be missing or wrong in a file */
+export interface StoredPlatform {
+  id?: unknown
+  stationId?: unknown
+  edges?: unknown
+  width?: unknown
+  markers?: unknown
+}
+
+/**
+ * Put back a platform read from a save, under its own id. Nothing is checked against the track or
+ * the stations here (`settlePlatforms` does once everything is back). Returns false, and adds
+ * nothing, when the record does not hold together or the id is taken; a marker that does not hold
+ * together is left out.
+ */
+export function restorePlatform(net: Network, raw: StoredPlatform | null | undefined): boolean {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || typeof raw.stationId !== 'string' || net.platforms.has(raw.id)) return false
+  if (!Array.isArray(raw.edges) || (raw.edges.length !== 1 && raw.edges.length !== 2)) return false
+  const edges: PlatformEdge[] = []
+  for (const item of raw.edges as unknown[]) {
+    const edge = storedEdge(item)
+    if (!edge) return false
+    edges.push(edge)
+  }
+  const width = typeof raw.width === 'number' && Number.isFinite(raw.width) && raw.width >= 0 ? raw.width : PLATFORM_WIDTH
+  const markers: StopMarker[] = []
+  if (Array.isArray(raw.markers)) {
+    for (const item of raw.markers as unknown[]) {
+      const marker = storedMarker(item, edges.length)
+      if (marker) markers.push(marker)
+    }
+  }
+  addPlatform(net, { id: raw.id, stationId: raw.stationId, edges: edges as Platform['edges'], width, markers })
+  return true
+}
+
+function storedEdge(raw: unknown): PlatformEdge | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { track, side, ref } = raw as Record<string, unknown>
+  if ((side !== 'left' && side !== 'right') || !Array.isArray(track)) return null
+  const spans: TrackSpan[] = []
+  for (const item of track as unknown[]) {
+    if (!item || typeof item !== 'object') return null
+    const { segId, t0, t1 } = item as Record<string, unknown>
+    if (typeof segId !== 'string' || !isNumber(t0) || !isNumber(t1)) return null
+    spans.push({ segId, t0, t1 })
+  }
+  const edge: PlatformEdge = { track: spans, side }
+  if (typeof ref === 'string' && ref !== '') edge.ref = ref
+  return edge
+}
+
+function storedMarker(raw: unknown, edges: number): StopMarker | null {
+  if (!raw || typeof raw !== 'object') return null
+  const { edge, at, heading, maxLength } = raw as Record<string, unknown>
+  if ((edge !== 0 && edge !== 1) || edge >= edges || !isNumber(at) || (heading !== 'forward' && heading !== 'backward')) return null
+  const marker: StopMarker = { edge, at, heading }
+  if (isNumber(maxLength) && maxLength > 0) marker.maxLength = maxLength
+  return marker
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
