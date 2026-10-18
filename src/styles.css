@@ -16,6 +16,9 @@
   --sleeper: #443425;
   --rail: #526071;
   --rail-head: #ffffff;
+  --platform: #d4d6d9;
+  --platform-edge: #8f96a0;
+  --platform-line: #eab308;
   --danger: #dc2626;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
@@ -36,6 +39,9 @@
   --sleeper: #1c1510;
   --rail: #94a3b8;
   --rail-head: #f1f5f9;
+  --platform: #2e3135;
+  --platform-edge: #646b75;
+  --platform-line: #ca8a04;
   --danger: #f87171;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
@@ -57,6 +63,9 @@
     --sleeper: #1c1510;
     --rail: #94a3b8;
     --rail-head: #f1f5f9;
+    --platform: #2e3135;
+    --platform-edge: #646b75;
+    --platform-line: #ca8a04;
     --danger: #f87171;
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   }

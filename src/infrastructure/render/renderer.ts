@@ -16,6 +16,7 @@ import { networkCheckToken } from '@domain/models/networkWatch'
 import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight } from './speedZoneRender'
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { renderStations, type StationRenderOptions } from './stationRender'
+import { platformsInView, platformsOfPass, renderPlatformBodies, renderStopMarkers, type PlatformRenderOptions, type PlatformShape } from './platformRender'
 import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type RailTint, type SectionStripeStyle } from './lodTracks'
 import { renderCantMarks } from './cantRender'
 import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGradientChevrons, type GradientColors } from './gradientRender'
@@ -546,6 +547,8 @@ export interface RenderNetworkOptions {
   signals?: SignalRenderOptions
   /** The station picked and the one under the cursor; the stations themselves are always drawn */
   stations?: Pick<StationRenderOptions, 'selectedId' | 'hoveredId'>
+  /** The platform picked, the one under the cursor, the unit of their stop markers; the platforms themselves are always drawn */
+  platforms?: PlatformRenderOptions
   /**
    * Cant and slopes marked on the track (`cantRender.ts`, `gradientRender.ts`). Absent: neither is
    * drawn. The cant is read under `line` — full size only — and the slopes need `gradient`.
@@ -884,6 +887,19 @@ export function renderNetwork(
       }
     : null
 
+  // PLATFORMS: drawn with the track of their level, under everything else of it (`platformRender.ts`).
+  // Found once per frame among the ones kept with the network; nothing at all without platforms.
+  const platformsShown: PlatformShape[] = net.platforms.size > 0 && lod !== 'schematic' ? platformsInView(net, bounds, options?.gauge) : []
+  const passLevels = allGroups.map((g) => g.level)
+  /** The bodies of the platforms of a level, on its bridge deck and under its bands and rails */
+  const drawPlatforms = (level: number): void => {
+    if (platformsShown.length === 0) return
+    renderPlatformBodies(ctx, cam, vw, vh, platformsOfPass(platformsShown, level, passLevels), {
+      lod, gauge: options?.gauge, alpha: level < 0 ? TUNNEL_ALPHA : 1,
+      selectedId: options?.platforms?.selectedId, hoveredId: options?.platforms?.hoveredId,
+    })
+  }
+
   /** What lies under the rails of a level, whatever the tier the rails are drawn in */
   const drawTrackUnderlays = (pieces: TrackPiece[], level: number): void => {
     if (!showsTrackObjects) return
@@ -921,6 +937,7 @@ export function renderNetwork(
     renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
     const tunnel = level < 0
 
+    drawPlatforms(level)
     drawTrackUnderlays(pieces, level)
     drawCantMarks(pieces, level)
 
@@ -941,6 +958,8 @@ export function renderNetwork(
   }
 
   if (options?.part !== 'overlays') {
+    // No rail in view, a platform beside one that is just out of it: drawn on its own
+    if (levelGroups.length === 0 && options?.level === undefined) drawPlatforms(0)
     if (lod === 'schematic') {
       for (const group of levelGroups) drawTrackUnderlays(group.pieces, group.level)
       // Once for the whole network: the levels are not layered in this tier
@@ -948,6 +967,7 @@ export function renderNetwork(
     } else if (lod === 'line') {
       const paper = levelGroups.some((g) => g.level > 0) ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
       for (const group of levelGroups) {
+        drawPlatforms(group.level)
         drawTrackUnderlays(group.pieces, group.level)
         renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper, category: options?.railTint }, GAUGE)
       }
@@ -957,6 +977,7 @@ export function renderNetwork(
       for (const group of levelGroups) {
         // The two rails can be told apart: so can a bridge, which gets its deck as in the detailed drawing
         renderBridgeDecks(ctx, cam, vw, vh, net, group.pieces, group.level, GAUGE)
+        drawPlatforms(group.level)
         drawTrackUnderlays(group.pieces, group.level)
         drawCantMarks(group.pieces, group.level)
         renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true)
@@ -1043,6 +1064,9 @@ export function renderNetwork(
       space,
     })
   }
+
+  // Stop markers of the platforms: their boards are always drawn up close, their lengths give way
+  renderStopMarkers(ctx, cam, vw, vh, platformsShown, { lod, gauge: options?.gauge, unit: options?.platforms?.unit, space })
 
   /** Screen rectangles the slope labels must keep clear of: section badges, then diagnostic markers */
   const takenBoxes: BadgeBox[] = []
