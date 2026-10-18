@@ -3,6 +3,8 @@ import { addNode, addSegment, createNetwork, resetIdCounter } from '../models/ne
 import { proposeJunction } from '../models/junction'
 import { addStation } from '../models/stations'
 import { addSpeedZone } from '../models/speedZones'
+import { addPlatform, settlePlatforms } from '../models/platforms'
+import type { PlatformEdge } from '../models/types'
 import { findRouteGuide, guideDurationLeft, guideDurations, guideLeft } from './routeGuide'
 
 beforeEach(() => resetIdCounter(0))
@@ -115,5 +117,55 @@ describe('the way to the next station', () => {
     expect(guide.path.length).toBeCloseTo(2500, 6)
     expect(findRouteGuide(net, lead, undefined, [])).toBeNull()
     expect(findRouteGuide(net, lead, undefined, ['n_unknown'])).toBeNull()
+  })
+})
+
+describe('the way to a station with platforms', () => {
+  /** A 4 km line, a station with a platform of 400 m from x = 2000 to x = 2400 and its markers */
+  function withPlatform() {
+    const net = createNetwork()
+    const n = [0, 2000, 2400, 4000].map((x) => addNode(net, { x, y: 0 }))
+    const rails = [0, 1, 2].map((i) => addSegment(net, n[i].id, n[i + 1].id)!)
+    const station = addStation(net, { name: 'Quai', pos: { x: 2200, y: 10 }, stops: [] })
+    const edges: [PlatformEdge] = [{ track: [{ segId: rails[1].id, t0: 0, t1: 1 }], side: 'left', ref: 'A' }]
+    addPlatform(net, {
+      stationId: station.id,
+      edges,
+      width: 6,
+      markers: [
+        { edge: 0, at: 390, heading: 'forward' },
+        { edge: 0, at: 250, heading: 'forward', maxLength: 220 },
+        { edge: 0, at: 10, heading: 'backward' },
+      ],
+    })
+    settlePlatforms(net)
+    return { net, n, rails, station }
+  }
+
+  it('leads to the marker for the way the train comes and for its length', () => {
+    const { net, rails, station } = withPlatform()
+    const east = { segId: rails[0].id, t: 0.5, forward: true }
+    // A long train: the marker for every train, 390 m along the platform
+    const long = findRouteGuide(net, east, station, [], undefined, undefined, undefined, 400)!
+    expect(long.target).toBe('platform')
+    expect(long.stop).toMatchObject({ segId: rails[1].id, forward: true, ref: 'A' })
+    expect(long.path.length).toBeCloseTo(1000 + 390, 6)
+    // A train of 200 m: the marker for trains up to 220 m
+    expect(findRouteGuide(net, east, station, [], undefined, undefined, undefined, 200)!.path.length).toBeCloseTo(1250, 6)
+    // Length unknown: the one for every train
+    expect(findRouteGuide(net, east, station)!.path.length).toBeCloseTo(1390, 6)
+    // From the east, westwards: the marker 10 m from the start of the platform, not the nearer ones facing the other way
+    const west = findRouteGuide(net, { segId: rails[2].id, t: 0.5, forward: false }, station, [], undefined, undefined, undefined, 200)!
+    expect(west.stop).toMatchObject({ segId: rails[1].id, forward: false })
+    expect(west.path.length).toBeCloseTo(800 + 390, 6)
+    expect(west.behind).toBe(false)
+  })
+
+  it('turns back to the marker facing the way out for a train that has passed the platform', () => {
+    const { net, rails, station } = withPlatform()
+    // East of the platform heading east, with nothing ahead: the way is behind, to the westward marker
+    const guide = findRouteGuide(net, { segId: rails[2].id, t: 0.5, forward: true }, station, [], undefined, undefined, undefined, 200)!
+    expect(guide.behind).toBe(true)
+    expect(guide.stop).toMatchObject({ forward: false })
   })
 })

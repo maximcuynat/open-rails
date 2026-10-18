@@ -2,14 +2,17 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from '@application/state/editorStore'
 import { applyConsoleCommand } from '@application/console/consoleCommands'
 import { buildTrainConsoleState } from '@application/console/consoleState'
-import { pilotOrders, pilotSpeed } from '@application/console/autopilot'
+import { PILOT_STOP_TOLERANCE, pilotOrders, pilotSpeed } from '@application/console/autopilot'
 import type { ConsoleState } from '@application/console/consoleContract'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
 import { setSignalOptions } from '@domain/models/signals'
 import { signalAt, trainAt } from '@domain/models/signalling.testkit'
 import { addStation } from '@domain/models/stations'
+import { addPlatform, defaultMarkers } from '@domain/models/platforms'
+import type { PlatformEdge } from '@domain/models/types'
+import { vehicleFrontEndPos } from '@domain/models/train'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
-import { addItineraryStop } from './itinerary'
+import { addItineraryStop, refreshRouteGuide } from './itinerary'
 import { PILOT_DWELL_S } from './autopilot'
 
 /**
@@ -37,13 +40,8 @@ function line(km: number, stations: Record<string, number>, climb?: [number, num
   store.notify()
   expect(store.placeRakeAtStation('depart', 'duplex')).not.toBeNull()
   store.togglePlayMode()
-  const headX = () => {
-    const lead = store.trains[0].vehicles[0].front
-    const rail = store.network.segments.get(lead.segId)!
-    const a = store.network.nodes.get(rail.from)!.pos.x
-    const b = store.network.nodes.get(rail.to)!.pos.x
-    return a + (b - a) * lead.t
-  }
+  // The head of the train: its nose, the front end of the lead vehicle — what stops on the mark
+  const headX = () => vehicleFrontEndPos(store.network, store.trains[0].vehicles[0])!.x
   /** Run the simulation for `seconds`, 20 steps a second; returns the top speed reached, m/s */
   const run = (seconds: number, until: () => boolean = () => false): number => {
     let top = 0
@@ -177,6 +175,27 @@ describe('the automatic pilot on a train of the game', { timeout: 30_000 }, () =
     // Arrived: it stays there
     run(60)
     expect(headX()).toBeLessThanOrEqual(12_000 + 1)
+  })
+
+  it('stops the nose on the stop marker of a platform, and tells the console how far that marker is', () => {
+    const { store, headX, run, train } = line(6, { arrivee: 4 })
+    // A platform of 220 m ending at km 4, on the rail from 3500 to 4000: its marker for eastbound trains at 3990
+    const rail = [...store.network.segments.values()].find((seg) => store.network.nodes.get(seg.to)!.pos.x === 4000)!
+    const edges: [PlatformEdge] = [{ track: [{ segId: rail.id, t0: (3780 - 3500) / 500, t1: 1 }], side: 'left', ref: 'B' }]
+    addPlatform(store.network, { stationId: 'arrivee', edges, width: 6, markers: defaultMarkers(store.network, edges, 10) })
+    store.notify()
+    expect(addItineraryStop(store, train(), 'arrivee')).toBeNull()
+    // « Prochain arrêt »: from the nose to the marker, along the track
+    expect(buildTrainConsoleState(store, train()).route!.distance).toBeCloseTo(3990 - headX(), 3)
+    store.setAutopilot(train().id, true)
+    run(300, () => headX() > 3000)
+    // The way is measured once a second: measured again now
+    refreshRouteGuide(store, train())
+    expect(buildTrainConsoleState(store, train()).route!.distance).toBeCloseTo(3990 - headX(), 3)
+    run(600, () => train().itinerary!.next === 2 && train().currentSpeed === 0)
+    expect(train().itinerary!.next).toBe(2)
+    expect(headX()).toBeGreaterThan(3990 - PILOT_STOP_TOLERANCE)
+    expect(headX()).toBeLessThanOrEqual(3990 + 1)
   })
 
   it('comes to a platform in one steady braking: no speeding up again, no crawling, the brake not hunting', () => {
