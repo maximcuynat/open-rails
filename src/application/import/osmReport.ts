@@ -1,4 +1,4 @@
-import type { OsmImportIssue, OsmImportReport, OsmSignalCount, OsmSignalIgnored, OsmSignalMode, OsmSignalReport, OsmSignalSkip, OsmSurvey } from '@domain/import/osmTypes'
+import type { OsmImportIssue, OsmImportReport, OsmPlatformSkip, OsmSignalCount, OsmSignalIgnored, OsmSignalMode, OsmSignalReport, OsmSignalSkip, OsmSurvey } from '@domain/import/osmTypes'
 import type { SignalReportType } from '@domain/models/signalReport'
 import type { SignallingLevel } from '@domain/models/signals'
 
@@ -117,6 +117,26 @@ export function reportNotes(report: OsmImportReport): string[] {
     const without = skipped['no-track-nearby'] ?? 0
     if (without > 0) notes.push(`${plural(without, 'gare nommée sans voie importée à portée', 'gares nommées sans voie importée à portée')} : non posée${without > 1 ? 's' : ''}.`)
   }
+  notes.push(...platformNotes(report))
+  return notes
+}
+
+const PLATFORM_SKIP_WORDS: Record<OsmPlatformSkip, string> = {
+  'no-track': 'loin des voies importées',
+  'no-station': 'sans gare à portée',
+  duplicate: 'en double',
+  'uncovered-stops': 'dans une gare dont des voies à quai n’ont pas de quai dans les données',
+}
+
+/** What the import did about the platforms: read, laid, left out and why */
+export function platformNotes(report: OsmImportReport): string[] {
+  if (!report.platforms || report.platforms.found === 0) return []
+  const { found, placed, islands, skipped } = report.platforms
+  const notes: string[] = []
+  const island = islands > 0 ? `, dont ${plural(islands, 'quai central', 'quais centraux')}` : ''
+  notes.push(`${plural(found, 'quai lu', 'quais lus')} dans les données, ${plural(placed, 'posé', 'posés')} le long des voies${island}.`)
+  const left = breakdown(skipped, PLATFORM_SKIP_WORDS)
+  if (left.total > 0) notes.push(`${plural(left.total, 'quai laissé de côté', 'quais laissés de côté')} : ${left.text}.`)
   return notes
 }
 
@@ -159,10 +179,15 @@ export const OSM_ISSUE_TEXT: Record<OsmIssueKind, { one: string; many: string; m
     many: 'Gares sans voie',
     meaning: 'La gare est nommée dans les données, mais aucune voie importée ne passe assez près pour lui donner des voies à quai.',
   },
+  'platform-not-placed': {
+    one: 'Quai sans gare',
+    many: 'Quais sans gare',
+    meaning: 'Le quai longe une voie importée, mais aucune gare des données n’est assez près pour qu’il lui appartienne.',
+  },
 }
 
 /** Order of the groups in the report: what needs a decision first */
-const ISSUE_ORDER: readonly OsmIssueKind[] = ['undecided-crossing', 'unknown-junction', 'sharp-angle', 'uncertain-level', 'signal-not-placed', 'station-not-placed', 'cut-by-area']
+const ISSUE_ORDER: readonly OsmIssueKind[] = ['undecided-crossing', 'unknown-junction', 'sharp-angle', 'uncertain-level', 'signal-not-placed', 'station-not-placed', 'platform-not-placed', 'cut-by-area']
 
 export interface OsmIssueGroup {
   kind: OsmIssueKind

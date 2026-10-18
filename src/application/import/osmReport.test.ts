@@ -112,6 +112,19 @@ describe('the report shown after an import', () => {
 
   it('says nothing of what did not happen', () => {
     expect(reportNotes({ ...REPORT, stackedCrossings: 0, undecidedCrossings: 0, lengthWithoutSpeedKm: 0, droppedComponents: 0 })).toEqual([])
+    const quiet = { ...REPORT, stackedCrossings: 0, undecidedCrossings: 0, lengthWithoutSpeedKm: 0, droppedComponents: 0 }
+    expect(reportNotes({ ...quiet, platforms: { found: 0, placed: 0, islands: 0, skipped: {} } })).toEqual([])
+  })
+
+  it('says how many platforms were read, laid and left out, and why', () => {
+    const quiet = { ...REPORT, stackedCrossings: 0, undecidedCrossings: 0, lengthWithoutSpeedKm: 0, droppedComponents: 0 }
+    const notes = reportNotes({ ...quiet, platforms: { found: 12, placed: 7, islands: 2, skipped: { 'no-track': 3, duplicate: 1, 'no-station': 1 } } })
+    expect(notes).toEqual([
+      '12 quais lus dans les données, 7 posés le long des voies, dont 2 quais centraux.',
+      '5 quais laissés de côté : 3 loin des voies importées, 1 en double, 1 sans gare à portée.',
+    ])
+    expect(reportNotes({ ...quiet, platforms: { found: 1, placed: 1, islands: 0, skipped: {} } })).toEqual(['1 quai lu dans les données, 1 posé le long des voies.'])
+    expect(groupIssues([issue('platform-not-placed', 1), issue('platform-not-placed', 2)])[0].title).toBe('Quais sans gare')
   })
 
   it('groups the issues by kind with their count, what needs a decision first', () => {
