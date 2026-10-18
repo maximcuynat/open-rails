@@ -403,8 +403,9 @@ describe('track levels — trains', () => {
 
   it('a vehicle on level 0 is drawn before the deck of level 1 that passes over it', () => {
     const { net, ground } = crossingTracks(1)
-    // Just short of the crossing point, where the pointer could as well pick the bridge
-    const train = wagonOn(net, { x: 85, y: 0 })
+    // Its body runs from x = 90 to x = 108, under the bridge (x = 100), where the pointer could as
+    // well pick the bridge
+    const train = wagonOn(net, { x: 108, y: 0 })
     expect(train.vehicles[0].front.segId).toBe(ground.id)
     const { ops, bands } = drawLayered(net, [train])
 
@@ -414,6 +415,86 @@ describe('track levels — trains', () => {
     expect(body[0]).toBeGreaterThan(Math.max(...indices(ops, isGroundStroke)))
     expect(body[0]).toBeLessThan(indices(ops, isDeckStroke)[0])
     expect(body[0]).toBeLessThan(Math.min(...indices(ops, isUpperRailStroke)))
+
+    // Its nose a metre short of the deck, at a right angle: under it already, before it shows
+    const coming = wagonOn(net, { x: 96.5, y: 0 })
+    const comingOps = drawLayered(net, [coming]).ops
+    expect(indices(comingOps, isBodyFill)[0]).toBeLessThan(indices(comingOps, isDeckStroke)[0])
+    // Further from it, nothing passes over it: drawn over every track
+    const away = wagonOn(net, { x: 85, y: 0 })
+    const awayOps = drawLayered(net, [away]).ops
+    expect(indices(awayOps, isBodyFill)[0]).toBeGreaterThan(Math.max(...indices(awayOps, isUpperRailStroke)))
+  })
+
+  it('several trains: the one under the bridge before its deck, the others over every track', () => {
+    const { net } = crossingTracks(1)
+    const under = wagonOn(net, { x: 108, y: 0 })
+    const over = wagonOn(net, { x: 100, y: 30 })
+    const away = wagonOn(net, { x: 40, y: 0 })
+    const { ops } = drawLayered(net, [under, over, away])
+    const bodies = indices(ops, isBodyFill)
+    expect(bodies).toHaveLength(3)
+    const deck = indices(ops, isDeckStroke)[0]
+    const upperRails = Math.max(...indices(ops, isUpperRailStroke))
+    expect(bodies.filter((i) => i < deck)).toHaveLength(1)
+    expect(bodies.filter((i) => i > upperRails)).toHaveLength(2)
+  })
+
+  it('climbing onto a bridge, a vehicle is drawn over the upper level before it reaches its deck', () => {
+    // A 0 → 1 ramp along y = 0: the deck starts halfway, at x = 100
+    const net = createNetwork()
+    const foot = addNode(net, { x: 0, y: 0 })
+    const top = addNode(net, { x: 200, y: 0 }, 1)
+    addSegment(net, foot.id, top.id)
+    // Its body ends a few decimetres short of the deck: it stands on the ground part of the ramp
+    const train = wagonOn(net, { x: 99.8, y: 0 })
+    const [veh] = train.vehicles
+    expect(vehicleLevel(net, veh, { front: 0, rear: 0, wheelbase: 18 })).toBe(0)
+
+    // Plain driving view: the rails of the upper level are closed by round caps that reach back
+    // over the ground part of the ramp, so is the inside of the rails in the background colour
+    const { ctx, ops } = createRecordingContext()
+    const camera = cam()
+    renderNetworkWithTrains(ctx, camera, VW, VH, net, noSelection(), {}, { tool: 'select', plainRails: true }, (band) => {
+      renderTrainSet(ctx, camera, VW, VH, net, train, false, false, false, undefined, null, null, band, undefined, true)
+    })
+    const body = indices(ops, isBodyFill)
+    expect(body).toHaveLength(1)
+    // After every rail and every inside of a rail, those of the upper level included
+    const upperInside = indices(ops, (op) => op.name === 'stroke' && op.strokeStyle === '#ffffff' && !!op.start && op.start[0] > VW / 2 - 1)
+    expect(upperInside.length).toBeGreaterThan(0)
+    expect(body[0]).toBeGreaterThan(Math.max(...indices(ops, (op) => op.name === 'stroke' && (op.strokeStyle === '#ffffff' || op.strokeStyle === '#526071'))))
+  })
+
+  it('beside a bridge on the next track, a vehicle on the ground is drawn over its abutment', () => {
+    // Two tracks 4.5 m apart: the near one stays on the ground, the far one climbs onto a bridge
+    // whose deck starts at x = 110 — its wing walls splay back over the near track
+    const net = createNetwork()
+    const g1 = addNode(net, { x: 0, y: 0 })
+    const g2 = addNode(net, { x: 200, y: 0 })
+    addSegment(net, g1.id, g2.id)
+    const f1 = addNode(net, { x: 0, y: 4.5 })
+    const f2 = addNode(net, { x: 100, y: 4.5 })
+    const f3 = addNode(net, { x: 120, y: 4.5 }, 1)
+    const f4 = addNode(net, { x: 200, y: 4.5 }, 1)
+    addSegment(net, f1.id, f2.id)
+    addSegment(net, f2.id, f3.id)
+    addSegment(net, f3.id, f4.id)
+    const camera = createCamera(110, 2, 20)
+    const beside = wagonOn(net, { x: 118, y: 0 })
+    expect(beside.vehicles[0].front.segId).toBe([...net.segments.keys()][0])
+    // And a train on the bridge: drawn over its deck as well
+    const far = wagonOn(net, { x: 160, y: 4.5 })
+    const { ops } = drawLayered(net, [beside, far], camera)
+
+    const deck = indices(ops, (op) => op.name === 'stroke' && near(op.lineWidth ?? 0, DECK_WIDTH * 20))
+    // Parapets, abutments and their wing walls, rails: all in the colour of the rails
+    const railColoured = indices(ops, (op) => op.name === 'stroke' && op.strokeStyle === '#526071')
+    const bodies = indices(ops, isBodyFill)
+    expect(deck.length).toBeGreaterThan(0)
+    expect(bodies).toHaveLength(2)
+    expect(Math.min(...bodies)).toBeGreaterThan(Math.max(...deck))
+    expect(Math.min(...bodies)).toBeGreaterThan(Math.max(...railColoured))
   })
 
   it('a vehicle on the bridge is drawn after its deck and rails', () => {
@@ -428,19 +509,22 @@ describe('track levels — trains', () => {
     expect(ops[body[0]].globalAlpha).toBe(1)
   })
 
-  it('the overlays of the network are drawn once, after every level and every train', () => {
+  it('the overlays of the network are drawn once, after every level: over a train under a bridge, under the others', () => {
     const { net } = crossingTracks(1)
-    const { ops } = drawLayered(net, [wagonOn(net, { x: 85, y: 0 })])
+    const { ops } = drawLayered(net, [wagonOn(net, { x: 108, y: 0 }), wagonOn(net, { x: 40, y: 0 })])
 
     // Buffer stops: one per open end, as in a plain rendering of the network
     const signs = (list: Op[]) => indices(list, isBufferBeam)
     expect(signs(ops)).toHaveLength(4)
     expect(signs(drawPlain(net))).toHaveLength(4)
-    expect(Math.min(...signs(ops))).toBeGreaterThan(indices(ops, isBodyFill)[0])
+    const [underBridge, inTheOpen] = indices(ops, isBodyFill)
+    expect(Math.min(...signs(ops))).toBeGreaterThan(underBridge)
     expect(Math.min(...signs(ops))).toBeGreaterThan(Math.max(...indices(ops, isUpperRailStroke)))
+    // As on a single level: the train that nothing passes over comes after them
+    expect(inTheOpen).toBeGreaterThan(Math.max(...signs(ops)))
   })
 
-  it('driving route callback: right after the network on a single level, last when levels are interleaved', () => {
+  it('driving route callback: right after the network, before the trains of the last pass', () => {
     const run = (net: Network): string[] => {
       const order: string[] = []
       const { ctx } = createRecordingContext()
@@ -452,12 +536,13 @@ describe('track levels — trains', () => {
       return order
     }
     expect(run(crossingTracks(0).net)).toEqual(['route', 'trains'])
-    expect(run(crossingTracks(1).net)).toEqual(['trains -Infinity..0', 'trains 0..Infinity', 'route'])
+    expect(run(crossingTracks(1).net)).toEqual(['trains -Infinity..0', 'route', 'trains 0..Infinity'])
   })
 
   it('a vehicle in a tunnel is dimmed, and drawn before the ground rails that pass over it', () => {
     const { net, upper } = crossingTracks(-1)
-    const train = wagonOn(net, { x: 100, y: 40 })
+    // From y = −8 to y = 10: under the ground track (y = 0)
+    const train = wagonOn(net, { x: 100, y: 10 })
     expect(train.vehicles[0].front.segId).toBe(upper.id)
     const { ops } = drawLayered(net, [train])
 
@@ -465,6 +550,12 @@ describe('track levels — trains', () => {
     expect(body).toHaveLength(1)
     expect(ops[body[0]].globalAlpha).toBeCloseTo(TUNNEL_VEHICLE_ALPHA)
     expect(body[0]).toBeLessThan(Math.min(...indices(ops, isGroundRailStroke)))
+
+    // Away from the ground track: still dimmed, drawn over it
+    const away = drawLayered(net, [wagonOn(net, { x: 100, y: 40 })]).ops
+    const awayBody = indices(away, isBodyFill)[0]
+    expect(away[awayBody].globalAlpha).toBeCloseTo(TUNNEL_VEHICLE_ALPHA)
+    expect(awayBody).toBeGreaterThan(Math.max(...indices(away, isGroundRailStroke)))
   })
 
   it('single level: one plain network call then the trains without band — the calls of a flat layout', () => {
@@ -596,13 +687,14 @@ describe('track levels — ramps', () => {
     expect(gentle).toEqual(flat)
   })
 
-  it('a vehicle at the foot of a ramp is drawn with the ground: under a bridge next to it, not dimmed', () => {
+  it('a vehicle at the foot of a ramp is drawn with the ground: under a bridge over it, not dimmed', () => {
     const { net, ramp } = rampTo(1)
     // A bridge on level 1 across the foot of the ramp, with no common node
     const u1 = addNode(net, { x: 30, y: -50 }, 1)
     const u2 = addNode(net, { x: 30, y: 50 }, 1)
     addSegment(net, u1.id, u2.id)
-    const train = wagonOn(net, { x: 60, y: 0 })
+    // From x = 27 to x = 45, under that bridge
+    const train = wagonOn(net, { x: 45, y: 0 })
     expect(train.vehicles[0].front.segId).toBe(ramp.id)
     expect(Math.max(train.vehicles[0].front.t, train.vehicles[0].rear.t)).toBeLessThan(0.5)
     const { ops } = drawLayered(net, [train])
