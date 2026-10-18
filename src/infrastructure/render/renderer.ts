@@ -546,6 +546,10 @@ export interface RenderNetworkOptions {
   signals?: SignalRenderOptions
   /** The station picked and the one under the cursor; the stations themselves are always drawn */
   stations?: Pick<StationRenderOptions, 'selectedId' | 'hoveredId'>
+  /** The platform picked with the selection tool, drawn as such */
+  selectedPlatformId?: string | null
+  /** The platform under the cursor with the selection tool */
+  hoveredPlatformId?: string | null
   /**
    * Cant and slopes marked on the track (`cantRender.ts`, `gradientRender.ts`). Absent: neither is
    * drawn. The cant is read under `line` — full size only — and the slopes need `gradient`.
