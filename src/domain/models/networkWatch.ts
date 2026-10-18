@@ -97,6 +97,7 @@ export function createCountedNetwork(): Network {
     speedZones: new CountingMap(counter, 'speedZones'),
     signals: new CountingMap(counter, 'signals'),
     stations: new CountingMap(counter, 'stations'),
+    platforms: new CountingMap(counter, 'platforms'),
   }
   counters.set(net, counter)
   return net

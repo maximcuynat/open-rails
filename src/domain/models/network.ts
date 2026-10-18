@@ -30,6 +30,7 @@ export function syncIdCounter(net: Network): void {
   for (const id of net.speedZones.keys()) scan(id)
   for (const id of net.signals.keys()) scan(id)
   for (const id of net.stations.keys()) scan(id)
+  for (const id of net.platforms.keys()) scan(id)
   resetIdCounter(max)
 }
 
