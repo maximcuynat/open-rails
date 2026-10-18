@@ -110,10 +110,10 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
 - [ ] `stops` tirés des repères pour une gare qui a des quais
 
 ### Q1 — Dessin
-- [ ] Corps du quai (polygone sous les rails, au-dessus du ballast), nez de quai marqué
-- [ ] Bornes de début et de fin, repères d'arrêt (petit panneau orienté, longueur écrite)
-- [ ] Dézoom : le quai devient un trait épais le long de la voie, puis disparaît ; culling par boîte
-- [ ] Thème sombre ; rien ne bouge au dessin des voies (règle : l'aspect ne change pas sans demande)
+- [x] Corps du quai (polygone sous les rails, au-dessus du ballast), nez de quai marqué
+- [x] Bornes de début et de fin, repères d'arrêt (petit panneau orienté, longueur écrite)
+- [x] Dézoom : le quai devient un trait épais le long de la voie, puis disparaît ; culling par boîte
+- [x] Thème sombre ; rien ne bouge au dessin des voies (règle : l'aspect ne change pas sans demande)
 
 ### Q2 — Outil « Quai » (pose)
 - [ ] Deux clics le long d'une voie (début, fin), comme une zone de vitesse ; le côté suit le
