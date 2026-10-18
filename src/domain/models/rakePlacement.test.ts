@@ -6,6 +6,7 @@ import { addStation } from './stations'
 import { addPlatform, defaultMarkers, settlePlatforms } from './platforms'
 import { advanceTrainSet, getTrainSetVisuals, trackLeftAhead, vehicleFrontEndPos, vehicleRearEndPos } from './train'
 import type { Network, PlatformEdge } from './types'
+import { setRunning } from './running'
 
 /** A straight from x = 0 to x = `length`, its only rail returned */
 function straight(length: number): { net: Network; segId: string } {
@@ -217,5 +218,36 @@ describe('a rake set down at a station with platforms', () => {
     expect(fit.longest).toBeCloseTo(220, 6)
     // Two trainsets coupled, 401 m: longer than the platform, set down sticking out of it all the same
     expect(stationFit(net, station, { model: 'duplex', trailers: 8, units: 2 })).toMatchObject({ tracks: 1, fitting: 0, placeable: true })
+  })
+})
+
+describe('a rake set down on a double line', () => {
+  beforeEach(() => resetIdCounter())
+
+  /** Two tracks 4 km long, 4.5 m apart, a station without platforms half way: a stop on each */
+  function doubleLineStation(running: boolean) {
+    const net = createNetwork()
+    const tracks = [0, 4.5].map((y) => addSegment(net, addNode(net, { x: 0, y }).id, addNode(net, { x: 4000, y }).id)!)
+    if (running) {
+      // Keeping left: the north track (y = 0) runs east, the south one west
+      setRunning(net, tracks[0], 'forward')
+      setRunning(net, tracks[1], 'backward')
+    }
+    // The south track first: without a direction of running it is the one taken
+    const station = addStation(net, { name: 'Milieu', pos: { x: 2000, y: 2 }, stops: [{ segId: tracks[1].id, t: 0.5 }, { segId: tracks[0].id, t: 0.5 }] })
+    return { net, tracks, station }
+  }
+
+  it('faces the way its platform track is run, before the order of the stops', () => {
+    const plain = doubleLineStation(false)
+    const first = createRakeAtStation(plain.net, plain.station, 'duplex')!
+    expect(first.train.vehicles[0].front.segId).toBe(plain.tracks[1].id)
+    expect(first.train.vehicles[0].front.forward).toBe(true)
+
+    const kept = doubleLineStation(true)
+    const lead = createRakeAtStation(kept.net, kept.station, 'duplex')!.train.vehicles[0].front
+    // Still the south track, now facing west, the way it is run
+    expect(lead.segId).toBe(kept.tracks[1].id)
+    expect(lead.forward).toBe(false)
   })
 })
