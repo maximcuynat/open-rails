@@ -174,4 +174,20 @@ en parallèle par quatre agents, chacun dans son worktree, depuis le commit du s
 
 ## Revue
 
-_(à remplir à la fin de chaque lot)_
+### Q0 à Q3 — 2026-10-19
+Menés en parallèle par quatre agents, fusionnés dans `feature/quais` (conflits de Q3 réglés à la
+main dans le store, `Canvas.tsx` et `renderer.ts` : les options de dessin gardent la forme de Q1,
+`platforms: { selectedId, hoveredId, unit }`). Typage propre, 2 956 tests au vert, les tests
+d'annulation de Q2 et Q3 qui attendaient Q0 réactivés.
+
+Essai au navigateur (deux voies à 10 m) : quai latéral posé en deux clics avec « Gare 1 » et ses
+deux repères ; îlot entre les deux voies (« Quai central · 160.00 m », rames qui tiennent dans la
+barre) ; sélection d'un quai ; borne tirée de 20 m (200 → 220 m) ; de près, ligne de sécurité,
+bornes et repères. Aucune erreur dans la page.
+
+À reprendre :
+- La marque de la gare se pose au milieu du quai : un clic à cet endroit choisit la gare, pas le quai.
+- Les longueurs s'écrivent « 160.00 m » (`formatDistance`), pas « 160,00 m ».
+- Un îlot qui perd une de ses voies est retiré, pas changé en quai latéral.
+- `MergeReport.platformsAdded` n'est pas encore dit dans le compte rendu de fusion.
+- Un quai à cheval sur deux morceaux du jeu de données reste raccourci quand le second arrive (Q5).
