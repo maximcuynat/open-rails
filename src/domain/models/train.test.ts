@@ -687,6 +687,29 @@ describe('findCouplerSnap', () => {
     expect(snap!.snappedVehicle.kind).toBe('loco')
   })
 
+  it('takes an end only from its own track, across the joints of short rails', () => {
+    resetIdCounter()
+    const net = createNetwork()
+    // Two tracks 4.2 m apart, each made of 10 m rails
+    for (const y of [0, 4.2]) {
+      let prev = addNode(net, { x: 0, y })
+      for (let x = 10; x <= 300; x += 10) {
+        const next = addNode(net, { x, y })
+        addSegment(net, prev.id, next.id)
+        prev = next
+      }
+    }
+    const ts = createTrainSet(net, { x: 150, y: 0 }, 'loco')!
+    const frontPos = vehicleFrontEndPos(net, ts.vehicles[0])!
+    const rearPos = vehicleRearEndPos(net, ts.vehicles[0])!
+    // Along its own track, a rail or two past the end
+    expect(findCouplerSnap(net, [ts], { x: frontPos.x + 12, y: 0 }, 'wagon', 15)?.end).toBe('front')
+    expect(findCouplerSnap(net, [ts], { x: rearPos.x - 12, y: 0 }, 'wagon', 15)?.end).toBe('rear')
+    // Level with either end, on the track beside
+    expect(findCouplerSnap(net, [ts], { x: frontPos.x + 2, y: 4.2 }, 'wagon', 15)).toBeNull()
+    expect(findCouplerSnap(net, [ts], { x: rearPos.x - 2, y: 4.2 }, 'wagon', 15)).toBeNull()
+  })
+
   it('returns null when mouse is far from all couplers', () => {
     const { net } = makeStraightNetwork(300)
     const ts = createTrainSet(net, { x: 150, y: 0 }, 'loco')!

@@ -834,6 +834,8 @@ export interface CouplerSnapTarget {
  * and if so compute the snapped Vehicle laid out against that end as `advanceTrainSet` will lay it:
  * a trailer next to a trailer stands on the bogie that is already there.
  * With `flipped` the vehicle is coupled turned around, its nose away from the head of the train.
+ * An end only counts when the rail nearest the cursor is its own track: on the track beside, a few
+ * metres away, the vehicle goes on that track instead.
  */
 export function findCouplerSnap(
   net: Network,
@@ -851,6 +853,16 @@ export function findCouplerSnap(
   const makeSnapped = (front: TrackPosition, rear: TrackPosition): Vehicle => (
     { id: generateId('veh_preview'), ...ghost, front, rear }
   )
+  const under = snapToNearestTrack(net, worldPos, maxDist)
+  /** The rail under the cursor lies along the track from the end vehicle outward, as far as the cursor may be */
+  const onTrackOf = (veh: Vehicle, end: 'front' | 'rear'): boolean => {
+    if (!under) return true
+    const trace: WalkTrace = { spans: [], nodes: [] }
+    const reach = 2 * maxDist + bogieDistance(veh) + bogieDistance(ghost)
+    if (end === 'rear') walkBackward(net, veh.front.segId, veh.front.t, veh.front.forward, reach, { trace })
+    else walkForward(net, veh.rear.segId, veh.rear.t, veh.rear.forward, reach, { trace })
+    return trace.spans.some((span) => span.segId === under.segId)
+  }
 
   for (const train of trains) {
     if (train.vehicles.length === 0) continue
@@ -860,7 +872,7 @@ export function findCouplerSnap(
     const rearPos = vehicleRearEndPos(net, lastVeh)
     if (rearPos) {
       const d = Math.hypot(rearPos.x - worldPos.x, rearPos.y - worldPos.y)
-      if (d < bestDist) {
+      if (d < bestDist && onTrackOf(lastVeh, 'rear')) {
         // Compute position for new vehicle behind lastVeh
         const newFront = followerFront(net, lastVeh, lastVeh.rear, ghost)
         if (newFront) {
@@ -883,7 +895,7 @@ export function findCouplerSnap(
     const frontPos = vehicleFrontEndPos(net, firstVeh)
     if (frontPos) {
       const d = Math.hypot(frontPos.x - worldPos.x, frontPos.y - worldPos.y)
-      if (d < bestDist) {
+      if (d < bestDist && onTrackOf(firstVeh, 'front')) {
         // Compute position for new vehicle in front of firstVeh
         const spacing = jointSpacing(ghost, firstVeh)
         const newRear = spacing === 0

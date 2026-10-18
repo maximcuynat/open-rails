@@ -153,6 +153,30 @@ describe('EditorStore trains', () => {
       expect(store.trains).toHaveLength(1)
     })
 
+    it('sets a train down on the track beside, not against the end of the one next to it', () => {
+      const { store } = storeWithStraightTrack()
+      const c = addNode(store.network, { x: 0, y: 4.2 })
+      const d = addNode(store.network, { x: 1000, y: 4.2 })
+      const beside = addSegment(store.network, c.id, d.id)!
+      store.placeTrainItem({ x: 100, y: 0 })
+      const first = store.trains[0].id
+
+      // In the reach of the train in progress, but on the other track
+      store.updateLocomotivePreview({ x: 75, y: 4.2 })
+      expect(store.couplerSnapTarget).toBeNull()
+      expect(store.placeTrainItem({ x: 75, y: 4.2 })).toBe(true)
+      expect(store.trains).toHaveLength(2)
+      expect(store.trains.find((t) => t.id === first)!.vehicles).toHaveLength(1)
+      expect(store.trains[1].vehicles[0].front.segId).toBe(beside.id)
+
+      // Chain ended: in the magnetic reach of the first train's end, still the other track
+      store.cancelInteraction()
+      store.setTrainPlacementKind('tgv_loco')
+      const tail = vehicleRearEndPos(store.network, store.trains[0].vehicles[0])!
+      store.updateLocomotivePreview({ x: tail.x - 3, y: 4.2 })
+      expect(store.couplerSnapTarget?.train.id).not.toBe(first)
+    })
+
     it('once the chain is ended, the same click starts a separate train', () => {
       const { store } = storeWithStraightTrack()
       store.placeTrainItem({ x: 100, y: 0 })
