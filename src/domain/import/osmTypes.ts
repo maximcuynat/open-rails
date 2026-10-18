@@ -70,6 +70,12 @@ export interface OsmImportOptions {
    * `lambert93`: the national frame, the same for every import, so that two imports line up.
    */
   frame?: OsmFrame
+  /**
+   * Work out the normal direction of running of the track OSM gives none for, by the French rule
+   * « keep to the left on a double line » (`inferKeepLeft`). On when absent; `railway:preferred_direction`
+   * is read whatever this says.
+   */
+  keepLeft?: boolean
 }
 
 export const DEFAULT_OSM_IMPORT_OPTIONS: OsmImportOptions = {
@@ -233,7 +239,15 @@ export interface OsmImportReport {
   stations?: OsmStationReport
   /** What the import did about the platforms; absent when they were not asked for */
   platforms?: OsmPlatformReport
+  /** Length of track given a normal direction of running by its OSM tag, by the rule of keeping left, and without one, km */
+  running?: OsmRunningReport
   issues: OsmImportIssue[]
+}
+
+export interface OsmRunningReport {
+  taggedKm: number
+  inferredKm: number
+  noneKm: number
 }
 
 /** Where imported data comes from. Stored in the project: the ODbL asks for it. */

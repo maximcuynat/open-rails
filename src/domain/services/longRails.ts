@@ -1,6 +1,7 @@
 import type { Network, NodeId, PathPiece, Point, Segment } from '../models/types'
 import { addPathSegment, detachSegment, nodeLevel, removeNode, replaceRail } from '../models/network'
 import { splitSegment } from '../models/junction'
+import { runningCarriesOn } from '../models/running'
 import { pieceEnd } from '../geometry/railPath'
 import { leaveDirectionOnShape, pointOnShape, segmentEnds, shapeChordCount, shapeLengthBetween, shapePolyline } from '../geometry/segmentGeometry'
 
@@ -45,6 +46,9 @@ function isKept(net: Network, nodeId: NodeId): boolean {
   if (rails.length !== 2 || rails[0] === rails[1]) return true
   const node = net.nodes.get(nodeId)
   if (!node) return true
+  // Where the normal direction of running changes (or starts) the two rails stay apart
+  const [s1, s2] = [net.segments.get(rails[0]), net.segments.get(rails[1])]
+  if (s1 && s2 && !runningCarriesOn(s1, s2, nodeId)) return true
   for (const sid of rails) {
     const seg = net.segments.get(sid)
     // A cant set by hand belongs to its own rail
@@ -171,7 +175,7 @@ export function mergeIntoLongRails(net: Network, options: LongRailOptions): { be
         const to = (k + 1) / steps
         shares.push({ segId: long.id, from, to, start: place(from), end: place(to) })
       }
-      replaceRail(net, { oldId: seg.id, pieces: shares })
+      replaceRail(net, { oldId: seg.id, pieces: shares, ...(seg.running ? { running: seg.running } : {}) })
       done += lengths[i]
       if (i < chain.length - 1) inner.push(forward ? seg.to : seg.from)
     })

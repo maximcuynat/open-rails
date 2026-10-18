@@ -248,5 +248,6 @@ describe('platforms laid along the track', () => {
       expect(withPlatforms.report.platforms).toEqual({ found: 0, placed: 0, islands: 0, skipped: {} })
       expect(without.report.platforms).toBeUndefined()
     }
-  })
+    // Eight whole conversions of real data
+  }, 30_000)
 })

@@ -55,7 +55,16 @@ export interface Segment {
   parentSegmentId?: SegmentId
   /** Cant of a curved rail in mm, set by hand; absent = computed from its radius and speed (see `curveCant`) */
   cant?: number
+  /**
+   * Normal direction of running on this rail, relative to its `from` → `to`: on a double line
+   * trains keep to one track each way (to the left in France). Absent: none (single track, yard,
+   * unknown). A cost for the path search (`runningToll`), never a ban.
+   */
+  running?: RunningDirection
 }
+
+/** Normal direction of running on a rail: from its `from` node to its `to` node, or the other way */
+export type RunningDirection = 'forward' | 'backward'
 
 export type JunctionId = string
 

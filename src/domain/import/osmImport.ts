@@ -1,10 +1,12 @@
-import type { NodeId, Point } from '../models/types'
+import type { NodeId, Point, RunningDirection, SegmentId } from '../models/types'
 import type { OsmImportIssue, OsmImportOptions, OsmImportReport, OsmImportResult, OsmSurvey, OverpassResponse } from './osmTypes'
 import { throughTracksAtNode } from '../models/crossing'
 import { findJunctionAtNode, syncJunctions } from '../models/junction'
 import { generateId, resetIdCounter, segmentBand, syncIdCounter } from '../models/network'
 import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { analyzeKinematics } from '../services/kinematicDiagnostics'
+import { inferKeepLeft } from '../services/runningDirection'
+import { setRunning } from '../models/running'
 import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
 import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
 import { createTrackPlacer } from './osmPlace'
@@ -246,6 +248,8 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   if (options.speedLimits) laySpeedZones(built, chains, tangents, options)
   // Counted on the track as it was fitted, before anything cuts its rails
   const slowUnderSpeedKm = options.speedLimits ? slowUnderSpeed(built, chains, graph) / 1000 : 0
+  // The normal direction of running, before anything cuts a rail: `replaceRail` hands it to the pieces
+  const runBothWays = layRunning(built, chains)
   const issues: OsmImportIssue[] = []
   /** The OSM way a rail was laid from; a rail cut since then answers for the one it was cut from */
   const wayOf = (segId: string): number[] => {
@@ -290,6 +294,11 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     }
   }
 
+  // Where OSM gives none, the rule of keeping left on a double line (the rails are settled)
+  const tagged = new Set<SegmentId>()
+  for (const seg of net.segments.values()) if (seg.running) tagged.add(seg.id)
+  if (options.keepLeft !== false) inferKeepLeft(net, { skip: (seg) => runBothWays.has(seg.parentSegmentId ?? seg.id) })
+
   const junctions = syncJunctions(net)
   const report: OsmImportReport = {
     nodes: net.nodes.size,
@@ -308,6 +317,14 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     droppedComponents: dropped,
     issues,
   }
+  const running = { taggedKm: 0, inferredKm: 0, noneKm: 0 }
+  for (const seg of net.segments.values()) {
+    const km = segmentShapeLength(net, seg) / 1000
+    if (!seg.running) running.noneKm += km
+    else if (tagged.has(seg.id)) running.taggedKm += km
+    else running.inferredKm += km
+  }
+  report.running = running
   for (const seg of net.segments.values()) {
     report.lengthKm += segmentShapeLength(net, seg) / 1000
     const band = segmentBand(net, seg)
@@ -361,6 +378,35 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   const dataDate = data?.osm3s?.timestamp_osm_base
   if (typeof dataDate === 'string') result.dataDate = dataDate
   return result
+}
+
+/**
+ * The normal direction of running of each rail laid, read from `railway:preferred_direction` of
+ * the way at its middle (rails are laid along their chain, `from` at the start). Returns the
+ * rails whose way is run both ways by its tag: the rule of keeping left leaves them alone.
+ */
+function layRunning(built: BuiltNetwork, chains: readonly Chain[]): Set<SegmentId> {
+  const net = built.network
+  const both = new Set<SegmentId>()
+  for (const chain of chains) {
+    for (const rail of built.chainRails[chain.index]) {
+      const seg = net.segments.get(rail.segId)
+      if (!seg) continue
+      const middle = (rail.s0 + rail.s1) / 2
+      let i = chain.stations.findIndex((s) => s > middle) - 1
+      if (i < 0) i = middle <= 0 ? 0 : chain.edges.length - 1
+      i = Math.min(i, chain.edges.length - 1)
+      const edge = chain.edges[i]
+      if (!edge) continue
+      const tag = edge.track.tags['railway:preferred_direction']
+      if (tag === 'both') both.add(seg.id)
+      if (tag !== 'forward' && tag !== 'backward') continue
+      // The way drawn along the chain: its direction is the rail's
+      const running: RunningDirection = chain.forward[i] === (tag === 'forward') ? 'forward' : 'backward'
+      setRunning(net, seg, running)
+    }
+  }
+  return both
 }
 
 /** The number of the last id the domain gave out. Reading it takes one, which is given back. */
