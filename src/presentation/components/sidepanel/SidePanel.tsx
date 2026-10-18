@@ -262,11 +262,18 @@ function StationPanel({ store, station }: { store: EditorStore; station: Station
           </>
         )}
         {station.uic && <Field label="UIC" value={station.uic} />}
-        <Field label="Voies à quai" value={station.stops.length === 0 ? 'aucune' : String(station.stops.length)} />
-        {station.stops.map((stop, i) => {
-          const section = findSectionBySegment(sections, stop.segId)
-          return <Field key={`${stop.segId}-${i}`} label={`Voie ${stop.ref ?? i + 1}`} value={section ? section.name : '—'} />
-        })}
+        {platforms.length > 0 ? (
+          // With platforms the stops are their markers (two per edge): count the tracks they run along
+          <Field label="Voies à quai" value={String(platforms.reduce((n, platform) => n + platform.edges.length, 0))} />
+        ) : (
+          <>
+            <Field label="Voies à quai" value={station.stops.length === 0 ? 'aucune' : String(station.stops.length)} />
+            {station.stops.map((stop, i) => {
+              const section = findSectionBySegment(sections, stop.segId)
+              return <Field key={`${stop.segId}-${i}`} label={`Voie ${stop.ref ?? i + 1}`} value={section ? section.name : '—'} />
+            })}
+          </>
+        )}
       </div>
       <div className="sp-subheader">Quais</div>
       {platforms.length === 0 ? (
@@ -288,6 +295,13 @@ function StationPanel({ store, station }: { store: EditorStore; station: Station
             : 'Elle suit ses rails ; elle ne se modifie pas ici.'}
         </p>
       </div>
+      {editable && (
+        <button className="sp-danger" onClick={() => store.deleteStation(station.id)} title="La voie reste ; les trains ne s’y arrêtent plus">
+          {platforms.length === 0
+            ? 'Supprimer la gare'
+            : `Supprimer la gare et ${platforms.length === 1 ? 'son quai' : `ses ${platforms.length} quais`}`}
+        </button>
+      )}
     </>
   )
 }

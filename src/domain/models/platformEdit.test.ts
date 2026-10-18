@@ -5,6 +5,7 @@ import { addPlatform, edgeLength, platformDimensions, pointOnEdge } from './plat
 import {
   addMarker,
   createStation,
+  deleteStation,
   distanceAlongEdge,
   moveEdgeEnd,
   moveMarker,
@@ -215,5 +216,31 @@ describe('editing a platform', () => {
     expect(st.pos).toEqual({ x: 30, y: 40 })
     expect(moveStationLabel(net, st.id, { x: 30, y: 40 })).toBe(false)
     expect(moveStationLabel(net, 'st_nowhere', { x: 0, y: 0 })).toBe(false)
+  })
+})
+
+describe('deleting a station', () => {
+  beforeEach(() => resetIdCounter())
+
+  it('takes all its platforms with it, and leaves the others and the track', () => {
+    const { net, a1, a2, b } = station()
+    const kept = createStation(net, 'Lus', { x: 0, y: 50 })
+    const gone = createStation(net, 'Clelles', { x: 75, y: 20 })
+    const side = { track: [{ segId: a1, t0: 0, t1: 1 }], side: 'right' as const }
+    const ids = [
+      addPlatform(net, { stationId: gone.id, edges: [side], width: 6, markers: [] }).id,
+      addPlatform(net, { stationId: gone.id, edges: [{ track: [{ segId: a2, t0: 0, t1: 1 }], side: 'left' }], width: 6, markers: [] }).id,
+    ]
+    const other = addPlatform(net, { stationId: kept.id, edges: [{ track: [{ segId: b, t0: 0, t1: 1 }], side: 'left' }], width: 6, markers: [] })
+    const rails = net.segments.size
+
+    expect(deleteStation(net, gone.id)).toBe(2)
+    expect(net.stations.has(gone.id)).toBe(false)
+    expect(ids.some((id) => net.platforms.has(id))).toBe(false)
+    expect(net.platforms.has(other.id)).toBe(true)
+    expect(net.segments.size).toBe(rails)
+    // A station without platform goes alone; no station, nothing
+    expect(deleteStation(net, kept.id)).toBe(1)
+    expect(deleteStation(net, kept.id)).toBeNull()
   })
 })

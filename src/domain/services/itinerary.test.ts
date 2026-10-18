@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { afterCall, destinationOf, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStop } from './itinerary'
+import { afterCall, destinationOf, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStation, withoutStop } from './itinerary'
 
 // Roughly where they are, in km east and north
 const PLACES: Record<string, { x: number; y: number }> = {
@@ -66,5 +66,17 @@ describe('the itinerary of a train', () => {
     const length = straightLengthAhead(it1, PLACES.marseille, place)
     expect(length).toBeCloseTo(Math.hypot(45, 270) + Math.hypot(195, 340), 6)
     expect(straightLengthAhead(itineraryFrom('marseille'), PLACES.marseille, place)).toBe(0)
+  })
+})
+
+describe('an itinerary once a station is deleted', () => {
+  it('loses the station wherever it stands, and still heads for the same next station', () => {
+    // Called at a and b, heading for c
+    const itinerary = { stations: ['a', 'b', 'c', 'b', 'd'], next: 2 }
+    expect(withoutStation(itinerary, 'b')).toEqual({ stations: ['a', 'c', 'd'], next: 1 })
+    expect(withoutStation(itinerary, 'c')).toEqual({ stations: ['a', 'b', 'b', 'd'], next: 2 })
+    expect(withoutStation(itinerary, 'z')).toBe(itinerary)
+    // The last station gone: arrived
+    expect(withoutStation({ stations: ['a', 'b'], next: 1 }, 'b')).toEqual({ stations: ['a'], next: 1 })
   })
 })

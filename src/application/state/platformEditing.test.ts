@@ -138,6 +138,36 @@ describe('editing a platform with the selection tool', () => {
 })
 
 describe('stations in the editor', () => {
+  it('are deleted with all their platforms, from the panel or with Delete, in one undo step', () => {
+    const { store, station, platform, rails } = storeWithPlatform()
+    const second = addPlatform(store.network, {
+      stationId: station.id,
+      edges: [{ track: [{ segId: rails[1], t0: 0.25, t1: 0.75 }], side: 'left' }],
+      width: 6,
+      markers: [],
+    })
+    const lus = store.createStation('Lus', { x: 0, y: 50 })!
+    // A train whose journey calls at the station deleted, then at Lus
+    expect(store.placeTrainLoco({ x: 250, y: 0 })).toBe(true)
+    const train = store.trains[0]
+    train.itinerary = { stations: [lus, station.id, lus], next: 1 }
+
+    store.selectStation(station.id)
+    store.deleteSelection()
+    expect(store.network.stations.has(station.id)).toBe(false)
+    expect(store.network.platforms.has(platform.id) || store.network.platforms.has(second.id)).toBe(false)
+    expect(store.selectedStation).toBeNull()
+    expect(store.trains[0].itinerary).toEqual({ stations: [lus, lus], next: 1 })
+    expect(rails.every((id) => store.network.segments.has(id))).toBe(true)
+
+    store.undo()
+    expect(store.network.stations.has(station.id)).toBe(true)
+    expect(store.network.platforms.has(platform.id) && store.network.platforms.has(second.id)).toBe(true)
+    // Not while the network cannot be edited
+    store.togglePlayMode()
+    expect(store.deleteStation(station.id)).toBe(false)
+  })
+
   it('are created, renamed and their mark dragged; undo puts the name back', () => {
     const { store, station } = storeWithPlatform()
     const id = store.createStation('  Lus-la-Croix-Haute ', { x: 10, y: 10 })!

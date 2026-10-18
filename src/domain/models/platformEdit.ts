@@ -1,6 +1,6 @@
 import { touchNetwork } from './networkWatch'
-import { edgeLength, edgeLine, platformOutline, pointOnEdge, sideNormal, PLATFORM_WIDTH, type PlatformDimensions } from './platforms'
-import { addStation } from './stations'
+import { edgeLength, edgeLine, platformOutline, platformsOf, pointOnEdge, removePlatform, sideNormal, PLATFORM_WIDTH, type PlatformDimensions } from './platforms'
+import { addStation, removeStation } from './stations'
 import type { Network, Platform, PlatformEdge, PlatformId, Point, SegmentId, Station, StationId, StopMarker, TrackSpan } from './types'
 import { closestParamOnShape, distanceToShape, pointOnShape, segmentEnds, shapeLengthBetween, shapeParamAtDistance, type SegmentEnds } from '../geometry/segmentGeometry'
 
@@ -529,6 +529,19 @@ export function setPlatformStation(net: Network, platformId: PlatformId, station
 /** A new station of the editor: a name and a place, no stop of its own (its platforms will give them) */
 export function createStation(net: Network, name: string, pos: Point): Station {
   return addStation(net, { name: name.trim() || 'Nouvelle gare', pos, stops: [] })
+}
+
+/**
+ * Delete a station and every platform it has (a station may have several): a platform belongs to
+ * one station and has no meaning without it. The track stays. Returns how many platforms went with
+ * it; null when there is no such station.
+ */
+export function deleteStation(net: Network, stationId: StationId): number | null {
+  if (!net.stations.has(stationId)) return null
+  const platforms = platformsOf(net, stationId)
+  for (const platform of platforms) removePlatform(net, platform.id)
+  removeStation(net, stationId)
+  return platforms.length
 }
 
 /** Move the place (the label) of a station. False when there is no such station or it does not move. */

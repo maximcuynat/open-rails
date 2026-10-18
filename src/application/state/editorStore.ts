@@ -16,9 +16,11 @@ import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
 import { cleanStations, stationAt } from '@domain/models/stations'
 import { setStationIdentity } from '@domain/models/stations'
+import { withoutStation } from '@domain/services/itinerary'
 import {
   addMarker,
   createStation,
+  deleteStation,
   moveEdgeEnd,
   moveMarker,
   moveStationLabel,
@@ -2486,6 +2488,11 @@ export class EditorStore {
       this.deleteSelectedPlatform()
       return
     }
+    // A station picked: Delete removes it with its platforms
+    if (this.tool === 'select' && this.selectedStation) {
+      this.deleteStation(this.selectedStation.id)
+      return
+    }
     if (this.isTrainSelected || this.tool === 'locomotive' || this.tool === 'coupling') {
       if (this.selectedTrain || this.locomotive) {
         this.deleteSelectedTrainOrVehicle()
@@ -4781,6 +4788,29 @@ export class EditorStore {
     }
     if (Object.keys(next).length === 0) return false
     setStationIdentity(this.network, id, next)
+    this.markDirty()
+    return true
+  }
+
+  /**
+   * Delete a station with all its platforms (one undo step); the track stays, and the journeys of
+   * the trains no longer call there. False when the network cannot be edited or there is no such station.
+   */
+  deleteStation = (id: string): boolean => {
+    if (!this.canEditNetwork || deleteStation(this.network, id) === null) return false
+    if (this.stationDrag?.id === id) this.stationDrag = null
+    if (this.platformDrag && !this.network.platforms.has(this.platformDrag.platformId)) this.platformDrag = null
+    if (this.selectedStationId === id) this.selectedStationId = null
+    if (this.hoveredStationId === id) this.hoveredStationId = null
+    if (this.selectedPlatformId && !this.network.platforms.has(this.selectedPlatformId)) this.selectedPlatformId = null
+    if (this.hoveredPlatformId && !this.network.platforms.has(this.hoveredPlatformId)) this.hoveredPlatformId = null
+    for (const train of this.trains) {
+      if (!train.itinerary) continue
+      const itinerary = withoutStation(train.itinerary, id)
+      if (itinerary === train.itinerary) continue
+      train.itinerary = itinerary
+      this.routeGuides.delete(train.id)
+    }
     this.markDirty()
     return true
   }

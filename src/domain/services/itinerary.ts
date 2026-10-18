@@ -84,6 +84,16 @@ export function withoutStop(itinerary: TrainItinerary, index: number): TrainItin
   return { stations: itinerary.stations.filter((_, i) => i !== index), next: itinerary.next }
 }
 
+/**
+ * The itinerary without a station that no longer exists, wherever it stood (it may come back more
+ * than once): the train still heads for the same next station. The same itinerary when it was not there.
+ */
+export function withoutStation(itinerary: TrainItinerary, stationId: StationId): TrainItinerary {
+  if (!itinerary.stations.includes(stationId)) return itinerary
+  const before = itinerary.stations.slice(0, itinerary.next).filter((id) => id === stationId).length
+  return { stations: itinerary.stations.filter((id) => id !== stationId), next: itinerary.next - before }
+}
+
 /** The itinerary once the train has called at the station it was heading for */
 export function afterCall(itinerary: TrainItinerary): TrainItinerary {
   if (itinerary.next >= itinerary.stations.length) return itinerary
