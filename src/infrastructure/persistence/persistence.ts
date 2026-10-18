@@ -15,9 +15,10 @@ import {
   type SignallingSettings,
 } from '../../domain/models/signals'
 import { cleanStations, restoreStation } from '../../domain/models/stations'
+import { restorePlatform, settlePlatforms } from '../../domain/models/platforms'
 import { adoptReconciledNetwork, reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
-import type { Junction, JunctionKind, Network, PathPiece, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
+import type { Junction, JunctionKind, Network, PathPiece, Platform, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
 import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
@@ -117,6 +118,15 @@ export interface SerializedStation {
   stops: { segId: string; t: number; ref?: string }[]
 }
 
+/** Saved platform: its station, the track of each edge and its side, its width, its stop markers */
+export interface SerializedPlatform {
+  id: string
+  stationId: string
+  edges: { track: { segId: string; t0: number; t1: number }[]; side: 'left' | 'right'; ref?: string }[]
+  width: number
+  markers: { edge: 0 | 1; at: number; heading: 'forward' | 'backward'; maxLength?: number }[]
+}
+
 export interface SerializedCamera {
   x: number
   y: number
@@ -145,7 +155,7 @@ export interface SerializedGraphEdge {
 }
 
 export interface SerializedProject {
-  version: 1 | 2 | 3 | 4
+  version: 1 | 2 | 3 | 4 | 5
   name?: string
   nodes: SerializedNode[]
   segments: SerializedSegment[]
@@ -184,6 +194,8 @@ export interface SerializedProject {
   signals?: SerializedSignal[]
   /** Stations and their platform tracks (absent when there is none; version 4) */
   stations?: SerializedStation[]
+  /** Platforms of the stations (absent when there is none; version 5) */
+  platforms?: SerializedPlatform[]
   /** Signalling level of the project; only written when it is not the default one */
   signallingLevel?: SignallingLevel
   /** Emergency brake on passing a closed signal; only written when it is not the default (on) */
@@ -386,6 +398,9 @@ export function serializeNetwork(
     })
   }
 
+  const platforms: SerializedPlatform[] = []
+  for (const platform of net.platforms.values()) platforms.push(serializedPlatform(platform))
+
   // Construire le graphe d'adjacence entre sections : deux sections sont adjacentes
   // si elles partagent au moins un noeud frontiere (endpoint de leurs segments)
   let serializedSections: SerializedSection[] | undefined
@@ -423,9 +438,9 @@ export function serializeNetwork(
   }
 
   return {
-    // 4 as soon as a station is in it, 3 as soon as a long rail is: a build that does not know
-    // them must not open it as something else (or without them)
-    version: stations.length > 0 ? 4 : segments.some((s) => s.kind === 'path') ? 3 : 2,
+    // 5 as soon as a platform is in it, 4 as soon as a station is, 3 as soon as a long rail is: a
+    // build that does not know them must not open it as something else (or without them)
+    version: platforms.length > 0 ? 5 : stations.length > 0 ? 4 : segments.some((s) => s.kind === 'path') ? 3 : 2,
     name: projectName,
     nodes,
     segments,
@@ -463,6 +478,7 @@ export function serializeNetwork(
     // A project without signal on the default settings carries none of these: it is written back as it was
     signals: signals.length > 0 ? signals : undefined,
     stations: stations.length > 0 ? stations : undefined,
+    platforms: platforms.length > 0 ? platforms : undefined,
     signallingLevel:
       signalling?.level !== undefined && signalling.level !== DEFAULT_SIGNALLING_SETTINGS.level ? signalling.level : undefined,
     signalStopEnforced:
@@ -558,7 +574,7 @@ function restoreJunction(net: Network, j: SerializedJunction): void {
 }
 
 /** Newest project version this build reads */
-export const PROJECT_VERSION = 4
+export const PROJECT_VERSION = 5
 
 /**
  * Whether the entries of a live map can be left where they are to take the order of the saved
@@ -613,6 +629,32 @@ function sameJunction(live: Junction, j: SerializedJunction): boolean {
   return true
 }
 
+/** A platform as it is saved: copies of everything, fields left out when absent */
+function serializedPlatform(platform: Platform): SerializedPlatform {
+  return {
+    id: platform.id,
+    stationId: platform.stationId,
+    edges: platform.edges.map((edge) => ({
+      track: edge.track.map((span) => ({ segId: span.segId, t0: span.t0, t1: span.t1 })),
+      side: edge.side,
+      ...(edge.ref !== undefined ? { ref: edge.ref } : {}),
+    })),
+    width: platform.width,
+    markers: platform.markers.map((marker) => ({
+      edge: marker.edge,
+      at: marker.at,
+      heading: marker.heading,
+      ...(marker.maxLength !== undefined ? { maxLength: marker.maxLength } : {}),
+    })),
+  }
+}
+
+/** True when a saved platform is the live one, field for field */
+function samePlatform(live: Platform, saved: SerializedPlatform): boolean {
+  if (!saved || typeof saved !== 'object') return false
+  return JSON.stringify(serializedPlatform(live)) === JSON.stringify(saved)
+}
+
 /** The network brought to the data in place against one read anew: the same nodes, rails, adjacency, tables, zones and signals, in the same order */
 function checkAgainstFresh(net: Network, data: SerializedProject, reconciledAt?: number): void {
   const fresh = deserializeNetwork(data, reconciledAt).network
@@ -624,6 +666,7 @@ function checkAgainstFresh(net: Network, data: SerializedProject, reconciledAt?:
     zones: JSON.stringify([...n.speedZones.values()]),
     signals: JSON.stringify([...n.signals.values()]),
     stations: JSON.stringify([...n.stations.values()]),
+    platforms: JSON.stringify([...n.platforms.values()]),
   })
   const mine = parts(net)
   const theirs = parts(fresh)
@@ -756,6 +799,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   const segmentsInPlace = segmentsKept.inPlace
   const liveSegments = into && !segmentsInPlace ? new Map(into.segments) : into ? into.segments : null
   const liveJunctions = into ? new Map(into.junctions) : null
+  const livePlatforms = into ? new Map(into.platforms) : null
   // Every node and rail as it is, none dropped, every rail between the nodes it is: the rails of each node are as they are
   const railsAsTheyAre =
     segmentsInPlace && nodesInPlace && segmentsKept.dropped === 0 && nodesKept.dropped === 0 &&
@@ -770,6 +814,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
     into.speedZones.clear()
     into.signals.clear()
     into.stations.clear()
+    into.platforms.clear()
   }
 
   // 1. Restore nodes
@@ -876,6 +921,14 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   if (Array.isArray(data.stations)) {
     for (const station of data.stations) restoreStation(net, station)
   }
+  // Platforms name rails too, and their station: after the stations. One still as saved stays the object it is
+  if (Array.isArray(data.platforms)) {
+    for (const platform of data.platforms) {
+      const live = livePlatforms?.get(platform?.id)
+      if (live && samePlatform(live, platform)) net.platforms.set(live.id, live)
+      else restorePlatform(net, platform)
+    }
+  }
 
   // 4. Ids generated from here on (by the reconcile pass below) must not reuse the ones just read
   syncIdCounter(net)
@@ -885,6 +938,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   // A signal on a rail that is not in the file, or out of 0…1, is dropped; a stop likewise
   cleanSignals(net)
   cleanStations(net)
+  settlePlatforms(net)
 
   // 5. Reconcile intersections; it ends by bringing the tables in line with the track. A project
   // known to have been reconciled at that very tolerance when it was written (`reconciledAt`: a
@@ -896,6 +950,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   cleanSpeedZones(net)
   cleanSignals(net)
   cleanStations(net)
+  settlePlatforms(net)
   // Only a reconcile pass makes ids
   if (reconciledAt !== tolerance) syncIdCounter(net)
   // Heights, cants and frog numbers were written onto the nodes, rails and tables in place — on
@@ -907,7 +962,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
   // 6. Restore trains (stopped, controls at rest) and keep their ids clear of future generateId calls
   const trains = deserializeTrains(net, data.trains)
   if (trains.length > 0) {
-    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys(), ...net.signals.keys(), ...net.stations.keys()]
+    const ids = [...net.nodes.keys(), ...net.segments.keys(), ...net.junctions.keys(), ...net.speedZones.keys(), ...net.signals.keys(), ...net.stations.keys(), ...net.platforms.keys()]
     for (const train of trains) ids.push(train.id, ...train.vehicles.map((v) => v.id))
     // One id at a time: a large network has more ids than a call takes arguments
     let highest = 0

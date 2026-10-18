@@ -242,6 +242,30 @@ class ContentRecord {
         put(stop.ref)
       }
     }
+    for (const platform of net.platforms.values()) {
+      label = `platform ${platform.id}`
+      put(platform.id)
+      put(platform.stationId)
+      put(platform.width)
+      put(platform.edges.length)
+      for (const edge of platform.edges) {
+        put(edge.side)
+        put(edge.ref)
+        put(edge.track.length)
+        for (const span of edge.track) {
+          put(span.segId)
+          put(span.t0)
+          put(span.t1)
+        }
+      }
+      put(platform.markers.length)
+      for (const marker of platform.markers) {
+        put(marker.edge)
+        put(marker.at)
+        put(marker.heading)
+        put(marker.maxLength)
+      }
+    }
     if (values.length !== at) {
       values.length = at
       differs ??= 'something removed'

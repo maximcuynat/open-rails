@@ -1,4 +1,4 @@
-import type { SerializedProject, SerializedStation } from './persistence'
+import type { SerializedPlatform, SerializedProject, SerializedStation } from './persistence'
 
 // A project file cut into parts and put back together, as data: the files of a dataset are the
 // slices of one project (one per line), and loading a journey is the union of the files its lines
@@ -7,7 +7,9 @@ import type { SerializedProject, SerializedStation } from './persistence'
 // What stands at the border of two slices is in both: a node shared by rails of two lines, the
 // route table of that node (whole: loaded alone, the editor trims it to the rails it has), a
 // station with platforms on both (each slice holds its own stops). A speed zone is never on both
-// sides: `splitSpeedZonesBy` cuts them at the border before the project is written.
+// sides: `splitSpeedZonesBy` cuts them at the border before the project is written. A platform
+// goes whole to every slice that holds one of its rails, with its station (loaded alone, the editor
+// keeps the longest part of each edge it has the track of).
 
 /** The part of a project that holds the rails `keepRail` says yes to, with what stands on them */
 export function sliceProject(project: SerializedProject, keepRail: (segId: string) => boolean): SerializedProject {
@@ -26,9 +28,11 @@ export function sliceProject(project: SerializedProject, keepRail: (segId: strin
     if (kept !== 0 && kept !== zone.spans.length) throw new Error(`Speed zone ${zone.id} runs over rails of two slices: cut the zones at the borders first`)
     return kept > 0
   })
+  const platforms = project.platforms?.filter((platform) => platform.edges.some((edge) => edge.track.some((span) => rails.has(span.segId))))
+  const platformed = new Set(platforms?.map((platform) => platform.stationId))
   const stations = project.stations
     ?.map((station) => ({ ...station, stops: station.stops.filter((stop) => rails.has(stop.segId)) }))
-    .filter((station) => station.stops.length > 0)
+    .filter((station) => station.stops.length > 0 || platformed.has(station.id))
   let sectionMeta: Record<string, unknown> | undefined
   if (project.sectionMeta) {
     sectionMeta = {}
@@ -45,6 +49,7 @@ export function sliceProject(project: SerializedProject, keepRail: (segId: strin
     speedZones: speedZones && speedZones.length > 0 ? speedZones : undefined,
     signals: signals && signals.length > 0 ? signals : undefined,
     stations: stations && stations.length > 0 ? stations : undefined,
+    platforms: platforms && platforms.length > 0 ? platforms : undefined,
     sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
     // What belongs to one view of the whole, not to a part of it
     camera: undefined,
@@ -54,7 +59,7 @@ export function sliceProject(project: SerializedProject, keepRail: (segId: strin
 }
 
 /**
- * The project the slices were cut from. Nodes, rails, tables, zones and signals are taken once by
+ * The project the slices were cut from. Nodes, rails, tables, zones, signals and platforms are taken once by
  * id (the same thing in two slices must be the same thing); the stops of a station found in
  * several slices are put together; the section settings are merged. The scalar settings come from
  * the first project, the version is the highest.
@@ -68,6 +73,7 @@ export function unionProjects(projects: readonly SerializedProject[]): Serialize
   const speedZones = new Map<string, NonNullable<SerializedProject['speedZones']>[number]>()
   const signals = new Map<string, NonNullable<SerializedProject['signals']>[number]>()
   const stations = new Map<string, SerializedStation>()
+  const platforms = new Map<string, SerializedPlatform>()
   const sectionMeta: Record<string, unknown> = {}
   let version = first.version
   const take = <T extends { id: string }>(into: Map<string, T>, items: readonly T[] | undefined, what: string): void => {
@@ -83,6 +89,7 @@ export function unionProjects(projects: readonly SerializedProject[]): Serialize
     take(junctions, project.junctions, 'Route table')
     take(speedZones, project.speedZones, 'Speed zone')
     take(signals, project.signals, 'Signal')
+    take(platforms, project.platforms, 'Platform')
     for (const station of project.stations ?? []) {
       const known = stations.get(station.id)
       if (!known) {
@@ -105,6 +112,7 @@ export function unionProjects(projects: readonly SerializedProject[]): Serialize
     speedZones: speedZones.size > 0 ? [...speedZones.values()] : undefined,
     signals: signals.size > 0 ? [...signals.values()] : undefined,
     stations: stations.size > 0 ? [...stations.values()] : undefined,
+    platforms: platforms.size > 0 ? [...platforms.values()] : undefined,
     sectionMeta: Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
     camera: undefined,
     sections: undefined,

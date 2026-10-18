@@ -8,6 +8,7 @@ const outcome = (over: Partial<MergeOutcome> = {}): MergeOutcome => ({
   railsDropped: 1,
   stationsAdded: 2,
   stationsMerged: 1,
+  platformsAdded: 0,
   junctionsDropped: 0,
   junctionsRebuilt: 0,
   signalsAdded: 0,
