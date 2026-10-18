@@ -4,6 +4,7 @@ import { normalizedName, uicKey } from '../../domain/models/stationRegistry'
 import type {
   SerializedJunction,
   SerializedNode,
+  SerializedPlatform,
   SerializedProject,
   SerializedSegment,
   SerializedSignal,
@@ -40,6 +41,8 @@ export interface MergeReport {
   railsDropped: number
   stationsAdded: number
   stationsMerged: number
+  /** Incoming platforms kept (one on a doubled rail the current project already has a platform on is left out) */
+  platformsAdded: number
   /** Incoming route tables left out: the current project had one at that node, and it still fits */
   junctionsDropped: number
   /** Route tables of both projects left out at a node where the two meet: the editor proposes one again */
@@ -82,6 +85,7 @@ function* ownIds(project: SerializedProject): Generator<string> {
   for (const zone of project.speedZones ?? []) yield zone.id
   for (const signal of project.signals ?? []) yield signal.id
   for (const station of project.stations ?? []) yield station.id
+  for (const platform of project.platforms ?? []) yield platform.id
   for (const train of project.trains ?? []) {
     yield train.id
     for (const vehicle of train.vehicles) yield vehicle.id
@@ -139,6 +143,16 @@ export function renumberProject(project: SerializedProject, firstFree: number): 
     id: id(station.id),
     stops: station.stops.filter((stop) => rails.has(stop.segId)).map((stop) => ({ ...stop, segId: id(stop.segId) })),
   }))
+  // A platform of a station the file does not hold goes; one of whose edges keeps no rail of the file too
+  const stationIds = new Set(stations.map((station) => station.id))
+  const platforms = (project.platforms ?? [])
+    .map((platform) => ({
+      ...platform,
+      id: id(platform.id),
+      stationId: id(platform.stationId),
+      edges: platform.edges.map((edge) => ({ ...edge, track: edge.track.filter((span) => rails.has(span.segId)).map((span) => ({ ...span, segId: id(span.segId) })) })),
+    }))
+    .filter((platform) => stationIds.has(platform.stationId) && platform.edges.every((edge) => edge.track.length > 0))
   const trains = (project.trains ?? [])
     .filter((train) => train.vehicles.every((v) => rails.has(v.front.segId) && rails.has(v.rear.segId)))
     .map((train) => ({
@@ -162,6 +176,7 @@ export function renumberProject(project: SerializedProject, firstFree: number): 
     speedZones: speedZones.length > 0 ? speedZones : undefined,
     signals: signals.length > 0 ? signals : undefined,
     stations: stations.length > 0 ? stations : undefined,
+    platforms: platforms.length > 0 ? platforms : undefined,
     trains: trains.length > 0 ? trains : undefined,
     sectionMeta: sectionMeta && Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
     sections: undefined,
@@ -437,6 +452,8 @@ export function mergeProjects(current: SerializedProject, incoming: SerializedPr
   const stations: SerializedStation[] = (current.stations ?? []).map((station) => ({ ...station, stops: [...station.stops] }))
   let stationsAdded = 0
   let stationsMerged = 0
+  /** Incoming station → the station it is in the result */
+  const stationIs = new Map<string, string>()
   for (const raw of added.stations ?? []) {
     const stops = raw.stops.filter((stop) => !gone(stop.segId)).map(place)
     const code = uicKey(raw.uic)
@@ -449,10 +466,36 @@ export function mergeProjects(current: SerializedProject, incoming: SerializedPr
       stationsAdded++
       continue
     }
+    stationIs.set(raw.id, same.id)
     stationsMerged++
     for (const stop of stops) {
       if (!same.stops.some((s) => s.segId === stop.segId && metresApart(s.segId, s.t, stop.t) < SAME_PLACE_WITHIN)) same.stops.push(stop)
     }
+  }
+
+  // 7b. Platforms follow their station and their rails (a span on a doubled rail onto the rail it
+  // now is, turned round with it: the side, seen walking the edge, stays). One that has an edge on
+  // a doubled rail the current project already has a platform on is left out; one that keeps no
+  // rail on an edge goes. The stops of a station that has platforms are drawn again on loading.
+  const platformed = new Set<string>()
+  for (const platform of current.platforms ?? []) for (const edge of platform.edges) for (const span of edge.track) platformed.add(span.segId)
+  const platforms: SerializedPlatform[] = [...(current.platforms ?? [])]
+  let platformsAdded = 0
+  for (const platform of added.platforms ?? []) {
+    if (platform.edges.some((edge) => edge.track.some((span) => railIs.has(span.segId) && platformed.has(rail(span.segId))))) continue
+    const edges = platform.edges.map((edge) => ({
+      ...edge,
+      track: edge.track
+        .filter((span) => !gone(span.segId))
+        .map((span) => {
+          const survivor = railIs.get(span.segId)
+          if (!survivor) return span
+          return survivor.flipped ? { segId: survivor.id, t0: 1 - span.t0, t1: 1 - span.t1 } : { ...span, segId: survivor.id }
+        }),
+    }))
+    if (edges.some((edge) => edge.track.length === 0)) continue
+    platforms.push({ ...platform, stationId: stationIs.get(platform.stationId) ?? platform.stationId, edges })
+    platformsAdded++
   }
 
   // 8. Trains come along, standing where they stood
@@ -496,6 +539,7 @@ export function mergeProjects(current: SerializedProject, incoming: SerializedPr
     speedZones: speedZones.length > 0 ? speedZones : undefined,
     signals: signals.length > 0 ? signals : undefined,
     stations: stations.length > 0 ? stations : undefined,
+    platforms: platforms.length > 0 ? platforms : undefined,
     trains: trains.length > 0 ? trains : undefined,
     sectionMeta: Object.keys(sectionMeta).length > 0 ? sectionMeta : undefined,
     sections: undefined,
@@ -509,6 +553,7 @@ export function mergeProjects(current: SerializedProject, incoming: SerializedPr
     railsDropped: railIs.size + collapsed.size,
     stationsAdded,
     stationsMerged,
+    platformsAdded,
     junctionsDropped,
     junctionsRebuilt,
     signalsAdded,

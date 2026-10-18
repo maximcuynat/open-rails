@@ -105,9 +105,9 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
       convention de côté testée sur droite, courbe et voie parcourue à rebours
 
 ### Q0 — Modèle et persistance (domaine seul)
-- [ ] `networkWatch` (empreinte des quais dans l'oracle), `remapPlatforms`, `cleanPlatforms`
-- [ ] Sauvegarde, rechargement, annuler / refaire, fusion, découpe
-- [ ] `stops` tirés des repères pour une gare qui a des quais
+- [x] `networkWatch` (empreinte des quais dans l'oracle), `remapPlatforms`, `cleanPlatforms`
+- [x] Sauvegarde, rechargement, annuler / refaire, fusion, découpe
+- [x] `stops` tirés des repères pour une gare qui a des quais
 
 ### Q1 — Dessin
 - [ ] Corps du quai (polygone sous les rails, au-dessus du ballast), nez de quai marqué
