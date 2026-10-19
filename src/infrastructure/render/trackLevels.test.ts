@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { OTHER_SIDE_ALPHA } from '@infrastructure/render/levelAlpha'
 import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment, setNodesLevel } from '@domain/models/network'
 import { createTrainSet, type TrainSet } from '@domain/models/train'
@@ -14,9 +15,7 @@ import {
   inLevelBand,
   DECK_WIDTH,
   DECK_PARAPET_WIDTH,
-  TUNNEL_ALPHA,
   TUNNEL_DASH,
-  TUNNEL_VEHICLE_ALPHA,
   diagnosticLabel,
   GAUGE,
   type LevelBand,
@@ -198,7 +197,7 @@ describe('track levels — rails', () => {
     const tunnelRails = indices(ops, isUpperRailStroke)
     expect(tunnelRails.length).toBeGreaterThan(0)
     for (const i of tunnelRails) {
-      expect(ops[i].globalAlpha).toBeCloseTo(TUNNEL_ALPHA)
+      expect(ops[i].globalAlpha).toBeCloseTo(OTHER_SIDE_ALPHA)
       expect(ops[i].dash).toEqual(TUNNEL_DASH)
     }
     const groundRails = indices(ops, isGroundRailStroke)
@@ -228,7 +227,7 @@ describe('track levels — rails', () => {
 
     // In a tunnel: dimmed and dashed, drawn before the ground
     const tunnel = lines(drawPlain(crossingTracks(-1).net, mid))
-    expect(tunnel.map((op) => op.globalAlpha)).toEqual([TUNNEL_ALPHA, 1])
+    expect(tunnel.map((op) => op.globalAlpha)).toEqual([OTHER_SIDE_ALPHA, 1])
     expect(tunnel.map((op) => op.dash)).toEqual([TUNNEL_DASH, []])
   })
 
@@ -243,7 +242,7 @@ describe('track levels — rails', () => {
 
     // A track wholly below ground is dimmed, in a stroke of its own
     const tunnel = lines(drawPlain(crossingTracks(-1).net, far))
-    expect(tunnel.map((op) => op.globalAlpha)).toEqual([TUNNEL_ALPHA, 1])
+    expect(tunnel.map((op) => op.globalAlpha)).toEqual([OTHER_SIDE_ALPHA, 1])
   })
 
   it('ramp: the abutment is where the deck starts on the ramp, not at the node where the span begins', () => {
@@ -463,7 +462,7 @@ describe('track levels — trains', () => {
 
     const body = indices(ops, isBodyFill)
     expect(body).toHaveLength(1)
-    expect(ops[body[0]].globalAlpha).toBeCloseTo(TUNNEL_VEHICLE_ALPHA)
+    expect(ops[body[0]].globalAlpha).toBeCloseTo(OTHER_SIDE_ALPHA)
     expect(body[0]).toBeLessThan(Math.min(...indices(ops, isGroundRailStroke)))
   })
 
@@ -582,7 +581,7 @@ describe('track levels — ramps', () => {
       expect(ops[i].dash).toEqual([])
     }
     for (const i of lower) {
-      expect(ops[i].globalAlpha).toBeCloseTo(TUNNEL_ALPHA)
+      expect(ops[i].globalAlpha).toBeCloseTo(OTHER_SIDE_ALPHA)
       expect(ops[i].dash).toEqual(TUNNEL_DASH)
     }
     // The tunnel part is drawn first, under whatever is on the ground
@@ -628,7 +627,7 @@ describe('track levels — ramps', () => {
     expect(atTop[indices(atTop, isBodyFill)[0]].globalAlpha).toBe(1)
 
     const below = drawLayered(net, [wagonOn(net, { x: 160, y: 0 })]).ops
-    expect(below[indices(below, isBodyFill)[0]].globalAlpha).toBeCloseTo(TUNNEL_VEHICLE_ALPHA)
+    expect(below[indices(below, isBodyFill)[0]].globalAlpha).toBeCloseTo(OTHER_SIDE_ALPHA)
   })
 
   it('too steep a ramp: the existing diagnostic marker, with the slope as its text', () => {
@@ -817,7 +816,7 @@ describe('speed zones on the canvas', () => {
     addSpeedZoneBetween(net, at(net, 100, -30), at(net, 100, 30), 60)
     const band = draw(net).filter(isBandStroke)
     expect(band).toHaveLength(1)
-    expect(band[0].globalAlpha).toBeCloseTo(SPEED_ZONE_ALPHA * TUNNEL_ALPHA)
+    expect(band[0].globalAlpha).toBeCloseTo(SPEED_ZONE_ALPHA * OTHER_SIDE_ALPHA)
   })
 
   it('in the layered drawing, each level draws the bands of its own rails only', () => {

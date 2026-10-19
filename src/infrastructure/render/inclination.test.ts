@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { OTHER_SIDE_ALPHA } from '@infrastructure/render/levelAlpha'
 import { createCamera, type Camera } from '@infrastructure/render/camera'
 import { addCurveChain, addNode, addSegment, createNetwork, resetIdCounter } from '@domain/models/network'
 import { tangentArcPieces } from '@domain/geometry/curve'
@@ -7,7 +8,7 @@ import { createVehicle, makeTrainSet, type TrainSet } from '@domain/models/train
 import type { LineSettings } from '@domain/models/speedLimits'
 import { trackProfile, trackSpeedStats } from '@domain/models/trackSpeed'
 import type { Network, Point, RailNode, Segment } from '@domain/models/types'
-import { GAUGE, TRAIN_FLANK_FILL, TUNNEL_ALPHA, renderNetwork, renderTrainSet, type RenderNetworkOptions } from '@infrastructure/render/renderer'
+import { GAUGE, TRAIN_FLANK_FILL, renderNetwork, renderTrainSet, type RenderNetworkOptions } from '@infrastructure/render/renderer'
 import { trackLod } from '@infrastructure/render/lod'
 import { groupPiecesByLevel } from '@infrastructure/render/levelPieces'
 import { networkDerived } from '@infrastructure/render/networkDerived'
@@ -411,7 +412,7 @@ describe('cant marks', () => {
     for (const node of below.net.nodes.values()) node.level = -1
     networkChanged()
     const [tunnel] = marks(drawTracks(below.net, cam, options()).paints)
-    expect(tunnel.globalAlpha).toBeCloseTo(open.globalAlpha * TUNNEL_ALPHA, 9)
+    expect(tunnel.globalAlpha).toBeCloseTo(open.globalAlpha * OTHER_SIDE_ALPHA, 9)
 
     const above = curveLayout()
     for (const node of above.net.nodes.values()) node.level = 1
@@ -643,7 +644,7 @@ describe('slope marks', () => {
     // The ramp is cut where it goes below half a level: one stroke on the ground, one in the tunnel
     expect(strokes).toHaveLength(2)
     const alphas = strokes.map((p) => p.globalAlpha).sort((a, b) => a - b)
-    expect(alphas[0]).toBeCloseTo(alphas[1] * TUNNEL_ALPHA, 9)
+    expect(alphas[0]).toBeCloseTo(alphas[1] * OTHER_SIDE_ALPHA, 9)
     // All pointing up: towards −x here
     for (const sub of strokes.flatMap((p) => p.path)) expect(sub[1][0]).toBeLessThan(sub[0][0])
   })

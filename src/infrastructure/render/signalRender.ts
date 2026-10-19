@@ -24,6 +24,7 @@ import { trackPositionBand, type TrackPiece } from './levelPieces'
 import { trackLod } from './lod'
 import { clusterMarkers, reportClusterRadius, type MarkerSeverity } from './lodOverlays'
 import { themeInk } from './themeInk'
+import { levelAlpha, type ViewDepth } from './levelAlpha'
 
 // ─────────────────── Signals on the canvas ───────────────────
 //
@@ -554,6 +555,8 @@ export function speedSignBox(at: Point, heading: Point, sign: Pick<SpeedSign, 'd
 
 export interface SignalRenderOptions {
   level: SignallingLevel
+  /** The side of the ground looked at: a signal on the other side is faded (`levelAlpha`) */
+  depth?: ViewDepth
   /** Rail gauge of the project, m */
   gauge?: number
   /** Driving: what the signals show and the track held. Absent: every signal in its default state */
@@ -709,6 +712,13 @@ export function renderSignalling(
     const layout = signalLayout(net, trackKey)
     // The head of a signal is about as wide as it is long: a square around it is its room
     const room = 4 * sizes.lamp + 4
+    // A signal is faded on the other side of the ground than the one looked at, as its rail is
+    const alphaBelow = levelAlpha(-1, options.depth)
+    const alphaAbove = levelAlpha(0, options.depth)
+    const placedAlpha = (placed: PlacedSignal): number | undefined => {
+      const alpha = placed.tunnel ? alphaBelow : alphaAbove
+      return alpha === 1 ? undefined : alpha
+    }
 
     for (const placed of layout.signals) {
       const at = toScreen(placed.pos)
@@ -721,7 +731,7 @@ export function renderSignalling(
       const id = placed.signal.id
       const selected = id === options.selectedId
       drawSignal(ctx, at, placed.heading, signalGlyph(placed.signal, status.state, options.level, status), sizes, {
-        alpha: placed.tunnel ? 0.4 : undefined,
+        alpha: placedAlpha(placed),
         ring: id === options.dangerId ? SIGNAL_DANGER : selected ? SIGNAL_SELECTED : null,
         arrow: selected,
         ink,

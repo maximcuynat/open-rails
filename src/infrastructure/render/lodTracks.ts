@@ -4,10 +4,10 @@ import type { TrackSection } from '@domain/models/sections'
 import type { Camera } from './camera'
 import { isWholePiece, type TrackPiece } from './levelPieces'
 import type { SectionPolyline } from './networkDerived'
+import { levelAlpha, levelDashed, type ViewDepth } from './levelAlpha'
 import {
   GAUGE,
   RAIL_WIDTH,
-  TUNNEL_ALPHA,
   TUNNEL_DASH,
   segmentRenderIntervals,
   subdivideCurve,
@@ -85,6 +85,8 @@ export function renderLineTracks(
   colors: LineTrackColors,
   gauge: number = GAUGE,
   hollow = false,
+  /** The side of the ground looked at: the other one is faded (`levelAlpha`) */
+  depth: ViewDepth = 'surface',
 ): void {
   if (pieces.length === 0) return
   const s = cam.scale
@@ -141,21 +143,24 @@ export function renderLineTracks(
   }
 
   const lineW = lineTrackWidth(s, gauge)
-  const tunnel = level < 0
-  const alpha = tunnel ? TUNNEL_ALPHA : 1
+  const alpha = levelAlpha(level, depth)
+  // The paper the edging and the inside are made of: faded with the level from below ground,
+  // where it would otherwise blot out the tunnels under it
+  const paperAlpha = depth === 'underground' ? alpha : 1
 
   ctx.save()
   ctx.lineJoin = 'round'
   if (halo.length > 0) {
     // Butt ends: the edging must not bite into the rail that carries on at the same level
     ctx.lineCap = 'butt'
+    ctx.globalAlpha = paperAlpha
     ctx.strokeStyle = colors.paper
     ctx.lineWidth = lineW + LINE_HALO_EXTRA
     strokeBatch(ctx, halo)
   }
   ctx.lineCap = 'round'
   ctx.lineWidth = lineW
-  if (tunnel) ctx.setLineDash(TUNNEL_DASH)
+  if (levelDashed(level, depth)) ctx.setLineDash(TUNNEL_DASH)
 
   // Rails tier: the line is as wide as the track, and its inside is taken out again, which leaves
   // the two rails — the way a map draws the edges of a road. Where tracks meet, their insides run
@@ -163,7 +168,7 @@ export function renderLineTracks(
   const insideW = hollow ? Math.max(0, 2 * gauge * s - lineW) : 0
   const inside = (first: LineBatch, second: LineBatch): void => {
     if (insideW <= 0) return
-    ctx.globalAlpha = 1
+    ctx.globalAlpha = paperAlpha
     ctx.strokeStyle = colors.paper
     ctx.lineWidth = insideW
     strokeBatch(ctx, first)
@@ -277,6 +282,8 @@ export function renderDetailRails(
   selectedSegments: ReadonlySet<string>,
   colors: DetailRailColors,
   gauge: number = GAUGE,
+  /** The side of the ground looked at: the other one is faded (`levelAlpha`) */
+  depth: ViewDepth = 'surface',
 ): void {
   if (pieces.length === 0) return
   const s = cam.scale
@@ -318,13 +325,12 @@ export function renderDetailRails(
   const railWidthRatio = Math.max(0.25, Math.min(2.5, gauge / GAUGE))
   const railPx = Math.max(1.2, RAIL_WIDTH * railWidthRatio * s)
   const headPx = Math.max(0.8, railPx * 0.42)
-  const tunnel = level < 0
-  const levelAlpha = tunnel ? TUNNEL_ALPHA : 1
+  const alphaOfLevel = levelAlpha(level, depth)
 
   ctx.save()
   ctx.lineCap = 'butt'
   ctx.lineJoin = 'round'
-  if (tunnel) ctx.setLineDash(TUNNEL_DASH)
+  if (levelDashed(level, depth)) ctx.setLineDash(TUNNEL_DASH)
   const rails = (plain: LineBatch, picked: LineBatch, alpha: number): void => {
     // Base of the rails, then their head on top
     ctx.globalAlpha = alpha
@@ -347,8 +353,8 @@ export function renderDetailRails(
     }
   }
   // Closed branches first: an open rail ending at the same points stays whole
-  rails(closed, selectedClosed, levelAlpha * CLOSED_BRANCH_ALPHA)
-  rails(normal, selected, levelAlpha)
+  rails(closed, selectedClosed, alphaOfLevel * CLOSED_BRANCH_ALPHA)
+  rails(normal, selected, alphaOfLevel)
   ctx.restore()
 }
 
@@ -373,6 +379,8 @@ export function renderSectionStripes(
   pieces: TrackPiece[],
   level: number,
   styleOf: (segId: string) => SectionStripeStyle,
+  /** The side of the ground looked at: the other one is faded (`levelAlpha`) */
+  depth: ViewDepth = 'surface',
 ): void {
   if (pieces.length === 0) return
   const s = cam.scale
@@ -401,13 +409,13 @@ export function renderSectionStripes(
     }
   }
 
-  const levelAlpha = level < 0 ? TUNNEL_ALPHA : 1
+  const alphaOfLevel = levelAlpha(level, depth)
   ctx.save()
   ctx.lineCap = 'round'
   for (const { style, lines } of batches.values()) {
     ctx.strokeStyle = style.color
     ctx.lineWidth = style.station ? Math.max(2.5, Math.min(5.0, 0.6 * s)) : Math.max(1.5, Math.min(3.5, 0.4 * s))
-    ctx.globalAlpha = (style.selected ? 0.95 : style.station ? 0.8 : 0.45) * levelAlpha
+    ctx.globalAlpha = (style.selected ? 0.95 : style.station ? 0.8 : 0.45) * alphaOfLevel
     ctx.setLineDash(style.station ? [8, 4] : [])
     strokeBatch(ctx, lines)
   }
@@ -453,6 +461,8 @@ export interface SchematicTrackColors {
   accent: string
   /** The colour of the kind of line a section belongs to (asked of its first rail), when the map tells kinds apart */
   category?: RailTint
+  /** The side of the ground looked at: the other one is faded (`levelAlpha`) */
+  depth?: ViewDepth
 }
 
 /** Distance between two tracks laid side by side, metres: the line of the schematic covers it */
@@ -525,9 +535,12 @@ export function renderSchematicTracks(
   ctx.lineWidth = schematicLineWidth(s)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  strokeLines(tunnel, colors.rail, TUNNEL_ALPHA)
-  strokeLines(ground, colors.rail, 1)
-  for (const [color, lines] of tinted) strokeLines(lines, color, 1)
+  // A section wholly below ground is a tunnel; any other is drawn with the surface
+  const tunnelAlpha = levelAlpha(-1, colors.depth)
+  const groundAlpha = levelAlpha(0, colors.depth)
+  strokeLines(tunnel, colors.rail, tunnelAlpha)
+  strokeLines(ground, colors.rail, groundAlpha)
+  for (const [color, lines] of tinted) strokeLines(lines, color, groundAlpha)
   strokeLines(selected, colors.accent, 1)
   ctx.restore()
 }

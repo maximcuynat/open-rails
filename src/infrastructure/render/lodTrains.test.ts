@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { getViewportBounds, renderLocomotive, renderTrainSet, TUNNEL_VEHICLE_ALPHA } from './renderer'
+import { OTHER_SIDE_ALPHA } from '@infrastructure/render/levelAlpha'
+import { getViewportBounds, renderLocomotive, renderTrainSet } from './renderer'
 import {
   drawTrainMarker,
   pointsInBounds,
@@ -292,7 +293,7 @@ describe('train level of detail', () => {
       const strokes = recordStrokes(ctx)
       renderTrainSet(ctx, SCHEMATIC, 800, 600, tunnel.net, tunnel.ts, false, false, false, undefined, null, null, { above: -2, upTo: -1 })
       expect(strokes).toHaveLength(2)
-      expect(strokes.every(s => s.alpha === TUNNEL_VEHICLE_ALPHA)).toBe(true)
+      expect(strokes.every(s => s.alpha === OTHER_SIDE_ALPHA)).toBe(true)
     })
 
     it('leaves the debug overlay as it is', () => {
