@@ -263,8 +263,9 @@ function checkAgainstUnion(net: Network, files: readonly SerializedProject[], to
   const fresh = files.length > 0 ? deserializeNetwork(unionProjects(files), tolerance).network : null
   const sorted = (rows: unknown[][]): string => JSON.stringify(rows.sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0)))
   const parts = (n: Network | null): Record<string, string> => ({
-    nodes: sorted(n ? [...n.nodes.values()].map((node) => [node.id, node.pos.x, node.pos.y, node.level ?? 0]) : []),
-    rails: sorted(n ? [...n.segments.values()].map((seg) => [seg.id, seg.from, seg.to, seg.kind, seg.via?.x, seg.via?.y, seg.cant, seg.path]) : []),
+    // Every field, whatever it is: one the file is read with must be put on by a slice too
+    nodes: sorted(n ? [...n.nodes.values()].map((node) => [node.id, node]) : []),
+    rails: sorted(n ? [...n.segments.values()].map((seg) => [seg.id, seg]) : []),
     adjacency: sorted(n ? [...n.adjacency].map(([id, rails]) => [id, ...[...rails].sort()]) : []),
     tables: sorted(n ? [...n.junctions.values()].map((j) => [j.id, j.nodeId, j.kind, j.passages, j.positions, j.frogNumber]) : []),
     zones: sorted(n ? [...n.speedZones.values()].map((z) => [z.id, z]) : []),
