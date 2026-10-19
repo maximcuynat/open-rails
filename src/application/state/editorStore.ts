@@ -80,10 +80,10 @@ import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { lineCategory, type BBox, type DatasetIndex, type LineId } from '@domain/dataset/datasetIndex'
-import { connectionsToward, linesToDrop } from '@domain/dataset/lineRoute'
+import { boxesMeet, connectionsToward, distanceToBox, linesToDrop, piecesOverCap } from '@domain/dataset/lineRoute'
 import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
 import type { MergeOutcome } from '@application/import/mergeReport'
-import { unionProjects } from '@infrastructure/persistence/projectSlices'
+import { addSliceInPlace, removeSliceInPlace, sliceHoldsRail } from '@infrastructure/persistence/sliceInPlace'
 import {
   saveNetworkToStorage,
   loadNetworkFromStorage,
@@ -131,7 +131,10 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockModel } from '@domain/models/rollingStock'
-import { railTintOf } from '@infrastructure/render/datasetOverview'
+import { LINE_CATEGORY_COLORS } from '@infrastructure/render/datasetOverview'
+import { trackLod } from '@infrastructure/render/lod'
+import { trackPositionBand } from '@infrastructure/render/levelPieces'
+import { isUnderground, type ViewDepth } from '@infrastructure/render/levelAlpha'
 import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
 import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { applyGame, captureGame } from '@domain/models/runningState'
@@ -462,8 +465,17 @@ export class EditorStore {
   datasetFiles = new Map<LineId, SerializedProject>()
   /** Bumped whenever a file comes or goes: what is worked out from the files is worked out again */
   private datasetFilesRevision = 0
-  private railTintCache: { index: DatasetIndex; revision: number; tint: (segId: string) => string | undefined } | null = null
-  private railLineCache: { revision: number; lineOf: Map<SegmentId, LineId> } | null = null
+  private railTintCache: { index: DatasetIndex; tint: (segId: string) => string | undefined } | null = null
+  /** The file each rail came with (the first loaded that holds it), kept as files come and go */
+  private railLineMap = new Map<SegmentId, LineId>()
+  /** When each piece loaded was last in view or near a train (`datasetClock`): the ones seen longest ago go first past the cap */
+  datasetSeen = new Map<LineId, number>()
+  /** Counts the checks of the dataset lines: the clock of `datasetSeen` */
+  private datasetClock = 0
+  /** Bumped when the dataset project is replaced: a file asked for by the previous one is not added to this one */
+  private datasetGeneration = 0
+  /** When the lines were last checked against the view and the trains (ms, `performance.now`) */
+  datasetRefreshedAt = -Infinity
 
   /**
    * The rails of a dataset project a train must keep off: those of the high-speed lines, for a
@@ -494,13 +506,8 @@ export class EditorStore {
   }
 
   /** The file (line, or piece of a line) each rail of a dataset project came with; the first that holds it */
-  private get railLine(): Map<SegmentId, LineId> {
-    const cache = this.railLineCache
-    if (cache && cache.revision === this.datasetFilesRevision) return cache.lineOf
-    const lineOf = new Map<SegmentId, LineId>()
-    for (const [id, file] of this.datasetFiles) for (const seg of file.segments) if (!lineOf.has(seg.id)) lineOf.set(seg.id, id)
-    this.railLineCache = { revision: this.datasetFilesRevision, lineOf }
-    return lineOf
+  private get railLine(): ReadonlyMap<SegmentId, LineId> {
+    return this.railLineMap
   }
 
   /** The colour of the kind of line each rail of a dataset project belongs to; undefined on any other project */
@@ -508,9 +515,14 @@ export class EditorStore {
     const index = this.datasetIndex
     if (!this.dataset || !index || this.datasetFiles.size === 0) return undefined
     const cache = this.railTintCache
-    if (cache && cache.index === index && cache.revision === this.datasetFilesRevision) return cache.tint
-    const tint = railTintOf(index, this.datasetFiles)
-    this.railTintCache = { index, revision: this.datasetFilesRevision, tint }
+    if (cache && cache.index === index) return cache.tint
+    const colorOfLine = new Map(index.lines.map((line) => [line.id, LINE_CATEGORY_COLORS[lineCategory(line)]]))
+    const railLine = this.railLineMap
+    const tint = (segId: string): string | undefined => {
+      const line = railLine.get(segId)
+      return line === undefined ? undefined : colorOfLine.get(line)
+    }
+    this.railTintCache = { index, tint }
     return tint
   }
   /** Fetches the files of some lines; set by the application layer (the store does not fetch) */
@@ -527,6 +539,8 @@ export class EditorStore {
   datasetStoredProject: SerializedProject | null = null
   /** Seconds since the trains were last checked against the connections to lines not loaded */
   private datasetCheckElapsed = 0
+  /** How many pieces of the dataset stay loaded at most: past it, the ones seen longest ago are dropped */
+  datasetMaxPieces = DATASET_MAX_PIECES
   /** Lines fetched because a train came near them; the dock says so */
   onDatasetLinesAdded: ((lines: LineId[], rails: number) => void) | null = null
   /** A fetch of lines a train came near failed; the dock says so */
@@ -543,6 +557,46 @@ export class EditorStore {
   }
   /** The dispatcher's board was asked for (Affichage ▸ « Tableau de l'aiguilleur ») */
   showDispatcher = false
+
+  /**
+   * The side of the ground the canvas looks at: the surface (the tunnels faded and dashed) or
+   * below ground (the tunnels drawn as they are, the surface faded). Switched by hand
+   * (`toggleViewDepth`, the top bar, `view.toggleDepth`) and on its own when the train of this
+   * screen goes into a tunnel or comes out of one. Never saved.
+   */
+  viewDepth: ViewDepth = 'surface'
+  /** The train whose side of the ground the view follows, and the side it was last on */
+  private depthFollowed: { trainId: string; underground: boolean } | null = null
+
+  setViewDepth = (depth: ViewDepth): void => {
+    if (depth === this.viewDepth) return
+    this.viewDepth = depth
+    this.notify()
+  }
+
+  toggleViewDepth = (): void => {
+    this.setViewDepth(this.viewDepth === 'surface' ? 'underground' : 'surface')
+  }
+
+  /**
+   * While driving: the view goes below ground when the train of this screen goes into a tunnel
+   * (its lead vehicle's level goes under 0), and back up when it comes out — once per crossing,
+   * so that a side chosen by hand meanwhile stays. A train taken already in a tunnel is looked at there.
+   */
+  private followDrivenDepth(): void {
+    const train = this.cameraTrain
+    const lead = train?.vehicles[0]
+    if (!train || !lead) {
+      this.depthFollowed = null
+      return
+    }
+    const level = Math.max(trackPositionBand(this.network, lead.front), trackPositionBand(this.network, lead.rear))
+    const underground = isUnderground(level)
+    const followed = this.depthFollowed
+    if (followed && followed.trainId === train.id && followed.underground === underground) return
+    this.depthFollowed = { trainId: train.id, underground }
+    this.setViewDepth(underground ? 'underground' : 'surface')
+  }
 
   /** The board is up: while driving, when asked for or as soon as a desk sits in the room */
   get dispatcherVisible(): boolean {
@@ -1382,6 +1436,10 @@ export class EditorStore {
     this.dataset = null
     this.datasetIndex = null
     this.datasetFiles = new Map()
+    this.railLineMap = new Map()
+    this.datasetSeen.clear()
+    this.datasetGeneration++
+    this.datasetFilesRevision++
     this.datasetPending.clear()
     this.datasetLoader = null
     this.datasetReloadPending = false
@@ -1413,6 +1471,11 @@ export class EditorStore {
     this.dataset = recipe
     this.datasetIndex = index
     this.datasetFiles = new Map(files)
+    this.railLineMap = new Map()
+    for (const [id, file] of this.datasetFiles) for (const seg of file.segments) if (!this.railLineMap.has(seg.id)) this.railLineMap.set(seg.id, id)
+    this.datasetSeen.clear()
+    this.datasetGeneration++
+    this.datasetFilesRevision++
     this.datasetPending.clear()
     this.datasetReloadPending = false
     this.adoptLoadedProject(res)
@@ -1446,18 +1509,49 @@ export class EditorStore {
     this.notifyView()
   }
 
-  /**
-   * Once a second while driving: every connection within reach of a train's lead that leads to
-   * a line not loaded has that line asked for (once; the loader is the application's). Nothing
-   * is ever unloaded.
-   */
+  /** Once a second while driving: the lines are checked against the trains (and the view) */
   private checkDatasetLines(dt: number): void {
     if (!this.dataset || !this.datasetIndex || !this.datasetLoader) return
     this.datasetCheckElapsed += dt
     if (this.datasetCheckElapsed < DATASET_CHECK_PERIOD_S) return
     this.datasetCheckElapsed = 0
-    const gates = connectionsToward(this.datasetIndex, new Set(this.dataset.lines))
+    this.refreshDatasetLines()
+  }
+
+  /** The box of the world the canvas shows, from the camera and the size of the viewport */
+  private get viewBox(): BBox {
+    const halfW = this.viewport.w / 2 / this.camera.scale
+    const halfH = this.viewport.h / 2 / this.camera.scale
+    return { minX: this.camera.x - halfW, minY: this.camera.y - halfH, maxX: this.camera.x + halfW, maxY: this.camera.y + halfH }
+  }
+
+  /** True when the view is close enough for the pieces it meets to be fetched: from the « rails » tier of the track up */
+  get isDatasetViewNear(): boolean {
+    // The rails are drawn at standard gauge whatever the project's (`renderer.ts`, `GAUGE`)
+    const tier = trackLod(this.camera.scale, STANDARD_TRACK_GAUGE)
+    return tier === 'rails' || tier === 'detail'
+  }
+
+  /**
+   * Bring the lines (pieces of lines) of a dataset project in line with where one looks and where
+   * the trains run, in every mode, paused or not: called once a second while the trains run, and
+   * by the canvas when the view moves (`useDatasetStreaming`).
+   * - fetched: the pieces whose box meets the view and its margin (`DATASET_VIEW_MARGIN_M`) once
+   *   the view is close enough (`isDatasetViewNear`: the overview is enough further out), and the
+   *   pieces beyond a connection within reach of a train's lead (`DATASET_LOOKAHEAD_M`);
+   * - dropped: the pieces far from the view and from every train (`DATASET_KEEP_M`), never one a
+   *   vehicle stands on nor one asked for; and past `datasetMaxPieces`, the ones seen longest ago.
+   */
+  refreshDatasetLines = (): void => {
+    const index = this.datasetIndex
+    if (!this.dataset || !index) return
+    this.datasetRefreshedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const clock = ++this.datasetClock
+    const loaded = new Set(this.datasetFiles.keys())
     const wanted = new Set<LineId>()
+
+    // Ahead of the trains: the lines beyond the connections within reach of a lead
+    const gates = connectionsToward(index, loaded)
     const leads: Point[] = []
     for (const train of this.trains) {
       const lead = train.vehicles[0]
@@ -1468,64 +1562,112 @@ export class EditorStore {
         if (Math.hypot(gate.x - pos.x, gate.y - pos.y) > DATASET_LOOKAHEAD_M) continue
         for (const id of gate.lines) if (!this.datasetPending.has(id)) wanted.add(id)
       }
-    }
-    // What every train has left far behind is dropped: never what a train stands on, nor what
-    // was just asked for. Further than what is fetched, so that nothing comes and goes
-    const held = new Set<LineId>([...wanted, ...this.datasetPending])
-    const railLine = this.railLine
-    for (const train of this.trains) {
-      for (const veh of train.vehicles) {
-        for (const pos of [veh.front, veh.rear]) {
-          const line = railLine.get(pos.segId)
-          if (line) held.add(line)
-        }
+      for (const line of index.lines) {
+        if (loaded.has(line.id) && distanceToBox(pos.x, pos.y, line.bbox) <= DATASET_LOOKAHEAD_M) this.datasetSeen.set(line.id, clock)
       }
     }
-    // In the free view the screen follows no train: what it looks at stays, though no train is near
-    const kept = this.isFreeView ? [...leads, { x: this.camera.x, y: this.camera.y }] : leads
-    this.removeDatasetLines(linesToDrop(this.datasetIndex, new Set(this.dataset.lines), kept, DATASET_KEEP_M, held))
-    if (wanted.size === 0) return
+
+    // In view: what the view meets is seen; fetched once the view is close enough
+    const view = this.viewBox
+    const margin = { minX: view.minX - DATASET_VIEW_MARGIN_M, minY: view.minY - DATASET_VIEW_MARGIN_M, maxX: view.maxX + DATASET_VIEW_MARGIN_M, maxY: view.maxY + DATASET_VIEW_MARGIN_M }
+    const near = this.isDatasetViewNear
+    for (const line of index.lines) {
+      if (!boxesMeet(line.bbox, margin)) continue
+      if (loaded.has(line.id)) this.datasetSeen.set(line.id, clock)
+      else if (near && !this.datasetPending.has(line.id)) wanted.add(line.id)
+    }
+
+    // Never dropped: what a vehicle stands on, what is asked for or on its way
+    const held = new Set<LineId>([...wanted, ...this.datasetPending])
+    for (const id of this.occupiedLines()) {
+      held.add(id)
+      this.datasetSeen.set(id, clock)
+    }
+    // Far from every train and from the view (which reaches as far as it shows)
+    const centre = { x: this.camera.x, y: this.camera.y, keep: DATASET_KEEP_M + Math.hypot(view.maxX - view.minX, view.maxY - view.minY) / 2 }
+    const far = new Set(linesToDrop(index, loaded, [...leads, centre], DATASET_KEEP_M, held))
+    // And past the cap, the ones seen longest ago, with room for those to come
+    const left = [...loaded].filter((id) => !far.has(id))
+    for (const id of piecesOverCap(left, this.datasetSeen, held, this.datasetMaxPieces, wanted.size)) far.add(id)
+    if (far.size > 0) this.removeDatasetLines([...far])
+
+    if (wanted.size === 0 || !this.datasetLoader) return
+    // Never more at once than the cap holds: the nearest the middle of the view first
     const ids = [...wanted]
+      .sort((a, b) => distanceToBox(this.camera.x, this.camera.y, lineBox(index, a)) - distanceToBox(this.camera.x, this.camera.y, lineBox(index, b)))
+      .slice(0, Math.max(1, this.datasetMaxPieces))
     for (const id of ids) this.datasetPending.add(id)
+    const generation = this.datasetGeneration
     void this.datasetLoader(ids)
       .then((files) => {
+        // The project was replaced meanwhile: what it asked for is not this one's
+        if (generation !== this.datasetGeneration) return
         const rails = this.addDatasetLines(files)
+        for (const id of files.keys()) this.datasetSeen.set(id, this.datasetClock)
         if (rails > 0) this.onDatasetLinesAdded?.(ids, rails)
       })
       .catch((error: unknown) => {
+        if (generation !== this.datasetGeneration) return
         console.warn('Lignes du jeu de données non chargées', error)
         this.onDatasetError?.(error)
       })
       .finally(() => {
-        for (const id of ids) this.datasetPending.delete(id)
+        if (generation === this.datasetGeneration) for (const id of ids) this.datasetPending.delete(id)
       })
   }
 
+  /** The lines (pieces of lines) a vehicle of a train stands on */
+  private occupiedLines(): Set<LineId> {
+    const railLine = this.railLine
+    const occupied = new Set<LineId>()
+    for (const train of this.trains) {
+      for (const veh of train.vehicles) {
+        for (const pos of [veh.front, veh.rear]) {
+          const line = railLine.get(pos.segId)
+          if (line) occupied.add(line)
+        }
+      }
+    }
+    return occupied
+  }
+
+  /** The reconcile tolerance of the dataset project: the one its files were reconciled at */
+  private datasetTolerance(file: SerializedProject): number {
+    return placementThresholds(typeof file.gauge === 'number' ? file.gauge : undefined).reconcileTolerance
+  }
+
   /**
-   * Add the files of some lines to the dataset project, in place: the union of every file is
-   * loaded onto the live network (what is already there stays the object it is, the trains keep
-   * their rails, the driving goes on). Returns how many rails were added.
+   * Add the files of some lines to the dataset project, in place: each one is put onto the live
+   * network alone (`addSliceInPlace`) — what is already there stays the object it is, the trains
+   * keep their rails, the driving goes on. Returns how many rails were added.
    */
   addDatasetLines = (files: ReadonlyMap<LineId, SerializedProject>): number => {
     if (!this.dataset) return 0
     const added: LineId[] = []
     for (const [id, project] of files) {
-      if (!this.datasetFiles.has(id)) added.push(id)
+      if (this.datasetFiles.has(id)) continue
+      added.push(id)
       this.datasetFiles.set(id, project)
     }
     if (added.length === 0) return 0
     this.datasetFilesRevision++
     const before = this.network.segments.size
     const t0 = performance.now()
-    const union = unionProjects([...this.datasetFiles.values()])
-    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
-    const res = deserializeNetwork(union, tolerance, this.network)
-    this.keepTrainIdsClear()
-    if (res.sectionMeta) {
-      const keys = Object.keys(res.sectionMeta).filter((key) => !(key in this.sectionMeta))
-      for (const key of keys) this.sectionMeta[key] = res.sectionMeta[key]
-      if (keys.length) sectionMetaChanged(this.sectionMeta, keys)
+    // The files come after those already loaded, in their order: each is put on with the ones before it
+    const all = [...this.datasetFiles.values()]
+    const base = all.length - added.length
+    for (const [i, id] of added.entries()) {
+      const file = files.get(id)!
+      const upTo = all.slice(0, base + i + 1)
+      addSliceInPlace(this.network, file, upTo, this.datasetTolerance(file))
+      for (const seg of file.segments) if (!this.railLineMap.has(seg.id)) this.railLineMap.set(seg.id, id)
+      if (file.sectionMeta) {
+        const keys = Object.keys(file.sectionMeta).filter((key) => !(key in this.sectionMeta))
+        for (const key of keys) this.sectionMeta[key] = file.sectionMeta[key]
+        if (keys.length) sectionMetaChanged(this.sectionMeta, keys)
+      }
     }
+    this.keepTrainIdsClear()
     this.dataset = { ...this.dataset, lines: [...this.dataset.lines, ...added] }
     this.datasetLastAddMs = performance.now() - t0
     this.savePersistedState()
@@ -1552,32 +1694,37 @@ export class EditorStore {
   }
 
   /**
-   * Drop some lines (or pieces of lines) of the dataset project, in place: what is left is put
-   * back onto the live network, the rails of the lines dropped go and everything else stays the
-   * object it is. A line a vehicle stands on is kept whatever is asked, and so is the last one.
-   * Returns how many rails went.
+   * Drop some lines (or pieces of lines) of the dataset project, in place: each one is taken off
+   * the live network alone (`removeSliceInPlace`), what another file holds too stays, everything
+   * else stays the object it is. A line a vehicle stands on is kept whatever is asked; the last
+   * one may go (the project is then the overview alone). Returns how many rails went.
    */
   removeDatasetLines = (ids: readonly LineId[]): number => {
     if (!this.dataset || ids.length === 0) return 0
-    const railLine = this.railLine
-    const occupied = new Set<LineId>()
-    for (const train of this.trains) {
-      for (const veh of train.vehicles) {
-        for (const pos of [veh.front, veh.rear]) {
-          const line = railLine.get(pos.segId)
-          if (line) occupied.add(line)
-        }
-      }
-    }
-    const going = ids.filter((id) => this.datasetFiles.has(id) && !occupied.has(id))
-    if (going.length === 0 || going.length >= this.datasetFiles.size) return 0
-    for (const id of going) this.datasetFiles.delete(id)
+    const occupied = this.occupiedLines()
+    const going = [...new Set(ids)].filter((id) => this.datasetFiles.has(id) && !occupied.has(id))
+    if (going.length === 0) return 0
     this.datasetFilesRevision++
     const before = this.network.segments.size
     const t0 = performance.now()
-    const union = unionProjects([...this.datasetFiles.values()])
-    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
-    deserializeNetwork(union, tolerance, this.network)
+    for (const id of going) {
+      const file = this.datasetFiles.get(id)!
+      this.datasetFiles.delete(id)
+      this.datasetSeen.delete(id)
+      const remaining = [...this.datasetFiles.values()]
+      removeSliceInPlace(this.network, file, remaining, this.datasetTolerance(file))
+      // A rail another file holds too now goes with that one
+      for (const seg of file.segments) {
+        if (this.railLineMap.get(seg.id) !== id) continue
+        this.railLineMap.delete(seg.id)
+        for (const [other, project] of this.datasetFiles) {
+          if (sliceHoldsRail(project, seg.id)) {
+            this.railLineMap.set(seg.id, other)
+            break
+          }
+        }
+      }
+    }
     this.keepTrainIdsClear()
     this.dataset = { ...this.dataset, lines: this.dataset.lines.filter((id) => !going.includes(id)) }
     this.datasetLastRemoveMs = performance.now() - t0
@@ -5326,6 +5473,8 @@ export class EditorStore {
     for (const trainId of [...this.trainDrivers.keys()]) if (!this.trains.some((t) => t.id === trainId)) this.trainDrivers.delete(trainId)
     // A train nearing a line of the dataset that is not loaded: its file is asked for now
     this.checkDatasetLines(dt)
+    // Into a tunnel or out of one: the view goes with the train of this screen
+    this.followDrivenDepth()
     this.checkItineraries(dt)
     // Once every train has moved: what each one holds, what the signals show, the signals passed
     // (nothing at all on a network without signal)
@@ -5390,6 +5539,14 @@ export const DATASET_LOOKAHEAD_M = 5000
 export const DATASET_KEEP_M = 20_000
 /** How often (s) the trains are checked against the connections */
 const DATASET_CHECK_PERIOD_S = 1
+/** The pieces whose box comes this close (m) to the view are fetched, once the view is near enough */
+export const DATASET_VIEW_MARGIN_M = 5000
+/** How many pieces of the dataset stay loaded at most (about 10 000 rails): past it, the ones seen longest ago go */
+export const DATASET_MAX_PIECES = 24
+/** The box of a line (piece) of the index */
+function lineBox(index: DatasetIndex, id: LineId): BBox {
+  return index.lines.find((line) => line.id === id)?.bbox ?? { minX: Infinity, minY: Infinity, maxX: Infinity, maxY: Infinity }
+}
 /** How often (s) the trains are placed on the way to their next station */
 const ROUTE_GUIDE_PERIOD_S = 1
 /** Camera scale (px per metre) a rake set down at a station is shown at: its bogies show from 3.5 */

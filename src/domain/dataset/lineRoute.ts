@@ -189,18 +189,38 @@ export function distanceToBox(x: number, y: number, box: BBox): number {
 }
 
 /**
- * The loaded lines that every one of `points` (where the trains are) is further than `keep`
- * metres from, those in `held` left out (a train stands on them, or they are being fetched):
- * what can be dropped.
+ * The loaded lines that every one of `points` (where the trains are, the middle of the view) is
+ * further than `keep` metres from — or than its own `keep`, when it has one (the view reaches as
+ * far as it shows) —, those in `held` left out (a train stands on them, or they are being
+ * fetched): what can be dropped.
  */
-export function linesToDrop(index: DatasetIndex, loaded: ReadonlySet<LineId>, points: readonly { x: number; y: number }[], keep: number, held: ReadonlySet<LineId>): LineId[] {
+export function linesToDrop(index: DatasetIndex, loaded: ReadonlySet<LineId>, points: readonly { x: number; y: number; keep?: number }[], keep: number, held: ReadonlySet<LineId>): LineId[] {
   if (points.length === 0) return []
   const drop: LineId[] = []
   for (const line of index.lines) {
     if (!loaded.has(line.id) || held.has(line.id)) continue
-    if (points.every((p) => distanceToBox(p.x, p.y, line.bbox) > keep)) drop.push(line.id)
+    if (points.every((p) => distanceToBox(p.x, p.y, line.bbox) > (p.keep ?? keep))) drop.push(line.id)
   }
   return drop
+}
+
+/** True when two boxes overlap or touch */
+export function boxesMeet(a: BBox, b: BBox): boolean {
+  return a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY
+}
+
+/**
+ * Which pieces to drop so that no more than `cap` stay loaded: the ones seen longest ago first
+ * (`seen`: when each was last in view or near a train; never seen counts as the oldest), never
+ * one in `held`. `incoming`: pieces about to come, which need their room too.
+ */
+export function piecesOverCap(loaded: readonly LineId[], seen: ReadonlyMap<LineId, number>, held: ReadonlySet<LineId>, cap: number, incoming = 0): LineId[] {
+  const over = loaded.length + incoming - cap
+  if (over <= 0) return []
+  return loaded
+    .filter((id) => !held.has(id))
+    .sort((a, b) => (seen.get(a) ?? -Infinity) - (seen.get(b) ?? -Infinity))
+    .slice(0, over)
 }
 
 /** The connections that lead from a loaded line to one not loaded: where a train leaves what it has */

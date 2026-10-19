@@ -122,6 +122,7 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
       window.dispatchEvent(new CustomEvent('rail:fit-view'))
       return
     case 'view.toggleInspector': store.toggleSidePanel(); return
+    case 'view.toggleDepth': store.toggleViewDepth(); return
     case 'sim.togglePlay':
       e.preventDefault()
       if (store.locomotive || store.trains.length > 0) store.togglePlayMode()

@@ -4,7 +4,7 @@ import { fakeDataset } from '@application/dataset/dataset.testkit'
 import { fetchLineFiles, resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { reloadDataset } from '@application/dataset/journeyLoader'
 import { recipeLines } from '@domain/dataset/datasetRecipe'
-import { distanceToBox, gatesToward, linesToDrop, routeThroughStations, travelWeight, travelWeightFor } from '@domain/dataset/lineRoute'
+import { boxesMeet, distanceToBox, gatesToward, linesToDrop, piecesOverCap, routeThroughStations, travelWeight, travelWeightFor } from '@domain/dataset/lineRoute'
 import { resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { prepareSandbox } from './sandbox'
@@ -45,6 +45,19 @@ describe('lines of the dataset coming and going as the trains run', () => {
     // A second train near it keeps it; no train at all drops nothing
     expect(linesToDrop(index, loaded, [...at, { x: 0, y: 45_000 }], 20_000, new Set())).toEqual([])
     expect(linesToDrop(index, loaded, [], 20_000, new Set())).toEqual([])
+    // A point that reaches further (the view, as far as it shows) keeps what it reaches
+    expect(linesToDrop(index, loaded, [{ x: 250, y: 0, keep: 60_000 }], 20_000, new Set())).toEqual([])
+  })
+
+  it('tells boxes that meet, and which pieces go past the cap: the ones seen longest ago', () => {
+    expect(boxesMeet({ minX: 0, minY: 0, maxX: 10, maxY: 10 }, { minX: 10, minY: 5, maxX: 20, maxY: 6 })).toBe(true)
+    expect(boxesMeet({ minX: 0, minY: 0, maxX: 10, maxY: 10 }, { minX: 11, minY: 5, maxX: 20, maxY: 6 })).toBe(false)
+    const seen = new Map([['a', 3], ['b', 1], ['c', 2]])
+    expect(piecesOverCap(['a', 'b', 'c'], seen, new Set(), 3)).toEqual([])
+    expect(piecesOverCap(['a', 'b', 'c'], seen, new Set(), 2)).toEqual(['b'])
+    // Room for one to come; never one held; one never seen is the oldest
+    expect(piecesOverCap(['a', 'b', 'c'], seen, new Set(['b']), 2, 1)).toEqual(['c', 'a'])
+    expect(piecesOverCap(['a', 'x'], seen, new Set(), 1)).toEqual(['x'])
   })
 
   it('drops a line in place: its rails go, the rest stays as it was, the recipe follows', async () => {
@@ -64,13 +77,17 @@ describe('lines of the dataset coming and going as the trains run', () => {
     expect(store.trains).toHaveLength(1)
   })
 
-  it('never drops the line a train stands on, nor the last one', async () => {
+  it('never drops the line a train stands on; the last one goes when no train is on it', async () => {
     const { store, index, options } = await started()
     expect(store.removeDatasetLines(['a'])).toBe(0)
     store.addDatasetLines(await fetchLineFiles(index, ['b'], undefined, options))
     expect(store.removeDatasetLines(['a', 'b'])).toBeGreaterThan(0)
     expect(store.dataset!.lines).toEqual(['a'])
     expect(store.trains).toHaveLength(1)
+    store.removeTrainSet(store.trains[0].id)
+    expect(store.removeDatasetLines(['a'])).toBeGreaterThan(0)
+    expect(store.dataset!.lines).toEqual([])
+    expect(store.network.segments.size).toBe(0)
   })
 
   it('while driving, drops what every train is far from and keeps what is near', async () => {

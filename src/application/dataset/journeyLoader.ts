@@ -1,7 +1,7 @@
-import type { DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
+import type { BBox, DatasetIndex, LineId } from '@domain/dataset/datasetIndex'
 import { recipeLines, recipeName, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { routeBbox, routeThroughStations, type JourneyRoute } from '@domain/dataset/lineRoute'
-import type { SerializedProject } from '@infrastructure/persistence/persistence'
+import { PROJECT_VERSION, type SerializedProject } from '@infrastructure/persistence/persistence'
 import { unionProjects } from '@infrastructure/persistence/projectSlices'
 import type { EditorStore } from '@application/state/editorStore'
 import { DATASET_ERROR_MESSAGES, DatasetError, fetchLineFiles, loadDatasetIndex, type DatasetFetch, type LineFetchProgress } from './datasetClient'
@@ -65,6 +65,59 @@ export async function loadStation(store: EditorStore, index: DatasetIndex, stati
 }
 
 /**
+ * A project of the dataset with no line in it: the settings its files share (full size, metres,
+ * standard gauge, Lambert-93 from the origin of the index), no track. What the whole network
+ * starts from, and a recipe whose lines were all dropped.
+ */
+export function emptyDatasetProject(index: DatasetIndex, name: string): SerializedProject {
+  return {
+    version: PROJECT_VERSION,
+    name,
+    nodes: [],
+    segments: [],
+    unit: 'm',
+    scalePreset: '1:1',
+    gauge: 1.435,
+    trackSpacing: 3.8,
+    flatLevels: true,
+    osmSource: { lat: index.origin.lat, lon: index.origin.lon, dataDate: index.dataDate, importedAt: index.generatedAt, frame: index.frame },
+    showDimensions: false,
+    boardEnabled: false,
+  }
+}
+
+/** The box of every line of the index: the whole country */
+export function indexBbox(index: DatasetIndex): BBox | null {
+  return index.lines.length > 0 ? routeBbox(index, index.lines.map((line) => line.id)) : null
+}
+
+/**
+ * The project the lines of a recipe make: their union, or the empty project when there is none.
+ * The whole network takes the settings of no line in particular: those of its first file (the
+ * speed of a high-speed line, say) would stand for every line loaded after it.
+ */
+function recipeProject(index: DatasetIndex, recipe: DatasetRecipe, files: ReadonlyMap<LineId, SerializedProject>, name: string): SerializedProject {
+  if (recipe.lines.length === 0) return emptyDatasetProject(index, name)
+  const union = unionOf(files, recipe.lines)
+  if (!recipe.whole) return union
+  const { lineSpeed: _speed, lineType: _type, ...rest } = union
+  return rest
+}
+
+/**
+ * Open the whole network of the dataset (« Fichier ▸ Réseau France ») as a locked project with no
+ * line loaded: the index draws the country, and the lines are fetched as the view comes near them
+ * (`store.refreshDatasetLines`).
+ */
+export async function openWholeNetwork(store: EditorStore, options: DatasetFetch = {}): Promise<void> {
+  const index = await loadDatasetIndex(options)
+  const recipe: DatasetRecipe = { version: 1, dataDate: index.dataDate, lines: [], stations: [], whole: true }
+  const name = recipeName(index, recipe)
+  store.loadDataset(recipe, emptyDatasetProject(index, name), new Map(), index, indexBbox(index), { name })
+  installLineStreaming(store, index, options)
+}
+
+/**
  * Fetch again the lines of a project saved as a recipe (the store was built from the storage
  * with `datasetReloadPending`): the trains and the camera it saved come back with them.
  */
@@ -74,11 +127,11 @@ export async function reloadDataset(store: EditorStore, options: JourneyLoadOpti
   const index = await loadDatasetIndex(options)
   const recipe: DatasetRecipe = { ...saved, lines: recipeLines(index, saved.lines) }
   const files = await fetchLineFiles(index, recipe.lines, options.onProgress, options)
-  const union = unionOf(files, recipe.lines)
+  const project = recipeProject(index, recipe, files, store.projectName)
   const stored = store.datasetStoredProject
   const restore: { name?: string; trains?: SerializedProject['trains']; camera?: SerializedProject['camera'] } = { name: store.projectName }
   if (stored?.trains) restore.trains = stored.trains
   if (stored?.camera) restore.camera = stored.camera
-  store.loadDataset(recipe, union, files, index, routeBbox(index, recipe.lines), restore)
+  store.loadDataset(recipe, project, files, index, recipe.lines.length > 0 && !recipe.whole ? routeBbox(index, recipe.lines) : indexBbox(index), restore)
   installLineStreaming(store, index, options)
 }

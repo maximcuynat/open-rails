@@ -1,4 +1,5 @@
 import { renderDatasetOverview } from '@infrastructure/render/datasetOverview'
+import { levelAlpha } from '@infrastructure/render/levelAlpha'
 import { renderRouteGuide, routeGuideReach } from '@infrastructure/render/routeGuideRender'
 import { guideAhead } from '@domain/services/routeGuide'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -19,7 +20,6 @@ import {
   pickSpacing,
   SIMPLIFY_THRESHOLD,
   GAUGE,
-  TUNNEL_VEHICLE_ALPHA,
   inLevelBand,
   vehicleLevel,
   type LevelBand,
@@ -374,6 +374,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
 
     const networkOptions: RenderNetworkOptions = {
       tool: store.tool,
+      viewDepth: store.viewDepth,
       gauge: store.gauge,
       gradient: store.gradientLimits,
       // Cant and slopes marked on the track: part of it, so they stay while driving — but for the plain view
@@ -465,15 +466,17 @@ export function Canvas({ store, onViewport }: CanvasProps) {
             // The bodies lean with the cant and the speed (full size only)
             lineSettings,
             plainView,
+            store.viewDepth,
           )
         }
       } else if (store.locomotive) {
         // The legacy consist is one block: it takes the level of the rail under its power car
         const level = vehicleLevel(store.network, store.locomotive)
         if (!inLevelBand(level, band)) return
-        if (level < 0) {
+        const alpha = levelAlpha(level, store.viewDepth)
+        if (alpha !== 1) {
           ctx.save()
-          ctx.globalAlpha = TUNNEL_VEHICLE_ALPHA
+          ctx.globalAlpha = alpha
         }
         const isDeleteHovered = store.tool === 'locomotive' && store.trainToolSubMode === 'delete' && store.hoveredTrainDeleteVehicle !== null
         renderLocomotive(ctx, cam, rect.width, rect.height, store.network, store.locomotive, false, store.showTrainDebug, store.isTrainSelected, {
@@ -484,7 +487,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
           braking: store.locomotiveBraking,
           debugOptions: store.trainDebugOptions,
         }, isDeleteHovered)
-        if (level < 0) ctx.restore()
+        if (alpha !== 1) ctx.restore()
       }
     }
 
