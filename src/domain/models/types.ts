@@ -62,9 +62,9 @@ export interface Segment {
    */
   running?: RunningDirection
   /**
-   * What kind of railway the rail belongs to (OSM `railway=subway`): absent for the railway itself,
-   * the one trains run on. A metro track is drawn and saved like any other, but no rolling stock
-   * of the table runs on it (`isSubwayRail`, `store.railsBlockedFor`).
+   * What kind of railway the rail belongs to (OSM `railway=subway`, `tram`, `light_rail`): absent for
+   * the railway itself, the one trains run on. A metro or tram track is drawn and saved like any
+   * other, but no rolling stock of the table runs on it (`isUrbanRail`, `store.railsBlockedFor`).
    */
   railway?: RailwayKind
 }
@@ -73,7 +73,7 @@ export interface Segment {
 export type RunningDirection = 'forward' | 'backward'
 
 /** A railway other than the main one a rail may belong to (`Segment.railway`) */
-export type RailwayKind = 'subway'
+export type RailwayKind = 'subway' | 'tram' | 'light_rail'
 
 export type JunctionId = string
 

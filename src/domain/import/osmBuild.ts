@@ -208,6 +208,8 @@ const MAX_SPEED_HOPS = 50
  */
 /** The most a metro track without `maxspeed` is taken to allow, km/h (the fastest French metros run at 80) */
 export const SUBWAY_ASSUMED_SPEED = 80
+/** The speed a tram track without `maxspeed` is assumed to allow, in km/h (street running) */
+export const TRAM_ASSUMED_SPEED = 50
 
 export function assumedSpeeds(chains: Chain[], tangents: NodeTangents, defaultSpeed: number): (number | null)[][] {
   if (!(defaultSpeed > 0)) return chains.map((chain) => chain.edges.map(() => null))
@@ -245,7 +247,7 @@ export function assumedSpeeds(chains: Chain[], tangents: NodeTangents, defaultSp
       const a = before[i]
       const b = after[i]
       if (a !== null && b !== null) return Math.min(a, b)
-      return a ?? b ?? (edge.track.highSpeed ? null : edge.track.kind === 'subway' ? Math.min(fallback, SUBWAY_ASSUMED_SPEED) : fallback)
+      return a ?? b ?? (edge.track.highSpeed ? null : edge.track.kind === 'tram' ? Math.min(fallback, TRAM_ASSUMED_SPEED) : edge.track.kind === 'subway' || edge.track.kind === 'light_rail' ? Math.min(fallback, SUBWAY_ASSUMED_SPEED) : fallback)
     })
   })
 }

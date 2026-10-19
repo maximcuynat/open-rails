@@ -18,7 +18,8 @@ import { cleanStations, restoreStation } from '../../domain/models/stations'
 import { restorePlatform, settlePlatforms } from '../../domain/models/platforms'
 import { adoptReconciledNetwork, reconcileNetworkIntersections } from '../../domain/geometry/reconcile'
 import { placementThresholds } from '../../domain/geometry/scale'
-import type { Junction, JunctionKind, Network, PathPiece, Platform, RailNode, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
+import type { Junction, JunctionKind, Network, PathPiece, Platform, RailNode, RailwayKind, Segment, SegmentKind, SignalRole } from '../../domain/models/types'
+import { isRailwayKind } from '../../domain/models/railway'
 import type { TrackSection } from '../../domain/models/sections'
 import type { Unit, ScalePresetId } from '../../domain/models/units'
 import type { GradientLimits } from '../../domain/services/kinematicDiagnostics'
@@ -56,8 +57,8 @@ export interface SerializedSegment {
   cant?: number
   /** Normal direction of running relative to `from` → `to` (`Segment.running`); absent: none */
   running?: 'forward' | 'backward'
-  /** Kind of railway (`Segment.railway`): `subway` for a metro track; absent: the railway */
-  railway?: 'subway'
+  /** Kind of railway (`Segment.railway`): `subway`, `tram` or `light_rail`; absent: the railway */
+  railway?: RailwayKind
   /**
    * Legacy (saves made when the level was a property of the rail): never written, converted to
    * node heights on load.
@@ -307,7 +308,7 @@ function serializedSegment(items: SerializedItems, net: Network, s: Segment): Se
       via: s.via ? keep({ x: s.via.x, y: s.via.y }) : undefined,
       ...(isStoredCant(s) ? { cant: s.cant } : {}),
       ...(isStoredRunning(s.running) ? { running: s.running } : {}),
-      ...(isStoredRailway(s.railway) ? { railway: s.railway } : {}),
+      ...(isRailwayKind(s.railway) ? { railway: s.railway } : {}),
       ...(s.kind === 'path' ? { path: storedPath(net, s) } : {}),
     })
     items.segments.set(s.id, saved)
@@ -723,11 +724,6 @@ function isStoredRunning(value: unknown): value is 'forward' | 'backward' {
   return value === 'forward' || value === 'backward'
 }
 
-/** A kind of railway worth storing (or read back); an unknown one is the railway */
-function isStoredRailway(value: unknown): value is 'subway' {
-  return value === 'subway'
-}
-
 /** A line speed read from a file: kept only when it is one the settings accept */
 function storedLineSpeed(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= LINE_SPEED_RANGE.min && value <= LINE_SPEED_RANGE.max
@@ -784,7 +780,7 @@ export function readSavedSegment(s: SerializedSegment): Segment {
   // Before the reconcile pass, which hands the cant down to the pieces of a rail it cuts
   if (isStoredCant({ kind, cant: s.cant }) && seg.via) seg.cant = s.cant
   if (isStoredRunning(s.running)) seg.running = s.running
-  if (isStoredRailway(s.railway)) seg.railway = s.railway
+  if (isRailwayKind(s.railway)) seg.railway = s.railway
   return seg
 }
 

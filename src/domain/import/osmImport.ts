@@ -7,7 +7,7 @@ import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { analyzeKinematics } from '../services/kinematicDiagnostics'
 import { inferKeepLeft, keepLeftDecisions } from '../services/runningDirection'
 import { setRunning } from '../models/running'
-import { setRailway } from '../models/railway'
+import { isRailwayKind, setRailway } from '../models/railway'
 import { rightHandArea } from '../services/rightHandRunning'
 import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
 import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
@@ -300,10 +300,10 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   const tagged = new Set<SegmentId>()
   for (const seg of net.segments.values()) if (seg.running) tagged.add(seg.id)
   // Trains keep to the right on the classic lines of Alsace-Moselle (the high-speed lines there keep
-  // left), and the French metros keep right everywhere
+  // left), and the French metros and trams keep right everywhere
   const rightHand = rightHandArea(project)
   const keepsRight = (seg: Segment): boolean => {
-    if (seg.railway === 'subway') return true
+    if (seg.railway) return true
     if (highSpeedRails.has(seg.parentSegmentId ?? seg.id)) return false
     const a = net.nodes.get(seg.from)?.pos
     const b = net.nodes.get(seg.to)?.pos
@@ -426,7 +426,7 @@ function layRunning(built: BuiltNetwork, chains: readonly Chain[]): { both: Set<
       i = Math.min(i, chain.edges.length - 1)
       const edge = chain.edges[i]
       if (!edge) continue
-      if (edge.track.kind === 'subway') setRailway(net, seg, 'subway')
+      if (isRailwayKind(edge.track.kind)) setRailway(net, seg, edge.track.kind)
       if (edge.track.highSpeed) highSpeed.add(seg.id)
       const tag = edge.track.tags['railway:preferred_direction']
       if (tag === 'both') both.add(seg.id)

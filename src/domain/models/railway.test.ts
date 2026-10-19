@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { PathPiece } from './types'
 import { addNode, addSegment, createNetwork, dissolveNode, resetIdCounter } from './network'
 import { splitSegment } from './junction'
-import { isSubwayRail, setRailway } from './railway'
+import { isRailwayKind, isSubwayRail, isUrbanRail, setRailway } from './railway'
 import { mergeIntoLongRails, type PathFitter } from '../services/longRails'
 import { deserializeNetwork, readSavedSegment, serializeNetwork } from '@infrastructure/persistence/persistence'
 import { mergeProjects } from '@infrastructure/persistence/projectMerge'
@@ -29,6 +29,22 @@ describe('kind of railway of a rail', () => {
     expect(setRailway(net, seg, 'subway')).toBe(false)
     setRailway(net, seg, undefined)
     expect('railway' in seg).toBe(false)
+  })
+
+  it('tells a tram and a light rail from a metro, and saves each as itself', () => {
+    const net = createNetwork()
+    const kinds = ['subway', 'tram', 'light_rail'] as const
+    const segs = kinds.map((kind, i) => {
+      const seg = addSegment(net, addNode(net, { x: 0, y: i * 10 }).id, addNode(net, { x: 100, y: i * 10 }).id)!
+      setRailway(net, seg, kind)
+      return seg
+    })
+    expect(segs.map(isSubwayRail)).toEqual([true, false, false])
+    expect(segs.map(isUrbanRail)).toEqual([true, true, true])
+    expect(isUrbanRail({})).toBe(false)
+    expect(isRailwayKind('narrow_gauge')).toBe(false)
+    const back = deserializeNetwork(serializeNetwork(net)).network
+    expect(segs.map((seg) => back.segments.get(seg.id)!.railway)).toEqual([...kinds])
   })
 
   it('goes with both halves of a rail cut in two, and with a merged rail', () => {
@@ -71,7 +87,7 @@ describe('kind of railway of a rail', () => {
     // `readSavedSegment` is what a piece of the dataset added in place goes through
     expect(readSavedSegment(data.segments.find((s) => s.id === s1.id)!).railway).toBe('subway')
     // A value that is not a kind of railway is the railway
-    const odd = { ...data, segments: data.segments.map((s) => (s.id === s1.id ? { ...s, railway: 'tram' as never } : s)) }
+    const odd = { ...data, segments: data.segments.map((s) => (s.id === s1.id ? { ...s, railway: 'funicular' as never } : s)) }
     expect(deserializeNetwork(odd).network.segments.get(s1.id)?.railway).toBeUndefined()
 
     const metro = sliceProject(data, (segId) => segId === s1.id)

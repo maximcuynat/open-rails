@@ -220,6 +220,10 @@ describe('the journeys a train can make', () => {
     setRailway(net, metro, 'subway')
     const blocked = tgv.store.railsBlockedFor(tgv.train)!
     expect(blocked(metro.id)).toBe(true)
+    // Nor a tram track
+    setRailway(net, metro, 'tram')
+    expect(tgv.store.railsBlockedFor(tgv.train)!(metro.id)).toBe(true)
+    setRailway(net, metro, 'subway')
     expect(blocked(tgv.train.vehicles[0].front.segId)).toBe(false)
     // Nor may a journey enter a metro line, whatever the train
     const line = { ...tgv.index.lines[0], category: 'subway' as const }

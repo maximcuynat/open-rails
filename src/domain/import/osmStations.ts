@@ -3,7 +3,7 @@ import type { OsmImportIssue, OsmStationReport, OsmStationSkip } from './osmType
 import type { OsmNode, OsmRead } from './osmRead'
 import type { TrackGraph } from './osmGraph'
 import { addStation } from '../models/stations'
-import { isSubwayRail } from '../models/railway'
+import { isUrbanRail } from '../models/railway'
 import { projectOnSegment } from '../models/locomotive'
 import { railsWithin } from '../geometry/networkFollower'
 import type { TrackPlace, TrackPlacer } from './osmPlace'
@@ -193,8 +193,8 @@ export function layStations(input: StationLayInput): { report: OsmStationReport;
       skip('off-track')
       continue
     }
-    // A stop of a metro (its tags do not always say so): the stations are those of the trains
-    if (isSubwayRail(net.segments.get(place.segId))) {
+    // A stop of a metro or a tram (its tags do not always say so): the stations are those of the trains
+    if (isUrbanRail(net.segments.get(place.segId))) {
       skip('track-not-imported')
       continue
     }
@@ -216,7 +216,7 @@ export function layStations(input: StationLayInput): { report: OsmStationReport;
       // On a way: the station is where its way is, imported or not
       const at = graph.at.has(node.id) ? graph.pos.get(node.id) : undefined
       const place = at && placer.placeOf(node.id, at)
-      if (!at || (place && isSubwayRail(net.segments.get(place.segId)))) {
+      if (!at || (place && isUrbanRail(net.segments.get(place.segId)))) {
         skip('track-not-imported')
         continue
       }

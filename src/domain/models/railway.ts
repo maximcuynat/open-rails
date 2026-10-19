@@ -4,14 +4,28 @@ import { touchNetwork } from './networkWatch'
 
 // ─────────────────── Kind of railway of a rail ───────────────────
 //
-// A rail belongs to the railway (absent `Segment.railway`) or to a metro (`subway`, OSM
-// `railway=subway`, brought by the « LGV France » dataset around the cities it reaches). It is
-// read at the import, carried by `replaceRail` when a rail is cut or merged, saved, and kept off by
-// every train of the table: none is a metro (`store.railsBlockedFor`).
+// A rail belongs to the railway (absent `Segment.railway`) or to an urban network of its own: a
+// metro (`subway`, OSM `railway=subway`, brought by the « LGV France » dataset around the cities it
+// reaches), a tram (`tram`) or a light rail (`light_rail`), never mistaken for one another nor for
+// the railway. It is read at the import, carried by `replaceRail` when a rail is cut or merged,
+// saved, and kept off by every train of the table: none is a metro or a tram
+// (`store.railsBlockedFor`).
+
+/** The kinds of railway a rail may belong to besides the railway itself */
+export const RAILWAY_KINDS: readonly RailwayKind[] = ['subway', 'tram', 'light_rail']
+
+export function isRailwayKind(value: unknown): value is RailwayKind {
+  return (RAILWAY_KINDS as readonly unknown[]).includes(value)
+}
 
 /** True for a rail of a metro */
 export function isSubwayRail(seg: Pick<Segment, 'railway'> | undefined): boolean {
   return seg?.railway === 'subway'
+}
+
+/** True for a rail of a metro, a tram or a light rail: no train of the table runs on it */
+export function isUrbanRail(seg: Pick<Segment, 'railway'> | undefined): boolean {
+  return seg?.railway !== undefined
 }
 
 /**

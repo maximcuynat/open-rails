@@ -46,4 +46,30 @@ describe('a metro at import', () => {
       expect(eastward).toBe((a.y + b.y) / 2 > northY + 2)
     }
   })
+
+  it('keeps a tram and a light rail apart from the metro and from the railway, each with its own kind', () => {
+    const data = answer(
+      osmTrack(1, 100, along([0, 0], [3000, 0], 100)).elements,
+      osmTrack(2, 200, along([0, 500], [3000, 500], 100), { railway: 'subway' }).elements,
+      osmTrack(3, 300, along([0, 1000], [3000, 1000], 100), { railway: 'tram' }).elements,
+      osmTrack(4, 400, along([0, 1500], [3000, 1500], 100), { railway: 'light_rail' }).elements,
+    )
+    const net = convertOsm(data, options({ extraKinds: ['subway', 'tram', 'light_rail'] })).network
+    // Each kind on its own way, never mixed
+    const meanY = new Map<string, number[]>()
+    for (const seg of net.segments.values()) {
+      const kind = seg.railway ?? 'railway'
+      meanY.set(kind, [...(meanY.get(kind) ?? []), net.nodes.get(seg.from)!.pos.y])
+    }
+    const spread = (kind: string) => {
+      const ys = meanY.get(kind)!
+      return { mid: ys.reduce((a, b) => a + b, 0) / ys.length, width: Math.max(...ys) - Math.min(...ys) }
+    }
+    const order = ['railway', 'subway', 'tram', 'light_rail']
+    expect([...meanY.keys()].sort()).toEqual([...order].sort())
+    for (const kind of order) expect(spread(kind).width).toBeLessThan(1)
+    // In the order the ways were laid, 500 m apart
+    const mids = order.map((kind) => spread(kind).mid)
+    for (let k = 1; k < mids.length; k++) expect(mids[k] - mids[k - 1]).toBeCloseTo(500, -1)
+  })
 })
