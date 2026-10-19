@@ -61,10 +61,19 @@ export interface Segment {
    * unknown). A cost for the path search (`runningToll`), never a ban.
    */
   running?: RunningDirection
+  /**
+   * What kind of railway the rail belongs to (OSM `railway=subway`): absent for the railway itself,
+   * the one trains run on. A metro track is drawn and saved like any other, but no rolling stock
+   * of the table runs on it (`isSubwayRail`, `store.railsBlockedFor`).
+   */
+  railway?: RailwayKind
 }
 
 /** Normal direction of running on a rail: from its `from` node to its `to` node, or the other way */
 export type RunningDirection = 'forward' | 'backward'
+
+/** A railway other than the main one a rail may belong to (`Segment.railway`) */
+export type RailwayKind = 'subway'
 
 export type JunctionId = string
 

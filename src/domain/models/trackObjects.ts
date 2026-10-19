@@ -1,4 +1,4 @@
-import type { Network, RunningDirection, Segment, SegmentId, TrackSpan } from './types'
+import type { Network, RailwayKind, RunningDirection, Segment, SegmentId, TrackSpan } from './types'
 import type { TrackPosition } from './locomotive'
 
 // ─────────────────── Objects attached to the track ───────────────────
@@ -35,11 +35,13 @@ export interface RailReplacement {
   pieces: RailPiece[]
   /** Normal direction of running of the old rail (`Segment.running`), handed to the pieces that have none */
   running?: RunningDirection
+  /** Kind of railway of the old rail (`Segment.railway`), handed to the pieces that have none */
+  railway?: RailwayKind
 }
 
-/** The direction of running of `seg`, as a field to spread into a replacement */
-function runningOf(seg: Segment): { running?: RunningDirection } {
-  return seg.running ? { running: seg.running } : {}
+/** The direction of running and the kind of railway of `seg`, as fields to spread into a replacement */
+export function runningOf(seg: Segment): { running?: RunningDirection; railway?: RailwayKind } {
+  return { ...(seg.running ? { running: seg.running } : {}), ...(seg.railway ? { railway: seg.railway } : {}) }
 }
 
 /**
