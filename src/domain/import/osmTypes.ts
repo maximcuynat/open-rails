@@ -183,7 +183,7 @@ export interface OsmSignalReport {
 /** Why a stop or a station the import reads was not laid */
 export type OsmStationSkip =
   | 'unnamed' // a stop position with neither name nor UIC code: nothing to make a station of
-  | 'track-not-imported' // on a way the options leave out (a metro station under a railway one)
+  | 'track-not-imported' // on a way the options leave out (a metro station under a railway one), or on a metro track
   | 'off-track' // too far from the track once laid
   | 'no-track-nearby' // a station node with no track within reach
 
@@ -250,6 +250,8 @@ export interface OsmRunningReport {
   taggedKm: number
   inferredKm: number
   noneKm: number
+  /** Of `inferredKm`, the track given its direction by keeping right (the metros, the classic lines of Alsace-Moselle) */
+  rightHandKm?: number
   /**
    * The rule of keeping left held against the tags, with `checkKeepLeft`: of the tagged track it
    * can tell, the km where it says what the tag says, and where it says the other way

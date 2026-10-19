@@ -1,4 +1,4 @@
-import type { NodeId, Point, RunningDirection, SegmentId } from '../models/types'
+import type { NodeId, Point, RunningDirection, Segment, SegmentId } from '../models/types'
 import type { OsmImportIssue, OsmImportOptions, OsmImportReport, OsmImportResult, OsmSurvey, OverpassResponse } from './osmTypes'
 import { throughTracksAtNode } from '../models/crossing'
 import { findJunctionAtNode, syncJunctions } from '../models/junction'
@@ -7,6 +7,8 @@ import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { analyzeKinematics } from '../services/kinematicDiagnostics'
 import { inferKeepLeft, keepLeftDecisions } from '../services/runningDirection'
 import { setRunning } from '../models/running'
+import { setRailway } from '../models/railway'
+import { rightHandArea } from '../services/rightHandRunning'
 import { isExtraKind, readOsm, type OsmRead, type OsmTrack } from './osmRead'
 import { LAMBERT93_ORIGIN, projectionFor, type OsmFrame } from './osmProjection'
 import { createTrackPlacer } from './osmPlace'
@@ -248,8 +250,8 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   if (options.speedLimits) laySpeedZones(built, chains, tangents, options)
   // Counted on the track as it was fitted, before anything cuts its rails
   const slowUnderSpeedKm = options.speedLimits ? slowUnderSpeed(built, chains, graph) / 1000 : 0
-  // The normal direction of running, before anything cuts a rail: `replaceRail` hands it to the pieces
-  const runBothWays = layRunning(built, chains)
+  // The normal direction of running and the kind of railway, before anything cuts a rail: `replaceRail` hands them to the pieces
+  const { both: runBothWays, highSpeed: highSpeedRails } = layRunning(built, chains)
   const issues: OsmImportIssue[] = []
   /** The OSM way a rail was laid from; a rail cut since then answers for the one it was cut from */
   const wayOf = (segId: string): number[] => {
@@ -297,8 +299,18 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
   // Where OSM gives none, the rule of keeping left on a double line (the rails are settled)
   const tagged = new Set<SegmentId>()
   for (const seg of net.segments.values()) if (seg.running) tagged.add(seg.id)
-  const keepLeftCheck = options.checkKeepLeft ? keepLeftDecisions(net, {}, true) : null
-  if (options.keepLeft !== false) inferKeepLeft(net, { skip: (seg) => runBothWays.has(seg.parentSegmentId ?? seg.id) })
+  // Trains keep to the right on the classic lines of Alsace-Moselle (the high-speed lines there keep
+  // left), and the French metros keep right everywhere
+  const rightHand = rightHandArea(project)
+  const keepsRight = (seg: Segment): boolean => {
+    if (seg.railway === 'subway') return true
+    if (highSpeedRails.has(seg.parentSegmentId ?? seg.id)) return false
+    const a = net.nodes.get(seg.from)?.pos
+    const b = net.nodes.get(seg.to)?.pos
+    return !!a && !!b && rightHand({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+  }
+  const keepLeftCheck = options.checkKeepLeft ? keepLeftDecisions(net, { keepsRight }, true) : null
+  if (options.keepLeft !== false) inferKeepLeft(net, { skip: (seg) => runBothWays.has(seg.parentSegmentId ?? seg.id), keepsRight })
 
   const junctions = syncJunctions(net)
   const report: OsmImportReport = {
@@ -318,12 +330,15 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
     droppedComponents: dropped,
     issues,
   }
-  const running = { taggedKm: 0, inferredKm: 0, noneKm: 0 }
+  const running = { taggedKm: 0, inferredKm: 0, noneKm: 0, rightHandKm: 0 }
   for (const seg of net.segments.values()) {
     const km = segmentShapeLength(net, seg) / 1000
     if (!seg.running) running.noneKm += km
     else if (tagged.has(seg.id)) running.taggedKm += km
-    else running.inferredKm += km
+    else {
+      running.inferredKm += km
+      if (keepsRight(seg)) running.rightHandKm += km
+    }
   }
   if (keepLeftCheck) {
     const check = { agreeKm: 0, disagreeKm: 0 }
@@ -393,12 +408,14 @@ export function convertOsm(data: OverpassResponse, options: OsmImportOptions): O
 
 /**
  * The normal direction of running of each rail laid, read from `railway:preferred_direction` of
- * the way at its middle (rails are laid along their chain, `from` at the start). Returns the
- * rails whose way is run both ways by its tag: the rule of keeping left leaves them alone.
+ * the way at its middle (rails are laid along their chain, `from` at the start), and its kind of
+ * railway (a metro: `railway=subway`). Returns the rails whose way is run both ways by its tag
+ * (the rule of keeping left leaves them alone) and the rails of high-speed ways.
  */
-function layRunning(built: BuiltNetwork, chains: readonly Chain[]): Set<SegmentId> {
+function layRunning(built: BuiltNetwork, chains: readonly Chain[]): { both: Set<SegmentId>; highSpeed: Set<SegmentId> } {
   const net = built.network
   const both = new Set<SegmentId>()
+  const highSpeed = new Set<SegmentId>()
   for (const chain of chains) {
     for (const rail of built.chainRails[chain.index]) {
       const seg = net.segments.get(rail.segId)
@@ -409,6 +426,8 @@ function layRunning(built: BuiltNetwork, chains: readonly Chain[]): Set<SegmentI
       i = Math.min(i, chain.edges.length - 1)
       const edge = chain.edges[i]
       if (!edge) continue
+      if (edge.track.kind === 'subway') setRailway(net, seg, 'subway')
+      if (edge.track.highSpeed) highSpeed.add(seg.id)
       const tag = edge.track.tags['railway:preferred_direction']
       if (tag === 'both') both.add(seg.id)
       if (tag !== 'forward' && tag !== 'backward') continue
@@ -417,7 +436,7 @@ function layRunning(built: BuiltNetwork, chains: readonly Chain[]): Set<SegmentI
       setRunning(net, seg, running)
     }
   }
-  return both
+  return { both, highSpeed }
 }
 
 /** The number of the last id the domain gave out. Reading it takes one, which is given back. */

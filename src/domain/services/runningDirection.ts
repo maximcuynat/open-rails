@@ -21,7 +21,8 @@ import type { TrackPathOptions } from './trackPath'
 //   leaves that other track on its right. Not on single track (no other track), not where three
 //   tracks or more lie side by side (a station, a passing loop with sidings: there the tracks are
 //   run both ways). The left of a heading (hx, hy) is (hy, −hx), the y axis growing downwards.
-//   Right-hand running (Alsace-Moselle) would take the other side; not done yet.
+//   Where trains keep to the right (`KeepLeftOptions.keepsRight`: the classic lines of
+//   Alsace-Moselle, `services/rightHandRunning.ts`) the rule takes the other side.
 
 /** Metres a way counts more for each metre it runs a rail against its normal direction */
 export const RUNNING_TOLL_PER_M = 1
@@ -74,6 +75,8 @@ export interface KeepLeftOptions {
   skip?: (seg: Segment) => boolean
   /** A double track shorter than this (m) between two single ones is a passing loop, left without direction */
   minDoubleRun?: number
+  /** Rails where trains keep to the right instead (Alsace-Moselle): the other track is left on their left */
+  keepsRight?: (seg: Segment) => boolean
 }
 
 /** Real track: the axes of a double line are 3.5 to 5 m apart, OSM drawing them less precisely */
@@ -137,9 +140,10 @@ export function keepLeftDecisions(net: Network, options: KeepLeftOptions = {}, a
     if (alone >= MIN_SEEN * samples) single.add(seg.id)
     const seen = left + right
     if (skipped || seen < MIN_SEEN * samples) continue
-    // The other track on the right of from → to: run forward, keeping to the left
-    if (right >= MIN_AGREE * seen) decided.set(seg.id, 'forward')
-    else if (left >= MIN_AGREE * seen) decided.set(seg.id, 'backward')
+    // The other track on the right of from → to: run forward, keeping to the left (backward where trains keep right)
+    const keepRight = options.keepsRight?.(seg) ?? false
+    if (right >= MIN_AGREE * seen) decided.set(seg.id, keepRight ? 'backward' : 'forward')
+    else if (left >= MIN_AGREE * seen) decided.set(seg.id, keepRight ? 'forward' : 'backward')
   }
   // A short double track between two single ones is a passing loop: run both ways (see `crossingRules.ts`)
   for (const segId of [...decided.keys()]) {
