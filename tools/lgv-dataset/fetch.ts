@@ -5,7 +5,7 @@ import type { OverpassResponse } from '@domain/import/osmTypes'
 import { OsmError } from '@infrastructure/osm/osmError'
 import type { DatasetManifest } from './manifest'
 import { mergeAnswers, wayIdsOf } from './merge'
-import { approachQuery, platformTileQuery, regionQuery, tileQuery } from './queries'
+import { approachQuery, platformTileQuery, regionQuery, subwayQuery, tileQuery } from './queries'
 import { splitTile, tileKey, tilesOf, type Tile } from './tiles'
 
 export interface FetchOptions {
@@ -27,6 +27,8 @@ export interface FetchedData {
   approachWays: Map<string, Set<number>>
   /** The ways the regions brought: classic track, named by its line relation */
   regionWays: Set<number>
+  /** The ways each metro brought, by metro id */
+  subwayWays: Map<string, Set<number>>
   /** How many queries went to the servers (not the cache) */
   asked: number
   tiles: number
@@ -95,7 +97,13 @@ export async function fetchAll(manifest: DatasetManifest, cacheDir: string, opti
     for (const id of wayIdsOf(answer)) regionWays.add(id)
     answers.push(answer)
   }
+  const subwayWays = new Map<string, Set<number>>()
+  for (const subway of manifest.subways ?? []) {
+    const answer = await cached(`subway-${subway.id}`, subwayQuery(subway))
+    subwayWays.set(subway.id, wayIdsOf(answer))
+    answers.push(answer)
+  }
   // The platforms of the whole box, near the tracks or not: the import keeps the ones along them
   const platformTiles = options.platforms === false ? 0 : await fetchTiles('platforms-', platformTileQuery)
-  return { merged: mergeAnswers(answers), approachWays, regionWays, asked, tiles, platformTiles }
+  return { merged: mergeAnswers(answers), approachWays, regionWays, subwayWays, asked, tiles, platformTiles }
 }

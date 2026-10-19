@@ -54,9 +54,9 @@ Demandé le 2026-10-19. Décisions de l'utilisateur :
       « Réseau France » cadre tout l'index ; mini-carte cliquable sur l'index
 
 ### V4 — Métro dans le jeu de données (après `plan-sens-circulation.md`)
-- [ ] `railway=subway` demandé par le générateur, catégorie « Métro » (couleur, légende), type de
-      rail gardé sur le réseau (`Segment.kind` ferroviaire : train / métro), sauvegardé
-- [ ] Régénération (requêtes Overpass nouvelles, avec `User-Agent`)
+- [x] `railway=subway` demandé par le générateur, catégorie « Métro » (couleur, légende), type de
+      rail gardé sur le réseau (`Segment.railway`, `kind` étant déjà la forme du rail), sauvegardé
+- [x] Régénération (requêtes Overpass nouvelles, avec `User-Agent`)
 
 ## Revue
 
@@ -114,7 +114,51 @@ France » ; vue d'ensemble, rien chargé ; au palier « ligne » rien n'est dema
 arrive ; approche de Paris, bouton puis touche U ; rechargement : « Réseau France » rouvert avec ses
 deux morceaux.
 
-**Reste / risques.** ~~Le cadrage du pays bute sur l'échelle minimale de la caméra (la France entière
+### V4 (2026-10-19, branche `dataset-metro`)
+
+**Rail.** `Segment.railway?: 'subway'` (absent : le chemin de fer ; `kind` désigne déjà la forme du
+rail, d'où un autre nom), outils dans `models/railway.ts` (`isSubwayRail`, `setRailway`,
+`remapRailway`). Fait comme `Segment.running` : `RailReplacement.railway` (rempli par la découpe, la
+fusion, les doublons et les rails longs, `handedOn`), `replaceRail` le donne aux morceaux qui n'en
+ont pas ; les rails longs gardent un nœud entre métro et train ; empreinte de l'oracle
+(`networkWatch`) et suivi (`networkFollower`) ; sauvegarde (`SerializedSegment.railway`, valeur
+inconnue lue comme le chemin de fer), `readSavedSegment` (donc `sliceInPlace`), découpe et fusion de
+projets par recopie (testé).
+
+**Import.** `railway=subway` avec `extraKinds: ['subway']` : le rail prend `railway: 'subway'` de la
+voie à son milieu (`layRunning`). Un métro sans `maxspeed` est pris à 80 km/h au plus
+(`SUBWAY_ASSUMED_SPEED`). Ses arrêts ne font pas de gare (`track-not-imported`) : les étiquettes de
+mode manquent souvent, la première régénération à blanc avait ajouté dix stations de métro (Corvisart,
+Pont de Bois…). Les métros français roulent à droite : la règle de déduction y garde la droite (voir
+`plan-sens-circulation.md`) ; l'écart de la règle aux étiquettes retombe de 60,6 à 42,1 km.
+Souterrain : `tunnel` / `layer` sont posés sur presque toutes les voies (Paris : 672 voies en tunnel
+sur 855, 6 par `layer` seul, aucune par `location=underground` seul) ; 625 km sur 695 sont sous le
+sol, donc estompés en surface par `levelAlpha`.
+
+**Générateur.** `manifest.subways` (Paris, Lyon, Marseille, Lille : les villes que le jeu touche ; une
+boîte chacune) ; `subwayQuery` (voies `railway=subway` hors dépôts et garages, routes
+`route=subway`). `assignLines` nomme une voie de métro d'après le `ref` de ses routes
+(`metro-paris-1`, « Métro de Paris, ligne 1 », catégorie `subway`), le plus petit quand elle en porte
+plusieurs ; une section sans nom ne prend la ligne que d'une voisine de même nature (métro ou train),
+sinon « Métro, autres voies » (`metro-autres`) ; `absorbSmallLines` ne verse une ligne de métro que
+dans une ligne de métro.
+
+**Application.** `LineCategory` `subway` (« Métro », violet `#9333ea`) : couleur des rails chargés
+(`railTint`), vue d'ensemble, mini-carte, légende. `store.railsBlockedFor` tient le chemin de chaque
+train hors des voies de métro (aucun matériel n'en est un), `travelWeight` / `travelWeightFor` n'entrent
+jamais dans une ligne de métro.
+
+**Régénération.** 26 lignes de métro avant découpe, 13 747 rails, 695 km de voie (625 sous le sol),
+3,38 Mio ; fichiers de lignes 19,76 Mio contre 16,38 (+20,6 %, sous le seuil de 25 %). 76 596 rails,
+8 613 km, 200 gares comme avant. Aix-en-Provence TGV → Avignon TGV toujours à gauche
+(`explore-aix-avignon.test.ts`, voir plus bas).
+
+**Reste.** Pas de gares de métro ni de matériel métro ; Rennes, Toulouse et Rouen (non touchées par
+le jeu de données) ne sont pas demandées ; Orlyval est dans la boîte de Paris s'il est étiqueté
+`railway=subway`. Une section qui joint métro et train par un nœud de degré 2 est nommée par sa
+majorité (rare dans les données).
+
+**Reste / risques (V1–V3).** ~~Le cadrage du pays bute sur l'échelle minimale de la caméra (la France entière
 ne tient pas dans la fenêtre).~~ Fait (V5). La position des aiguilles d'une table de frontière est gardée quand
 la voie qu'elle ouvre existe encore, sinon reprise du fichier. Fusion avec le sens de circulation :
 `deserializeNetwork` a été découpé (`readSavedSegment`) — un champ ajouté au rail (`running`) doit

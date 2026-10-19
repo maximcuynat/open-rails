@@ -1,7 +1,8 @@
 # Jeu de données « LGV France »
 
 Le réseau ferré à grande vitesse de France, avec les raccordements vers quelques gares de centre-ville,
-prêt à être chargé par l'éditeur : un fichier projet par ligne et un index.
+les lignes classiques de Provence-Alpes-Côte d'Azur et le métro de quelques villes (Paris, Lyon, Marseille, Lille),
+prêt à être chargé par l'éditeur : un fichier projet par morceau de ligne et un index.
 
 - Données OpenStreetMap du 2026-10-07T16:59:56Z, générées le 2026-10-19.
 - Voies, gares et signaux : © les contributeurs d’OpenStreetMap, licence ODbL 1.0 — https://www.openstreetmap.org/copyright
@@ -125,6 +126,33 @@ fichiers partagent leurs ids et se réunissent par union (`unionProjects`).
 | Ligne de Paris à Marseille : section Lyon - Marseille | `ligne-r4117951-02.json` | 1217 | 133.4 km | 300 ko |
 | Ligne de Paris à Marseille : section Lyon - Marseille | `ligne-r4117951-03.json` | 202 | 21.9 km | 47 ko |
 | Ligne de Paris à Marseille : section Lyon - Marseille | `ligne-r4117951-04.json` | 1448 | 106.6 km | 411 ko |
+| Métro, autres voies | `metro-autres.json` | 270 | 28.7 km | 70 ko |
+| Métro de Lille, ligne 1 | `metro-lille-1.json` | 785 | 25.8 km | 194 ko |
+| Métro de Lille, ligne 2 | `metro-lille-2.json` | 1472 | 63.2 km | 377 ko |
+| Métro de Lyon, ligne A | `metro-lyon-a.json` | 223 | 18.9 km | 58 ko |
+| Métro de Lyon, ligne B | `metro-lyon-b.json` | 352 | 21.3 km | 88 ko |
+| Métro de Lyon, ligne C | `metro-lyon-c.json` | 172 | 4.2 km | 41 ko |
+| Métro de Lyon, ligne D | `metro-lyon-d.json` | 431 | 26.5 km | 104 ko |
+| Métro de Marseille, ligne M1 | `metro-marseille-m1.json` | 629 | 25.8 km | 151 ko |
+| Métro de Marseille, ligne M2 | `metro-marseille-m2.json` | 526 | 18.8 km | 131 ko |
+| Métro de Paris, ligne 1 | `metro-paris-1.json` | 576 | 34.9 km | 151 ko |
+| Métro de Paris, ligne 10 | `metro-paris-10.json` | 459 | 18.1 km | 113 ko |
+| Métro de Paris, ligne 11 | `metro-paris-11-01.json` | 412 | 18.7 km | 105 ko |
+| Métro de Paris, ligne 11 | `metro-paris-11-02.json` | 147 | 5.9 km | 39 ko |
+| Métro de Paris, ligne 12 | `metro-paris-12.json` | 494 | 20.6 km | 123 ko |
+| Métro de Paris, ligne 13 | `metro-paris-13.json` | 824 | 48.5 km | 215 ko |
+| Métro de Paris, ligne 14 | `metro-paris-14.json` | 1085 | 58.8 km | 260 ko |
+| Métro de Paris, ligne 15 | `metro-paris-15.json` | 338 | 32.9 km | 89 ko |
+| Métro de Paris, ligne 2 | `metro-paris-2.json` | 458 | 25.0 km | 115 ko |
+| Métro de Paris, ligne 3 | `metro-paris-3.json` | 459 | 21.6 km | 116 ko |
+| Métro de Paris, ligne 4 | `metro-paris-4.json` | 568 | 25.9 km | 147 ko |
+| Métro de Paris, ligne 5 | `metro-paris-5.json` | 570 | 23.7 km | 149 ko |
+| Métro de Paris, ligne 6 | `metro-paris-6.json` | 641 | 29.6 km | 166 ko |
+| Métro de Paris, ligne 7 | `metro-paris-7.json` | 399 | 26.9 km | 99 ko |
+| Métro de Paris, ligne 7bis | `metro-paris-7bis.json` | 171 | 5.5 km | 44 ko |
+| Métro de Paris, ligne 8 | `metro-paris-8.json` | 600 | 30.9 km | 149 ko |
+| Métro de Paris, ligne 9 | `metro-paris-9.json` | 397 | 20.5 km | 100 ko |
+| Métro de Paris, ligne Orlyval | `metro-paris-orlyval.json` | 289 | 14.2 km | 74 ko |
 | Raccordement de Lyon Part-Dieu par le nord | `racc-lyon-part-dieu-nord.json` | 656 | 42.4 km | 167 ko |
 | Raccordement de Lyon Part-Dieu par le sud | `racc-lyon-part-dieu-sud-01.json` | 399 | 11.6 km | 93 ko |
 | Raccordement de Lyon Part-Dieu par le sud | `racc-lyon-part-dieu-sud-02.json` | 2152 | 115.6 km | 573 ko |

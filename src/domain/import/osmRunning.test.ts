@@ -9,9 +9,9 @@ import { pointOnShape, segmentEnds } from '../geometry/segmentGeometry'
 beforeEach(() => resetIdCounter(0))
 
 /** Which way the rails of a track along y (kit metres, x growing east) are normally run: east, west, none, or mixed */
-function runningAlong(result: OsmImportResult, y: number): string {
+function runningAlong(result: OsmImportResult, y: number, x = 0): string {
   const net = result.network
-  const at = placeIn(result, 0, y)
+  const at = placeIn(result, x, y)
   const seen = new Set<string>()
   for (const seg of net.segments.values()) {
     const ends = segmentEnds(net, seg)!
@@ -64,5 +64,33 @@ describe('the normal direction of running at import', () => {
   it('gives a single track no direction', () => {
     const result = convertOsm(answer(osmTrack(1, 100, along([0, 0], [3000, 0], 100)).elements), options())
     expect(runningAlong(result, 0)).toBe('none')
+  })
+})
+
+describe('right-hand running in Alsace-Moselle', () => {
+  // The kit is at (47° N, 5° E): 48.5° N, 7.5° E is between Strasbourg and Sélestat
+  const EAST = 2.5 * 111_320 * Math.cos((47 * Math.PI) / 180)
+  const SOUTH = -1.5 * 111_170
+
+  it('keeps right on a classic double line there, left on a high-speed one', () => {
+    const classic = convertOsm(
+      answer(
+        osmTrack(1, 100, along([EAST, SOUTH], [EAST + 3000, SOUTH], 100)).elements,
+        osmTrack(2, 200, along([EAST, SOUTH + 4.5], [EAST + 3000, SOUTH + 4.5], 100)).elements,
+      ),
+      options(),
+    )
+    expect(runningAlong(classic, SOUTH, EAST + 1500)).toBe('west')
+    expect(runningAlong(classic, SOUTH + 4.5, EAST + 1500)).toBe('east')
+    resetIdCounter(0)
+    const lgv = convertOsm(
+      answer(
+        osmTrack(1, 100, along([EAST, SOUTH], [EAST + 3000, SOUTH], 100), { highspeed: 'yes' }).elements,
+        osmTrack(2, 200, along([EAST, SOUTH + 4.5], [EAST + 3000, SOUTH + 4.5], 100), { highspeed: 'yes' }).elements,
+      ),
+      options(),
+    )
+    expect(runningAlong(lgv, SOUTH, EAST + 1500)).toBe('east')
+    expect(runningAlong(lgv, SOUTH + 4.5, EAST + 1500)).toBe('west')
   })
 })

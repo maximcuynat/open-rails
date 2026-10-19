@@ -13,7 +13,10 @@ import type { DatasetManifest } from './manifest'
 // it is a high-speed way. Then, so that a border always falls on a junction node or a track end,
 // every section (a run of rails between two nodes of degree ≠ 2) takes the line that holds most
 // of its length; a section no way of which says anything takes the line of a neighbouring
-// section, and what is left is « autres ».
+// section, and what is left is « autres ». A metro track (`railway=subway`) belongs to the line
+// of its routes (`route=subway`, by their `ref`), and only ever takes the line of a metro section:
+// the metro and the railway are kept apart.
+
 
 export type { LineId }
 
@@ -30,6 +33,9 @@ export interface LineInfo {
 }
 
 export const OTHER_LINE: LineInfo = { id: 'autres', name: 'Autres voies', highSpeed: false }
+
+/** The metro tracks no route names and no neighbour gives a line to */
+export const OTHER_SUBWAY_LINE: LineInfo = { id: 'metro-autres', name: 'Métro, autres voies', highSpeed: false, category: 'subway' }
 
 export interface LineAssignment {
   lineOf: Map<SegmentId, LineId>
@@ -67,6 +73,19 @@ export function readLineRelations(data: OverpassResponse): Relation[] {
   return relations
 }
 
+/** The routes of the metro lines of the answer (`route=subway`, one per direction), with the ways they hold */
+export function readSubwayRoutes(data: OverpassResponse): { id: number; ref: string; ways: Set<number> }[] {
+  const routes: { id: number; ref: string; ways: Set<number> }[] = []
+  for (const element of data.elements ?? []) {
+    if (element.type !== 'relation' || !element.tags || !Array.isArray(element.members)) continue
+    if (element.tags.type !== 'route' || element.tags.route !== 'subway' || !element.tags.ref) continue
+    const ways = new Set<number>()
+    for (const member of element.members) if (member.type === 'way') ways.add(member.ref)
+    routes.push({ id: element.id, ref: element.tags.ref, ways })
+  }
+  return routes
+}
+
 /** The published line each listed relation belongs to, and the rank of that line (its precedence) */
 function linesOfManifest(manifest: DatasetManifest): Map<number, { info: LineInfo; rank: number }> {
   const byRelation = new Map<number, { info: LineInfo; rank: number }>()
@@ -88,6 +107,7 @@ export function assignLines(
   manifest: DatasetManifest,
   approachWays: ReadonlyMap<string, ReadonlySet<number>>,
   regionWays: ReadonlySet<number> = new Set(),
+  subwayWays: ReadonlyMap<string, ReadonlySet<number>> = new Map(),
 ): LineAssignment {
   const net = result.network
   const wayOfRail = result.wayOfRail
@@ -143,10 +163,43 @@ export function assignLines(
     return info
   }
 
+  // A metro track: the line of its routes, the lowest `ref` when it carries several
+  const subwayOfWay = new Map<number, string>()
+  for (const [subwayId, ways] of subwayWays) for (const way of ways) if (!subwayOfWay.has(way)) subwayOfWay.set(way, subwayId)
+  const subwayName = new Map((manifest.subways ?? []).map((s) => [s.id, s.name]))
+  const refsOfWay = new Map<number, string[]>()
+  for (const route of readSubwayRoutes(data)) {
+    for (const way of route.ways) {
+      const refs = refsOfWay.get(way)
+      if (refs) refs.push(route.ref)
+      else refsOfWay.set(way, [route.ref])
+    }
+  }
+  const subwayInfo = new Map<string, LineInfo>()
+  const subwayLine = (way: number, subwayId: string): LineInfo | null => {
+    const refs = refsOfWay.get(way)
+    if (!refs) return null
+    const ref = [...refs].sort((a, b) => a.localeCompare(b, 'fr', { numeric: true }))[0]
+    const id = `metro-${subwayId}-${ref.toLowerCase().replace(/[^0-9a-z]+/g, '')}`
+    let info = subwayInfo.get(id)
+    if (!info) {
+      info = { id, name: `${subwayName.get(subwayId) ?? 'Métro'}, ligne ${ref}`, highSpeed: false, category: 'subway' }
+      subwayInfo.set(id, info)
+    }
+    return info
+  }
+
   let unlistedHighSpeedWays = 0
   const lineOfWay = new Map<number, LineId | null>()
   const wayLine = (way: number): LineId | null => {
     if (lineOfWay.has(way)) return lineOfWay.get(way)!
+    const subwayId = subwayOfWay.get(way)
+    if (subwayId !== undefined) {
+      const info = subwayLine(way, subwayId)
+      const line = info ? keep(info) : null
+      lineOfWay.set(way, line)
+      return line
+    }
     const tags = wayTags.get(way) ?? {}
     const highSpeed = isHighSpeedWay(tags)
     let line: LineId | null = null
@@ -192,7 +245,9 @@ export function assignLines(
     }
   })
 
-  // 3. A section nobody names takes the line of a neighbour, as long as some neighbour has one
+  // 3. A section nobody names takes the line of a neighbour of its own kind (metro or railway), as
+  // long as some neighbour has one
+  const subwaySection = sections.map((section) => net.segments.get(section.segmentIds[0])?.railway === 'subway')
   let changed = true
   while (changed) {
     changed = false
@@ -200,7 +255,7 @@ export function assignLines(
       if (lineOfSection.has(i)) return
       for (const nodeId of section.orderedNodes) {
         for (const j of sectionsOfNode.get(nodeId) ?? []) {
-          const line = lineOfSection.get(j)
+          const line = subwaySection[j] === subwaySection[i] ? lineOfSection.get(j) : undefined
           if (line) {
             lineOfSection.set(i, line)
             changed = true
@@ -213,7 +268,7 @@ export function assignLines(
 
   const lineOf = new Map<SegmentId, LineId>()
   sections.forEach((section, i) => {
-    const line = lineOfSection.get(i) ?? keep(OTHER_LINE)
+    const line = lineOfSection.get(i) ?? keep(subwaySection[i] ? OTHER_SUBWAY_LINE : OTHER_LINE)
     for (const segId of section.segmentIds) lineOf.set(segId, line)
   })
   return { lineOf, lines, unlistedHighSpeedWays }

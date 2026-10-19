@@ -14,7 +14,7 @@ import { fetchAll } from './fetch'
 import { assignLines, readLineRelations } from './lines'
 import type { DatasetManifest } from './manifest'
 import { mergeAnswers } from './merge'
-import { approachQuery, platformTileQuery, regionQuery, tileQuery } from './queries'
+import { approachQuery, platformTileQuery, regionQuery, subwayQuery, tileQuery } from './queries'
 import { splitTile, tileKey, tilesOf } from './tiles'
 
 const manifest = (over: Partial<DatasetManifest> = {}): DatasetManifest => ({
@@ -84,6 +84,13 @@ describe('queries', () => {
     expect(q).toContain('way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](area.r)->.w;')
     expect(q).toContain('node[railway~"^(station|halt)$"](area.r)')
     expect(q).toContain('rel(bw.w)[type=route][route~"^(tracks|railway)$"];')
+  })
+
+  it('ask a city for its metro tracks but its depots, and the routes that name its lines', () => {
+    const q = subwayQuery({ id: 'lyon', name: 'Métro de Lyon', bbox: [45.68, 4.77, 45.81, 4.96] })
+    expect(q).toContain('way[railway=subway][service!~"^(yard|siding|spur)$"](45.68,4.77,45.81,4.96)->.w;')
+    expect(q).toContain('rel(bw.w)[type=route][route=subway];\nout body;')
+    expect(q).not.toContain('station')
   })
 })
 
@@ -199,6 +206,39 @@ describe('the line of each rail', () => {
     expect([...lineOf.values()]).toContain(classic.id)
     // Without the region, the same way says nothing
     expect([...assignLines(result, d, manifest({ approaches: [], lines: [] }), new Map()).lines.values()].some((line) => line.category !== undefined)).toBe(false)
+  })
+
+  it('names a metro track after its route, a metro track of no route after a metro neighbour, and keeps the metro apart', () => {
+    const d = data()
+    const subway = { railway: 'subway' }
+    d.elements.push(
+      ...[[51, 0], [52, 100], [53, 200], [54, 300], [55, 400]].map(([id, x]) => osmNode(id, x, 300)),
+      osmNode(56, 300, 306),
+      osmNode(57, 400, 326),
+      ...[[61, 0], [62, 100], [63, 200]].map(([id, x]) => osmNode(id, x, 600)),
+      osmWay(500, [51, 52, 53], subway),
+      osmWay(501, [53, 54, 55], subway),
+      osmWay(502, [53, 56, 57], subway),
+      osmWay(600, [61, 62, 63], subway),
+      { type: 'relation', id: 950, members: [{ type: 'way', ref: 500 }], tags: { type: 'route', route: 'subway', ref: '1' } },
+    )
+    const result = convertOsm(d, options({ traceWays: true, extraKinds: ['subway'] }))
+    const m = manifest({ approaches: [], subways: [{ id: 'paris', name: 'Métro de Paris', bbox: [48.72, 2.2, 48.96, 2.5] }] })
+    const { lineOf, lines } = assignLines(result, d, m, new Map(), new Set(), new Map([['paris', new Set([500, 501, 502, 600])]]))
+    expect(lines.get('metro-paris-1')).toEqual({ id: 'metro-paris-1', name: 'Métro de Paris, ligne 1', highSpeed: false, category: 'subway' })
+    expect(lines.get('metro-autres')?.category).toBe('subway')
+    const lineOfWay = new Map<number, Set<string>>()
+    for (const seg of result.network.segments.values()) {
+      const way = result.wayOfRail!.get(seg.parentSegmentId ?? seg.id) ?? result.wayOfRail!.get(seg.id)!
+      expect(seg.railway === 'subway').toBe(way >= 500)
+      if (!lineOfWay.has(way)) lineOfWay.set(way, new Set())
+      lineOfWay.get(way)!.add(lineOf.get(seg.id)!)
+    }
+    // Ways 500, 501 and 502 meet at node 53: the two without a route take the line of the first
+    for (const way of [500, 501, 502]) expect([...lineOfWay.get(way)!]).toEqual(['metro-paris-1'])
+    expect([...lineOfWay.get(600)!]).toEqual(['metro-autres'])
+    // The railway never takes a metro line
+    for (const way of [100, 200, 300, 400]) for (const line of lineOfWay.get(way) ?? []) expect(line.startsWith('metro')).toBe(false)
   })
 
   it('gives a way to the first listed line that holds it', () => {

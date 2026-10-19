@@ -178,6 +178,7 @@ class ContentRecord {
       put(seg.parentSegmentId)
       put(seg.cant)
       put(seg.running)
+      put(seg.railway)
       // Replaced, never changed in place: the list itself tells
       put(seg.path)
     }

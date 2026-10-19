@@ -56,6 +56,8 @@ export interface SerializedSegment {
   cant?: number
   /** Normal direction of running relative to `from` → `to` (`Segment.running`); absent: none */
   running?: 'forward' | 'backward'
+  /** Kind of railway (`Segment.railway`): `subway` for a metro track; absent: the railway */
+  railway?: 'subway'
   /**
    * Legacy (saves made when the level was a property of the rail): never written, converted to
    * node heights on load.
@@ -305,6 +307,7 @@ function serializedSegment(items: SerializedItems, net: Network, s: Segment): Se
       via: s.via ? keep({ x: s.via.x, y: s.via.y }) : undefined,
       ...(isStoredCant(s) ? { cant: s.cant } : {}),
       ...(isStoredRunning(s.running) ? { running: s.running } : {}),
+      ...(isStoredRailway(s.railway) ? { railway: s.railway } : {}),
       ...(s.kind === 'path' ? { path: storedPath(net, s) } : {}),
     })
     items.segments.set(s.id, saved)
@@ -663,7 +666,7 @@ function checkAgainstFresh(net: Network, data: SerializedProject, reconciledAt?:
   const fresh = deserializeNetwork(data, reconciledAt).network
   const parts = (n: Network): Record<string, string> => ({
     nodes: JSON.stringify([...n.nodes.values()].map((node) => [node.id, node.pos.x, node.pos.y, node.level ?? 0])),
-    rails: JSON.stringify([...n.segments.values()].map((seg) => [seg.id, seg.from, seg.to, seg.kind, seg.via?.x, seg.via?.y, seg.cant, seg.running, seg.path])),
+    rails: JSON.stringify([...n.segments.values()].map((seg) => [seg.id, seg.from, seg.to, seg.kind, seg.via?.x, seg.via?.y, seg.cant, seg.running, seg.railway, seg.path])),
     adjacency: JSON.stringify([...n.adjacency]),
     tables: JSON.stringify([...n.junctions.values()].map((j) => [j.id, j.nodeId, j.kind, j.passages, j.positions, j.active, j.frogNumber])),
     zones: JSON.stringify([...n.speedZones.values()]),
@@ -718,6 +721,11 @@ function isStoredCant(seg: { kind: SegmentKind; cant?: unknown }): seg is { kind
 /** A normal direction of running worth storing (or read back) */
 function isStoredRunning(value: unknown): value is 'forward' | 'backward' {
   return value === 'forward' || value === 'backward'
+}
+
+/** A kind of railway worth storing (or read back); an unknown one is the railway */
+function isStoredRailway(value: unknown): value is 'subway' {
+  return value === 'subway'
 }
 
 /** A line speed read from a file: kept only when it is one the settings accept */
@@ -776,6 +784,7 @@ export function readSavedSegment(s: SerializedSegment): Segment {
   // Before the reconcile pass, which hands the cant down to the pieces of a rail it cuts
   if (isStoredCant({ kind, cant: s.cant }) && seg.via) seg.cant = s.cant
   if (isStoredRunning(s.running)) seg.running = s.running
+  if (isStoredRailway(s.railway)) seg.railway = s.railway
   return seg
 }
 

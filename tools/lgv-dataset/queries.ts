@@ -1,4 +1,4 @@
-import type { Approach, Region } from './manifest'
+import type { Approach, Region, Subway } from './manifest'
 import type { Tile } from './tiles'
 import { platformQuery } from '@infrastructure/osm/overpassClient'
 
@@ -70,6 +70,24 @@ export function regionQuery(region: Region): string {
     '(.w;.w>;node[railway~"^(station|halt)$"](area.r););',
     'out body qt;',
     'rel(bw.w)[type=route][route~"^(tracks|railway)$"];',
+    'out body;',
+  ].join('\n')
+}
+
+/**
+ * The metro of a city: its tracks (`railway=subway`, but its depots and sidings), their nodes, and
+ * the routes of its lines (`route=subway`, one per direction), which name the lines. No station: the
+ * stations of the dataset are those of the trains.
+ */
+export function subwayQuery(subway: Subway): string {
+  const [south, west, north, east] = subway.bbox
+  const b = bbox({ south, west, north, east })
+  return [
+    `[out:json][timeout:${QUERY_TIMEOUT_S}];`,
+    `way[railway=subway][service!~"^(yard|siding|spur)$"]${b}->.w;`,
+    '(.w;.w>;);',
+    'out body qt;',
+    'rel(bw.w)[type=route][route=subway];',
     'out body;',
   ].join('\n')
 }

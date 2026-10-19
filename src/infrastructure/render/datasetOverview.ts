@@ -14,6 +14,7 @@ export const LINE_CATEGORY_COLORS: Record<LineCategory, string> = {
   main: '#ea580c',
   regional: '#16a34a',
   service: '#64748b',
+  subway: '#9333ea',
 }
 
 /**

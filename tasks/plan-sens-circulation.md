@@ -93,4 +93,32 @@ Fait le 2026-10-19 (branche `sens-circulation`, depuis `feature/quais` 55654e2).
   gauche, 0 sur celle de droite, 0 m à contre-sens, arrivé en 1 304 s.
 - **S6** : `ConsoleState.wrongTrack` (validé dans `protocol.ts`), « Contre-sens » sous la vitesse sur les
   trois pupitres et le téléphone (`SpeedCaption`).
-- Reste : circulation à droite (Alsace-Moselle) ; ~~donner la destination à la pose en gare~~ (fait : S7).
+- Reste : ~~circulation à droite (Alsace-Moselle)~~ (fait, ci-dessous) ; ~~donner la destination à la pose en gare~~ (fait : S7).
+
+### Alsace-Moselle (2026-10-19, branche `dataset-metro`)
+
+- [x] Garder la droite sur le réseau classique des départements 57, 67 et 68 ; les LGV y gardent la gauche
+- [x] Les métros gardent la droite (Paris, Lyon, Marseille, Lille, apportés par le lot V4 de `plan-vue-reseau.md`)
+
+**Approche.** OSM n'a pas d'étiquette du côté de circulation, et le pays (relation) ne dit rien
+des départements : un polygone grossier des trois départements en (lat, lon)
+(`services/rightHandRunning.ts`, `ALSACE_MOSELLE`, à environ 2 km des limites), projeté une fois dans
+le repère de l'import (`rightHandArea(project)`, local comme Lambert-93) ; le milieu du rail y est
+testé. `keepLeftDecisions` / `inferKeepLeft` prennent `keepsRight(seg)` : l'autre voie est alors
+laissée à gauche. À l'import : vrai pour un rail de métro, et pour un rail dont la voie n'est pas à
+grande vitesse (`highspeed=yes` ou TVM) au milieu duquel le polygone répond oui. La même règle sert
+au contrôle contre les étiquettes (`checkKeepLeft`). Le rapport compte `rightHandKm`.
+
+**Tests.** Villes dedans (Metz, Thionville, Forbach, Sarreguemines, Sarrebourg, Strasbourg, Haguenau,
+Sélestat, Colmar, Mulhouse) et dehors (Nancy, Lunéville, Saint-Dié, Épinal, Belfort, Longwy,
+Luxembourg, Sarrebruck, Kehl, Bâle, Paris) ; double voie classique vers 48,5° N 7,5° E à droite, LGV
+au même endroit à gauche ; double voie de métro à droite.
+
+**Jeu de données.** 391 km de voie reçoivent leur sens par la règle, dont 317 en gardant la droite
+(les métros pour l'essentiel) ; en Alsace-Moselle le jeu n'a que 248 km de voie ferrée (la LGV Est
+et ses raccordements), tous déjà orientés par étiquette ou par la règle. Écart de la règle aux
+étiquettes : 42,1 km sur 5 907 (avant le métro : 41 km).
+
+**Reste.** Les points de changement de côté (sauts-de-mouton de Lunéville, Montreux-Vieux…) tombent
+près des limites, où le polygone est approximatif ; le jeu n'a pas encore de lignes classiques
+d'Alsace pour l'éprouver en circulation.
