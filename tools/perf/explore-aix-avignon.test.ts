@@ -18,8 +18,15 @@ verifyNetworkRevisions(false)
 const DIR = fileURLToPath(new URL('../../public/data/lgv/', import.meta.url))
 const read = <T>(name: string): T => JSON.parse(readFileSync(`${DIR}${name}`, 'utf8')) as T
 
-const FROM = 'Aix-en-Provence TGV'
-const TO = 'Avignon TGV'
+const AIX = 'Aix-en-Provence TGV'
+const AVIGNON = 'Avignon TGV'
+/** Both ways, the rake set down knowing where it goes (`toward`) or not */
+const RUNS = [
+  { from: AIX, to: AVIGNON, toward: true },
+  { from: AVIGNON, to: AIX, toward: true },
+  { from: AIX, to: AVIGNON, toward: false },
+  { from: AVIGNON, to: AIX, toward: false },
+]
 
 /**
  * Which track of a double line a place is on, seen in the direction of travel: « gauche » when
@@ -49,11 +56,12 @@ function sideOfTravel(net: Network, segId: string, p: Point, heading: Point): 'g
   return laterals[0] > 0 ? 'droite' : 'gauche'
 }
 
-// A TGV from Aix-en-Provence TGV to Avignon TGV on the LGV Méditerranée of the dataset, under the
-// automatic pilot and the full driving aid: which track of the double line it runs on.
+// A TGV between Aix-en-Provence TGV and Avignon TGV on the LGV Méditerranée of the dataset, both
+// ways, under the automatic pilot and the full driving aid: which track of the double line it runs
+// on, set down knowing its destination (`placeRakeAtStation(…, toward)`) or not.
 //
 // Run by hand: PROFILE=1 npx vitest run tools/perf/explore-aix-avignon.test.ts --silent=false
-test.runIf(process.env.PROFILE && existsSync(`${DIR}index.json`))('Aix-en-Provence TGV → Avignon TGV under the pilot', { timeout: 900_000 }, () => {
+test.runIf(process.env.PROFILE && existsSync(`${DIR}index.json`)).each(RUNS)('$from → $to under the pilot (destination known at set-down: $toward)', { timeout: 900_000 }, ({ from: FROM, to: TO, toward }) => {
   const index = readDatasetIndex(read<unknown>('index.json'))
   const from = index.stations.find((s) => s.name === FROM)!
   const to = index.stations.find((s) => s.name === TO)!
@@ -68,17 +76,22 @@ test.runIf(process.env.PROFILE && existsSync(`${DIR}index.json`))('Aix-en-Proven
   const stationId = (name: string) => [...net.stations.values()].find((s) => s.name === name)!.id
   let tagged = 0
   for (const seg of net.segments.values()) if (seg.running) tagged++
-  process.stderr.write(`\n${pieces.map((p) => p.id).join(', ')} : ${net.segments.size} rails, ${tagged} avec un sens normal\n`)
+  process.stderr.write(`\n${FROM} → ${TO}, destination ${toward ? 'connue' : 'inconnue'} à la pose — ${pieces.map((p) => p.id).join(', ')} : ${net.segments.size} rails, ${tagged} avec un sens normal\n`)
 
-  const stop = store.placeRakeAtStation(stationId(FROM), 'duplex')
+  const placing = performance.now()
+  const stop = store.placeRakeAtStation(stationId(FROM), 'duplex', toward ? stationId(TO) : undefined)
+  const placingMs = performance.now() - placing
   if (!stop) throw new Error(`no room at ${FROM}`)
-  const train = store.trains[0]
-  const start = train.vehicles[0].front
+  const placed = store.trains[0]
+  const start = placed.vehicles[0].front
   const startRail = net.segments.get(start.segId)!
-  process.stderr.write(`  posé voie ${stop.ref ?? '?'} sur ${start.segId}, ${startRail.running ? (runsAgainst(startRail, start.forward) ? 'à contre-sens' : 'dans le sens normal') : 'voie sans sens'}\n`)
+  process.stderr.write(`  posé voie ${stop.ref ?? '?'} sur ${start.segId}, ${startRail.running ? (runsAgainst(startRail, start.forward) ? 'à contre-sens' : 'dans le sens normal') : 'voie sans sens'} (${placingMs.toFixed(0)} ms)\n`)
   store.togglePlayMode()
-  const refused = addItineraryStop(store, train, stationId(TO))
+  const refused = addItineraryStop(store, placed, stationId(TO))
   if (refused) throw new Error(`itinerary refused: ${refused}`)
+  // A rake facing away from its way is driven from its other cab: another object
+  const train = store.trains.find((t) => t.id === placed.id)!
+  if (train !== placed) process.stderr.write(`  dos au trajet : repart de son autre cabine\n`)
   store.setAutopilot(train.id, true)
 
   const metres = { gauche: 0, droite: 0, unknown: 0, against: 0, normal: 0, none: 0 }

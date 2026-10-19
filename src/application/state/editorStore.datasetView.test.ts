@@ -6,6 +6,7 @@ import { openWholeNetwork, reloadDataset } from '@application/dataset/journeyLoa
 import type { LineId } from '@domain/dataset/datasetIndex'
 import { resetIdCounter } from '@domain/models/network'
 import { resetMemoryStorage, type SerializedProject } from '@infrastructure/persistence/persistence'
+import { MIN_CAMERA_SCALE } from '@infrastructure/render/camera'
 
 function serving(bodies: Record<string, unknown>): typeof fetch {
   return (async (input: RequestInfo | URL) => {
@@ -62,6 +63,33 @@ describe('« Réseau France »: the whole dataset, its lines loaded as the view 
     expect(store.osmSource?.frame).toBe('lambert93')
     // Framed on every line: from Gare Un to Gare Isolée, 50 km apart
     expect(store.camera.y).toBeCloseTo(25_000)
+  })
+
+  it('steps back far enough for the whole country to be in the window, other projects keeping their limit', async () => {
+    const dataset = fakeDataset()
+    const { index, files } = dataset
+    // An index as wide as France: a line 1 100 km out east and 1 000 km out south
+    index.lines[2].bbox = { minX: 0, minY: 50_000, maxX: 1_100_000, maxY: 1_000_000 }
+    const store = new EditorStore()
+    store.setViewport(1200, 800)
+    await openWholeNetwork(store, { fetch: serving({ ...files, 'index.json': index }), baseUrl: '/' })
+    const halfW = store.viewport.w / 2 / store.camera.scale
+    const halfH = store.viewport.h / 2 / store.camera.scale
+    expect(store.camera.x - halfW).toBeLessThanOrEqual(0)
+    expect(store.camera.x + halfW).toBeGreaterThanOrEqual(1_100_000)
+    expect(store.camera.y - halfH).toBeLessThanOrEqual(0)
+    expect(store.camera.y + halfH).toBeGreaterThanOrEqual(1_000_000)
+    // Even in a phone's window
+    store.frameBox({ minX: 0, minY: 0, maxX: 1_100_000, maxY: 1_000_000 }, 360, 640)
+    expect(360 / store.camera.scale).toBeGreaterThanOrEqual(1_100_000)
+    expect(store.minCameraScale).toBeLessThan(MIN_CAMERA_SCALE)
+
+    // A project of its own does not step back that far
+    resetMemoryStorage()
+    const plain = new EditorStore()
+    expect(plain.minCameraScale).toBe(MIN_CAMERA_SCALE)
+    plain.frameBox({ minX: 0, minY: 0, maxX: 1_100_000, maxY: 1_000_000 }, 1200, 800)
+    expect(plain.camera.scale).toBe(MIN_CAMERA_SCALE)
   })
 
   it('fetches nothing while the view is far out: the overview is enough there', async () => {

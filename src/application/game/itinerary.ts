@@ -5,6 +5,7 @@ import { consistLength, consistMaxSpeed, stockSpec } from '@domain/models/rollin
 import { positionOnSegment, segmentPartialLength } from '@domain/models/locomotive'
 import { networkCheckToken } from '@domain/models/networkWatch'
 import { isTrainStopped, type TrainSet } from '@domain/models/train'
+import type { RakeHeading } from '@domain/models/rakePlacement'
 import type { Point, StationId } from '@domain/models/types'
 import { afterCall, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStop, type StationRef } from '@domain/services/itinerary'
 import { openPassage } from '@domain/models/junction'
@@ -220,16 +221,10 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
     if (standsInTheWay(store, train, state.guide)) state.left = null
   }
   if (state.left === null && state.failedOn !== lead.segId) {
-    const index = store.datasetIndex
-    const indexed = index?.stations.find((s) => s.id === station)
-    const loaded = new Set(store.dataset?.lines ?? [])
-    const under = store.linesUnder(train)
-    const weight = travelWeightFor(trainAbility(train))
-    const gates = index && indexed && store.dataset ? gatesToward(index, loaded, indexed.lines, under, weight) : []
+    const gates = gatesTowardStation(store, train, station)
     // A call on the way to somewhere else: a platform the train can go on from
     const after = train.itinerary?.stations[train.itinerary.next + 1]
-    const afterIndexed = after === undefined ? undefined : index?.stations.find((s) => s.id === after)
-    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, loaded, afterIndexed.lines, under, weight) : [] }
+    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: gatesTowardStation(store, train, after) }
     const toll = crossingToll(net, tracksHeldByOthers(store, train))
     state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond, store.railsBlockedFor(train), toll, consistLength(train.vehicles))
     state.left = state.guide ? state.guide.path.length : null
@@ -243,6 +238,34 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
   }
   state.against = applyDrivingAid(store, train, state.guide)
   return false
+}
+
+/**
+ * The nodes where the loaded track of a dataset project meets the way of a train to a station
+ * whose lines are not loaded (`gatesToward`, from the lines under the train, by what it can run
+ * on). None on any other project, or for a station the index does not know.
+ */
+function gatesTowardStation(store: EditorStore, train: TrainSet, stationId: StationId): string[] {
+  const index = store.datasetIndex
+  const indexed = index?.stations.find((s) => s.id === stationId)
+  if (!index || !indexed || !store.dataset) return []
+  return gatesToward(index, new Set(store.dataset.lines), indexed.lines, store.linesUnder(train), travelWeightFor(trainAbility(train)))
+}
+
+/**
+ * Where a train is to go, for setting it down (`createRakeAtStation`): the station when it is on
+ * the track loaded, the gates towards it otherwise, the rails it must keep off. Null for a
+ * station neither the network nor the index knows.
+ */
+export function rakeHeadingToward(store: EditorStore, train: TrainSet, stationId: StationId): RakeHeading | null {
+  const station = store.network.stations.get(stationId)
+  const gates = gatesTowardStation(store, train, stationId)
+  if (!station && gates.length === 0) return null
+  const heading: RakeHeading = { gates }
+  if (station) heading.station = station
+  const blocked = store.railsBlockedFor(train)
+  if (blocked) heading.blocked = blocked
+  return heading
 }
 
 /** The plain track beyond a set of points is looked at this far for a train coming, m */

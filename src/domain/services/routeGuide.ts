@@ -127,6 +127,27 @@ export function findRouteGuide(
   return guideOf(net, { spans: found.spans, length: found.length }, target, !ahead, target === 'platform' ? stops[found.goal] : undefined)
 }
 
+/**
+ * The way AHEAD of a lead bogie to a platform of `station` where a train of `trainLength` metres
+ * stops — or, when the station has no platform on the track loaded, to the nearest of `gates` —,
+ * the track run against its normal direction paid for (`runningToll`). Null when there is none
+ * ahead: what a rake set down at a station is weighed by, before it has an itinerary.
+ */
+export function findWayAhead(
+  net: Network,
+  lead: TrackPosition,
+  station: Station | undefined,
+  gates: readonly NodeId[] = [],
+  blocked?: TrackPathOptions['blocked'],
+  trainLength = Infinity,
+): TrackPath | null {
+  const stops = station ? stationStopGoals(net, station, trainLength) : []
+  const goals: TrackPoint[] = stops.length > 0 ? stops : gates.flatMap((nodeId) => railEndsAt(net, nodeId))
+  if (goals.length === 0) return null
+  const found = findTrackPathToAny(net, { segId: lead.segId, t: lead.t }, goals, { leaving: lead.forward ? 1 : 0, blocked, toll: runningToll(net) })
+  return found ? { spans: found.spans, length: found.length } : null
+}
+
 /** A stretch runs its rail the way a stop wants to be reached (a stretch without length, either way) */
 function runsTheWay(span: TrackSpan, stop: StopGoal): boolean {
   return stop.forward === undefined || span.t0 === span.t1 || (span.t1 > span.t0) === stop.forward

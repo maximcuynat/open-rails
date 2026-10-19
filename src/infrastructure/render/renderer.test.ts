@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
-import { createCamera } from '@infrastructure/render/camera'
+import { createCamera, DATASET_MIN_CAMERA_SCALE } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import {
+  renderGrid,
   renderNetwork,
   renderScaleBar,
   renderTrainSet,
@@ -51,6 +52,24 @@ function createMockContext(): CanvasRenderingContext2D {
     fillText: vi.fn(),
   } as unknown as CanvasRenderingContext2D
 }
+
+describe('the grid and the scale bar as far out as the camera goes', () => {
+  it.each([undefined, 5])('draws as few lines over the whole of France as nearer (grid step %s)', (spacing) => {
+    const ctx = createMockContext()
+    renderGrid(ctx, createCamera(0, 0, DATASET_MIN_CAMERA_SCALE), 1280, 760, spacing)
+    // Lines at least 8 px apart, minor and major: at most (1280 + 760) / 8 × 1.2, and a few more
+    const lines = (ctx.moveTo as ReturnType<typeof vi.fn>).mock.calls.length
+    expect(lines).toBeGreaterThan(0)
+    expect(lines).toBeLessThan(320)
+  })
+
+  it('measures thousands of kilometres on the scale bar', () => {
+    const ctx = Object.assign(createMockContext(), { arcTo: vi.fn(), roundRect: vi.fn() })
+    expect(() => renderScaleBar(ctx, createCamera(0, 0, DATASET_MIN_CAMERA_SCALE), 1280, 760)).not.toThrow()
+    const texts = (ctx.fillText as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]))
+    expect(texts.some((text) => /km/.test(text))).toBe(true)
+  })
+})
 
 describe('Pan Mode Rendering (Vue épurée en mode Déplacer)', () => {
   let mockCtx: CanvasRenderingContext2D
