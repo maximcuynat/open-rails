@@ -89,6 +89,7 @@ export function loadDatasetIndex(options: DatasetFetch = {}): Promise<DatasetInd
 
 export function resetDatasetIndexCache(): void {
   indexPromise = null
+  lineFileCache.clear()
 }
 
 export interface LineFetchProgress {
@@ -99,9 +100,36 @@ export interface LineFetchProgress {
 const isProject = (raw: unknown): raw is SerializedProject =>
   typeof raw === 'object' && raw !== null && Array.isArray((raw as SerializedProject).nodes) && Array.isArray((raw as SerializedProject).segments)
 
+/** How many line files, once read, are kept in memory: a piece the view comes back to is not fetched nor read again */
+export const LINE_FILE_CACHE_SIZE = 48
+
+/** The files already read, by release and name, the one used last at the end (never changed once read) */
+const lineFileCache = new Map<string, SerializedProject>()
+
+function cachedLineFile(file: string): SerializedProject | undefined {
+  const project = lineFileCache.get(file)
+  if (project) {
+    lineFileCache.delete(file)
+    lineFileCache.set(file, project)
+  }
+  return project
+}
+
+function cacheLineFile(file: string, project: SerializedProject): void {
+  lineFileCache.delete(file)
+  lineFileCache.set(file, project)
+  while (lineFileCache.size > LINE_FILE_CACHE_SIZE) lineFileCache.delete(lineFileCache.keys().next().value!)
+}
+
+/** Tests: the files read before are forgotten */
+export function resetLineFileCache(): void {
+  lineFileCache.clear()
+}
+
 /**
  * The project files of some lines, fetched together; `onProgress` is told after each one. A line
- * the index does not know fails before anything is asked.
+ * the index does not know fails before anything is asked. A file read before (one of the last
+ * `LINE_FILE_CACHE_SIZE`) is given again without being fetched.
  */
 export async function fetchLineFiles(
   index: DatasetIndex,
@@ -116,11 +144,18 @@ export async function fetchLineFiles(
   const projects = await Promise.all(
     lines.map(async (id) => {
       const file = files.get(id)!
-      const raw = await fetchJson(file, options)
-      if (!isProject(raw)) throw new DatasetError('invalid', DATASET_ERROR_MESSAGES.invalid(file))
+      // By release of the data: a file of another index under the same name is another file
+      const key = `${index.dataDate}|${file}`
+      let project = cachedLineFile(key)
+      if (!project) {
+        const raw = await fetchJson(file, options)
+        if (!isProject(raw)) throw new DatasetError('invalid', DATASET_ERROR_MESSAGES.invalid(file))
+        cacheLineFile(key, raw)
+        project = raw
+      }
       done++
       onProgress?.({ done, total })
-      return [id, raw] as const
+      return [id, project] as const
     }),
   )
   return new Map(projects)

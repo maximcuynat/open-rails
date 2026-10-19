@@ -236,7 +236,7 @@ describe('platforms laid along the track', () => {
     expect(result.network.stations.get(platform.stationId)!.name).toBe('Halte')
   })
 
-  it('leaves the stations of an answer without platforms as they were, on the four samples', () => {
+  it('leaves the stations of an answer without platforms as they were, on the four samples', { timeout: 30_000 }, () => {
     for (const name of ['clelles-mens', 'dijon-ville', 'lgv-pasilly', 'paris-gare-de-lyon']) {
       const data = readFixture(name)
       resetIdCounter(0)

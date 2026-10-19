@@ -18,6 +18,7 @@ import { renderSpeedZoneBands, renderSpeedZoneMarkers, type SpeedZoneHighlight }
 import { renderSignalling, renderSignalStripes, type SignalRenderOptions } from './signalRender'
 import { renderStations, type StationRenderOptions } from './stationRender'
 import { platformsInView, platformsOfPass, renderPlatformBodies, renderStopMarkers, type PlatformRenderOptions, type PlatformShape } from './platformRender'
+import { levelAlpha, type ViewDepth } from './levelAlpha'
 import { renderDetailRails, renderLineTracks, renderSchematicTracks, renderSectionStripes, type RailTint, type SectionStripeStyle } from './lodTracks'
 import { renderCantMarks } from './cantRender'
 import { GRADIENT_LABEL_FONT, drawGradientLabels, gradientLabelBoxes, renderGradientChevrons, type GradientColors } from './gradientRender'
@@ -507,6 +508,8 @@ export function getSegmentRenderIntervals(
 
 export interface RenderNetworkOptions {
   tool?: string
+  /** The side of the ground looked at: what is on the other side is faded (`levelAlpha`); the surface when absent */
+  viewDepth?: ViewDepth
   hideConstructionNodes?: boolean
   hideSectionCenterline?: boolean
   onlyRenamedSectionBadges?: boolean
@@ -564,11 +567,11 @@ export interface RenderNetworkOptions {
 export const DECK_WIDTH = BALLAST_WIDTH * 1.45
 /** Width of the parapet drawn along each edge of a bridge deck. */
 export const DECK_PARAPET_WIDTH = 0.30
-/** Opacity of a rail below ground (tunnel). */
+/** Opacity of a rail below ground (tunnel) in the SVG export; the canvas fades by `levelAlpha` */
 export const TUNNEL_ALPHA = 0.4
 /** Dash pattern (screen px) of a rail below ground. */
 export const TUNNEL_DASH = [6, 5]
-/** Opacity of a vehicle running in a tunnel. */
+/** Opacity of a vehicle running in a tunnel (former canvas rule; the canvas now fades by `levelAlpha`) */
 export const TUNNEL_VEHICLE_ALPHA = 0.35
 
 /** Levels `above` (excluded) to `upTo` (included): what one pass of the layered drawing covers. */
@@ -939,6 +942,7 @@ export function renderNetwork(
   const isPan = options?.tool === 'pan'
   const hideConstructionNodes = options?.hideConstructionNodes ?? isPan
   const hideSectionCenterline = options?.hideSectionCenterline ?? isPan
+  const depth: ViewDepth = options?.viewDepth ?? 'surface'
   const onlyRenamedSectionBadges = options?.onlyRenamedSectionBadges ?? isPan
 
   // Level of detail of this frame: the rails are drawn with the constant `GAUGE`, so it reads that one
@@ -999,7 +1003,7 @@ export function renderNetwork(
   const drawPlatforms = (level: number): void => {
     if (platformsShown.length === 0) return
     renderPlatformBodies(ctx, cam, vw, vh, platformsOfPass(platformsShown, level, passLevels), {
-      lod, gauge: options?.gauge, alpha: level < 0 ? TUNNEL_ALPHA : 1,
+      lod, gauge: options?.gauge, alpha: levelAlpha(level, depth),
       selectedId: options?.platforms?.selectedId, hoveredId: options?.platforms?.hoveredId,
     })
   }
@@ -1007,7 +1011,7 @@ export function renderNetwork(
   /** What lies under the rails of a level, whatever the tier the rails are drawn in */
   const drawTrackUnderlays = (pieces: TrackPiece[], level: number): void => {
     if (!showsTrackObjects) return
-    const alpha = level < 0 ? TUNNEL_ALPHA : 1
+    const alpha = levelAlpha(level, depth)
     // Speed zones: a band under the rails of the stretch they limit (on the deck of a bridge)
     if (!options?.hideSpeedZoneBands) renderSpeedZoneBands(ctx, cam, vw, vh, net, pieces, GAUGE, alpha, options?.speedZones, lod, derived)
     // Blocks and track held for the trains: stripes beside the rails of this level
@@ -1028,18 +1032,32 @@ export function renderNetwork(
   /** Cant: the outer rail of the canted curves, highlighted under the rails */
   const drawCantMarks = (pieces: TrackPiece[], level: number): void => {
     if (!cantProfile || !cantColor) return
-    renderCantMarks(ctx, cam, vw, vh, net, pieces, cantProfile, GAUGE, GAUGE, level < 0 ? TUNNEL_ALPHA : 1, cantColor)
+    renderCantMarks(ctx, cam, vw, vh, net, pieces, cantProfile, GAUGE, GAUGE, levelAlpha(level, depth), cantColor)
   }
   /** Slopes: chevrons between the rails of the ramps, pointing up */
   const drawGradientChevrons = (pieces: TrackPiece[], level: number): void => {
     if (!ramps || !steepRails || !gradientColors) return
-    renderGradientChevrons(ctx, cam, vw, vh, net, pieces, ramps, steepRails, GAUGE, level < 0 ? TUNNEL_ALPHA : 1, gradientColors)
+    renderGradientChevrons(ctx, cam, vw, vh, net, pieces, ramps, steepRails, GAUGE, levelAlpha(level, depth), gradientColors)
+  }
+
+  /** The deck of a bridge, faded with the surface when one looks below ground */
+  const drawBridgeDecks = (pieces: TrackPiece[], level: number): void => {
+    if (level <= 0) return
+    const alpha = levelAlpha(level, depth)
+    if (alpha === 1) {
+      renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
+      return
+    }
+    ctx.save()
+    ctx.globalAlpha = alpha
+    renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
+    ctx.restore()
   }
 
   const drawDetailedTracks = (pieces: TrackPiece[], level: number): void => {
     // 0. BRIDGE DECK under the rails of a level above ground
-    renderBridgeDecks(ctx, cam, vw, vh, net, pieces, level, GAUGE)
-    const tunnel = level < 0
+    drawBridgeDecks(pieces, level)
+    const alpha = levelAlpha(level, depth)
 
     drawPlatforms(level)
     drawTrackUnderlays(pieces, level)
@@ -1047,17 +1065,17 @@ export function renderNetwork(
 
     // 1. SECTION CENTERLINE (Ligne d'axe teintée par section / canton)
     // A subtle coloured stripe in the middle of the track tells the sections apart: one stroke per colour
-    if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, pieces, level, stripeOf)
+    if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, pieces, level, stripeOf, depth)
 
     // 2. PURE RAIL RENDERING: the two rails of every piece, gathered by style
-    renderDetailRails(ctx, cam, vw, vh, net, pieces, level, selection.segments, { rail: railColor, accent, head: railHeadColor }, GAUGE)
+    renderDetailRails(ctx, cam, vw, vh, net, pieces, level, selection.segments, { rail: railColor, accent, head: railHeadColor }, GAUGE, depth)
     // Connect rails and create smooth dynamic miter joints at nodes
-    if (tunnel) {
+    if (alpha !== 1) {
       ctx.save()
-      ctx.globalAlpha = TUNNEL_ALPHA
+      ctx.globalAlpha = alpha
     }
     renderRailJoints(ctx, cam, vw, vh, net, selection, railColor, accent, bounds, GAUGE, jointsByLevel ? level : undefined)
-    if (tunnel) ctx.restore()
+    if (alpha !== 1) ctx.restore()
     drawGradientChevrons(pieces, level)
   }
 
@@ -1067,25 +1085,25 @@ export function renderNetwork(
     if (lod === 'schematic') {
       for (const group of levelGroups) drawTrackUnderlays(group.pieces, group.level)
       // Once for the whole network: the levels are not layered in this tier
-      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { rail: railColor, accent, category: options?.railTint })
+      renderSchematicTracks(ctx, cam, vw, vh, derived.sectionPolylines(), bounds, selectedSections, { rail: railColor, accent, category: options?.railTint, depth })
     } else if (lod === 'line') {
       const paper = levelGroups.some((g) => g.level > 0) ? getCanvasStyle(ctx.canvas, '--paper', '#ffffff') : ''
       for (const group of levelGroups) {
         drawPlatforms(group.level)
         drawTrackUnderlays(group.pieces, group.level)
-        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper, category: options?.railTint }, GAUGE)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper, category: options?.railTint }, GAUGE, false, depth)
       }
     } else if (lod === 'rails') {
       // The two rails of every track in a handful of strokes, then the stripe of the sections
       const paper = getCanvasStyle(ctx.canvas, '--paper', '#ffffff')
       for (const group of levelGroups) {
         // The two rails can be told apart: so can a bridge, which gets its deck as in the detailed drawing
-        renderBridgeDecks(ctx, cam, vw, vh, net, group.pieces, group.level, GAUGE)
+        drawBridgeDecks(group.pieces, group.level)
         drawPlatforms(group.level)
         drawTrackUnderlays(group.pieces, group.level)
         drawCantMarks(group.pieces, group.level)
-        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true)
-        if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, group.pieces, group.level, stripeOf)
+        renderLineTracks(ctx, cam, vw, vh, net, group.pieces, group.level, selection.segments, { rail: railColor, accent, paper }, GAUGE, true, depth)
+        if (!hideSectionCenterline) renderSectionStripes(ctx, cam, vw, vh, net, group.pieces, group.level, stripeOf, depth)
         drawGradientChevrons(group.pieces, group.level)
       }
     } else {
@@ -1160,7 +1178,7 @@ export function renderNetwork(
   if (showsTrackObjects) {
     // Signals stand beside the track, above the rails; hidden with the boards at far zoom. They
     // come first: a signal is always drawn, a board gives way to it.
-    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, { ...options.signals, space })
+    if (options?.signals) renderSignalling(ctx, cam, vw, vh, net, derived, { ...options.signals, space, depth })
     renderSpeedZoneMarkers(ctx, cam, vw, vh, net, derived, {
       highlight: options?.speedZones,
       gauge: GAUGE,
@@ -4931,6 +4949,8 @@ export function renderTrainSet(
   line?: LineSettings,
   /** Plain driving view: bodies and bogies, never the gangways nor the lean, however close the view */
   plain = false,
+  /** The side of the ground looked at: a vehicle on the other side is faded (`levelAlpha`) */
+  viewDepth: ViewDepth = 'surface',
 ): void {
   // Nothing of the train in view: nothing to compute nor to draw. The debug overlay reaches far
   // beyond the train (stopping distance, vectors), so it is never skipped.
@@ -4998,17 +5018,18 @@ export function renderTrainSet(
       ? Math.max(levelOfVehicle(train.vehicles[index].id), levelOfVehicle(train.vehicles[index + 1].id))
       : top
   /**
-   * Draw a part in the pass of `level`: skipped outside the band of this pass, dimmed when the
-   * track under it (`depth`) is below ground
+   * Draw a part in the pass of `level`: skipped outside the band of this pass, faded when the track
+   * under it (`under`) is on the other side of the ground than the one looked at
    */
-  const atLevel = (level: number, draw: () => void, depth = level): void => {
+  const atLevel = (level: number, draw: () => void, under = level): void => {
     if (!inLevelBand(level, band)) return
-    if (depth >= 0) {
+    const alpha = levelAlpha(under, viewDepth)
+    if (alpha === 1) {
       draw()
       return
     }
     ctx.save()
-    ctx.globalAlpha = (isGhost ? 0.45 : 1) * TUNNEL_VEHICLE_ALPHA
+    ctx.globalAlpha = (isGhost ? 0.45 : 1) * alpha
     draw()
     ctx.restore()
   }

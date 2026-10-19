@@ -351,6 +351,30 @@ kbd {
   background: var(--panel-2);
 }
 
+/* The side of the ground the view looks at (DepthSwitch) */
+.tb-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tb-depth:hover {
+  background: var(--panel-2);
+}
+.tb-depth.is-underground {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
 /* The mode of the application: building or playing (ModeSwitch) */
 .tb-mode {
   display: inline-flex;

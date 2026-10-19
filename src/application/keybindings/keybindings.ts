@@ -72,6 +72,7 @@ export const ACTIONS = [
   { id: 'view.toggleSnap', label: 'Aimantation', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'g' }, null] },
   { id: 'view.fit', label: 'Cadrer la vue', group: 'tools', contexts: BOTH, by: 'key', defaults: [{ key: 'f' }, null] },
   { id: 'view.toggleInspector', label: 'Afficher / masquer l’inspecteur', group: 'tools', contexts: BOTH, by: 'key', defaults: [{ key: 'i' }, null] },
+  { id: 'view.toggleDepth', label: 'Vue en surface / en souterrain', group: 'tools', contexts: BOTH, by: 'key', defaults: [{ key: 'u' }, null] },
   { id: 'sim.togglePlay', label: 'Prendre / rendre les commandes', group: 'tools', contexts: BOTH, by: 'code', defaults: [{ code: 'F5' }, null] },
   { id: 'train.debug', label: 'Squelette debug des trains', group: 'tools', contexts: BOTH, by: 'code', defaults: [{ code: 'F3' }, null] },
 ] as const satisfies readonly ActionDef[]

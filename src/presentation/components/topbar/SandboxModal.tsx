@@ -12,6 +12,8 @@ interface SandboxModalProps {
   store: EditorStore
   /** Opens the room of the phone desks and shows its window */
   onPhoneDesk: () => void
+  /** Opens « Réseau France » instead: the whole network, to look at before choosing anything */
+  onWholeNetwork?: () => void
   onClose: () => void
 }
 
@@ -30,7 +32,7 @@ const PC_CONSOLES: readonly { preference: ConsolePreference; name: string; detai
  * says where the train is driven from — a phone, or a console of this screen — and the driving
  * begins. Mounted when opened and unmounted when closed: every opening starts blank.
  */
-export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps) {
+export function SandboxModal({ store, onPhoneDesk, onWholeNetwork, onClose }: SandboxModalProps) {
   const [index, setIndex] = useState<DatasetIndex | null>(null)
   const [indexError, setIndexError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -324,6 +326,11 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
             <span className="osm-footer-status" role="status">
               {progress.done} {progress.total > 1 ? 'fichiers' : 'fichier'} sur {progress.total}
             </span>
+          )}
+          {phase === 'setup' && onWholeNetwork && !canJoin && (
+            <button type="button" className="modal-btn modal-btn-secondary" onClick={onWholeNetwork} title="Tout le réseau en tracé simplifié, les voies chargées à l’approche">
+              Explorer le réseau France
+            </button>
           )}
           <button type="button" className="modal-btn modal-btn-secondary" onClick={onClose} disabled={loading}>
             {phase === 'desk' ? 'Plus tard' : canJoin ? 'Annuler' : 'Ouvrir l’éditeur'}

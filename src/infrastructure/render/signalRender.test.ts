@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { OTHER_SIDE_ALPHA } from '@infrastructure/render/levelAlpha'
 import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, resetIdCounter, setNodesLevel } from '@domain/models/network'
 import { addSignal, addSignalPair } from '@domain/models/signals'
@@ -258,7 +259,7 @@ describe('signals on the canvas', () => {
     lay(net, seg.id, 0.5, true)
     const ops = draw(net, {})
     const arc = ops.findIndex((op) => op.name === 'arc')
-    expect(ops[arc].globalAlpha).toBeCloseTo(0.4)
+    expect(ops[arc].globalAlpha).toBeCloseTo(OTHER_SIDE_ALPHA)
   })
 
   it('hides the signals at far zoom and is not drawn with the rails of a level', () => {
@@ -439,8 +440,8 @@ describe('blocks and reservations on the canvas', () => {
     const state = createSignallingState()
     state.railReservations.set(seg.id, [{ segId: seg.id, t0: 0.3, t1: 0.5, trainId: 't1' }])
     const ops = draw(net, { showBlocks: true, showReservations: true, state })
-    expect(strokesOf(ops, BLOCK_COLORS)[0].globalAlpha).toBeCloseTo(BLOCK_ALPHA * 0.4)
-    expect(strokesOf(ops, RESERVATION_COLORS)[0].globalAlpha).toBeCloseTo(RESERVATION_ALPHA * 0.4)
+    expect(strokesOf(ops, BLOCK_COLORS)[0].globalAlpha).toBeCloseTo(BLOCK_ALPHA * OTHER_SIDE_ALPHA)
+    expect(strokesOf(ops, RESERVATION_COLORS)[0].globalAlpha).toBeCloseTo(RESERVATION_ALPHA * OTHER_SIDE_ALPHA)
   })
 
   it('a block on a ramp is cut where the level changes: each piece with its level', () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { EditorStore, useEditorVersion } from '@application/state/editorStore'
 import { useKeyboardShortcuts } from '@presentation/hooks/useKeyboardShortcuts'
+import { useDatasetStreaming } from '@presentation/hooks/useDatasetStreaming'
 import { Canvas } from '@presentation/components/canvas/Canvas'
 import { TopBar } from '@presentation/components/topbar/TopBar'
 import { ToolBar } from '@presentation/components/toolbar/ToolBar'
@@ -35,6 +36,8 @@ export default function App() {
   // Subscribe so App re-renders on store changes (drives child components).
   useEditorVersion(store)
   useKeyboardShortcuts(store)
+  // The lines of a dataset project come and go with the view, in every mode
+  useDatasetStreaming(store)
 
   const [vp, setVp] = useState({ w: 800, h: 600 })
   const onViewport = useCallback((w: number, h: number) => setVp({ w, h }), [])
@@ -55,10 +58,10 @@ export default function App() {
   // nears can be fetched.
   useEffect(() => {
     if (store.datasetReloadPending) {
-      showToast('Rechargement de la ligne…', 'info')
+      showToast(store.dataset?.whole ? 'Réouverture du réseau France…' : 'Rechargement de la ligne…', 'info')
       void reloadDataset(store)
         .then(() => store.enterGamePaused())
-        .then(() => showToast(`Ligne « ${store.projectName} » rechargée`, 'success'))
+        .then(() => showToast(store.dataset?.whole ? `${store.projectName} rouvert` : `Ligne « ${store.projectName} » rechargée`, 'success'))
         .catch((error: unknown) => showToast(datasetErrorMessage(error), 'error', 8000))
     } else if (store.dataset && !store.datasetIndex) {
       void loadDatasetIndex()

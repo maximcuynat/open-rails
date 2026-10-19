@@ -15,6 +15,9 @@ import { mergeReportFigures, mergeReportNotes, type MergeOutcome } from '@applic
 import { SettingsModal } from '../settings/SettingsModal'
 import { formatDistance } from '@domain/models/units'
 import { EXAMPLES, loadExample, type ExampleNetwork } from '../../../examples'
+import { openWholeNetwork } from '@application/dataset/journeyLoader'
+import { datasetErrorMessage } from '@application/dataset/datasetClient'
+import { WHOLE_NETWORK_NAME } from '@domain/dataset/datasetRecipe'
 
 // The import window brings the whole conversion with it: loaded when it is first opened
 const OsmImportModal = lazy(() => import('./OsmImportModal').then((module) => ({ default: module.OsmImportModal })))
@@ -33,6 +36,41 @@ interface TopBarProps {
   /** The phone desk session, opened from the Simulation menu */
   remote: RemoteSession
   onFitView: () => void
+}
+
+/**
+ * « Réseau France » : the whole dataset as a locked project with no line loaded; the overview
+ * draws the country and the lines come as the view nears them.
+ */
+function openFrance(store: EditorStore): void {
+  if (store.isPlayMode) store.togglePlayMode()
+  showToast('Ouverture du réseau France…', 'info')
+  void openWholeNetwork(store)
+    .then(() => showToast('Approchez une ligne pour charger ses voies', 'success'))
+    .catch((error: unknown) => showToast(datasetErrorMessage(error), 'error', 8000))
+}
+
+/** The project would lose something by being replaced: track drawn by hand, or trains */
+const hasWorkToLose = (store: EditorStore): boolean => store.trains.length > 0 || (!store.dataset && store.network.segments.size > 0)
+
+/** The surface / underground switch of the view: what is on the other side of the ground is faded */
+function DepthSwitch({ store }: { store: EditorStore }) {
+  const below = store.viewDepth === 'underground'
+  return (
+    <button
+      type="button"
+      className={`tb-depth${below ? ' is-underground' : ''}`}
+      aria-pressed={below}
+      onClick={store.toggleViewDepth}
+      title={`${below ? 'Vue en souterrain : la surface est estompée' : 'Vue en surface : les tunnels sont estompés'} — cliquer pour passer ${below ? 'en surface' : 'en souterrain'}${store.shortcutHint('view.toggleDepth')}`}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 10h18" />
+        {below ? <path d="M6 21v-5a6 6 0 0 1 12 0v5" /> : <path d="M12 3v4M8.5 4.5l1.5 2M15.5 4.5l-1.5 2" />}
+      </svg>
+      <span>{below ? 'Souterrain' : 'Surface'}</span>
+    </button>
+  )
 }
 
 /** The mode of the application, always in view: building or playing, and what the time of the game is doing */
@@ -66,6 +104,11 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
   const [showRemoteModal, setShowRemoteModal] = useState(false)
   const [showOsmImport, setShowOsmImport] = useState(false)
   const [showLineBetween, setShowLineBetween] = useState(false)
+  const [showFranceModal, setShowFranceModal] = useState(false)
+  const requestFrance = (): void => {
+    if (hasWorkToLose(store)) setShowFranceModal(true)
+    else openFrance(store)
+  }
   // The game is offered at start on a blank page; with a project to come back to, from the menu
   const [showSandbox, setShowSandbox] = useState(() => store.network.segments.size === 0 && !store.dataset)
   // The free view asks for it too: a train to set down at a station while the others run
@@ -100,6 +143,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'merge-json', label: 'Ajouter un JSON au projet…', disabled: !store.canEditNetwork },
         { id: 'import-osm', label: 'Importer depuis OpenStreetMap…' },
         { id: 'line-between-stations', label: 'Ligne entre gares…' },
+        { id: 'whole-network', label: WHOLE_NETWORK_NAME },
         {
           id: 'examples',
           label: 'Exemples',
@@ -151,6 +195,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'line-between-stations':
             setShowLineBetween(true)
+            break
+          case 'whole-network':
+            requestFrance()
             break
           case 'export-json':
             exportJSON(store)
@@ -237,6 +284,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         { id: 'toggle-inclination', label: 'Dévers et pentes', checked: store.showInclination },
         { id: 'toggle-driving-view', label: 'Vue de conduite épurée', checked: store.minimalDrivingView },
         { id: 'toggle-dispatcher', label: 'Tableau de l’aiguilleur (en conduite)', checked: store.showDispatcher },
+        { id: 'toggle-underground', label: 'Vue en souterrain', checked: store.viewDepth === 'underground', shortcut: store.shortcutLabel('view.toggleDepth') },
         { id: 'toggle-inspector', label: 'Inspecteur', checked: store.isSidePanelOpen, shortcut: store.shortcutLabel('view.toggleInspector'), separatorAfter: true },
         {
           id: 'theme',
@@ -296,6 +344,9 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
             break
           case 'toggle-dispatcher':
             store.toggleDispatcher()
+            break
+          case 'toggle-underground':
+            store.toggleViewDepth()
             break
           case 'toggle-inspector':
             store.toggleSidePanel()
@@ -420,6 +471,7 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         <MenuBar menus={menus} />
         <div className="tb-right">
           <ModeSwitch store={store} />
+          <DepthSwitch store={store} />
           <button
             className="tb-scale"
             onClick={store.openSettings}
@@ -473,6 +525,17 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
         <p>Voulez-vous réinitialiser le plan actuel ? Toutes les voies non exportées seront effacées.</p>
       </Modal>
       <Modal
+        isOpen={showFranceModal}
+        title={WHOLE_NETWORK_NAME}
+        confirmLabel="Ouvrir le réseau France"
+        confirmVariant="danger"
+        onClose={() => setShowFranceModal(false)}
+        onConfirm={() => openFrance(store)}
+      >
+        <p>Tout le réseau du jeu de données, en tracé simplifié : les voies d’une ligne se chargent quand on s’en approche, en édition comme en conduite, et ne sont pas modifiables.</p>
+        <p>Le projet actuel sera remplacé : ses trains et les voies non exportées seront effacés.</p>
+      </Modal>
+      <Modal
         isOpen={pendingExample !== null}
         title={`Ouvrir l'exemple « ${pendingExample?.label ?? ''} »`}
         confirmLabel="Ouvrir l'exemple"
@@ -500,6 +563,10 @@ export function TopBar({ store, remote, onFitView }: TopBarProps) {
               setShowRemoteModal(true)
             }}
             onClose={() => setShowSandbox(false)}
+            onWholeNetwork={() => {
+              setShowSandbox(false)
+              requestFrance()
+            }}
           />
         </Suspense>
       )}

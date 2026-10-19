@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DatasetIndex, IndexLine } from '@domain/dataset/datasetIndex'
-import { LINE_CATEGORY_COLORS, railTintOf, renderDatasetOverview } from './datasetOverview'
+import { LINE_CATEGORY_COLORS, OVERVIEW_STATIONS_MIN_SCALE, railTintOf, renderDatasetOverview } from './datasetOverview'
 
 function mockContext() {
   const strokes: string[] = []
@@ -57,6 +57,14 @@ describe('the lines of a dataset that are not loaded', () => {
     renderDatasetOverview(ctx, CAM, 800, 600, index([line('lgv', true, [[0, 0, 10, 10]], [0, 0, 10, 10])], stations), new Set(['here']))
     const written = vi.mocked(ctx.fillText).mock.calls.map((c) => c[0])
     expect(written).toEqual(['Ailleurs'])
+  })
+
+  it('leaves the stations out when the view is too far out for them', () => {
+    const { ctx } = mockContext()
+    const stations = [{ id: 'a', name: 'Ailleurs', x: 5000, y: 0, lines: ['lgv'] }]
+    const far = { ...CAM, scale: OVERVIEW_STATIONS_MIN_SCALE / 2 }
+    expect(renderDatasetOverview(ctx, far, 800, 600, index([line('lgv', true, [[0, 0, 10, 10]], [0, 0, 10, 10])], stations), new Set())).toBe(1)
+    expect(vi.mocked(ctx.fillText)).not.toHaveBeenCalled()
   })
 
   it('draws nothing of an index without outlines', () => {
