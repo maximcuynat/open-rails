@@ -24,35 +24,69 @@ Demandé le 2026-10-19 : un TGV d'Aix-en-Provence TGV vers Avignon TGV montait s
 ## Lots
 
 ### S1 — Donnée sur le rail
-- [ ] `Segment.running?: 'forward' | 'backward'` (sens normal, de `from` vers `to` ou l'inverse)
-- [ ] Sauvegarde, découpe, fusion de projets ; `replaceRail` le reporte sur les rails coupés ou
+- [x] `Segment.running?: 'forward' | 'backward'` (sens normal, de `from` vers `to` ou l'inverse)
+- [x] Sauvegarde, découpe, fusion de projets ; `replaceRail` le reporte sur les rails coupés ou
       fusionnés (retourné quand le rail l'est) ; `touchNetwork(net, id)` à chaque changement ; oracle
-- [ ] Import OSM : `railway:preferred_direction` de la voie au milieu de chaque rail
+- [x] Import OSM : `railway:preferred_direction` de la voie au milieu de chaque rail
       (`osmImport.ts`, à côté de `wayOfRail`), `both` ou absent : pas de sens
 
 ### S2 — Repli « garder la gauche »
-- [ ] Rail sans sens et voie parallèle à l'entraxe : le sens normal laisse l'autre voie à droite
+- [x] Rail sans sens et voie parallèle à l'entraxe : le sens normal laisse l'autre voie à droite
       (gauche de (hx, hy) = (hy, −hx), y vers le bas) ; pas sur voie unique ni dans les gares à
       plus de deux voies ; une option pour la circulation à droite (Alsace-Moselle) plus tard
 
 ### S3 — Coût dans la recherche
-- [ ] `runningToll(net)` (proportionnel à la longueur parcourue à contre-sens, pas un forfait),
+- [x] `runningToll(net)` (proportionnel à la longueur parcourue à contre-sens, pas un forfait),
       ajouté au péage de `refreshRouteGuide` ; hors de `standsInTheWay` (qui lit `toll > 0` comme
       « un train gêne ») ; aussi pour les recherches sans péage de `routeGuide.ts` et `onwardStops`
-- [ ] Un coût, pas une interdiction : un train retenu peut encore passer à contre-sens
+- [x] Un coût, pas une interdiction : un train retenu peut encore passer à contre-sens
 
 ### S4 — Départ en gare
-- [ ] `createRakeAtStation` / `bestRakeAt` : préférer l'arrêt et le sens qui parcourent la voie à
+- [x] `createRakeAtStation` / `bestRakeAt` : préférer l'arrêt et le sens qui parcourent la voie à
       quai dans son sens normal, avant « le plus de voie devant » (tient compte des repères de Q4)
 
 ### S5 — Jeu de données
-- [ ] Générateur : rails avec leur sens ; `node tools/lgv-dataset/run.mjs --dry` (depuis le cache),
+- [x] Générateur : rails avec leur sens ; `node tools/lgv-dataset/run.mjs --dry` (depuis le cache),
       puis régénération de `public/data/lgv/` ; vérifier Aix TGV → Avignon TGV à gauche
       (`tools/perf/` : un essai de trajet comme `explore-ligne-des-alpes.test.ts`)
 
 ### S6 — Option
-- [ ] Contre-sens dit au pupitre (IPCS)
+- [x] Contre-sens dit au pupitre (IPCS)
 
 ## Revue
 
-_(à remplir)_
+Fait le 2026-10-19 (branche `sens-circulation`, depuis `feature/quais` 55654e2).
+
+- **S1** : `Segment.running` (`types.ts`), outils dans `models/running.ts` (`setRunning`, `runsAgainst`,
+  `runningCarriesOn`, `remapRunning`). `RailReplacement.running` est rempli par `splitReplacement`,
+  `mergeReplacements`, `duplicateReplacement` et par les rails longs ; `replaceRail` le donne aux morceaux
+  qui n'en ont pas (retourné quand le morceau est posé dans l'autre sens ; à la fusion de deux rails, le
+  premier l'emporte). Les rails longs gardent un nœud là où le sens change. Empreinte de l'oracle
+  (`networkWatch`) et suivi (`networkFollower`) ; sauvegarde (`SerializedSegment.running`, valeur
+  inconnue ignorée), découpe et fusion de projets par recopie (à la fusion, sur un rail en double, le
+  projet courant l'emporte). Import : `railway:preferred_direction` de la voie au milieu de chaque rail
+  posé, avant toute découpe.
+- **S2** : `inferKeepLeft` (`services/runningDirection.ts`), lancé à l'import par défaut
+  (`OsmImportOptions.keepLeft`, donc dans l'application comme dans le générateur ; pas de case à cocher
+  dans la fenêtre d'import). Un échantillon tous les 50 m : exactement une voie parallèle (moins de 6°)
+  à 2,5 – 7,5 m, aucune autre à moins de 12 m ; 60 % des échantillons la voient, 90 % du même côté. Une
+  double voie de moins de 2,5 km entre deux voies uniques est un évitement : pas de sens (sinon le train
+  seul passerait dans chaque évitement, cf. `crossingRules.ts`). Les voies `both` ne sont pas touchées.
+- **S3** : `runningToll(net, reversed)` : longueur du rail entré à contre-sens × `RUNNING_TOLL_PER_M` (1 :
+  un mètre à contre-sens compte double) ; le rail de départ ne paie pas, celui de l'arrivée paie entier.
+  Ajouté dans `findRouteGuide` (donc pour tous ses appelants) à la place de `refreshRouteGuide`, aux
+  recherches sans péage, et à rebours pour le retour d'`onwardStops`. `standsInTheWay` n'y touche pas.
+- **S4** : `placeRank` : une issue (300 m de voie devant ; l'examen s'arrête aux premières aiguilles,
+  souvent avant 700 m, d'où ce seuil plutôt que `DEPARTURE_REACH`), puis le sens normal, puis la voie
+  devant. La pose ne connaît pas la destination : elle choisit le sens normal, pas le bon côté.
+- **S5** : le générateur envoie un User-Agent (`open-rails-dataset (github.com/maximcuynat/open-rails)`),
+  rapporte les sens et confronte la règle aux étiquettes (`checkKeepLeft`). Essai à blanc puis
+  régénération : 6 914 km de voie avec un sens par étiquette, 74 km par la règle, 930 km sans ; la
+  règle dit comme l'étiquette sur 5 846 km et l'inverse sur 41 km (99,3 %). Quais : 7 376 lus, 418
+  posés (98 centraux) ; 23 gares sur 200 sans quai. Fichiers : 16,38 Mio contre 15,5 (+5 %).
+- **Aix-en-Provence TGV → Avignon TGV** (`tools/perf/explore-aix-avignon.test.ts`) : avant, posé voie 3 vers
+  le nord, 38,2 km sur la voie de droite ; après, posé voie 4 dans le sens normal, 70,3 km sur la voie de
+  gauche, 0 sur celle de droite, 0 m à contre-sens, arrivé en 1 304 s.
+- **S6** : `ConsoleState.wrongTrack` (validé dans `protocol.ts`), « Contre-sens » sous la vitesse sur les
+  trois pupitres et le téléphone (`SpeedCaption`).
+- Reste : circulation à droite (Alsace-Moselle) ; donner la destination à la pose en gare.
