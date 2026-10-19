@@ -4,7 +4,7 @@ import { fitPath } from '@domain/geometry/arcFit'
 import { networkCheckToken, touchNetwork, verifyingNetworkRevisions } from '@domain/models/networkWatch'
 import { dirtyNodesOf, networkChangesSince } from '@domain/geometry/networkFollower'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
-import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
+import { createCamera, clampScale, fitDimensions, DATASET_MIN_CAMERA_SCALE, MIN_CAMERA_SCALE, type Camera } from '@infrastructure/render/camera'
 import { raiseIdCounter } from '@domain/models/ids'
 import { createNetwork, syncIdCounter, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
@@ -1497,6 +1497,15 @@ export class EditorStore {
     this.notify()
   }
 
+  /**
+   * The farthest the camera can step back, px per metre: a project of the dataset reaches the
+   * whole country (« Réseau France », its overview drawn from the index); any other keeps
+   * `MIN_CAMERA_SCALE`, where all its track is still drawn.
+   */
+  get minCameraScale(): number {
+    return this.dataset ? DATASET_MIN_CAMERA_SCALE : MIN_CAMERA_SCALE
+  }
+
   /** Put the camera on a world box, with a margin, within the viewport */
   frameBox = (box: BBox, viewportW?: number, viewportH?: number): void => {
     const vw = viewportW ?? this.viewport.w
@@ -1505,7 +1514,7 @@ export class EditorStore {
     const height = Math.max(1, box.maxY - box.minY)
     this.camera.x = (box.minX + box.maxX) / 2
     this.camera.y = (box.minY + box.maxY) / 2
-    this.camera.scale = clampScale(0.9 * Math.min(vw / width, vh / height))
+    this.camera.scale = clampScale(0.9 * Math.min(vw / width, vh / height), this.minCameraScale)
     this.notifyView()
   }
 
@@ -2770,7 +2779,7 @@ export class EditorStore {
     )
     this.camera.x = (minX + maxX) / 2
     this.camera.y = (minY + maxY) / 2
-    this.camera.scale = clampScale(scale)
+    this.camera.scale = clampScale(scale, this.minCameraScale)
     this.notify()
   }
 

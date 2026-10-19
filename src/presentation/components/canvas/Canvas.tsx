@@ -2651,7 +2651,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isTrackpadPinch = e.ctrlKey || e.metaKey
         const zoomDelta = -dy * (isTrackpadPinch ? 0.008 : 0.0016)
         const factor = Math.exp(Math.max(-0.4, Math.min(0.4, zoomDelta)))
-        cam.scale = clampScale(cam.scale * factor)
+        cam.scale = clampScale(cam.scale * factor, store.minCameraScale)
 
         cam.x = worldX - (px - vw / 2) / cam.scale
         cam.y = worldY - (py - vh / 2) / cam.scale

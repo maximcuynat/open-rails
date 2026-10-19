@@ -16,6 +16,8 @@ interface MiniMapProps {
 
 export function MiniMap({ store, viewportW = 800, viewportH = 600 }: MiniMapProps) {
   const ref = useRef<HTMLCanvasElement>(null)
+  /** Where the map last drawn puts the world: its centre and its scale (px per metre) */
+  const mapFrame = useRef<{ cx: number; cy: number; scale: number } | null>(null)
 
   useEffect(() => {
     const canvas = ref.current
@@ -128,6 +130,7 @@ export function MiniMap({ store, viewportW = 800, viewportH = 600 }: MiniMapProp
 
       // An empty network is centred on the camera: its map follows the view, and is not kept
       drawn = { net, token: hasNodes ? networkCheckToken(net) : undefined, lines: loaded.size, ink, paper, cx, cy, scale }
+      mapFrame.current = { cx, cy, scale }
     }
 
     const draw = () => {
@@ -180,37 +183,15 @@ export function MiniMap({ store, viewportW = 800, viewportH = 600 }: MiniMapProp
     }
   }, [store, viewportW, viewportH])
 
-  // Click/drag to navigate
+  // Click/drag to navigate: through the frame of the map as drawn (a project of the dataset maps its whole index, not only what is loaded)
   const navigate = (e: React.MouseEvent) => {
     const canvas = ref.current
-    if (!canvas) return
+    const frame = mapFrame.current
+    if (!canvas || !frame) return
     const rect = canvas.getBoundingClientRect()
-    const mx = e.clientX - rect.left
-    const my = e.clientY - rect.top
-    const net = store.network
     const cam = store.camera
-
-    let minX = 0, minY = 0, maxX = 0, maxY = 0
-    let hasNodes = false
-    for (const n of net.nodes.values()) {
-      if (!hasNodes) {
-        minX = maxX = n.pos.x
-        minY = maxY = n.pos.y
-        hasNodes = true
-      } else {
-        minX = Math.min(minX, n.pos.x)
-        minY = Math.min(minY, n.pos.y)
-        maxX = Math.max(maxX, n.pos.x)
-        maxY = Math.max(maxY, n.pos.y)
-      }
-    }
-    const cx = hasNodes ? (minX + maxX) / 2 : cam.x
-    const cy = hasNodes ? (minY + maxY) / 2 : cam.y
-    const span = hasNodes ? Math.max(maxX - minX, maxY - minY, 1) * 1.2 : 200
-    const scale = Math.min(MINI_W, MINI_H) / span
-
-    cam.x = cx + (mx - MINI_W / 2) / scale
-    cam.y = cy + (my - MINI_H / 2) / scale
+    cam.x = frame.cx + (e.clientX - rect.left - MINI_W / 2) / frame.scale
+    cam.y = frame.cy + (e.clientY - rect.top - MINI_H / 2) / frame.scale
     // Only the camera moved: no panel has anything new to show
     store.notifyView()
   }

@@ -10,8 +10,19 @@ export function createCamera(x = 0, y = 0, scale = 1): Camera {
   return { x, y, scale }
 }
 
-export function clampScale(scale: number): number {
-  return Math.min(10000, Math.max(0.002, scale))
+/** The farthest a project can step back, px per metre: 1 000 px of window show 500 km */
+export const MIN_CAMERA_SCALE = 0.002
+/**
+ * The farthest a project of the dataset can step back (« Réseau France »): 1 000 px show
+ * 5 000 km, the whole of France in the window of a phone (360 px: 1 800 km)
+ */
+export const DATASET_MIN_CAMERA_SCALE = 0.0002
+/** The closest any project can come, px per metre */
+export const MAX_CAMERA_SCALE = 10000
+
+/** A scale within the limits of the camera; `min` is the project's own (`EditorStore.minCameraScale`) */
+export function clampScale(scale: number, min = MIN_CAMERA_SCALE): number {
+  return Math.min(MAX_CAMERA_SCALE, Math.max(min, scale))
 }
 
 /** Compute camera scale and center to fit given dimensions within viewport with margin padding. */
