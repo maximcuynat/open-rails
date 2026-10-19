@@ -32,6 +32,12 @@ describe('what a merge says once done', () => {
     expect(mergeReportFigures(outcome({ stationsAdded: 0, stationsMerged: 0, repairs: 4 })).map((f) => f.label)).toEqual(['rails ajoutés', 'nœuds communs', 'doublon écarté', 'raccords soudés'])
   })
 
+  it('counts the platforms it brought, after the stations, and says nothing of them when there are none', () => {
+    expect(mergeReportFigures(outcome({ platformsAdded: 3 }))).toContainEqual({ label: 'quais ajoutés', value: '3' })
+    expect(mergeReportFigures(outcome({ platformsAdded: 1 })).map((f) => f.label)).toEqual(['rails ajoutés', 'nœuds communs', 'doublon écarté', 'gares ajoutées', 'quai ajouté'])
+    expect(mergeReportFigures(outcome({ platformsAdded: 0 })).map((f) => f.label)).not.toContain('quai ajouté')
+  })
+
   it('says what the user should know: no common frame, gauges, stations, tables, and how to go back', () => {
     expect(mergeReportNotes(outcome())).toEqual(['Une gare était déjà dans le projet : ses quais ont été réunis.', 'En cas de conflit, le projet courant est gardé. Ctrl+Z annule la fusion.'])
     const notes = mergeReportNotes(outcome({ frame: 'as-is', gaugeDiffers: true, junctionsRebuilt: 2, trainsAdded: 2, stationsMerged: 0 }))
