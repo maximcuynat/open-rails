@@ -416,19 +416,19 @@ describe('contextual bar — track tools', () => {
 
     let items = bar(store)
     expect(label(items)).toBe('Voie droite')
-    expect(value(items, 'length').text).toBe('40.00 m')
+    expect(value(items, 'length').text).toBe('40,00 m')
     expect(value(items, 'numeric').text).toBe('chiffres puis Entrée')
-    expect(actionLabels(items)).toEqual(['Voie double (3.30 m)', 'Terminer'])
+    expect(actionLabels(items)).toEqual(['Voie double (3,30 m)', 'Terminer'])
 
     // The length follows the cursor
     moveCursor(store, 262.5, 0)
-    expect(value(bar(store), 'length').text).toBe('62.50 m')
+    expect(value(bar(store), 'length').text).toBe('62,50 m')
 
     // Typed digits show in the bar and drive the length
     store.setNumericInput('12')
     items = bar(store)
     expect(value(items, 'numeric').text).toBe('12 m ↵')
-    expect(value(items, 'length').text).toBe('12.00 m')
+    expect(value(items, 'length').text).toBe('12,00 m')
     store.clearNumericInput()
 
     // Voie double is a toggle
@@ -462,7 +462,7 @@ describe('contextual bar — track tools', () => {
     expect(curve.tone).toBeUndefined()
     expect(curve.text).toMatch(/^R .+°/)
     expect(value(items, 'numeric').caption).toBe('Rayon')
-    expect(actionLabels(items)).toEqual(['Voie double (3.30 m)', 'Terminer'])
+    expect(actionLabels(items)).toEqual(['Voie double (3,30 m)', 'Terminer'])
 
     action(items, 'finish').run()
     expect(store.curveState.phase).toBe(0)
@@ -521,14 +521,14 @@ describe('contextual bar — track tools', () => {
     store.measureStart = { x: 0, y: 0 }
     moveCursor(store, 30, 40)
     let items = bar(store)
-    expect(value(items, 'distance').text).toBe('50.00 m')
-    expect(value(items, 'angle').text).toBe('53.1°')
+    expect(value(items, 'distance').text).toBe('50,00 m')
+    expect(value(items, 'angle').text).toBe('53,1°')
 
     // Once fixed, the measure no longer follows the cursor
     store.measureEnd = { x: 10, y: 0 }
     moveCursor(store, 500, 500)
     items = bar(store)
-    expect(value(items, 'distance').text).toBe('10.00 m')
+    expect(value(items, 'distance').text).toBe('10,00 m')
 
     action(items, 'finish').run()
     expect(store.measureStart).toBeNull()

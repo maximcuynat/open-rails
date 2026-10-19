@@ -306,7 +306,7 @@ describe('stop markers', () => {
     const { net } = sidePlatform([{ edge: 0, at: 50, heading: 'forward', maxLength: 2.4 }])
     const ctx = recordingContext()
     renderStopMarkers(ctx, createCamera(100, 0, 10), 800, 600, platformShapes(net), { lod: 'detail', unit: 'cm' })
-    expect(texts(ctx)).toEqual(['240.0 cm'])
+    expect(texts(ctx)).toEqual(['240,0 cm'])
   })
 
   it('lose their label, then their board, as the view moves away', () => {

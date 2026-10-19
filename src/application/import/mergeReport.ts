@@ -18,6 +18,7 @@ export function mergeReportFigures(report: MergeOutcome): Figure[] {
   if (report.stationsAdded + report.stationsMerged > 0) {
     figures.push({ label: report.stationsAdded > 1 ? 'gares ajoutées' : 'gare ajoutée', value: count(report.stationsAdded) })
   }
+  if (report.platformsAdded > 0) figures.push({ label: report.platformsAdded > 1 ? 'quais ajoutés' : 'quai ajouté', value: count(report.platformsAdded) })
   if (report.repairs > 0) figures.push({ label: report.repairs > 1 ? 'raccords soudés' : 'raccord soudé', value: count(report.repairs) })
   return figures
 }

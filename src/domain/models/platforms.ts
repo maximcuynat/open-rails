@@ -232,10 +232,11 @@ export function updatePlatform(net: Network, id: PlatformId, change: Partial<Omi
 //    already gone counts for nothing.
 // 4. Every marker is then held to [0, length of its edge]; a marker of an edge the platform does
 //    not have is dropped.
-// 5. A platform one of whose edges has no track left is removed (an island that loses one of its
-//    tracks is not turned into a platform beside the other).
+// 5. A platform beside a track whose edge has no track left is removed. An island that loses the
+//    track of one edge becomes a platform beside the other, on the side it was (the side of an edge
+//    is the side its platform stands on), with the markers of that edge and its own width.
 //
-// Then the stops of a station that has platforms are its markers (see `stopsOfPlatforms`).
+// Then the stops of a station that has platforms are its markers (see `stopsOfPlatforms`), its platforms taken by id.
 
 /** One stretch of an edge after an edit, or a gap, and its length along the track */
 interface EdgePart {
@@ -285,43 +286,50 @@ function sameTrack(a: readonly TrackSpan[], b: readonly TrackSpan[]): boolean {
  * Returns true when the platform changed (removed, or rewritten in place: the caller tells the revision).
  */
 function rewritePlatform(net: Network, platform: Platform, partsOf: (edge: PlatformEdge) => EdgePart[] | null): boolean {
-  const tracks: TrackSpan[][] = []
+  const tracks: (TrackSpan[] | null)[] = []
   const shifts: number[] = []
   for (const edge of platform.edges) {
     const parts = partsOf(edge)
-    if (!parts) {
-      tracks.push(edge.track)
-      shifts.push(0)
-      continue
-    }
-    const kept = keptPart(parts)
-    if (!kept) {
-      net.platforms.delete(platform.id)
-      return true
-    }
-    tracks.push(kept.track)
-    shifts.push(kept.shift)
+    const kept = parts ? keptPart(parts) : { track: edge.track, shift: 0 }
+    tracks.push(kept ? kept.track : null)
+    shifts.push(kept ? kept.shift : 0)
   }
-  const lengths = platform.edges.map((edge, i) => edgeLength(net, { ...edge, track: tracks[i] }))
+  // Rule 5: the edges that keep a track, by their index; none left, the platform goes
+  const kept = platform.edges.map((_, i) => i).filter((i) => tracks[i] !== null)
+  if (kept.length === 0) {
+    net.platforms.delete(platform.id)
+    return true
+  }
+  const lengths = platform.edges.map((edge, i) => (tracks[i] ? edgeLength(net, { ...edge, track: tracks[i] }) : 0))
   const markers: StopMarker[] = []
   for (const marker of platform.markers) {
-    if (marker.edge >= platform.edges.length) continue
+    const edge = kept.indexOf(marker.edge)
+    if (edge < 0) continue
     const at = Math.min(lengths[marker.edge], Math.max(0, marker.at - shifts[marker.edge]))
-    markers.push(at === marker.at ? marker : { ...marker, at })
+    markers.push(at === marker.at && edge === marker.edge ? marker : { ...marker, edge: edge as 0 | 1, at })
   }
   let changed = markers.length !== platform.markers.length || markers.some((marker, i) => marker !== platform.markers[i])
-  platform.edges.forEach((edge, i) => {
-    if (sameTrack(edge.track, tracks[i])) return
-    edge.track = tracks[i]
+  if (kept.length < platform.edges.length) {
+    // An island left with one track: a platform beside it, on the side the island was
+    const edge = platform.edges[kept[0]]
+    edge.track = tracks[kept[0]]!
+    platform.edges = [edge]
+    if (!(platform.width > 0)) platform.width = PLATFORM_WIDTH
     changed = true
-  })
+  } else {
+    platform.edges.forEach((edge, i) => {
+      if (sameTrack(edge.track, tracks[i]!)) return
+      edge.track = tracks[i]!
+      changed = true
+    })
+  }
   if (changed) platform.markers = markers
   return changed
 }
 
 /**
  * Carry the platforms off a replaced rail and onto its pieces (called by `replaceRail`), by the
- * rules above: each one stays where it is on the track; one that loses the whole track of an edge goes.
+ * rules above: each one stays where it is on the track; one that loses the whole track of its edges goes.
  */
 export function remapPlatforms(net: Network, replacement: RailReplacement): void {
   if (net.platforms.size === 0) return
@@ -373,13 +381,28 @@ export function stopsOfPlatforms(net: Network, platforms: readonly Platform[]): 
   return stops
 }
 
+/** Number an id ends with (`pl_12` → 12), NaN without one */
+const idNumber = (id: string): number => Number(/_(\d+)$/.exec(id)?.[1] ?? NaN)
+
+/**
+ * The order of the platforms of a station, and so of its stops: by id, that is the order they were
+ * laid in — never the order of `net.platforms`, which depends on how the network was put together
+ * (a piece of the dataset put back moves its platforms to the end of the map).
+ */
+function byPlatformId(a: Platform, b: Platform): number {
+  const na = idNumber(a.id)
+  const nb = idNumber(b.id)
+  if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 const sameStop = (a: StationStop, b: StationStop): boolean => a.segId === b.segId && a.t === b.t && a.ref === b.ref
 
 /**
  * Bring the platforms in line with the network, and the stations with their platforms: a platform
  * of a station that is gone goes; a stretch on a rail that is gone, or out of 0…1, is a gap (rules
  * 2 to 5 above, a gap counting for nothing); the markers are held to their edge. The stops of every
- * station that has platforms are then those of its markers (`stopsOfPlatforms`); a station without
+ * station that has platforms are then those of its markers (`stopsOfPlatforms`, platforms by id); a station without
  * platform keeps its own. Writes only what differs. Returns true when anything changed.
  */
 export function settlePlatforms(net: Network): boolean {
@@ -409,7 +432,7 @@ export function settlePlatforms(net: Network): boolean {
   }
   for (const [stationId, platforms] of byStation) {
     const station = net.stations.get(stationId)!
-    const stops = stopsOfPlatforms(net, platforms)
+    const stops = stopsOfPlatforms(net, platforms.sort(byPlatformId))
     if (stops.length === station.stops.length && stops.every((stop, i) => sameStop(stop, station.stops[i]))) continue
     station.stops = stops
     changed = true

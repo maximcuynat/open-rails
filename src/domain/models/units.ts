@@ -160,8 +160,14 @@ export const SCALE_PRESETS: Record<ScalePresetId, ScalePreset> = {
   },
 }
 
+/** A number with `decimals` decimals and the French decimal comma (« 160,00 ») */
+export function formatDecimal(value: number, decimals: number): string {
+  return value.toFixed(decimals).replace('.', ',')
+}
+
 /**
- * Format a world distance (in meters) to string using the selected unit.
+ * Format a world distance (in meters) to string using the selected unit, with the French decimal
+ * comma (« 160,00 m »). `parseDistance` reads it back.
  */
 export function formatDistance(distInMeters: number, unit: Unit, decimals?: number): string {
   if (!Number.isFinite(distInMeters)) return '—'
@@ -169,17 +175,17 @@ export function formatDistance(distInMeters: number, unit: Unit, decimals?: numb
     case 'mm': {
       const val = distInMeters * 1000
       const dec = decimals ?? (Math.abs(val) < 100 ? 1 : 0)
-      return `${val.toFixed(dec)} mm`
+      return `${formatDecimal(val, dec)} mm`
     }
     case 'cm': {
       const val = distInMeters * 100
       const dec = decimals ?? (Math.abs(val) < 10 ? 2 : 1)
-      return `${val.toFixed(dec)} cm`
+      return `${formatDecimal(val, dec)} cm`
     }
     case 'm':
     default: {
       const dec = decimals ?? 2
-      return `${distInMeters.toFixed(dec)} m`
+      return `${formatDecimal(distInMeters, dec)} m`
     }
   }
 }
@@ -197,11 +203,11 @@ export function formatRadius(radiusInMeters: number, unit: Unit): string {
  */
 export function formatAngle(angleInDegrees: number, decimals: number = 1): string {
   if (!Number.isFinite(angleInDegrees)) return '0°'
-  return `${angleInDegrees.toFixed(decimals)}°`
+  return `${formatDecimal(angleInDegrees, decimals)}°`
 }
 
 /**
- * Parse a distance string or number from user input into world meters.
+ * Parse a distance string or number from user input into world meters: the decimal comma or point.
  */
 export function parseDistance(input: string | number, unit: Unit): number {
   const num = typeof input === 'number' ? input : parseFloat(input.replace(',', '.'))

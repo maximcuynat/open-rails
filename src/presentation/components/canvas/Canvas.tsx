@@ -53,7 +53,7 @@ import {
   applyFreeformParallelTurnout,
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
-import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
+import { formatDecimal, formatDistance, formatRadius, parseDistance } from '@domain/models/units'
 import { trainRouteStart } from '@domain/models/train'
 import {
   renderStraightDimension,
@@ -885,7 +885,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.arc(eX, eY, 4, 0, Math.PI * 2)
       ctx.fill()
 
-      const labelText = `${formatDistance(dist, store.unit)} · ${angleDeg.toFixed(1)}° (ΔX : ${formatDistance(Math.abs(dx), store.unit)}, ΔY : ${formatDistance(Math.abs(dy), store.unit)})`
+      const labelText = `${formatDistance(dist, store.unit)} · ${formatDecimal(angleDeg, 1)}° (ΔX : ${formatDistance(Math.abs(dx), store.unit)}, ΔY : ${formatDistance(Math.abs(dy), store.unit)})`
       ctx.font = '600 11px Archivo, system-ui, sans-serif'
       const lw = ctx.measureText(labelText).width
       const mx = (sX + eX) / 2
@@ -1923,8 +1923,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
-        // A station first: its mark is small and stands over the track
-        const station = store.stationAt(world, hitTol)
+        // A station first: its mark is small and stands over the track (over its platforms too:
+        // there the platform keeps the click, but for the mark itself and the name)
+        const station = store.stationPickAt(world, hitTol)
         if (station) {
           store.selectStation(station.id)
           // Holding the button and moving carries its mark (label) elsewhere

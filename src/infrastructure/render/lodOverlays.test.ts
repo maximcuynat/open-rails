@@ -461,7 +461,7 @@ describe('renderNetwork overlays per tier', () => {
 
     it('shows the full badge from BADGE_FULL_FROM_PX on', () => {
       const { net, meta } = parallelTracks(1, 20)
-      expect(badgeTexts(draw(net, 3.0, { meta }))[0]).toContain('(200.0 m)')
+      expect(badgeTexts(draw(net, 3.0, { meta }))[0]).toContain('(200,0 m)')
       expect(badgeTexts(draw(net, 2.99, { meta }))[0]).not.toContain(' m)')
     })
 
@@ -484,7 +484,7 @@ describe('renderNetwork overlays per tier', () => {
       const selection = { nodes: new Set<string>(), segments: new Set([segIds[0]]) }
       const ctx = draw(net, DETAIL, { meta, selection, cy: 4 })
       const shown = badgeTexts(ctx)
-      expect(shown.some((t) => t.includes('(200.0 m)'))).toBe(true)
+      expect(shown.some((t) => t.includes('(200,0 m)'))).toBe(true)
       expect(shown).not.toContain('Voie 2')
     })
 

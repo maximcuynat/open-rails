@@ -2,6 +2,7 @@ import type { Point, Network, Selection, NodeId, SegmentId } from '@domain/model
 import { snapToGrid } from '@domain/models/network'
 import { bezierPoint } from '@domain/geometry/curve'
 import { collectAffectedVias } from '@domain/geometry/nodeTransform'
+import { formatDecimal } from '@domain/models/units'
 
 export type GizmoAxis = 'x' | 'y' | 'rotate'
 
@@ -412,13 +413,13 @@ export function renderTranslationGizmo(
 
     if (activeAxis === 'rotate' && options.angleDeg !== undefined) {
       const sign = options.angleDeg >= 0 ? '+' : ''
-      text = `Δθ: ${sign}${options.angleDeg.toFixed(1)}°`
+      text = `Δθ: ${sign}${formatDecimal(options.angleDeg, 1)}°`
       badgeBorder = GIZMO_ROT_COLOR
     } else if (options.delta && (activeAxis === 'x' || activeAxis === 'y')) {
       const unit = options.unit ?? 'm'
       const deltaVal = activeAxis === 'x' ? options.delta.x : options.delta.y
       const sign = deltaVal >= 0 ? '+' : ''
-      text = `Δ${activeAxis.toUpperCase()}: ${sign}${deltaVal.toFixed(2)} ${unit}`
+      text = `Δ${activeAxis.toUpperCase()}: ${sign}${formatDecimal(deltaVal, 2)} ${unit}`
       badgeBorder = activeAxis === 'x' ? GIZMO_X_COLOR : GIZMO_Y_COLOR
     }
 

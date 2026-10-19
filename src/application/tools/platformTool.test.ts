@@ -35,7 +35,7 @@ describe('the platform tool', () => {
     expect(store.network.platforms.size).toBe(0)
 
     store.cursorWorld = { x: 220, y: -4 }
-    expect(values(store)).toContain('200.00 m')
+    expect(values(store)).toContain('200,00 m')
     expect(platformPreviewDrawing(store)?.platforms).toHaveLength(1)
 
     const click = clickPlatformTool(store, { x: 220, y: -4 })
@@ -90,8 +90,8 @@ describe('the platform tool', () => {
     narrow.cursorWorld = { x: 220, y: 2 }
     const preview = resolvePlatformTool(narrow)
     expect(preview?.phase === 'end' && preview.plan?.island).toMatchObject({ ok: false })
-    expect(values(narrow).some((text) => text.startsWith('Voies trop proches pour un quai central (3.80 m, il faut 6.40 m)'))).toBe(true)
-    expect(islandRefusalText({ spacing: 3.8, minSpacing: 6.4, ok: false }, 'm')).toBe('Voies trop proches pour un quai central (3.80 m, il faut 6.40 m)')
+    expect(values(narrow).some((text) => text.startsWith('Voies trop proches pour un quai central (3,80 m, il faut 6,40 m)'))).toBe(true)
+    expect(islandRefusalText({ spacing: 3.8, minSpacing: 6.4, ok: false }, 'm')).toBe('Voies trop proches pour un quai central (3,80 m, il faut 6,40 m)')
   })
 
   it('shows the rakes the platform would hold', () => {

@@ -109,29 +109,72 @@ describe('platforms follow the track', () => {
     expect(markerX(net, platform, 0)).toBeCloseTo(270, 6)
   })
 
-  it('a platform whose edge loses all its track goes; an island that loses one of its tracks too', () => {
-    const { net, rails, platform, stationId } = station()
+  it('a platform whose edge loses all its track goes', () => {
+    const { net, rails, platform } = station()
     removeSegment(net, rails[0])
     removeSegment(net, rails[1])
     expect(net.platforms.has(platform.id)).toBe(true)
     removeSegment(net, rails[2])
     expect(net.platforms.has(platform.id)).toBe(false)
     networkCheckToken(net)
+  })
 
+  /** Two tracks along y = 10 and y = 20, x 0…100, and an island between them; markers on both edges */
+  function island(): { net: Network; one: string; two: string; island: Platform } {
+    const { net, stationId } = station()
     const a = addNode(net, { x: 0, y: 10 })
     const b = addNode(net, { x: 100, y: 10 })
     const c = addNode(net, { x: 0, y: 20 })
     const d = addNode(net, { x: 100, y: 20 })
     const one = addSegment(net, a.id, b.id)!
     const two = addSegment(net, c.id, d.id)!
-    const island = addPlatform(net, {
+    const platform = addPlatform(net, {
       stationId,
-      edges: [{ track: [{ segId: one.id, t0: 0, t1: 1 }], side: 'right' }, { track: [{ segId: two.id, t0: 0, t1: 1 }], side: 'left' }],
-      width: 0,
-      markers: [],
+      edges: [{ track: [{ segId: one.id, t0: 0, t1: 1 }], side: 'right', ref: 'A' }, { track: [{ segId: two.id, t0: 0, t1: 1 }], side: 'left', ref: 'B' }],
+      width: 6,
+      markers: [
+        { edge: 0, at: 90, heading: 'forward' },
+        { edge: 1, at: 10, heading: 'backward' },
+        { edge: 1, at: 80, heading: 'forward', maxLength: 70 },
+      ],
     })
-    removeSegment(net, two.id)
-    expect(net.platforms.has(island.id)).toBe(false)
+    return { net, one: one.id, two: two.id, island: platform }
+  }
+
+  it('an island that loses its second track becomes a platform beside the first, on the side it was', () => {
+    const { net, one, two, island: platform } = island()
+    networkCheckToken(net)
+    removeSegment(net, two)
+    expect(net.platforms.get(platform.id)).toBe(platform)
+    expect(platform.edges).toEqual([{ track: [{ segId: one, t0: 0, t1: 1 }], side: 'right', ref: 'A' }])
+    expect(platform.markers).toEqual([{ edge: 0, at: 90, heading: 'forward' }])
+    expect(platform.width).toBe(6)
+    networkCheckToken(net)
+  })
+
+  it('an island that loses its first track becomes a platform beside the second; its markers follow it', () => {
+    const { net, one, two, island: platform } = island()
+    networkCheckToken(net)
+    removeSegment(net, one)
+    expect(platform.edges).toEqual([{ track: [{ segId: two, t0: 0, t1: 1 }], side: 'left', ref: 'B' }])
+    expect(platform.markers).toEqual([
+      { edge: 0, at: 10, heading: 'backward' },
+      { edge: 0, at: 80, heading: 'forward', maxLength: 70 },
+    ])
+    networkCheckToken(net)
+    // And when the second goes as well, nothing is left
+    removeSegment(net, two)
+    expect(net.platforms.has(platform.id)).toBe(false)
+    networkCheckToken(net)
+  })
+
+  it('an island whose track went by other means is made a platform beside the other by settlePlatforms', () => {
+    const { net, two, island: platform } = island()
+    // A file could hold an island on a rail that is not there
+    updatePlatform(net, platform.id, { edges: [{ track: [{ segId: 'gone', t0: 0, t1: 1 }], side: 'right' }, platform.edges[1]!] })
+    expect(settlePlatforms(net)).toBe(true)
+    expect(platform.edges).toEqual([{ track: [{ segId: two, t0: 0, t1: 1 }], side: 'left', ref: 'B' }])
+    expect(platform.markers.map((m) => m.edge)).toEqual([0, 0])
     networkCheckToken(net)
   })
 })
