@@ -278,9 +278,10 @@ export function LimitCorners({ view }: { view: ConsoleView }) {
 
 /**
  * The caption under the speed: its unit, which turns into the warning while a curve is taken too
- * fast. Same place, same size: nothing moves when the warning comes or goes.
+ * fast, or into « Contre-sens » while the train runs its track against the normal direction. Same place, same size: nothing moves when the warning comes or goes.
  */
 export function SpeedCaption({ view, unit }: { view: ConsoleView; unit: string }) {
+  if (!view.curve && view.wrongTrack) return <span className="console-curve curve-discomfort" title={view.wrongTrack.hint} role="status">{view.wrongTrack.label}</span>
   if (!view.curve) return <>{unit}</>
   return <span className={`console-curve curve-${view.curve.tone}`} title={view.curve.hint} role="status">{view.curve.label}</span>
 }

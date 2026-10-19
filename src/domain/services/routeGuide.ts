@@ -5,6 +5,7 @@ import type { LineSettings } from '../models/speedLimits'
 import { speedLimitOverSpans } from '../models/trackSpeed'
 import { stationStopGoals, type StopGoal } from './stopMarkers'
 import { findTrackPathToAny, type TrackPath, type TrackPathOptions, type TrackPoint } from './trackPath'
+import { runningToll, sumTolls } from './runningDirection'
 
 // ─────────────────── The way to the next station, rail by rail ───────────────────
 //
@@ -78,7 +79,8 @@ function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: read
   const reached: StopGoal[] = []
   const pool = [...stops]
   while (pool.length > 0 && reached.length < TERMINUS_PLATFORMS) {
-    const back = findTrackPathToAny(net, goals[0], pool, { blocked })
+    // Walked from beyond back to the platform: the train runs it the other way
+    const back = findTrackPathToAny(net, goals[0], pool, { blocked, toll: runningToll(net, true) })
     if (!back) break
     reached.push(pool[back.goal])
     pool.splice(back.goal, 1)
@@ -102,18 +104,20 @@ export function findRouteGuide(
   beyond?: Beyond,
   /** Rails the train must keep off (see `TrackPathOptions.blocked`) */
   blocked?: TrackPathOptions['blocked'],
-  /** What makes one way better than another as short (see `TrackPathOptions.toll`): a side to keep, a track another train is on */
+  /** What makes one way better than another as short (see `TrackPathOptions.toll`): a track another train is on. The track run against its normal direction is paid for in any case (`runningToll`) */
   toll?: TrackPathOptions['toll'],
   /** Length of the train, m: which stop marker of a platform it stops at (unknown: the one for every train) */
   trainLength = Infinity,
 ): RouteGuide | null {
+  // Running on the normal track of a double line is paid for on top of what the caller pays
+  toll = sumTolls(runningToll(net), toll)
   let stops = station ? stationStopGoals(net, station, trainLength) : []
   const target: RouteGuide['target'] = stops.length > 0 ? 'platform' : 'gate'
   const from = { segId: lead.segId, t: lead.t }
   if (beyond && stops.length > 1) {
     const onward = onwardStops(net, from, lead.forward ? 1 : 0, stops, beyond, blocked, toll)
     // Unless the train cannot get to any of them: the nearest platform then, as without a beyond
-    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0, blocked }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1, blocked }))) stops = onward
+    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0, blocked, toll }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1, blocked, toll }))) stops = onward
   }
   const goals: TrackPoint[] = target === 'platform' ? stops : gates.flatMap((nodeId) => railEndsAt(net, nodeId))
   if (goals.length === 0) return null

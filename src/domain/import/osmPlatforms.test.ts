@@ -236,7 +236,7 @@ describe('platforms laid along the track', () => {
     expect(result.network.stations.get(platform.stationId)!.name).toBe('Halte')
   })
 
-  it('leaves the stations of an answer without platforms as they were, on the four samples', { timeout: 30_000 }, () => {
+  it('leaves the stations of an answer without platforms as they were, on the four samples', () => {
     for (const name of ['clelles-mens', 'dijon-ville', 'lgv-pasilly', 'paris-gare-de-lyon']) {
       const data = readFixture(name)
       resetIdCounter(0)
@@ -248,5 +248,6 @@ describe('platforms laid along the track', () => {
       expect(withPlatforms.report.platforms).toEqual({ found: 0, placed: 0, islands: 0, skipped: {} })
       expect(without.report.platforms).toBeUndefined()
     }
-  })
+    // Eight whole conversions of real data
+  }, 30_000)
 })

@@ -2,6 +2,7 @@ import { generateId } from './ids'
 import { segmentShapeLength } from '../geometry/segmentGeometry'
 import { stationStopTargets } from '../services/stopMarkers'
 import { walkBackward } from './locomotive'
+import { runsAgainst } from './running'
 import { edgeLength, platformsOf } from './platforms'
 import { consistLength, consistOf, endOverhang, rakeChoice, type RakeChoice, type RollingStockModel } from './rollingStock'
 import { advanceTrainSet, createVehicle, makeTrainSet, switchDrivingCab, trackLeftAhead, type TrainSet, type Vehicle } from './train'
@@ -16,6 +17,8 @@ import type { Network, Platform, PlatformEdge, SegmentId, Station, StationStop }
 
 /** How far ahead of a rake the track is looked at to tell which way out of a station is open */
 const DEPARTURE_REACH = 2000
+/** A rake with this much track ahead (m) faces a way out, not the buffers */
+const WAY_OUT = 300
 /** Room left between the buffers and the tail of a rake turned to leave a terminus, m */
 const BUFFER_CLEARANCE = 1
 
@@ -94,28 +97,47 @@ function stationPlaces(net: Network, station: Station, length: number): StationP
 /**
  * A complete rake of `model` at a platform of `station`, facing the way out: of every place it
  * may stand at (`stationPlaces`: the nose on a stop marker, or on a stop) where the whole rake
- * fits clear of `others`, driven from either cab, the one with most track ahead (a terminus has
- * its buffers behind the train), the first in the order of the places when they are equal — a
+ * fits clear of `others`, driven from either cab, the one best placed to leave (`placeRank`: a
+ * way out — a terminus has its buffers behind the train —, then the platform track run in
+ * its normal direction, then most track ahead), the first in the order of the places when they are equal — a
  * platform track that holds the whole rake before one it would stick out of. Null when the rake
  * fits at none.
  */
 export function createRakeAtStation(net: Network, station: Station, rake: RollingStockModel | RakeChoice, others: readonly TrainSet[] = []): RakeAtStation | null {
   const length = rakeLength(rake)
   let best: RakeAtStation | null = null
-  let bestFits = false
-  let bestAhead = -Infinity
+  let bestRank: number[] = []
   for (const { stop, directions, trackLength } of stationPlaces(net, station, length)) {
     const here = bestRakeAt(net, stop.segId, stop.t, rake, others, directions, true)
     if (!here) continue
-    // A platform track that holds the whole rake before one it would stick out of
-    const fits = trackLength >= length
-    if (!best || (fits && !bestFits) || (fits === bestFits && here.ahead > bestAhead)) {
+    // A platform track that holds the whole rake before one it would stick out of, then as `placeRank`
+    const rank = [trackLength >= length ? 1 : 0, ...placeRank(net, here)]
+    if (!best || isBetter(rank, bestRank)) {
       best = { train: here.train, stop }
-      bestFits = fits
-      bestAhead = here.ahead
+      bestRank = rank
     }
   }
   return best
+}
+
+/**
+ * How good a place to leave from is, best first: a way out (`WAY_OUT` of track ahead, not the
+ * buffers; the look ahead stops at the first points, often within a few hundred metres), then the platform track run in its normal direction (on a double line,
+ * the train leaves on its own track: `Segment.running`), then the most track ahead.
+ */
+function placeRank(net: Network, place: { train: TrainSet; ahead: number }): number[] {
+  const lead = place.train.vehicles[0]?.front
+  const seg = lead && net.segments.get(lead.segId)
+  const wayOut = place.ahead >= WAY_OUT
+  // Facing the buffers, the track ahead alone tells
+  const withRunning = wayOut && !(seg && runsAgainst(seg, lead.forward)) ? 1 : 0
+  return [wayOut ? 1 : 0, withRunning, place.ahead]
+}
+
+/** True when `a` comes before `b`, compared term by term */
+function isBetter(a: readonly number[], b: readonly number[]): boolean {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i]
+  return false
 }
 
 /**
@@ -206,8 +228,8 @@ export function stationFit(net: Network, station: Station, rake: RollingStockMod
 }
 
 /**
- * The rake that fits at a place of the track with most track ahead, of the headings given and
- * both cabs, clear of `others`. The place is that of the lead bogie, or of the nose (`nose`) of
+ * The rake that fits at a place of the track best placed to leave (`placeRank`: a way out,
+ * on its own track, most track ahead), of the headings given and both cabs, clear of `others`. The place is that of the lead bogie, or of the nose (`nose`) of
  * the rake as it arrived there, before it is driven from its other cab.
  */
 function bestRakeAt(
@@ -223,6 +245,7 @@ function bestRakeAt(
   const taken = new Set<SegmentId>()
   for (const other of others) for (const veh of other.vehicles) taken.add(veh.front.segId).add(veh.rear.segId)
   let best: { train: TrainSet; ahead: number } | null = null
+  let bestRank: number[] = []
   for (const direction of directions) {
     const arrived = nose ? createRakeWithNoseAt(net, segId, t, direction, rake) : createRake(net, segId, t, direction, rake)
     if (!arrived) continue
@@ -230,7 +253,11 @@ function bestRakeAt(
     for (const train of [arrived, turnedToLeave(net, arrived)]) {
       if (!train) continue
       const ahead = trackLeftAhead(net, train, DEPARTURE_REACH) ?? DEPARTURE_REACH
-      if (!best || ahead > best.ahead) best = { train, ahead }
+      const rank = placeRank(net, { train, ahead })
+      if (!best || isBetter(rank, bestRank)) {
+        best = { train, ahead }
+        bestRank = rank
+      }
     }
   }
   return best

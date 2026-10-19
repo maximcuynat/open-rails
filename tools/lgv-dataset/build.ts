@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { convertOsm } from '@domain/import/osmImport'
 import { LAMBERT93_ORIGIN, projectionFor } from '@domain/import/osmProjection'
-import type { OsmPlatformReport, OverpassResponse } from '@domain/import/osmTypes'
+import type { OsmPlatformReport, OsmRunningReport, OverpassResponse } from '@domain/import/osmTypes'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { placementThresholds } from '@domain/geometry/scale'
 import { resetIdCounter } from '@domain/models/network'
@@ -43,6 +43,8 @@ export interface BuiltDataset {
     speedDips: { dips: number; underZone: number; withoutZone: number }
     /** What the import did about the platforms (`OsmImportReport.platforms`) */
     platforms: OsmPlatformReport | null
+    /** Track given a normal direction of running by its tag, by the rule of keeping left, without one (`OsmImportReport.running`) */
+    running: OsmRunningReport | null
     /** Stations without a platform, and their names (sorted), the ones the data gave platforms apart */
     stationsWithoutPlatform: string[]
     /** Bytes of the files, and the part of them the platforms take */
@@ -83,6 +85,7 @@ export function buildDataset(
     stations: true,
     frame: 'lambert93',
     traceWays: true,
+    checkKeepLeft: true,
   })
   const convertMs = performance.now() - t0
   const net = result.network
@@ -138,6 +141,7 @@ export function buildDataset(
       slowUnderSpeedKm: result.report.slowUnderSpeedKm ?? 0,
       speedDips: dips,
       platforms: result.report.platforms ?? null,
+      running: result.report.running ?? null,
       stationsWithoutPlatform,
       bytes,
       platformBytes,
@@ -183,6 +187,18 @@ export function indexText(index: DatasetIndex): string {
   return text.replace(/"outline": "(\[[^"]*\])"/g, '"outline": $1')
 }
 
+/**
+ * Who asks, told to the Overpass servers: they answer 406 to a request without a User-Agent, which
+ * Node's fetch does not send of itself (a browser sends its own; the application leaves it be)
+ */
+const USER_AGENT = 'open-rails-dataset (github.com/maximcuynat/open-rails)'
+
+const politeFetch: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers)
+  headers.set('User-Agent', USER_AGENT)
+  return fetch(input, { ...init, headers })
+}
+
 /** The command: fetch (or read the cache), build, write */
 export async function main(argv: string[]): Promise<number> {
   const offline = argv.includes('--offline')
@@ -196,7 +212,7 @@ export async function main(argv: string[]): Promise<number> {
     // `--no-platforms`: without them, a cache made before them serves whole
     platforms: !argv.includes('--no-platforms'),
     log,
-    ask: (query) => askOverpass(query, { servers, rounds: 2, pauseMs: 20_000, timeoutMs: 240_000 }),
+    ask: (query) => askOverpass(query, { servers, rounds: 2, pauseMs: 20_000, timeoutMs: 240_000, fetch: politeFetch }),
   })
   log(`${fetched.tiles} tiles, ${fetched.platformTiles} tiles of platforms, ${fetched.asked} queries sent, ${fetched.merged.elements.length} elements merged`)
 
@@ -211,6 +227,11 @@ export async function main(argv: string[]): Promise<number> {
     const p = r.platforms
     const skipped = Object.entries(p.skipped).map(([why, count]) => `${count} ${why}`).join(', ')
     log(`platforms: ${p.found} read, ${p.placed} laid (${p.islands} islands)${skipped ? `, left out: ${skipped}` : ''}; ${(r.platformBytes / 1024).toFixed(0)} KiB of ${(r.bytes / 1048576).toFixed(2)} MiB of line files`)
+  }
+  if (r.running) {
+    const g = r.running
+    const check = g.check ? `; the rule held against the tags: agrees on ${g.check.agreeKm.toFixed(1)} km, disagrees on ${g.check.disagreeKm.toFixed(1)} km` : ''
+    log(`running: ${g.taggedKm.toFixed(0)} km by tag, ${g.inferredKm.toFixed(0)} km by keeping left, ${g.noneKm.toFixed(0)} km without${check}`)
   }
   log(`${r.stationsWithoutPlatform.length} of ${r.stations} stations without a platform${r.stationsWithoutPlatform.length > 0 ? `: ${r.stationsWithoutPlatform.slice(0, 40).join(', ')}${r.stationsWithoutPlatform.length > 40 ? '…' : ''}` : ''}`)
   // `--dry`: the figures only, nothing written

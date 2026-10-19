@@ -26,6 +26,7 @@ export interface RailRecord {
   vx: number | undefined
   vy: number | undefined
   cant: number | undefined
+  running: Segment['running']
   /** Path of a long rail: replaced, never changed in place */
   path: Segment['path']
   /** Box of the rail as it is on the grid; null while one of its nodes is missing */
@@ -39,7 +40,7 @@ export interface RailRecord {
 export interface NetworkChanges {
   /** Nodes that are new, moved or changed height */
   movedNodes: NodeId[]
-  /** Rails that are new, whose ends, kind, control point or cant changed, or one of whose ends moved */
+  /** Rails that are new, whose ends, kind, control point, cant or direction of running changed, or one of whose ends moved */
   changedRails: SegmentId[]
   /** Nodes a rail that changed or went used to end on */
   leftNodes: NodeId[]
@@ -236,7 +237,7 @@ export class NetworkFollower {
       const vy = seg.via?.y
       if (!rec) {
         const ord = this.nextRailOrd++
-        this.rails.set(id, { ref: seg, from: seg.from, to: seg.to, kind: seg.kind, vx, vy, cant: seg.cant, path: seg.path, box: null, ord, pass })
+        this.rails.set(id, { ref: seg, from: seg.from, to: seg.to, kind: seg.kind, vx, vy, cant: seg.cant, running: seg.running, path: seg.path, box: null, ord, pass })
         this.railsInOrder[ord] = seg
         changed.add(id)
         structure = true
@@ -249,7 +250,7 @@ export class NetworkFollower {
         reordered.add(id)
         structure = true
       }
-      if (rec.ref !== seg || rec.from !== seg.from || rec.to !== seg.to || rec.kind !== seg.kind || rec.vx !== vx || rec.vy !== vy || rec.cant !== seg.cant || rec.path !== seg.path) {
+      if (rec.ref !== seg || rec.from !== seg.from || rec.to !== seg.to || rec.kind !== seg.kind || rec.vx !== vx || rec.vy !== vy || rec.cant !== seg.cant || rec.running !== seg.running || rec.path !== seg.path) {
         if (rec.from !== seg.from || rec.to !== seg.to) structure = true
         leftNodes.push(rec.from, rec.to)
         rec.ref = seg
@@ -259,6 +260,7 @@ export class NetworkFollower {
         rec.vx = vx
         rec.vy = vy
         rec.cant = seg.cant
+        rec.running = seg.running
         rec.path = seg.path
         changed.add(id)
       }
@@ -328,11 +330,11 @@ export class NetworkFollower {
       const vy = seg.via?.y
       const rec = this.rails.get(seg.id)
       if (!rec) {
-        this.rails.set(seg.id, { ref: seg, from: seg.from, to: seg.to, kind: seg.kind, vx, vy, cant: seg.cant, path: seg.path, box: null, ord, pass })
+        this.rails.set(seg.id, { ref: seg, from: seg.from, to: seg.to, kind: seg.kind, vx, vy, cant: seg.cant, running: seg.running, path: seg.path, box: null, ord, pass })
         changed.add(seg.id)
         structure = true
       } else {
-        if (rec.ref !== seg || rec.from !== seg.from || rec.to !== seg.to || rec.kind !== seg.kind || rec.vx !== vx || rec.vy !== vy || rec.cant !== seg.cant || rec.path !== seg.path) {
+        if (rec.ref !== seg || rec.from !== seg.from || rec.to !== seg.to || rec.kind !== seg.kind || rec.vx !== vx || rec.vy !== vy || rec.cant !== seg.cant || rec.running !== seg.running || rec.path !== seg.path) {
           if (rec.from !== seg.from || rec.to !== seg.to) structure = true
           leftNodes.push(rec.from, rec.to)
           rec.ref = seg
@@ -342,6 +344,7 @@ export class NetworkFollower {
           rec.vx = vx
           rec.vy = vy
           rec.cant = seg.cant
+          rec.running = seg.running
           rec.path = seg.path
           changed.add(seg.id)
         }
@@ -413,7 +416,7 @@ export class NetworkFollower {
     for (const seg of net.segments.values()) {
       const rec = this.rails.get(seg.id)
       if (!rec) fail(`rail ${seg.id} unknown`)
-      if (rec!.ref !== seg || rec!.from !== seg.from || rec!.to !== seg.to || rec!.kind !== seg.kind || rec!.vx !== seg.via?.x || rec!.vy !== seg.via?.y || rec!.cant !== seg.cant || rec!.path !== seg.path) fail(`rail ${seg.id}`)
+      if (rec!.ref !== seg || rec!.from !== seg.from || rec!.to !== seg.to || rec!.kind !== seg.kind || rec!.vx !== seg.via?.x || rec!.vy !== seg.via?.y || rec!.cant !== seg.cant || rec!.running !== seg.running || rec!.path !== seg.path) fail(`rail ${seg.id}`)
       if (rec!.ord <= ord || this.railsInOrder[rec!.ord] !== seg) fail(`rail ${seg.id} out of order`)
       ord = rec!.ord
     }
