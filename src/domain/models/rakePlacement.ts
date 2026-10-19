@@ -17,6 +17,8 @@ import type { Network, Platform, PlatformEdge, SegmentId, Station, StationStop }
 
 /** How far ahead of a rake the track is looked at to tell which way out of a station is open */
 const DEPARTURE_REACH = 2000
+/** A rake with this much track ahead (m) faces a way out, not the buffers */
+const WAY_OUT = 300
 /** Room left between the buffers and the tail of a rake turned to leave a terminus, m */
 const BUFFER_CLEARANCE = 1
 
@@ -96,7 +98,7 @@ function stationPlaces(net: Network, station: Station, length: number): StationP
  * A complete rake of `model` at a platform of `station`, facing the way out: of every place it
  * may stand at (`stationPlaces`: the nose on a stop marker, or on a stop) where the whole rake
  * fits clear of `others`, driven from either cab, the one best placed to leave (`placeRank`: a
- * clear way out — a terminus has its buffers behind the train —, then the platform track run in
+ * way out — a terminus has its buffers behind the train —, then the platform track run in
  * its normal direction, then most track ahead), the first in the order of the places when they are equal — a
  * platform track that holds the whole rake before one it would stick out of. Null when the rake
  * fits at none.
@@ -119,17 +121,17 @@ export function createRakeAtStation(net: Network, station: Station, rake: Rollin
 }
 
 /**
- * How good a place to leave from is, best first: a clear way out (`DEPARTURE_REACH` of track
- * ahead, not the buffers), then the platform track run in its normal direction (on a double line,
+ * How good a place to leave from is, best first: a way out (`WAY_OUT` of track ahead, not the
+ * buffers; the look ahead stops at the first points, often within a few hundred metres), then the platform track run in its normal direction (on a double line,
  * the train leaves on its own track: `Segment.running`), then the most track ahead.
  */
 function placeRank(net: Network, place: { train: TrainSet; ahead: number }): number[] {
   const lead = place.train.vehicles[0]?.front
   const seg = lead && net.segments.get(lead.segId)
-  const clear = place.ahead >= DEPARTURE_REACH
-  // Short of a clear way out, the track ahead alone tells: the buffers are what matters there
-  const withRunning = clear && !(seg && runsAgainst(seg, lead.forward)) ? 1 : 0
-  return [clear ? 1 : 0, withRunning, place.ahead]
+  const wayOut = place.ahead >= WAY_OUT
+  // Facing the buffers, the track ahead alone tells
+  const withRunning = wayOut && !(seg && runsAgainst(seg, lead.forward)) ? 1 : 0
+  return [wayOut ? 1 : 0, withRunning, place.ahead]
 }
 
 /** True when `a` comes before `b`, compared term by term */
@@ -226,7 +228,7 @@ export function stationFit(net: Network, station: Station, rake: RollingStockMod
 }
 
 /**
- * The rake that fits at a place of the track best placed to leave (`placeRank`: a clear way out,
+ * The rake that fits at a place of the track best placed to leave (`placeRank`: a way out,
  * on its own track, most track ahead), of the headings given and both cabs, clear of `others`. The place is that of the lead bogie, or of the nose (`nose`) of
  * the rake as it arrived there, before it is driven from its other cab.
  */
