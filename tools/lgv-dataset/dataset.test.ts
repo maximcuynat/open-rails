@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { OverpassResponse } from '@domain/import/osmTypes'
+import type { OverpassElement, OverpassResponse } from '@domain/import/osmTypes'
 import { convertOsm } from '@domain/import/osmImport'
 import { answer, options, osmNode, osmWay, readFixture } from '@domain/import/osmImport.testkit'
 import { readStationRegistry } from '@domain/models/stationRegistry'
@@ -14,7 +14,7 @@ import { fetchAll } from './fetch'
 import { assignLines, readLineRelations } from './lines'
 import type { DatasetManifest } from './manifest'
 import { mergeAnswers } from './merge'
-import { approachQuery, regionQuery, tileQuery } from './queries'
+import { approachQuery, platformTileQuery, regionQuery, subwayQuery, tileQuery } from './queries'
 import { splitTile, tileKey, tilesOf } from './tiles'
 
 const manifest = (over: Partial<DatasetManifest> = {}): DatasetManifest => ({
@@ -60,6 +60,16 @@ describe('queries', () => {
     expect(q).toContain('rel(bw.w)[type=route][route~"^(tracks|railway)$"];\nout body;')
   })
 
+  it('ask a tile of France for the platforms of the trains and their nodes, nothing else', () => {
+    const q = platformTileQuery({ south: 43.3, west: 5.2, north: 45.3, east: 7.2 })
+    expect(q).toContain('area(3602202162)->.fr;')
+    expect(q).toContain('way[railway=platform][subway!=yes][tram!=yes][light_rail!=yes](area.fr)(43.3,5.2,45.3,7.2);')
+    expect(q).toContain('way[public_transport=platform][train=yes](area.fr)(43.3,5.2,45.3,7.2);')
+    expect(q).toContain('rel[railway=platform][type=multipolygon](area.fr)(43.3,5.2,45.3,7.2);')
+    expect(q).toContain('(._;>;);\nout body qt;')
+    expect(q).not.toContain('railway=rail')
+  })
+
   it('ask an approach for the running tracks along its corridor and every track around its terminal', () => {
     const q = approachQuery(manifest().approaches[0])
     // Crossovers and junction tracks included (they often have no `usage`): yards and sidings left out
@@ -74,6 +84,13 @@ describe('queries', () => {
     expect(q).toContain('way[railway=rail][service!~"^(yard|siding|spur)$"][usage!~"^(industrial|military|tourism|test)$"](area.r)->.w;')
     expect(q).toContain('node[railway~"^(station|halt)$"](area.r)')
     expect(q).toContain('rel(bw.w)[type=route][route~"^(tracks|railway)$"];')
+  })
+
+  it('ask a city for its metro tracks but its depots, and the routes that name its lines', () => {
+    const q = subwayQuery({ id: 'lyon', name: 'Métro de Lyon', bbox: [45.68, 4.77, 45.81, 4.96] })
+    expect(q).toContain('way[railway=subway][service!~"^(yard|siding|spur)$"](45.68,4.77,45.81,4.96)->.w;')
+    expect(q).toContain('rel(bw.w)[type=route][route=subway];\nout body;')
+    expect(q).not.toContain('station')
   })
 })
 
@@ -93,18 +110,26 @@ describe('merging answers', () => {
 describe('fetching through the cache', () => {
   const empty = (): OverpassResponse => ({ osm3s: { timestamp_osm_base: '2026-10-07T10:00:00Z' }, elements: [] })
 
-  it('asks once per tile and per approach, then reads the cache; offline refuses what is not there', async () => {
+  it('asks once per tile, per approach and per tile of platforms, then reads the cache; offline refuses what is not there', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'lgv-'))
     const ask = vi.fn(async () => empty())
     const m = manifest({ bbox: [40, 0, 44, 4], tileDeg: 2 })
     const first = await fetchAll(m, dir, { ask })
     expect(first.tiles).toBe(4)
-    expect(first.asked).toBe(5)
-    expect(readdirSync(dir)).toHaveLength(5)
+    expect(first.platformTiles).toBe(4)
+    expect(first.asked).toBe(9)
+    expect(readdirSync(dir)).toHaveLength(9)
+    expect(readdirSync(dir).filter((name) => name.startsWith('platforms-tile_'))).toHaveLength(4)
     const again = await fetchAll(m, dir, { ask, offline: true })
     expect(again.asked).toBe(0)
-    expect(ask).toHaveBeenCalledTimes(5)
+    expect(ask).toHaveBeenCalledTimes(9)
     await expect(fetchAll(manifest({ bbox: [50, 0, 52, 2] }), dir, { ask, offline: true })).rejects.toThrow(/offline/)
+    // Without the platforms, a cache made before them serves whole
+    const older = mkdtempSync(join(tmpdir(), 'lgv-'))
+    await fetchAll(m, older, { ask, platforms: false })
+    const without = await fetchAll(m, older, { ask, offline: true, platforms: false })
+    expect(without).toMatchObject({ asked: 0, platformTiles: 0 })
+    await expect(fetchAll(m, older, { ask, offline: true })).rejects.toThrow(/platforms-tile_.*offline/)
   })
 
   it('splits a tile the server finds too large, and waits on a busy one before asking again', async () => {
@@ -119,8 +144,9 @@ describe('fetching through the cache', () => {
     const sleep = vi.fn(async () => {})
     const data = await fetchAll(manifest({ bbox: [40, 0, 42, 2], tileDeg: 2, approaches: [] }), dir, { ask, sleep, busyPauses: [1] })
     expect(data.tiles).toBe(5)
+    expect(data.platformTiles).toBe(5)
     expect(sleep).toHaveBeenCalledTimes(1)
-    expect(readdirSync(dir)).toHaveLength(4)
+    expect(readdirSync(dir)).toHaveLength(8)
   })
 })
 
@@ -180,6 +206,39 @@ describe('the line of each rail', () => {
     expect([...lineOf.values()]).toContain(classic.id)
     // Without the region, the same way says nothing
     expect([...assignLines(result, d, manifest({ approaches: [], lines: [] }), new Map()).lines.values()].some((line) => line.category !== undefined)).toBe(false)
+  })
+
+  it('names a metro track after its route, a metro track of no route after a metro neighbour, and keeps the metro apart', () => {
+    const d = data()
+    const subway = { railway: 'subway' }
+    d.elements.push(
+      ...[[51, 0], [52, 100], [53, 200], [54, 300], [55, 400]].map(([id, x]) => osmNode(id, x, 300)),
+      osmNode(56, 300, 306),
+      osmNode(57, 400, 326),
+      ...[[61, 0], [62, 100], [63, 200]].map(([id, x]) => osmNode(id, x, 600)),
+      osmWay(500, [51, 52, 53], subway),
+      osmWay(501, [53, 54, 55], subway),
+      osmWay(502, [53, 56, 57], subway),
+      osmWay(600, [61, 62, 63], subway),
+      { type: 'relation', id: 950, members: [{ type: 'way', ref: 500 }], tags: { type: 'route', route: 'subway', ref: '1' } },
+    )
+    const result = convertOsm(d, options({ traceWays: true, extraKinds: ['subway'] }))
+    const m = manifest({ approaches: [], subways: [{ id: 'paris', name: 'Métro de Paris', bbox: [48.72, 2.2, 48.96, 2.5] }] })
+    const { lineOf, lines } = assignLines(result, d, m, new Map(), new Set(), new Map([['paris', new Set([500, 501, 502, 600])]]))
+    expect(lines.get('metro-paris-1')).toEqual({ id: 'metro-paris-1', name: 'Métro de Paris, ligne 1', highSpeed: false, category: 'subway' })
+    expect(lines.get('metro-autres')?.category).toBe('subway')
+    const lineOfWay = new Map<number, Set<string>>()
+    for (const seg of result.network.segments.values()) {
+      const way = result.wayOfRail!.get(seg.parentSegmentId ?? seg.id) ?? result.wayOfRail!.get(seg.id)!
+      expect(seg.railway === 'subway').toBe(way >= 500)
+      if (!lineOfWay.has(way)) lineOfWay.set(way, new Set())
+      lineOfWay.get(way)!.add(lineOf.get(seg.id)!)
+    }
+    // Ways 500, 501 and 502 meet at node 53: the two without a route take the line of the first
+    for (const way of [500, 501, 502]) expect([...lineOfWay.get(way)!]).toEqual(['metro-paris-1'])
+    expect([...lineOfWay.get(600)!]).toEqual(['metro-autres'])
+    // The railway never takes a metro line
+    for (const way of [100, 200, 300, 400]) for (const line of lineOfWay.get(way) ?? []) expect(line.startsWith('metro')).toBe(false)
   })
 
   it('gives a way to the first listed line that holds it', () => {
@@ -246,5 +305,46 @@ describe('the dataset built from an answer', () => {
     expect(built.index.dataDate).toBe('2026-10-06T07:27:36Z')
     expect(built.index.frame).toBe('lambert93')
     expect(built.files.values().next().value!.osmSource!.frame).toBe('lambert93')
+    // No platform in the data: the station is said to have none
+    expect(built.report.platforms).toEqual({ found: 0, placed: 0, islands: 0, skipped: {} })
+    expect(built.report.stationsWithoutPlatform).toEqual(['Clelles - Mens'])
+    expect(built.report.platformBytes).toBe(0)
+  })
+
+  it('Clelles with a platform beside each of its two tracks: laid in the files, the station drawn from them', () => {
+    const d = readFixture('clelles-mens')
+    const nodes = new Map(d.elements.filter((e) => e.type === 'node').map((e) => [e.id, e]))
+    /** A platform 120 m long beside a stop of a way, `side` 1 north of the track, −1 south */
+    const platformAt = (wayId: number, stopId: number, side: 1 | -1, first: number): OverpassElement[] => {
+      const way = d.elements.find((e) => e.type === 'way' && e.id === wayId)!
+      const i = way.nodes!.indexOf(stopId)
+      const [p, q, stop] = [way.nodes![i - 1], way.nodes![i + 1], stopId].map((id) => nodes.get(id)!)
+      const kx = 111_320 * Math.cos((stop.lat! * Math.PI) / 180)
+      const ky = 111_170
+      const dx = (q.lon! - p.lon!) * kx
+      const dy = (q.lat! - p.lat!) * ky
+      const len = Math.hypot(dx, dy)
+      const u = { x: dx / len, y: dy / len }
+      // North of the track: the normal with a positive y (latitude grows north)
+      const n = u.x >= 0 ? { x: -u.y * side, y: u.x * side } : { x: u.y * side, y: -u.x * side }
+      const corner = (a: number, off: number): OverpassElement => ({ type: 'node', id: 0, lat: stop.lat! + (u.y * a + n.y * off) / ky, lon: stop.lon! + (u.x * a + n.x * off) / kx })
+      const corners = [corner(-60, 1.7), corner(60, 1.7), corner(60, 7.7), corner(-60, 7.7)].map((c, k) => ({ ...c, id: first + k }))
+      return [...corners, { type: 'way', id: first, nodes: [...corners.map((c) => c.id), first], tags: { railway: 'platform', public_transport: 'platform' } }]
+    }
+    const data: OverpassResponse = {
+      ...d,
+      elements: [...d.elements, ...platformAt(1158177941, 1340040194, 1, 9_000_000_001), ...platformAt(1158177939, 2399156148, -1, 9_000_000_101)],
+    }
+    const built = buildDataset(data, manifest({ approaches: [] }), registry, new Map(), new Date('2026-10-07T12:00:00Z'))
+    expect(built.report.platforms).toEqual({ found: 2, placed: 2, islands: 0, skipped: {} })
+    expect(built.report.stationsWithoutPlatform).toEqual([])
+    expect(built.report.platformBytes).toBeGreaterThan(0)
+    const union = deserializeNetwork(unionProjects([...built.files.values()]))
+    expect(union.network.platforms.size).toBe(2)
+    const station = [...union.network.stations.values()][0]
+    expect(station.name).toBe('Clelles - Mens')
+    // A marker each way at each stop position
+    expect(station.stops).toHaveLength(4)
+    for (const platform of union.network.platforms.values()) expect(platform.stationId).toBe(station.id)
   })
 })

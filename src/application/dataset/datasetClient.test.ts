@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeIndex } from '@domain/dataset/datasetIndex.testkit'
-import { DatasetError, datasetErrorMessage, datasetUrl, fetchLineFiles, loadDatasetIndex, resetDatasetIndexCache } from './datasetClient'
+import { DatasetError, datasetErrorMessage, datasetUrl, fetchLineFiles, LINE_FILE_CACHE_SIZE, loadDatasetIndex, resetDatasetIndexCache } from './datasetClient'
 
 /** A `fetch` that answers from a table of bodies by file name */
 function fakeFetch(bodies: Record<string, unknown | (() => unknown)>): { fetch: typeof fetch; calls: string[] } {
@@ -59,6 +59,26 @@ describe('the dataset client', () => {
       { done: 1, total: 2 },
       { done: 2, total: 2 },
     ])
+  })
+
+  it('keeps the files it read: one asked again is not fetched again, until it is the oldest of too many', async () => {
+    const index = fakeIndex()
+    const f = fakeFetch({ 'a.json': project('LGV A'), 'b.json': project('LGV B') })
+    const first = await fetchLineFiles(index, ['a'], undefined, { fetch: f.fetch, baseUrl: '/' })
+    const again = await fetchLineFiles(index, ['a', 'b'], undefined, { fetch: f.fetch, baseUrl: '/' })
+    expect(again.get('a')).toBe(first.get('a'))
+    expect(f.calls).toEqual(['a.json', 'b.json'])
+    // Another release of the data is another file
+    await fetchLineFiles({ ...index, dataDate: 'later' }, ['a'], undefined, { fetch: f.fetch, baseUrl: '/' })
+    expect(f.calls).toEqual(['a.json', 'b.json', 'a.json'])
+    // Past the size of the cache, the one used longest ago is fetched anew
+    const many = { ...index, lines: Array.from({ length: LINE_FILE_CACHE_SIZE + 1 }, (_, i) => ({ ...index.lines[0], id: `p${i}`, file: `p${i}.json` })) }
+    const bodies: Record<string, unknown> = {}
+    for (const line of many.lines) bodies[line.file] = project(line.id)
+    const g = fakeFetch(bodies)
+    await fetchLineFiles(many, many.lines.map((line) => line.id), undefined, { fetch: g.fetch, baseUrl: '/' })
+    await fetchLineFiles(many, ['p0', 'p1'], undefined, { fetch: g.fetch, baseUrl: '/' })
+    expect(g.calls.slice(LINE_FILE_CACHE_SIZE + 1)).toEqual(['p0.json'])
   })
 
   it('names each failure in French', async () => {

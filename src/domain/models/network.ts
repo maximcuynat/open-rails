@@ -6,7 +6,10 @@ import { createCountedNetwork, touchNetwork } from './networkWatch'
 import { nodesWithin, railsWithin } from '../geometry/networkFollower'
 import { remapSignals } from './signals'
 import { remapStations } from './stations'
+import { remapPlatforms } from './platforms'
 import { remapSpeedZones } from './speedZones'
+import { remapRunning } from './running'
+import { remapRailway } from './railway'
 import { duplicateReplacement, mergeReplacements, notifyRailReplaced, removalReplacement, type RailReplacement } from './trackObjects'
 
 export { generateId, resetIdCounter }
@@ -30,6 +33,7 @@ export function syncIdCounter(net: Network): void {
   for (const id of net.speedZones.keys()) scan(id)
   for (const id of net.signals.keys()) scan(id)
   for (const id of net.stations.keys()) scan(id)
+  for (const id of net.platforms.keys()) scan(id)
   resetIdCounter(max)
 }
 
@@ -432,7 +436,8 @@ export function dissolveNode(
 /**
  * The one place a rail replacement goes through: "rail `oldId` is replaced by these pieces" (cut in
  * two, merged with its neighbour, dropped as a duplicate of another rail, or — no piece — removed).
- * Everything attached to the track is moved from here: the route tables, the speed zones, the signals, and
+ * Everything attached to the track is moved from here: the route tables, the speed zones, the signals,
+ * the stops of the stations, the platforms, the normal direction of running, the kind of railway, and
  * whoever listens (`onRailReplaced`). Every function that makes a rail disappear must call it,
  * while the pieces are in the network; `models/trackObjects.ts` builds the replacement for each
  * case. A new kind of object held by `Network` is moved by one more line here.
@@ -447,6 +452,9 @@ export function replaceRail(net: Network, replacement: RailReplacement): void {
   remapSpeedZones(net, replacement)
   remapSignals(net, replacement)
   remapStations(net, replacement)
+  remapPlatforms(net, replacement)
+  remapRunning(net, replacement)
+  remapRailway(net, replacement)
   notifyRailReplaced(net, replacement)
 }
 

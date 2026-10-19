@@ -601,6 +601,8 @@ export interface ConsoleView extends GuidanceView {
   turnout: TurnoutView
   /** Null on a network without signal: the consoles then show nothing of the signalling */
   signals: SignalsView | null
+  /** The train runs its track against the normal direction: what the caption under the speed says then */
+  wrongTrack: { label: string; hint: string } | null
 }
 
 /** Everything the three consoles write, from the state and the fleet list */
@@ -635,8 +637,11 @@ export function consoleView(state: ConsoleState, fleet: readonly FleetEntry[]): 
     releaseHint: state.stopped && (tone === 'applied' || tone === 'applying'),
     turnout: turnoutView(state.upcomingTurnout),
     signals: state.signals ? signalsView(state.signals) : null,
+    wrongTrack: state.wrongTrack ? WRONG_TRACK_VIEW : null,
   }
 }
+
+const WRONG_TRACK_VIEW = { label: 'Contre-sens', hint: 'Le train circule sur la voie à contre-sens (en France, on circule à gauche) : reprendre sa voie à la prochaine communication' }
 
 const COMPACT_KEYS: Record<string, string> = { 'Retour arrière': '⌫', Espace: 'Esp' }
 

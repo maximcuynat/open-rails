@@ -12,6 +12,8 @@ interface SandboxModalProps {
   store: EditorStore
   /** Opens the room of the phone desks and shows its window */
   onPhoneDesk: () => void
+  /** Opens « Réseau France » instead: the whole network, to look at before choosing anything */
+  onWholeNetwork?: () => void
   onClose: () => void
 }
 
@@ -30,12 +32,16 @@ const PC_CONSOLES: readonly { preference: ConsolePreference; name: string; detai
  * says where the train is driven from — a phone, or a console of this screen — and the driving
  * begins. Mounted when opened and unmounted when closed: every opening starts blank.
  */
-export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps) {
+export function SandboxModal({ store, onPhoneDesk, onWholeNetwork, onClose }: SandboxModalProps) {
   const [index, setIndex] = useState<DatasetIndex | null>(null)
   const [indexError, setIndexError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const [station, setStation] = useState<StationMatch | null>(null)
+  // Where the train is to go, if the player says: the rake is set down facing the way there
+  const [destQuery, setDestQuery] = useState('')
+  const [destActive, setDestActive] = useState(0)
+  const [destination, setDestination] = useState<StationMatch | null>(null)
   const [trainId, setTrainId] = useState(SANDBOX_TRAINS[0].id)
   // The composition asked for, by train: each keeps its own while another is looked at
   const [optionIds, setOptionIds] = useState<Record<string, string>>({})
@@ -72,6 +78,10 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
   }, [loading, onClose])
 
   const results = useMemo(() => (index && !station ? searchStations(index, query, 8) : []), [index, query, station])
+  const destResults = useMemo(
+    () => (index && station && !destination && destQuery.trim() ? searchStations(index, destQuery, 6).filter((m) => m.station.id !== station.station.id) : []),
+    [index, destQuery, station, destination],
+  )
   const train = SANDBOX_TRAINS.find((t) => t.id === trainId)
   const options: RakeOption[] = useMemo(() => (train?.model ? rakeOptions(train.model) : []), [train])
   // Kept from one render to the next: the check below runs again when it changes, and the default
@@ -110,6 +120,19 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
     }
   }
 
+  const onDestKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setDestActive((a) => Math.min(a + 1, Math.max(0, destResults.length - 1)))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setDestActive((a) => Math.max(a - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (destResults[destActive]) setDestination(destResults[destActive])
+    }
+  }
+
   // A game under way: the train can join it, the trains already running go on
   const canJoin = canAddSandboxTrain(store)
 
@@ -118,9 +141,11 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
     setPhase('loading')
     setError(null)
     setProgress({ done: 0, total: station.lines.length })
+    const sandboxOptions = { onProgress: setProgress, destination: destination?.station.id }
     try {
       if (join) {
-        const added = await addSandboxTrain(store, index, station.station.id, option, { onProgress: setProgress })
+        const added = await addSandboxTrain(store, index, station.station.id, option, sandboxOptions)
+        if (added.destinationRefused) showToast(added.destinationRefused, 'warning')
         // Already driving: this screen is on the new train, with the console it had
         if (store.isPlayMode) {
           showToast(`${train.name} à quai — ${added.stationName}${added.stop.ref ? `, voie ${added.stop.ref}` : ''}`, 'success')
@@ -129,7 +154,9 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
         }
         setStart(added)
       } else {
-        setStart(await prepareSandbox(store, index, station.station.id, option, { onProgress: setProgress }))
+        const started = await prepareSandbox(store, index, station.station.id, option, sandboxOptions)
+        if (started.destinationRefused) showToast(started.destinationRefused, 'warning')
+        setStart(started)
       }
       setPhase('desk')
     } catch (e) {
@@ -253,6 +280,54 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
                 )}
               </div>
 
+              {station && (
+                <div className="settings-section">
+                  <label className="settings-label" htmlFor="sandbox-destination">
+                    Destination <span className="settings-hint">Facultatif : la rame est posée sur la voie et dans le sens qui y mènent</span>
+                  </label>
+                  {destination ? (
+                    <div className="dataset-stop">
+                      <span className="dataset-stop-name">
+                        {destination.station.name}
+                        <span className="dataset-stop-lines">{stationBadge(destination)}</span>
+                      </span>
+                      <span className="dataset-stop-actions">
+                        <button type="button" className="modal-btn modal-btn-secondary" disabled={loading} onClick={() => setDestination(null)}>
+                          Retirer
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <input
+                      id="sandbox-destination"
+                      className="settings-input dataset-station-input"
+                      value={destQuery}
+                      placeholder="Aucune : le train part d’où il est posé"
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={!index || loading}
+                      onChange={(e) => {
+                        setDestQuery(e.target.value)
+                        setDestActive(0)
+                      }}
+                      onKeyDown={onDestKeyDown}
+                    />
+                  )}
+                  {destResults.length > 0 && (
+                    <ul className="osm-results" aria-label="Destinations trouvées">
+                      {destResults.map((match, i) => (
+                        <li key={match.station.id}>
+                          <button type="button" className={`osm-result${i === destActive ? ' is-active' : ''}`} aria-pressed={i === destActive} onMouseEnter={() => setDestActive(i)} onClick={() => setDestination(match)}>
+                            <span className="osm-result-name">{match.station.name}</span>
+                            <span className="osm-result-kind">{stationBadge(match)}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               <div className="settings-section">
                 <div className="settings-label">Train</div>
                 <div className="sandbox-choices" role="radiogroup" aria-label="Train">
@@ -324,6 +399,11 @@ export function SandboxModal({ store, onPhoneDesk, onClose }: SandboxModalProps)
             <span className="osm-footer-status" role="status">
               {progress.done} {progress.total > 1 ? 'fichiers' : 'fichier'} sur {progress.total}
             </span>
+          )}
+          {phase === 'setup' && onWholeNetwork && !canJoin && (
+            <button type="button" className="modal-btn modal-btn-secondary" onClick={onWholeNetwork} title="Tout le réseau en tracé simplifié, les voies chargées à l’approche">
+              Explorer le réseau France
+            </button>
           )}
           <button type="button" className="modal-btn modal-btn-secondary" onClick={onClose} disabled={loading}>
             {phase === 'desk' ? 'Plus tard' : canJoin ? 'Annuler' : 'Ouvrir l’éditeur'}

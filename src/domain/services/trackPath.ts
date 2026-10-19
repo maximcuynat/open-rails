@@ -9,6 +9,14 @@ export interface TrackPoint {
   t: number
 }
 
+/**
+ * A place to reach: with `forward`, only running its rail that way (true: towards its `to` end,
+ * growing t) — a stop marker speaks to one direction of travel; without it, either way.
+ */
+export interface TrackGoal extends TrackPoint {
+  forward?: boolean
+}
+
 /** A way along the track: the stretches covered, in order and each in the direction it is walked, and their length in metres */
 export interface TrackPath {
   spans: TrackSpan[]
@@ -113,20 +121,22 @@ export interface TrackPathOptions {
 
 /**
  * Shortest way from `a` to the nearest of `goals`, as `findTrackPath` finds it, with the index of
- * the goal reached. Goals off the track are passed over; null when none can be reached.
+ * the goal reached. Goals off the track are passed over; null when none can be reached. A goal
+ * with a direction (`TrackGoal.forward`) is only reached running its rail that way: a rail whose
+ * goals all want the other way is run through like any other.
  */
-export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly TrackPoint[], options: TrackPathOptions = {}): (TrackPath & { goal: number }) | null {
+export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly TrackGoal[], options: TrackPathOptions = {}): (TrackPath & { goal: number }) | null {
   const segA = net.segments.get(a.segId)
   if (!segA) return null
   if (!net.nodes.has(segA.from) || !net.nodes.has(segA.to)) return null
   if (!Number.isFinite(a.t)) return null
   const ta = Math.max(0, Math.min(1, a.t))
-  const goalsOn = new Map<SegmentId, { index: number; t: number }[]>()
+  const goalsOn = new Map<SegmentId, { index: number; t: number; forward?: boolean }[]>()
   goals.forEach((goal, index) => {
     const seg = net.segments.get(goal.segId)
     if (!seg || !net.nodes.has(seg.from) || !net.nodes.has(seg.to) || !Number.isFinite(goal.t)) return
     const on = goalsOn.get(seg.id) ?? []
-    on.push({ index, t: Math.max(0, Math.min(1, goal.t)) })
+    on.push(goal.forward === undefined ? { index, t: Math.max(0, Math.min(1, goal.t)) } : { index, t: Math.max(0, Math.min(1, goal.t)), forward: goal.forward })
     goalsOn.set(seg.id, on)
   })
   if (goalsOn.size === 0) return null
@@ -148,6 +158,8 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
   for (const goal of goalsOn.get(segA.id) ?? []) {
     // Further along the rail on the side it is left by; either side when it may be left by both
     if ((leaving === 1 && goal.t < ta) || (leaving === 0 && goal.t > ta)) continue
+    // Reached along the rail the way it runs from A
+    if ((goal.forward === true && goal.t < ta) || (goal.forward === false && goal.t > ta)) continue
     offer({ key: GOAL, node: segA.from, inSeg: segA.id, dist: segmentPartialLength(net, segA.id, ta, goal.t), parent: null, goalEntry: ta, goalIndex: goal.index })
   }
 
@@ -169,8 +181,9 @@ export function findTrackPathToAny(net: Network, a: TrackPoint, goals: readonly 
       if (!isPassageOpen(net, current.node, current.inSeg, sid, { anyPosition: true })) continue
       const entry = seg.from === current.node ? 0 : 1
       const reached = current.dist + (toll ? Math.max(0, toll(current.node, current.inSeg, sid)) : 0)
-      const here = goalsOn.get(sid)
-      if (here) {
+      // Entered by its `from` end, the rail is run forward: the goals that want that way
+      const here = goalsOn.get(sid)?.filter((goal) => goal.forward === undefined || goal.forward === (entry === 0))
+      if (here && here.length > 0) {
         // Running the whole of a goal's rail to come back to it is never shorter, and a goal
         // beyond it is further than the one on it: the rail is only entered
         for (const goal of here) {

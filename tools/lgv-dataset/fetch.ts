@@ -5,7 +5,7 @@ import type { OverpassResponse } from '@domain/import/osmTypes'
 import { OsmError } from '@infrastructure/osm/osmError'
 import type { DatasetManifest } from './manifest'
 import { mergeAnswers, wayIdsOf } from './merge'
-import { approachQuery, regionQuery, tileQuery } from './queries'
+import { approachQuery, platformTileQuery, regionQuery, subwayQuery, tileQuery } from './queries'
 import { splitTile, tileKey, tilesOf, type Tile } from './tiles'
 
 export interface FetchOptions {
@@ -17,6 +17,8 @@ export interface FetchOptions {
   log?: (line: string) => void
   /** Pauses (ms) before the whole rotation is tried again on a busy service; the length is the number of extra tries */
   busyPauses?: readonly number[]
+  /** Ask for the platforms too, tile by tile (on when absent): off, a cache made before them still serves */
+  platforms?: boolean
 }
 
 export interface FetchedData {
@@ -25,9 +27,13 @@ export interface FetchedData {
   approachWays: Map<string, Set<number>>
   /** The ways the regions brought: classic track, named by its line relation */
   regionWays: Set<number>
+  /** The ways each metro brought, by metro id */
+  subwayWays: Map<string, Set<number>>
   /** How many queries went to the servers (not the cache) */
   asked: number
   tiles: number
+  /** Tiles the platforms were asked by (0 when they were not) */
+  platformTiles: number
 }
 
 const DEFAULT_BUSY_PAUSES = [30_000, 60_000, 120_000]
@@ -61,18 +67,23 @@ export async function fetchAll(manifest: DatasetManifest, cacheDir: string, opti
   }
 
   const answers: OverpassResponse[] = []
-  let tiles = 0
-  const fetchTile = async (tile: Tile): Promise<void> => {
-    tiles++
-    try {
-      answers.push(await cached(tileKey(tile), tileQuery(tile)))
-    } catch (error) {
-      if (!(error instanceof OsmError) || error.kind !== 'too-large') throw error
-      log(`${tileKey(tile)}: too large, split in four`)
-      for (const part of splitTile(tile)) await fetchTile(part)
+  /** Every tile of the box asked, a tile too large split in four; returns how many were asked */
+  const fetchTiles = async (prefix: string, query: (tile: Tile) => string): Promise<number> => {
+    let count = 0
+    const fetchTile = async (tile: Tile): Promise<void> => {
+      count++
+      try {
+        answers.push(await cached(`${prefix}${tileKey(tile)}`, query(tile)))
+      } catch (error) {
+        if (!(error instanceof OsmError) || error.kind !== 'too-large') throw error
+        log(`${prefix}${tileKey(tile)}: too large, split in four`)
+        for (const part of splitTile(tile)) await fetchTile(part)
+      }
     }
+    for (const tile of tilesOf(manifest.bbox, manifest.tileDeg)) await fetchTile(tile)
+    return count
   }
-  for (const tile of tilesOf(manifest.bbox, manifest.tileDeg)) await fetchTile(tile)
+  const tiles = await fetchTiles('', tileQuery)
 
   const approachWays = new Map<string, Set<number>>()
   for (const approach of manifest.approaches) {
@@ -86,5 +97,13 @@ export async function fetchAll(manifest: DatasetManifest, cacheDir: string, opti
     for (const id of wayIdsOf(answer)) regionWays.add(id)
     answers.push(answer)
   }
-  return { merged: mergeAnswers(answers), approachWays, regionWays, asked, tiles }
+  const subwayWays = new Map<string, Set<number>>()
+  for (const subway of manifest.subways ?? []) {
+    const answer = await cached(`subway-${subway.id}`, subwayQuery(subway))
+    subwayWays.set(subway.id, wayIdsOf(answer))
+    answers.push(answer)
+  }
+  // The platforms of the whole box, near the tracks or not: the import keeps the ones along them
+  const platformTiles = options.platforms === false ? 0 : await fetchTiles('platforms-', platformTileQuery)
+  return { merged: mergeAnswers(answers), approachWays, regionWays, subwayWays, asked, tiles, platformTiles }
 }

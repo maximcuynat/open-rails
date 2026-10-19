@@ -4,6 +4,8 @@ import { buildTrainConsoleState } from '@application/console/consoleState'
 import { fakeDataset } from '@application/dataset/dataset.testkit'
 import { fetchLineFiles, resetDatasetIndexCache } from '@application/dataset/datasetClient'
 import { resetIdCounter } from '@domain/models/network'
+import { setRailway } from '@domain/models/railway'
+import { travelWeight, travelWeightFor } from '@domain/dataset/lineRoute'
 import { openPassage } from '@domain/models/junction'
 import { findJunctionAtNode, isPassageOpen } from '@domain/models/routing'
 import { advanceTrainSet } from '@domain/models/train'
@@ -209,6 +211,24 @@ describe('the journeys a train can make', () => {
     // A TGV may go anywhere
     const tgv = await withHighSpeedLine('duplex')
     expect(tgv.store.railsBlockedFor(tgv.train)).toBeUndefined()
+  })
+
+  it('keeps the way of every train off a metro track: none of the table is a metro', async () => {
+    const tgv = await withHighSpeedLine('duplex')
+    const net = tgv.store.network
+    const metro = [...net.segments.values()].find((seg) => seg.id !== tgv.train.vehicles[0].front.segId)!
+    setRailway(net, metro, 'subway')
+    const blocked = tgv.store.railsBlockedFor(tgv.train)!
+    expect(blocked(metro.id)).toBe(true)
+    // Nor a tram track
+    setRailway(net, metro, 'tram')
+    expect(tgv.store.railsBlockedFor(tgv.train)!(metro.id)).toBe(true)
+    setRailway(net, metro, 'subway')
+    expect(blocked(tgv.train.vehicles[0].front.segId)).toBe(false)
+    // Nor may a journey enter a metro line, whatever the train
+    const line = { ...tgv.index.lines[0], category: 'subway' as const }
+    expect(travelWeightFor({ maxKmh: 320, cabSignalling: true })(line)).toBe(Infinity)
+    expect(travelWeight(line)).toBe(Infinity)
   })
 })
 

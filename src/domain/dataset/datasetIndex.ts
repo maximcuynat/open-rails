@@ -46,15 +46,16 @@ export interface IndexLine {
  * The kinds of line a map tells apart. TER and Intercités are services, not tracks: what a rail
  * carries is the kind of its infrastructure.
  */
-export type LineCategory = 'highSpeed' | 'main' | 'regional' | 'service'
+export type LineCategory = 'highSpeed' | 'main' | 'regional' | 'service' | 'subway'
 
-export const LINE_CATEGORIES = ['highSpeed', 'main', 'regional', 'service'] as const satisfies readonly LineCategory[]
+export const LINE_CATEGORIES = ['highSpeed', 'main', 'regional', 'service', 'subway'] as const satisfies readonly LineCategory[]
 
 export const LINE_CATEGORY_LABELS: Record<LineCategory, string> = {
   highSpeed: 'Ligne à grande vitesse',
   main: 'Ligne classique',
   regional: 'Ligne régionale',
   service: 'Raccordement et service',
+  subway: 'Métro',
 }
 
 /** The kind of a line of the index, whatever its age */

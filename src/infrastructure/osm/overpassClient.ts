@@ -114,8 +114,8 @@ function degrees(value: number): string {
  * The Overpass QL query for the tracks of an area. Ways and the station nodes first, then the
  * nodes of the ways by recursion, in one `out body`: every node comes once, with its tags
  * (switches, signals, buffer stops and stop positions are tags of the nodes of a track; a station
- * is often a node of its own, beside the track). No relation: a line relation runs for hundreds of
- * kilometres.
+ * is often a node of its own, beside the track). The platforms of the trains come with them, as
+ * ways (`platformQuery`). No line relation: one runs for hundreds of kilometres.
  */
 export function buildOverpassQuery(area: OsmArea, kinds: OsmQueryKinds = ALL_QUERY_KINDS): string {
   const values = ['rail', ...ALL_EXTRA_KINDS.filter((kind) => kinds.extraKinds.includes(kind))]
@@ -126,10 +126,24 @@ export function buildOverpassQuery(area: OsmArea, kinds: OsmQueryKinds = ALL_QUE
       : `(${degrees(area.south)},${degrees(area.west)},${degrees(area.north)},${degrees(area.east)})`
   return [
     `[out:json][timeout:${OVERPASS_SERVER_TIMEOUT_S}];`,
-    `(way[railway~"^(${values.join('|')})$"]${where};node[railway~"^(station|halt)$"]${where};);`,
+    `(way[railway~"^(${values.join('|')})$"]${where};node[railway~"^(station|halt)$"]${where};${platformQuery(where)});`,
     '(._;>;);',
     'out body qt;',
   ].join('\n')
+}
+
+/**
+ * The statements that ask for the platforms of the trains within `where` (an Overpass filter such
+ * as `(around:…)` or a box): the ways tagged `railway=platform` that are not the metro's or the
+ * tram's, the ones tagged `public_transport=platform` + `train=yes`, and the multipolygons of the
+ * large ones (a few ways each, unlike a line relation). The recursion that follows brings their nodes.
+ */
+export function platformQuery(where: string): string {
+  return [
+    `way[railway=platform][subway!=yes][tram!=yes][light_rail!=yes]${where};`,
+    `way[public_transport=platform][train=yes]${where};`,
+    `rel[railway=platform][type=multipolygon]${where};`,
+  ].join('')
 }
 
 export interface OverpassProgress {

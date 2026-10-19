@@ -1,10 +1,11 @@
 import type { ConsoleRoute } from '@application/console/consoleContract'
 import type { EditorStore } from '@application/state/editorStore'
 import { gatesToward, routeThroughStations, shortestLineRoute, buildLineGraph, travelWeightFor, type TrainAbility } from '@domain/dataset/lineRoute'
-import { consistMaxSpeed, stockSpec } from '@domain/models/rollingStock'
+import { consistLength, consistMaxSpeed, stockSpec } from '@domain/models/rollingStock'
 import { positionOnSegment, segmentPartialLength } from '@domain/models/locomotive'
 import { networkCheckToken } from '@domain/models/networkWatch'
 import { isTrainStopped, type TrainSet } from '@domain/models/train'
+import type { RakeHeading } from '@domain/models/rakePlacement'
 import type { Point, StationId } from '@domain/models/types'
 import { afterCall, itineraryFrom, nextStop, stopsAhead, straightLengthAhead, withStop, withoutStop, type StationRef } from '@domain/services/itinerary'
 import { openPassage } from '@domain/models/junction'
@@ -12,6 +13,7 @@ import { rakeOccupancy } from '@domain/models/occupancy'
 import { findJunctionAtNode } from '@domain/models/routing'
 import { crossingToll, holdRail, holdWay, type TracksHeld } from '@domain/services/crossingRules'
 import { findRouteGuide, guideAhead, guideDurationLeft, guideDurations, guideLeft, pointsAgainstGuide, type GuidePoints, type RouteGuide } from '@domain/services/routeGuide'
+import { noseOffset } from '@domain/services/stopMarkers'
 import { aidReach } from './drivingAid'
 import { trackSpansEnds } from '@domain/services/trackPath'
 
@@ -219,18 +221,12 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
     if (standsInTheWay(store, train, state.guide)) state.left = null
   }
   if (state.left === null && state.failedOn !== lead.segId) {
-    const index = store.datasetIndex
-    const indexed = index?.stations.find((s) => s.id === station)
-    const loaded = new Set(store.dataset?.lines ?? [])
-    const under = store.linesUnder(train)
-    const weight = travelWeightFor(trainAbility(train))
-    const gates = index && indexed && store.dataset ? gatesToward(index, loaded, indexed.lines, under, weight) : []
+    const gates = gatesTowardStation(store, train, station)
     // A call on the way to somewhere else: a platform the train can go on from
     const after = train.itinerary?.stations[train.itinerary.next + 1]
-    const afterIndexed = after === undefined ? undefined : index?.stations.find((s) => s.id === after)
-    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: index && afterIndexed && store.dataset ? gatesToward(index, loaded, afterIndexed.lines, under, weight) : [] }
+    const beyond = after === undefined ? undefined : { station: net.stations.get(after), gates: gatesTowardStation(store, train, after) }
     const toll = crossingToll(net, tracksHeldByOthers(store, train))
-    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond, store.railsBlockedFor(train), toll)
+    state.guide = findRouteGuide(net, lead, net.stations.get(station), gates, beyond, store.railsBlockedFor(train), toll, consistLength(train.vehicles))
     state.left = state.guide ? state.guide.path.length : null
     state.failedOn = state.guide ? null : lead.segId
   }
@@ -242,6 +238,34 @@ export function refreshRouteGuide(store: EditorStore, train: TrainSet): boolean 
   }
   state.against = applyDrivingAid(store, train, state.guide)
   return false
+}
+
+/**
+ * The nodes where the loaded track of a dataset project meets the way of a train to a station
+ * whose lines are not loaded (`gatesToward`, from the lines under the train, by what it can run
+ * on). None on any other project, or for a station the index does not know.
+ */
+function gatesTowardStation(store: EditorStore, train: TrainSet, stationId: StationId): string[] {
+  const index = store.datasetIndex
+  const indexed = index?.stations.find((s) => s.id === stationId)
+  if (!index || !indexed || !store.dataset) return []
+  return gatesToward(index, new Set(store.dataset.lines), indexed.lines, store.linesUnder(train), travelWeightFor(trainAbility(train)))
+}
+
+/**
+ * Where a train is to go, for setting it down (`createRakeAtStation`): the station when it is on
+ * the track loaded, the gates towards it otherwise, the rails it must keep off. Null for a
+ * station neither the network nor the index knows.
+ */
+export function rakeHeadingToward(store: EditorStore, train: TrainSet, stationId: StationId): RakeHeading | null {
+  const station = store.network.stations.get(stationId)
+  const gates = gatesTowardStation(store, train, stationId)
+  if (!station && gates.length === 0) return null
+  const heading: RakeHeading = { gates }
+  if (station) heading.station = station
+  const blocked = store.railsBlockedFor(train)
+  if (blocked) heading.blocked = blocked
+  return heading
 }
 
 /** The plain track beyond a set of points is looked at this far for a train coming, m */
@@ -346,20 +370,23 @@ export function buildItineraryView(store: EditorStore, train: TrainSet): Itinera
   // What is only known as the crow flies is run at the speed of the line, or of the rake
   const cruise = Math.min(store.lineSettings.lineSpeed / 3.6, train.maxSpeed)
   const flown = (metres: number): number => (cruise > 0 ? metres / cruise : 0)
+  // Distances are told from the nose of the train; the way is measured from its lead bogie, behind it
+  const nose = noseOffset(train.vehicles)
   if (guide && state?.left != null) {
     if (state.durations?.guide !== guide) {
       state.durations = { guide, seconds: guideDurations(store.network, guide, store.lineSettings, train.maxSpeed) }
     }
     const onTrack = guideDurationLeft(guide, state.durations.seconds, state.left)
     if (guide.target === 'platform') {
-      distance = state.left
+      // The way ends where the nose is to stop: at the stop marker, or the stop
+      distance = Math.max(0, state.left - nose)
       duration = onTrack
       exact = true
     } else {
       // To the gate along the track, then as the crow flies to the station
       const end = trackSpansEnds(store.network, guide.path.spans)?.b ?? leadPoint(store, train)
       const rest = end && target ? Math.hypot(target.x - end.x, target.y - end.y) : 0
-      distance = state.left + rest
+      distance = Math.max(0, state.left - nose) + rest
       duration = onTrack + flown(rest)
     }
   } else {
@@ -374,7 +401,7 @@ export function buildItineraryView(store: EditorStore, train: TrainSet): Itinera
     origin,
     stops,
     platform: guide?.stop?.ref ?? null,
-    pointsAgainst: guide && state?.against ? state.against.distance : null,
+    pointsAgainst: guide && state?.against ? Math.max(0, state.against.distance - nose) : null,
     duration,
     totalDuration: duration === null ? null : duration + flown(beyond),
     next: next.name,

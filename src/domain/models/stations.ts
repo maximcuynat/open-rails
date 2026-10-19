@@ -9,9 +9,10 @@ import { remapTrackPosition, TRACK_T_EPSILON, type RailReplacement } from './tra
 // keeps them in place whenever a rail is cut or merged and drops them with the rail, wherever the
 // edit comes from. A station whose rails are all gone stays, with its name and its place.
 //
-// `net.stations` and the fields of a station are only changed by the functions of this file, each
-// of which tells the revision of the network. Nothing edits a station in the editor yet: the
-// OpenStreetMap import lays them, the canvas and the panels read them.
+// `net.stations` and the fields of a station are only changed by the functions of this file and of
+// `platformEdit.ts` (created, renamed and moved in the editor), each of which tells the revision of
+// the network. The OpenStreetMap import lays them too. A station that has platforms gets its stops
+// from their markers (`settlePlatforms`): its stops are then not edited by hand.
 //
 // This file must not import `network.ts` (which imports it) nor anything that does.
 

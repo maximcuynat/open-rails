@@ -4,7 +4,7 @@ import { fitPath } from '@domain/geometry/arcFit'
 import { networkCheckToken, touchNetwork, verifyingNetworkRevisions } from '@domain/models/networkWatch'
 import { dirtyNodesOf, networkChangesSince } from '@domain/geometry/networkFollower'
 import { DEFAULT_LINE_SETTINGS, type LineSettings, type LineType } from '@domain/models/speedLimits'
-import { createCamera, clampScale, fitDimensions, type Camera } from '@infrastructure/render/camera'
+import { createCamera, clampScale, fitDimensions, DATASET_MIN_CAMERA_SCALE, MIN_CAMERA_SCALE, type Camera } from '@infrastructure/render/camera'
 import { raiseIdCounter } from '@domain/models/ids'
 import { createNetwork, syncIdCounter, resetIdCounter, removeNode, removeSegment, addNode, addSegment, addCurveSegment, pruneOrphanNodes, dissolveNode, generateId, nodeLevel, setNodesLevel, canSpreadGradient, gradientRun, spreadGradient } from '@domain/models/network'
 import { separateLevelsAtNode, throughTracksAtNode } from '@domain/models/crossing'
@@ -15,6 +15,33 @@ import { isNetworkReconciled, reconcileNetworkIntersections } from '@domain/geom
 import { cleanSpeedZones } from '@domain/models/speedZones'
 import { DEFAULT_SIGNALLING_SETTINGS, cleanSignals, isSignallingLevel, type SignallingLevel, type SignallingSettings } from '@domain/models/signals'
 import { cleanStations, stationAt } from '@domain/models/stations'
+import { setStationIdentity } from '@domain/models/stations'
+import { withoutStation } from '@domain/services/itinerary'
+import {
+  addMarker,
+  createStation,
+  deleteStation,
+  moveEdgeEnd,
+  moveMarker,
+  moveStationLabel,
+  MIN_PLATFORM_LENGTH,
+  platformAt,
+  platformCentre,
+  platformEndAt,
+  platformMarkerAt,
+  platformShape,
+  removeMarker,
+  restorePlatformShape,
+  setMarkerOptions,
+  setPlatformRef,
+  setPlatformStation,
+  setPlatformWidth,
+  type PlatformEnd,
+  type PlatformMarkerHit,
+  type PlatformShape,
+} from '@domain/models/platformEdit'
+import { edgeLength, platformDimensions, removePlatform, settlePlatforms, type PlatformDimensions } from '@domain/models/platforms'
+import type { Platform, StopMarker } from '@domain/models/types'
 import {
   addSignal,
   addSignalPair,
@@ -30,6 +57,7 @@ import {
 import type { Signal, SignalRole, Station } from '@domain/models/types'
 import { addSignalRow, moveSignalsOffSwitches, signalForwardFor, signalRowPlaces, slideSignal } from '@domain/services/signalLayout'
 import { signalHeadWorld } from '@infrastructure/render/signalRender'
+import { stationMarkAt } from '@infrastructure/render/stationRender'
 import {
   createSignallingState,
   estimatedStoppingDistance,
@@ -53,10 +81,10 @@ import { CANT_RANGE } from '@domain/models/cant'
 import { placementThresholds, type PlacementThresholds } from '@domain/geometry/scale'
 import { DATASET_LOCKED_TOOLS, type DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { lineCategory, type BBox, type DatasetIndex, type LineId } from '@domain/dataset/datasetIndex'
-import { connectionsToward, linesToDrop } from '@domain/dataset/lineRoute'
+import { boxesMeet, connectionsToward, distanceToBox, linesToDrop, piecesOverCap } from '@domain/dataset/lineRoute'
 import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
 import type { MergeOutcome } from '@application/import/mergeReport'
-import { unionProjects } from '@infrastructure/persistence/projectSlices'
+import { addSliceInPlace, removeSliceInPlace, sliceHoldsRail } from '@infrastructure/persistence/sliceInPlace'
 import {
   saveNetworkToStorage,
   loadNetworkFromStorage,
@@ -104,9 +132,13 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockModel } from '@domain/models/rollingStock'
-import { railTintOf } from '@infrastructure/render/datasetOverview'
+import { isUrbanRail } from '@domain/models/railway'
+import { LINE_CATEGORY_COLORS } from '@infrastructure/render/datasetOverview'
+import { trackLod } from '@infrastructure/render/lod'
+import { trackPositionBand } from '@infrastructure/render/levelPieces'
+import { isUnderground, type ViewDepth } from '@infrastructure/render/levelAlpha'
 import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
-import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
+import { rakeHeadingToward, refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { applyGame, captureGame } from '@domain/models/runningState'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
 import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
@@ -157,6 +189,13 @@ export type Tool =
   | 'locomotive'
   | 'coupling'
   | 'signal'
+  | 'platform'
+
+/**
+ * A station template of the platform tool, laid in one click (`application/tools/platformTemplateTool.ts`):
+ * an island loop on a straight track, or two side platforms on a double track.
+ */
+export type PlatformTemplate = 'islandLoop' | 'sidePlatforms'
 
 /**
  * Sub-modes of the signalling mode (tool `signal`), in the order of the toolbar; `select` and
@@ -216,6 +255,17 @@ export const SPEED_ZONE_OVERLAP = 'Cette zone en chevauche une autre : la limite
 
 /** What a click of the speed limit tool did */
 export type SpeedZoneClick = 'started' | 'placed' | 'off-track' | 'no-path' | 'refused'
+
+/** What the selection tool drags of a platform: one of its ends, or one of its stop markers */
+export type PlatformDrag =
+  | ({ kind: 'end'; origin: PlatformShape } & PlatformEnd)
+  | ({ kind: 'marker'; origin: PlatformShape } & PlatformMarkerHit)
+
+/** What the selection tool finds of a platform under the cursor, the handles before the body */
+export type PlatformHit =
+  | ({ kind: 'end' } & PlatformEnd)
+  | ({ kind: 'marker' } & PlatformMarkerHit)
+  | { kind: 'body'; platformId: string }
 
 export type TrackMode = 'catalog' | 'freeform'
 
@@ -423,19 +473,42 @@ export class EditorStore {
   datasetFiles = new Map<LineId, SerializedProject>()
   /** Bumped whenever a file comes or goes: what is worked out from the files is worked out again */
   private datasetFilesRevision = 0
-  private railTintCache: { index: DatasetIndex; revision: number; tint: (segId: string) => string | undefined } | null = null
-  private railLineCache: { revision: number; lineOf: Map<SegmentId, LineId> } | null = null
+  private railTintCache: { index: DatasetIndex; tint: (segId: string) => string | undefined } | null = null
+  /** The file each rail came with (the first loaded that holds it), kept as files come and go */
+  private railLineMap = new Map<SegmentId, LineId>()
+  /** When each piece loaded was last in view or near a train (`datasetClock`): the ones seen longest ago go first past the cap */
+  datasetSeen = new Map<LineId, number>()
+  /** Counts the checks of the dataset lines: the clock of `datasetSeen` */
+  private datasetClock = 0
+  /** Bumped when the dataset project is replaced: a file asked for by the previous one is not added to this one */
+  private datasetGeneration = 0
+  /** When the lines were last checked against the view and the trains (ms, `performance.now`) */
+  datasetRefreshedAt = -Infinity
 
   /**
-   * The rails of a dataset project a train must keep off: those of the high-speed lines, for a
-   * train without their cab signalling. Undefined when it may go anywhere.
+   * The rails a train must keep off: those of a metro or a tram (`Segment.railway`, no train of the
+   * table is one), and in a dataset project those of the high-speed lines, for a train without their cab
+   * signalling. Undefined when it may go anywhere.
    */
   railsBlockedFor = (train: TrainSet): ((segId: SegmentId) => boolean) | undefined => {
+    const net = this.network
+    let urban = false
+    for (const seg of net.segments.values()) {
+      if (isUrbanRail(seg)) {
+        urban = true
+        break
+      }
+    }
     const index = this.datasetIndex
-    if (!this.dataset || !index || train.vehicles.every((veh) => stockSpec(veh).cabSignalling)) return undefined
-    const highSpeed = new Set(index.lines.filter((line) => lineCategory(line) === 'highSpeed').map((line) => line.id))
+    const highSpeed =
+      this.dataset && index && !train.vehicles.every((veh) => stockSpec(veh).cabSignalling)
+        ? new Set(index.lines.filter((line) => lineCategory(line) === 'highSpeed').map((line) => line.id))
+        : null
+    if (!urban && !highSpeed) return undefined
     const railLine = this.railLine
     return (segId) => {
+      if (urban && isUrbanRail(net.segments.get(segId))) return true
+      if (!highSpeed) return false
       const line = railLine.get(segId)
       return line !== undefined && highSpeed.has(line)
     }
@@ -455,13 +528,8 @@ export class EditorStore {
   }
 
   /** The file (line, or piece of a line) each rail of a dataset project came with; the first that holds it */
-  private get railLine(): Map<SegmentId, LineId> {
-    const cache = this.railLineCache
-    if (cache && cache.revision === this.datasetFilesRevision) return cache.lineOf
-    const lineOf = new Map<SegmentId, LineId>()
-    for (const [id, file] of this.datasetFiles) for (const seg of file.segments) if (!lineOf.has(seg.id)) lineOf.set(seg.id, id)
-    this.railLineCache = { revision: this.datasetFilesRevision, lineOf }
-    return lineOf
+  private get railLine(): ReadonlyMap<SegmentId, LineId> {
+    return this.railLineMap
   }
 
   /** The colour of the kind of line each rail of a dataset project belongs to; undefined on any other project */
@@ -469,9 +537,14 @@ export class EditorStore {
     const index = this.datasetIndex
     if (!this.dataset || !index || this.datasetFiles.size === 0) return undefined
     const cache = this.railTintCache
-    if (cache && cache.index === index && cache.revision === this.datasetFilesRevision) return cache.tint
-    const tint = railTintOf(index, this.datasetFiles)
-    this.railTintCache = { index, revision: this.datasetFilesRevision, tint }
+    if (cache && cache.index === index) return cache.tint
+    const colorOfLine = new Map(index.lines.map((line) => [line.id, LINE_CATEGORY_COLORS[lineCategory(line)]]))
+    const railLine = this.railLineMap
+    const tint = (segId: string): string | undefined => {
+      const line = railLine.get(segId)
+      return line === undefined ? undefined : colorOfLine.get(line)
+    }
+    this.railTintCache = { index, tint }
     return tint
   }
   /** Fetches the files of some lines; set by the application layer (the store does not fetch) */
@@ -488,6 +561,8 @@ export class EditorStore {
   datasetStoredProject: SerializedProject | null = null
   /** Seconds since the trains were last checked against the connections to lines not loaded */
   private datasetCheckElapsed = 0
+  /** How many pieces of the dataset stay loaded at most: past it, the ones seen longest ago are dropped */
+  datasetMaxPieces = DATASET_MAX_PIECES
   /** Lines fetched because a train came near them; the dock says so */
   onDatasetLinesAdded: ((lines: LineId[], rails: number) => void) | null = null
   /** A fetch of lines a train came near failed; the dock says so */
@@ -504,6 +579,46 @@ export class EditorStore {
   }
   /** The dispatcher's board was asked for (Affichage ▸ « Tableau de l'aiguilleur ») */
   showDispatcher = false
+
+  /**
+   * The side of the ground the canvas looks at: the surface (the tunnels faded and dashed) or
+   * below ground (the tunnels drawn as they are, the surface faded). Switched by hand
+   * (`toggleViewDepth`, the top bar, `view.toggleDepth`) and on its own when the train of this
+   * screen goes into a tunnel or comes out of one. Never saved.
+   */
+  viewDepth: ViewDepth = 'surface'
+  /** The train whose side of the ground the view follows, and the side it was last on */
+  private depthFollowed: { trainId: string; underground: boolean } | null = null
+
+  setViewDepth = (depth: ViewDepth): void => {
+    if (depth === this.viewDepth) return
+    this.viewDepth = depth
+    this.notify()
+  }
+
+  toggleViewDepth = (): void => {
+    this.setViewDepth(this.viewDepth === 'surface' ? 'underground' : 'surface')
+  }
+
+  /**
+   * While driving: the view goes below ground when the train of this screen goes into a tunnel
+   * (its lead vehicle's level goes under 0), and back up when it comes out — once per crossing,
+   * so that a side chosen by hand meanwhile stays. A train taken already in a tunnel is looked at there.
+   */
+  private followDrivenDepth(): void {
+    const train = this.cameraTrain
+    const lead = train?.vehicles[0]
+    if (!train || !lead) {
+      this.depthFollowed = null
+      return
+    }
+    const level = Math.max(trackPositionBand(this.network, lead.front), trackPositionBand(this.network, lead.rear))
+    const underground = isUnderground(level)
+    const followed = this.depthFollowed
+    if (followed && followed.trainId === train.id && followed.underground === underground) return
+    this.depthFollowed = { trainId: train.id, underground }
+    this.setViewDepth(underground ? 'underground' : 'surface')
+  }
 
   /** The board is up: while driving, when asked for or as soon as a desk sits in the room */
   get dispatcherVisible(): boolean {
@@ -719,6 +834,14 @@ export class EditorStore {
   signalToolSubMode: SignalSubMode = 'select'
   /** First click of the speed limit tool: where the zone starts */
   speedZoneStart: TrackPoint | null = null
+  /** First click of the platform tool: where the platform starts (see `application/tools/platformTool.ts`) */
+  platformStart: TrackPoint | null = null
+  /** Platform tool: lay one platform on each side of the track (the toggle of the bar) */
+  platformBothSides = false
+  /** Platform tool: Shift is held, which turns « both sides » the other way while it is */
+  platformShiftHeld = false
+  /** Platform tool: the station template in hand, laid in one click instead of a platform in two */
+  platformTemplate: PlatformTemplate | null = null
   /** Speed (km/h) of the next zone the speed limit tool lays */
   speedZoneToolSpeed = DEFAULT_ZONE_TOOL_SPEED
   /** Speed zone picked in the signalling mode */
@@ -741,6 +864,14 @@ export class EditorStore {
   selectedStationId: string | null = null
   /** Station under the cursor with the selection tool */
   hoveredStationId: string | null = null
+  /** The station mark being dragged with the selection tool, and where it stood */
+  stationDrag: { id: string; origin: Point } | null = null
+  /** Platform picked with the selection tool */
+  selectedPlatformId: string | null = null
+  /** Platform under the cursor with the selection tool */
+  hoveredPlatformId: string | null = null
+  /** An end (« borne ») or a stop marker of a platform being dragged, and the platform as it was */
+  platformDrag: PlatformDrag | null = null
   /** Signal picked in the signalling mode */
   selectedSignalId: string | null = null
   /** Signal under the cursor in the signalling mode (select and delete sub-modes) */
@@ -870,6 +1001,7 @@ export class EditorStore {
     this.measureEnd = null
     this.isMeasuring = false
     this.speedZoneStart = null
+    this.platformStart = null
     this.signalRowStart = null
     this.signalRowEnd = null
     this.numericInput = ''
@@ -993,6 +1125,7 @@ export class EditorStore {
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.selectedStationId = null
+        this.selectedPlatformId = null
         this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
@@ -1029,6 +1162,7 @@ export class EditorStore {
         if (typeof res.showDimensions === 'boolean') this.showDimensions = res.showDimensions
         this.selection = { nodes: new Set(), segments: new Set() }
         this.selectedStationId = null
+        this.selectedPlatformId = null
         this.resetPendingToolState()
         this.dirty = true
         this.savePersistedState()
@@ -1227,6 +1361,7 @@ export class EditorStore {
     this.adoptLoadedProject(res)
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     this.resetPendingToolState()
     if (res.dataset) {
       this.history = []
@@ -1325,6 +1460,10 @@ export class EditorStore {
     this.dataset = null
     this.datasetIndex = null
     this.datasetFiles = new Map()
+    this.railLineMap = new Map()
+    this.datasetSeen.clear()
+    this.datasetGeneration++
+    this.datasetFilesRevision++
     this.datasetPending.clear()
     this.datasetLoader = null
     this.datasetReloadPending = false
@@ -1356,6 +1495,11 @@ export class EditorStore {
     this.dataset = recipe
     this.datasetIndex = index
     this.datasetFiles = new Map(files)
+    this.railLineMap = new Map()
+    for (const [id, file] of this.datasetFiles) for (const seg of file.segments) if (!this.railLineMap.has(seg.id)) this.railLineMap.set(seg.id, id)
+    this.datasetSeen.clear()
+    this.datasetGeneration++
+    this.datasetFilesRevision++
     this.datasetPending.clear()
     this.datasetReloadPending = false
     this.adoptLoadedProject(res)
@@ -1377,6 +1521,15 @@ export class EditorStore {
     this.notify()
   }
 
+  /**
+   * The farthest the camera can step back, px per metre: a project of the dataset reaches the
+   * whole country (« Réseau France », its overview drawn from the index); any other keeps
+   * `MIN_CAMERA_SCALE`, where all its track is still drawn.
+   */
+  get minCameraScale(): number {
+    return this.dataset ? DATASET_MIN_CAMERA_SCALE : MIN_CAMERA_SCALE
+  }
+
   /** Put the camera on a world box, with a margin, within the viewport */
   frameBox = (box: BBox, viewportW?: number, viewportH?: number): void => {
     const vw = viewportW ?? this.viewport.w
@@ -1385,22 +1538,53 @@ export class EditorStore {
     const height = Math.max(1, box.maxY - box.minY)
     this.camera.x = (box.minX + box.maxX) / 2
     this.camera.y = (box.minY + box.maxY) / 2
-    this.camera.scale = clampScale(0.9 * Math.min(vw / width, vh / height))
+    this.camera.scale = clampScale(0.9 * Math.min(vw / width, vh / height), this.minCameraScale)
     this.notifyView()
   }
 
-  /**
-   * Once a second while driving: every connection within reach of a train's lead that leads to
-   * a line not loaded has that line asked for (once; the loader is the application's). Nothing
-   * is ever unloaded.
-   */
+  /** Once a second while driving: the lines are checked against the trains (and the view) */
   private checkDatasetLines(dt: number): void {
     if (!this.dataset || !this.datasetIndex || !this.datasetLoader) return
     this.datasetCheckElapsed += dt
     if (this.datasetCheckElapsed < DATASET_CHECK_PERIOD_S) return
     this.datasetCheckElapsed = 0
-    const gates = connectionsToward(this.datasetIndex, new Set(this.dataset.lines))
+    this.refreshDatasetLines()
+  }
+
+  /** The box of the world the canvas shows, from the camera and the size of the viewport */
+  private get viewBox(): BBox {
+    const halfW = this.viewport.w / 2 / this.camera.scale
+    const halfH = this.viewport.h / 2 / this.camera.scale
+    return { minX: this.camera.x - halfW, minY: this.camera.y - halfH, maxX: this.camera.x + halfW, maxY: this.camera.y + halfH }
+  }
+
+  /** True when the view is close enough for the pieces it meets to be fetched: from the « rails » tier of the track up */
+  get isDatasetViewNear(): boolean {
+    // The rails are drawn at standard gauge whatever the project's (`renderer.ts`, `GAUGE`)
+    const tier = trackLod(this.camera.scale, STANDARD_TRACK_GAUGE)
+    return tier === 'rails' || tier === 'detail'
+  }
+
+  /**
+   * Bring the lines (pieces of lines) of a dataset project in line with where one looks and where
+   * the trains run, in every mode, paused or not: called once a second while the trains run, and
+   * by the canvas when the view moves (`useDatasetStreaming`).
+   * - fetched: the pieces whose box meets the view and its margin (`DATASET_VIEW_MARGIN_M`) once
+   *   the view is close enough (`isDatasetViewNear`: the overview is enough further out), and the
+   *   pieces beyond a connection within reach of a train's lead (`DATASET_LOOKAHEAD_M`);
+   * - dropped: the pieces far from the view and from every train (`DATASET_KEEP_M`), never one a
+   *   vehicle stands on nor one asked for; and past `datasetMaxPieces`, the ones seen longest ago.
+   */
+  refreshDatasetLines = (): void => {
+    const index = this.datasetIndex
+    if (!this.dataset || !index) return
+    this.datasetRefreshedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const clock = ++this.datasetClock
+    const loaded = new Set(this.datasetFiles.keys())
     const wanted = new Set<LineId>()
+
+    // Ahead of the trains: the lines beyond the connections within reach of a lead
+    const gates = connectionsToward(index, loaded)
     const leads: Point[] = []
     for (const train of this.trains) {
       const lead = train.vehicles[0]
@@ -1411,64 +1595,112 @@ export class EditorStore {
         if (Math.hypot(gate.x - pos.x, gate.y - pos.y) > DATASET_LOOKAHEAD_M) continue
         for (const id of gate.lines) if (!this.datasetPending.has(id)) wanted.add(id)
       }
-    }
-    // What every train has left far behind is dropped: never what a train stands on, nor what
-    // was just asked for. Further than what is fetched, so that nothing comes and goes
-    const held = new Set<LineId>([...wanted, ...this.datasetPending])
-    const railLine = this.railLine
-    for (const train of this.trains) {
-      for (const veh of train.vehicles) {
-        for (const pos of [veh.front, veh.rear]) {
-          const line = railLine.get(pos.segId)
-          if (line) held.add(line)
-        }
+      for (const line of index.lines) {
+        if (loaded.has(line.id) && distanceToBox(pos.x, pos.y, line.bbox) <= DATASET_LOOKAHEAD_M) this.datasetSeen.set(line.id, clock)
       }
     }
-    // In the free view the screen follows no train: what it looks at stays, though no train is near
-    const kept = this.isFreeView ? [...leads, { x: this.camera.x, y: this.camera.y }] : leads
-    this.removeDatasetLines(linesToDrop(this.datasetIndex, new Set(this.dataset.lines), kept, DATASET_KEEP_M, held))
-    if (wanted.size === 0) return
+
+    // In view: what the view meets is seen; fetched once the view is close enough
+    const view = this.viewBox
+    const margin = { minX: view.minX - DATASET_VIEW_MARGIN_M, minY: view.minY - DATASET_VIEW_MARGIN_M, maxX: view.maxX + DATASET_VIEW_MARGIN_M, maxY: view.maxY + DATASET_VIEW_MARGIN_M }
+    const near = this.isDatasetViewNear
+    for (const line of index.lines) {
+      if (!boxesMeet(line.bbox, margin)) continue
+      if (loaded.has(line.id)) this.datasetSeen.set(line.id, clock)
+      else if (near && !this.datasetPending.has(line.id)) wanted.add(line.id)
+    }
+
+    // Never dropped: what a vehicle stands on, what is asked for or on its way
+    const held = new Set<LineId>([...wanted, ...this.datasetPending])
+    for (const id of this.occupiedLines()) {
+      held.add(id)
+      this.datasetSeen.set(id, clock)
+    }
+    // Far from every train and from the view (which reaches as far as it shows)
+    const centre = { x: this.camera.x, y: this.camera.y, keep: DATASET_KEEP_M + Math.hypot(view.maxX - view.minX, view.maxY - view.minY) / 2 }
+    const far = new Set(linesToDrop(index, loaded, [...leads, centre], DATASET_KEEP_M, held))
+    // And past the cap, the ones seen longest ago, with room for those to come
+    const left = [...loaded].filter((id) => !far.has(id))
+    for (const id of piecesOverCap(left, this.datasetSeen, held, this.datasetMaxPieces, wanted.size)) far.add(id)
+    if (far.size > 0) this.removeDatasetLines([...far])
+
+    if (wanted.size === 0 || !this.datasetLoader) return
+    // Never more at once than the cap holds: the nearest the middle of the view first
     const ids = [...wanted]
+      .sort((a, b) => distanceToBox(this.camera.x, this.camera.y, lineBox(index, a)) - distanceToBox(this.camera.x, this.camera.y, lineBox(index, b)))
+      .slice(0, Math.max(1, this.datasetMaxPieces))
     for (const id of ids) this.datasetPending.add(id)
+    const generation = this.datasetGeneration
     void this.datasetLoader(ids)
       .then((files) => {
+        // The project was replaced meanwhile: what it asked for is not this one's
+        if (generation !== this.datasetGeneration) return
         const rails = this.addDatasetLines(files)
+        for (const id of files.keys()) this.datasetSeen.set(id, this.datasetClock)
         if (rails > 0) this.onDatasetLinesAdded?.(ids, rails)
       })
       .catch((error: unknown) => {
+        if (generation !== this.datasetGeneration) return
         console.warn('Lignes du jeu de données non chargées', error)
         this.onDatasetError?.(error)
       })
       .finally(() => {
-        for (const id of ids) this.datasetPending.delete(id)
+        if (generation === this.datasetGeneration) for (const id of ids) this.datasetPending.delete(id)
       })
   }
 
+  /** The lines (pieces of lines) a vehicle of a train stands on */
+  private occupiedLines(): Set<LineId> {
+    const railLine = this.railLine
+    const occupied = new Set<LineId>()
+    for (const train of this.trains) {
+      for (const veh of train.vehicles) {
+        for (const pos of [veh.front, veh.rear]) {
+          const line = railLine.get(pos.segId)
+          if (line) occupied.add(line)
+        }
+      }
+    }
+    return occupied
+  }
+
+  /** The reconcile tolerance of the dataset project: the one its files were reconciled at */
+  private datasetTolerance(file: SerializedProject): number {
+    return placementThresholds(typeof file.gauge === 'number' ? file.gauge : undefined).reconcileTolerance
+  }
+
   /**
-   * Add the files of some lines to the dataset project, in place: the union of every file is
-   * loaded onto the live network (what is already there stays the object it is, the trains keep
-   * their rails, the driving goes on). Returns how many rails were added.
+   * Add the files of some lines to the dataset project, in place: each one is put onto the live
+   * network alone (`addSliceInPlace`) — what is already there stays the object it is, the trains
+   * keep their rails, the driving goes on. Returns how many rails were added.
    */
   addDatasetLines = (files: ReadonlyMap<LineId, SerializedProject>): number => {
     if (!this.dataset) return 0
     const added: LineId[] = []
     for (const [id, project] of files) {
-      if (!this.datasetFiles.has(id)) added.push(id)
+      if (this.datasetFiles.has(id)) continue
+      added.push(id)
       this.datasetFiles.set(id, project)
     }
     if (added.length === 0) return 0
     this.datasetFilesRevision++
     const before = this.network.segments.size
     const t0 = performance.now()
-    const union = unionProjects([...this.datasetFiles.values()])
-    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
-    const res = deserializeNetwork(union, tolerance, this.network)
-    this.keepTrainIdsClear()
-    if (res.sectionMeta) {
-      const keys = Object.keys(res.sectionMeta).filter((key) => !(key in this.sectionMeta))
-      for (const key of keys) this.sectionMeta[key] = res.sectionMeta[key]
-      if (keys.length) sectionMetaChanged(this.sectionMeta, keys)
+    // The files come after those already loaded, in their order: each is put on with the ones before it
+    const all = [...this.datasetFiles.values()]
+    const base = all.length - added.length
+    for (const [i, id] of added.entries()) {
+      const file = files.get(id)!
+      const upTo = all.slice(0, base + i + 1)
+      addSliceInPlace(this.network, file, upTo, this.datasetTolerance(file))
+      for (const seg of file.segments) if (!this.railLineMap.has(seg.id)) this.railLineMap.set(seg.id, id)
+      if (file.sectionMeta) {
+        const keys = Object.keys(file.sectionMeta).filter((key) => !(key in this.sectionMeta))
+        for (const key of keys) this.sectionMeta[key] = file.sectionMeta[key]
+        if (keys.length) sectionMetaChanged(this.sectionMeta, keys)
+      }
     }
+    this.keepTrainIdsClear()
     this.dataset = { ...this.dataset, lines: [...this.dataset.lines, ...added] }
     this.datasetLastAddMs = performance.now() - t0
     this.savePersistedState()
@@ -1495,32 +1727,37 @@ export class EditorStore {
   }
 
   /**
-   * Drop some lines (or pieces of lines) of the dataset project, in place: what is left is put
-   * back onto the live network, the rails of the lines dropped go and everything else stays the
-   * object it is. A line a vehicle stands on is kept whatever is asked, and so is the last one.
-   * Returns how many rails went.
+   * Drop some lines (or pieces of lines) of the dataset project, in place: each one is taken off
+   * the live network alone (`removeSliceInPlace`), what another file holds too stays, everything
+   * else stays the object it is. A line a vehicle stands on is kept whatever is asked; the last
+   * one may go (the project is then the overview alone). Returns how many rails went.
    */
   removeDatasetLines = (ids: readonly LineId[]): number => {
     if (!this.dataset || ids.length === 0) return 0
-    const railLine = this.railLine
-    const occupied = new Set<LineId>()
-    for (const train of this.trains) {
-      for (const veh of train.vehicles) {
-        for (const pos of [veh.front, veh.rear]) {
-          const line = railLine.get(pos.segId)
-          if (line) occupied.add(line)
-        }
-      }
-    }
-    const going = ids.filter((id) => this.datasetFiles.has(id) && !occupied.has(id))
-    if (going.length === 0 || going.length >= this.datasetFiles.size) return 0
-    for (const id of going) this.datasetFiles.delete(id)
+    const occupied = this.occupiedLines()
+    const going = [...new Set(ids)].filter((id) => this.datasetFiles.has(id) && !occupied.has(id))
+    if (going.length === 0) return 0
     this.datasetFilesRevision++
     const before = this.network.segments.size
     const t0 = performance.now()
-    const union = unionProjects([...this.datasetFiles.values()])
-    const tolerance = placementThresholds(typeof union.gauge === 'number' ? union.gauge : undefined).reconcileTolerance
-    deserializeNetwork(union, tolerance, this.network)
+    for (const id of going) {
+      const file = this.datasetFiles.get(id)!
+      this.datasetFiles.delete(id)
+      this.datasetSeen.delete(id)
+      const remaining = [...this.datasetFiles.values()]
+      removeSliceInPlace(this.network, file, remaining, this.datasetTolerance(file))
+      // A rail another file holds too now goes with that one
+      for (const seg of file.segments) {
+        if (this.railLineMap.get(seg.id) !== id) continue
+        this.railLineMap.delete(seg.id)
+        for (const [other, project] of this.datasetFiles) {
+          if (sliceHoldsRail(project, seg.id)) {
+            this.railLineMap.set(seg.id, other)
+            break
+          }
+        }
+      }
+    }
     this.keepTrainIdsClear()
     this.dataset = { ...this.dataset, lines: this.dataset.lines.filter((id) => !going.includes(id)) }
     this.datasetLastRemoveMs = performance.now() - t0
@@ -1646,6 +1883,7 @@ export class EditorStore {
     this.sectionMeta = {}
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     this.tool = 'pan'
     this.resetPendingToolState()
     this.projectName = DEFAULT_PROJECT_NAME
@@ -1706,6 +1944,8 @@ export class EditorStore {
       cleanSpeedZones(this.network)
       cleanSignals(this.network)
       cleanStations(this.network)
+      // After the stations: the stops of a station that has platforms are drawn from their markers
+      settlePlatforms(this.network)
       this.syncedNetwork = this.network
       this.syncedToken = networkCheckToken(this.network)
       // What the check itself changed (tables) is not to be checked again
@@ -1778,12 +2018,19 @@ export class EditorStore {
     if (this.tool !== t && (this.tool === 'place' || this.tool === 'curve' || this.tool === 'turnout')) {
       this.selection = { nodes: new Set(), segments: new Set() }
       this.selectedStationId = null
+      this.selectedPlatformId = null
     }
 
-    // A station is only picked with the selection tool
+    // A station template is picked anew each time the platform tool is taken
+    if (t !== this.tool) this.platformTemplate = null
+
+    // A station or a platform is only picked with the selection tool
     if (t !== 'select') {
       this.selectedStationId = null
+      this.selectedPlatformId = null
       this.hoveredStationId = null
+      this.hoveredPlatformId = null
+      this.cancelPlatformGesture()
     }
     // Zones are only picked inside the signalling mode, which always opens on its selection
     if (t !== 'signal' || this.tool !== 'signal') {
@@ -2273,6 +2520,7 @@ export class EditorStore {
   clearSelection = (): void => {
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     this.notify()
   }
 
@@ -2306,10 +2554,14 @@ export class EditorStore {
     const hadPlacement = this.hasPendingPlacement
     // A signal being laid or dragged is dropped first (the dragged one goes back where it stood)
     const hadSignalGesture = this.cancelSignalGesture()
+    // So is a platform end, a stop marker or a station mark being dragged (it goes back where it was)
+    const hadPlatformGesture = this.cancelPlatformGesture()
     const hadPending =
       hadPlacement ||
+      hadPlatformGesture ||
       this.measureStart !== null ||
       this.speedZoneStart !== null ||
+      this.platformStart !== null ||
       hadSignalGesture ||
       this.isNumericInputActive ||
       this.isDraggingNode ||
@@ -2359,6 +2611,10 @@ export class EditorStore {
       else this.notify()
     } else if (this.tool === 'signal' && this.stepBackSignalMode()) {
       // Signalling climbs one level at a time, like the train mode: see `stepBackSignalMode`
+    } else if (this.tool === 'platform' && this.platformTemplate) {
+      // A station template goes first, back to laying a platform
+      this.platformTemplate = null
+      this.notify()
     } else if (this.tool !== 'select') {
       this.setTool('select')
     } else {
@@ -2412,6 +2668,16 @@ export class EditorStore {
     // Signalling mode: the only thing Delete removes is the selected zone
     if (this.tool === 'signal') {
       if (!this.deleteSelectedSignal()) this.deleteSelectedSpeedZone()
+      return
+    }
+    // A platform picked with the selection tool: Delete removes it, and nothing else
+    if (this.tool === 'select' && this.selectedPlatform) {
+      this.deleteSelectedPlatform()
+      return
+    }
+    // A station picked: Delete removes it with its platforms
+    if (this.tool === 'select' && this.selectedStation) {
+      this.deleteStation(this.selectedStation.id)
       return
     }
     if (this.isTrainSelected || this.tool === 'locomotive' || this.tool === 'coupling') {
@@ -2544,7 +2810,7 @@ export class EditorStore {
     )
     this.camera.x = (minX + maxX) / 2
     this.camera.y = (minY + maxY) / 2
-    this.camera.scale = clampScale(scale)
+    this.camera.scale = clampScale(scale, this.minCameraScale)
     this.notify()
   }
 
@@ -2770,6 +3036,7 @@ export class EditorStore {
     if (this.isPlayMode || this.isNetworkLocked) return null
     this.selection = { nodes: new Set(), segments: new Set() }
     this.selectedStationId = null
+    this.selectedPlatformId = null
     const result = mergeIntoLongRails(this.network, {
       fit: fitPath,
       // 30 cm at full size, and the same share of the gauge on a model scale
@@ -3681,12 +3948,20 @@ export class EditorStore {
    * trains holds the whole rake. While trains are being driven it joins them: it stands at rest,
    * brakes applied, and this screen moves to it — the train it was on keeps its pilot if it has
    * one, else it is left with its brake where it is, like any train let go of.
+   *
+   * `toward`: the station the train is to go to next. The platform track and the way the rake
+   * faces are then those from which the way there keeps to the normal direction of running
+   * (`RakeHeading`): set down without it, it may face the right way on its track and still have
+   * the journey behind it. It is not added to the itinerary here.
    */
-  placeRakeAtStation = (stationId: StationId, rake: RollingStockModel | RakeChoice): StationStop | null => {
+  placeRakeAtStation = (stationId: StationId, rake: RollingStockModel | RakeChoice, toward?: StationId): StationStop | null => {
     const station = this.network.stations.get(stationId)
     if (!station) return null
-    const placed = createRakeAtStation(this.network, station, rake, this.trains)
+    let placed = createRakeAtStation(this.network, station, rake, this.trains)
     if (!placed) return null
+    // What the train can run on and the lines it stands on are those of the rake set down without a heading
+    const heading = toward !== undefined && toward !== stationId ? rakeHeadingToward(this, placed.train, toward) : null
+    if (heading) placed = createRakeAtStation(this.network, station, rake, this.trains, heading) ?? placed
     startItineraryAt(placed.train, stationId)
     this.adoptRake(placed.train)
     return placed.stop
@@ -4227,6 +4502,34 @@ export class EditorStore {
     if (train) this.toggleTrainEmergencyBrake(train)
   }
 
+  // ─────────────────── Platform tool ───────────────────
+
+  /** The platform tool lays one platform on each side of the track: the toggle, turned over by Shift */
+  get platformBothSidesActive(): boolean {
+    return this.platformBothSides !== this.platformShiftHeld
+  }
+
+  setPlatformBothSides = (on: boolean): void => {
+    this.platformBothSides = on
+    this.notify()
+  }
+
+  /** Take a station template (null: back to laying one platform in two clicks); the platform being laid goes */
+  setPlatformTemplate = (template: PlatformTemplate | null): void => {
+    if (template !== null && this.tool !== 'platform') this.setTool('platform')
+    if (this.tool !== 'platform') return
+    this.platformTemplate = template
+    this.platformStart = null
+    this.notify()
+  }
+
+  /** Shift went down or up: the platform tool shows what it would lay then */
+  setPlatformShiftHeld = (held: boolean): void => {
+    if (this.platformShiftHeld === held) return
+    this.platformShiftHeld = held
+    if (this.tool === 'platform') this.notify()
+  }
+
   // ─────────────────── Signalling mode: speed zones ───────────────────
 
   /** True in the signalling mode with the speed limit tool in hand (never while driving) */
@@ -4635,7 +4938,10 @@ export class EditorStore {
   selectStation = (id: string | null): boolean => {
     if (id !== null && !this.network.stations.has(id)) return false
     if (id === this.selectedStationId) return true
-    if (id !== null) this.selection = { nodes: new Set(), segments: new Set() }
+    if (id !== null) {
+      this.selection = { nodes: new Set(), segments: new Set() }
+      this.selectedPlatformId = null
+    }
     this.selectedStationId = id
     this.notify()
     return true
@@ -4646,13 +4952,288 @@ export class EditorStore {
     return stationAt(this.network, worldPos, tolerance)
   }
 
+  /**
+   * The station a click of the selection tool picks at a world position. Its mark or its name, under
+   * the cursor, pick it; near its mark (`tolerance` metres) it is picked only when no platform is
+   * under the cursor: a station laid with its platforms stands in their middle, and a click on the
+   * platform is for the platform — the station is still reached by its mark and its name.
+   */
+  stationPickAt = (worldPos: Point, tolerance: number = 14 / this.camera.scale): Station | null => {
+    if (this.network.stations.size === 0) return null
+    const exact = stationMarkAt(this.network.stations.values(), worldPos, this.camera.scale)
+    if (exact) return exact
+    const near = this.stationAt(worldPos, tolerance)
+    if (!near || (this.network.platforms.size > 0 && this.platformHitAt(worldPos))) return null
+    return near
+  }
+
   /** Remember the station under the cursor (selection tool). True when it changed. */
   updateStationHover = (worldPos: Point): boolean => {
-    const hovered = this.tool === 'select' && !this.isPlayMode ? this.stationAt(worldPos)?.id ?? null : null
+    const hovered = this.tool === 'select' && !this.isPlayMode ? this.stationPickAt(worldPos)?.id ?? null : null
     if (hovered === this.hoveredStationId) return false
     this.hoveredStationId = hovered
     return true
   }
+
+  // ─────────────────── Stations and platforms in the editor (selection tool) ───────────────────
+
+  /** A new station named `name`, at `pos` (the centre of the view when left out). One undo step; it is selected. */
+  createStation = (name: string, pos?: Point): string | null => {
+    if (!this.canEditNetwork) return null
+    const station = createStation(this.network, name, pos ?? { x: this.camera.x, y: this.camera.y })
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedPlatformId = null
+    this.selectedStationId = station.id
+    this.markDirty()
+    return station.id
+  }
+
+  /**
+   * Name and SNCF code of a station; a field left out is kept, an empty code clears it, an empty
+   * name is refused. One undo step. False when refused or nothing changes.
+   */
+  renameStation = (id: string, identity: { name?: string; code?: string }): boolean => {
+    const station = this.network.stations.get(id)
+    if (!this.canEditNetwork || !station) return false
+    const next: { name?: string; code?: string } = {}
+    if (identity.name !== undefined) {
+      const name = identity.name.trim()
+      if (name === '') return false
+      if (name !== station.name) next.name = name
+    }
+    if ('code' in identity) {
+      const code = identity.code?.trim().toUpperCase() || undefined
+      if (code !== station.code) next.code = code
+    }
+    if (Object.keys(next).length === 0) return false
+    setStationIdentity(this.network, id, next)
+    this.markDirty()
+    return true
+  }
+
+  /**
+   * Delete a station with all its platforms (one undo step); the track stays, and the journeys of
+   * the trains no longer call there. False when the network cannot be edited or there is no such station.
+   */
+  deleteStation = (id: string): boolean => {
+    if (!this.canEditNetwork || deleteStation(this.network, id) === null) return false
+    if (this.stationDrag?.id === id) this.stationDrag = null
+    if (this.platformDrag && !this.network.platforms.has(this.platformDrag.platformId)) this.platformDrag = null
+    if (this.selectedStationId === id) this.selectedStationId = null
+    if (this.hoveredStationId === id) this.hoveredStationId = null
+    if (this.selectedPlatformId && !this.network.platforms.has(this.selectedPlatformId)) this.selectedPlatformId = null
+    if (this.hoveredPlatformId && !this.network.platforms.has(this.hoveredPlatformId)) this.hoveredPlatformId = null
+    for (const train of this.trains) {
+      if (!train.itinerary) continue
+      const itinerary = withoutStation(train.itinerary, id)
+      if (itinerary === train.itinerary) continue
+      train.itinerary = itinerary
+      this.routeGuides.delete(train.id)
+    }
+    this.markDirty()
+    return true
+  }
+
+  /** Start dragging the mark (label) of a station with the selection tool. False when the network cannot be edited. */
+  beginStationDrag = (id: string): boolean => {
+    const station = this.network.stations.get(id)
+    if (!this.canEditNetwork || this.tool !== 'select' || !station) return false
+    this.stationDrag = { id, origin: { x: station.pos.x, y: station.pos.y } }
+    return true
+  }
+
+  /** Move the dragged station mark to a world position. True when it moved. */
+  dragStationTo = (worldPos: Point): boolean => {
+    const drag = this.stationDrag
+    return drag ? moveStationLabel(this.network, drag.id, worldPos) : false
+  }
+
+  /** The button comes up: the move is one undo step. True when the station ended somewhere else. */
+  endStationDrag = (): boolean => {
+    const drag = this.stationDrag
+    if (!drag) return false
+    this.stationDrag = null
+    const station = this.network.stations.get(drag.id)
+    const moved = !!station && (station.pos.x !== drag.origin.x || station.pos.y !== drag.origin.y)
+    if (moved) this.markDirty()
+    return moved
+  }
+
+  /** Sizes of a platform at the scale of the project */
+  get platformDims(): PlatformDimensions {
+    return platformDimensions(this.gauge)
+  }
+
+  /** The platform picked, if it still exists */
+  get selectedPlatform(): Platform | null {
+    return this.selectedPlatformId ? this.network.platforms.get(this.selectedPlatformId) ?? null : null
+  }
+
+  /** Pick a platform (null: none) with the selection tool: its panel opens, the track and station selections go. */
+  selectPlatform = (id: string | null): boolean => {
+    if (id !== null && (this.tool !== 'select' || !this.network.platforms.has(id))) return false
+    if (id === this.selectedPlatformId) return true
+    if (id !== null) {
+      this.selection = { nodes: new Set(), segments: new Set() }
+      this.selectedStationId = null
+    }
+    this.selectedPlatformId = id
+    this.notify()
+    return true
+  }
+
+  /**
+   * What of a platform is under a world position, within `tolerance` metres: a stop marker of the
+   * selected platform, an end (« borne ») of the selected platform then of any other, and last the
+   * body of a platform. Null when there is none.
+   */
+  platformHitAt = (worldPos: Point, tolerance: number = 10 / this.camera.scale): PlatformHit | null => {
+    const dims = this.platformDims
+    const selected = this.selectedPlatform?.id
+    if (selected) {
+      const marker = platformMarkerAt(this.network, worldPos, dims, tolerance, selected)
+      if (marker) return { kind: 'marker', ...marker }
+      const end = platformEndAt(this.network, worldPos, dims, tolerance, selected)
+      if (end) return { kind: 'end', ...end }
+    }
+    const end = platformEndAt(this.network, worldPos, dims, tolerance)
+    if (end) return { kind: 'end', ...end }
+    const body = platformAt(this.network, worldPos, dims, 0)
+    return body ? { kind: 'body', platformId: body.id } : null
+  }
+
+  /** Remember the platform under the cursor (selection tool). True when it changed. */
+  updatePlatformHover = (worldPos: Point): boolean => {
+    const hovered = this.tool === 'select' && !this.isPlayMode && this.network.platforms.size > 0
+      ? this.platformHitAt(worldPos)?.platformId ?? null
+      : null
+    if (hovered === this.hoveredPlatformId) return false
+    this.hoveredPlatformId = hovered
+    return true
+  }
+
+  /** Start dragging an end or a stop marker of a platform (selection tool). False when the network cannot be edited. */
+  beginPlatformDrag = (hit: PlatformHit): boolean => {
+    const platform = this.network.platforms.get(hit.platformId)
+    if (!this.canEditNetwork || this.tool !== 'select' || !platform || hit.kind === 'body') return false
+    const origin = platformShape(platform)
+    this.platformDrag = hit.kind === 'end'
+      ? { kind: 'end', platformId: hit.platformId, edge: hit.edge, end: hit.end, origin }
+      : { kind: 'marker', platformId: hit.platformId, index: hit.index, origin }
+    return true
+  }
+
+  /** Slide what is dragged of a platform to the place of its track nearest to a world position. True when it moved. */
+  dragPlatformTo = (worldPos: Point): boolean => {
+    const drag = this.platformDrag
+    if (!drag) return false
+    if (drag.kind === 'marker') return moveMarker(this.network, drag.platformId, drag.index, worldPos)
+    const minLength = MIN_PLATFORM_LENGTH * (this.platformDims.width / platformDimensions().width)
+    return moveEdgeEnd(this.network, drag.platformId, drag.edge, drag.end, worldPos, minLength)
+  }
+
+  /**
+   * What the canvas writes beside a dragged platform: the length of the edge for an end, the
+   * distance from a stop marker to the end of the platform the train runs towards. Null without a drag.
+   */
+  get platformDragMeasure(): { kind: 'end' | 'marker'; length: number } | null {
+    const drag = this.platformDrag
+    const platform = drag && this.network.platforms.get(drag.platformId)
+    if (!drag || !platform) return null
+    if (drag.kind === 'end') {
+      const edge = platform.edges[drag.edge]
+      return edge ? { kind: 'end', length: edgeLength(this.network, edge) } : null
+    }
+    const marker = platform.markers[drag.index]
+    const edge = marker && platform.edges[marker.edge]
+    if (!marker || !edge) return null
+    return { kind: 'marker', length: marker.heading === 'forward' ? edgeLength(this.network, edge) - marker.at : marker.at }
+  }
+
+  /** The button comes up: the drag is one undo step. True when the platform changed. */
+  endPlatformDrag = (): boolean => {
+    const drag = this.platformDrag
+    if (!drag) return false
+    this.platformDrag = null
+    const platform = this.network.platforms.get(drag.platformId)
+    const changed = !!platform && JSON.stringify(platformShape(platform)) !== JSON.stringify(drag.origin)
+    if (changed) this.markDirty()
+    return changed
+  }
+
+  /** Drop a platform or station drag, putting back what moved. True when there was one. */
+  private cancelPlatformGesture(): boolean {
+    const platformDrag = this.platformDrag
+    const stationDrag = this.stationDrag
+    this.platformDrag = null
+    this.stationDrag = null
+    if (platformDrag) restorePlatformShape(this.network, platformDrag.platformId, platformDrag.origin)
+    if (stationDrag) moveStationLabel(this.network, stationDrag.id, stationDrag.origin)
+    return platformDrag !== null || stationDrag !== null
+  }
+
+  /** Remove a platform (one undo step). False when the network cannot be edited or there is no such platform. */
+  deletePlatform = (id: string): boolean => {
+    if (!this.canEditNetwork) return false
+    if (this.platformDrag?.platformId === id) this.platformDrag = null
+    if (!removePlatform(this.network, id)) return false
+    if (this.selectedPlatformId === id) this.selectedPlatformId = null
+    if (this.hoveredPlatformId === id) this.hoveredPlatformId = null
+    this.markDirty()
+    return true
+  }
+
+  deleteSelectedPlatform = (): boolean => {
+    const platform = this.selectedPlatform
+    return platform ? this.deletePlatform(platform.id) : false
+  }
+
+  /** One change of a platform through a domain helper: one undo step when it changed anything */
+  private editPlatform(change: () => boolean): boolean {
+    if (!this.canEditNetwork || !change()) return false
+    this.markDirty()
+    return true
+  }
+
+  /** Track number of an edge of a platform (empty: none). One undo step. */
+  setPlatformRef = (id: string, edge: 0 | 1, ref: string): boolean =>
+    this.editPlatform(() => setPlatformRef(this.network, id, edge, ref))
+
+  /** Width of a platform beside one track, metres at 1:1. One undo step. */
+  setPlatformWidth = (id: string, width: number): boolean =>
+    this.editPlatform(() => setPlatformWidth(this.network, id, width))
+
+  /** The station a platform belongs to. One undo step. */
+  setPlatformStation = (id: string, stationId: string): boolean =>
+    this.editPlatform(() => setPlatformStation(this.network, id, stationId))
+
+  /** A new station, set in the middle of a platform, which then belongs to it. One undo step. Returns its id. */
+  createStationForPlatform = (id: string, name: string): string | null => {
+    const platform = this.network.platforms.get(id)
+    if (!this.canEditNetwork || !platform) return null
+    const pos = platformCentre(this.network, platform, this.platformDims) ?? { x: this.camera.x, y: this.camera.y }
+    const station = createStation(this.network, name, pos)
+    setPlatformStation(this.network, id, station.id)
+    this.markDirty()
+    return station.id
+  }
+
+  /** A stop marker added to an edge, short of the end a train running `heading` comes to. One undo step. */
+  addPlatformMarker = (id: string, edge: 0 | 1, heading: StopMarker['heading']): boolean => {
+    const track = this.network.platforms.get(id)?.edges[edge]
+    if (!track) return false
+    const length = edgeLength(this.network, track)
+    const inset = Math.min(this.platformDims.markerMargin, length / 2)
+    return this.editPlatform(() => addMarker(this.network, id, { edge, at: heading === 'forward' ? length - inset : inset, heading }) !== null)
+  }
+
+  /** Remove a stop marker of a platform. One undo step. */
+  removePlatformMarker = (id: string, index: number): boolean =>
+    this.editPlatform(() => removeMarker(this.network, id, index))
+
+  /** Direction and longest train of a stop marker (`maxLength` undefined: every train). One undo step. */
+  setPlatformMarker = (id: string, index: number, options: { heading?: StopMarker['heading']; maxLength?: number }): boolean =>
+    this.editPlatform(() => setMarkerOptions(this.network, id, index, options))
 
   get selectedSignal(): Signal | null {
     if (this.tool !== 'signal' || !this.selectedSignalId) return null
@@ -4964,6 +5545,8 @@ export class EditorStore {
     for (const trainId of [...this.trainDrivers.keys()]) if (!this.trains.some((t) => t.id === trainId)) this.trainDrivers.delete(trainId)
     // A train nearing a line of the dataset that is not loaded: its file is asked for now
     this.checkDatasetLines(dt)
+    // Into a tunnel or out of one: the view goes with the train of this screen
+    this.followDrivenDepth()
     this.checkItineraries(dt)
     // Once every train has moved: what each one holds, what the signals show, the signals passed
     // (nothing at all on a network without signal)
@@ -5028,6 +5611,14 @@ export const DATASET_LOOKAHEAD_M = 5000
 export const DATASET_KEEP_M = 20_000
 /** How often (s) the trains are checked against the connections */
 const DATASET_CHECK_PERIOD_S = 1
+/** The pieces whose box comes this close (m) to the view are fetched, once the view is near enough */
+export const DATASET_VIEW_MARGIN_M = 5000
+/** How many pieces of the dataset stay loaded at most (about 10 000 rails): past it, the ones seen longest ago go */
+export const DATASET_MAX_PIECES = 24
+/** The box of a line (piece) of the index */
+function lineBox(index: DatasetIndex, id: LineId): BBox {
+  return index.lines.find((line) => line.id === id)?.bbox ?? { minX: Infinity, minY: Infinity, maxX: Infinity, maxY: Infinity }
+}
 /** How often (s) the trains are placed on the way to their next station */
 const ROUTE_GUIDE_PERIOD_S = 1
 /** Camera scale (px per metre) a rake set down at a station is shown at: its bogies show from 3.5 */

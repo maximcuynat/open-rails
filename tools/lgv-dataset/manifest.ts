@@ -13,6 +13,17 @@ export interface DatasetManifest {
   approaches: Approach[]
   /** The regions whose classic lines are published too; none when absent */
   regions?: Region[]
+  /** The metros published too (`railway=subway`), of the cities the dataset reaches; none when absent */
+  subways?: Subway[]
+}
+
+/** The metro of a city: every running track of `railway=subway` in its box */
+export interface Subway {
+  id: string
+  /** The name of the network (« Métro de Paris »), which names its lines: « Métro de Paris, ligne 1 » */
+  name: string
+  /** south, west, north, east (degrees) */
+  bbox: [number, number, number, number]
 }
 
 /** A region of France taken whole: every running track of its classic lines */

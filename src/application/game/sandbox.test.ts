@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorStore } from '@application/state/editorStore'
 import { fakeDataset } from '@application/dataset/dataset.testkit'
 import { resetDatasetIndexCache } from '@application/dataset/datasetClient'
-import { resetIdCounter } from '@domain/models/network'
+import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
+import { setRunning } from '@domain/models/running'
+import { addStation } from '@domain/models/stations'
 import { ROLLING_STOCK } from '@domain/models/rollingStock'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { addSandboxTrain, canAddSandboxTrain, checkStationFit, prepareSandbox, SANDBOX_TRAINS, SandboxError, sandboxErrorMessage, stationFitMessage } from './sandbox'
@@ -36,8 +38,8 @@ describe('starting a sandbox game', () => {
     expect(train.vehicles).toHaveLength(ROLLING_STOCK.duplex.trailerCount + 2)
     expect(train.vehicles[0].front.segId).toBe(start.stop.segId)
     expect(store.selectedTrain).toBe(train)
-    // The camera on the head of the rake (the stop, at x = 250), close enough for the bogies
-    expect(store.camera.x).toBeCloseTo(250, 3)
+    // The camera on the lead bogie of the rake, its nose on the stop at x = 250, close enough for the bogies
+    expect(store.camera.x).toBeCloseTo(250 - ROLLING_STOCK.duplex.powerCar.noseOverhang, 3)
     expect(store.camera.y).toBeCloseTo(0, 3)
     expect(store.camera.scale).toBeGreaterThanOrEqual(3.5)
     // Not driving yet: the player chooses a console first, then takes the controls
@@ -132,6 +134,39 @@ describe('starting a sandbox game', () => {
     expect(`${first.vehicles[0].front.segId} ${first.vehicles[0].front.t}`).not.toBe(at)
     expect(second.currentSpeed).toBe(0)
     store.togglePlayMode()
+  })
+
+  it('sets the rake down towards the destination asked for, and puts it in the itinerary', async () => {
+    const { index, files } = fakeDataset()
+    const store = new EditorStore()
+    // « Gare Deux » is on line b, not loaded: the rake faces the gate towards it
+    const start = await prepareSandbox(store, index, 's1', 'duplex', { fetch: serving(files), baseUrl: '/', destination: 's2' })
+    expect(start.destinationRefused).toBeUndefined()
+    const train = store.trains[0]
+    expect(train.itinerary).toEqual({ stations: ['s1', 's2'], next: 1 })
+    expect(train.vehicles[0].front.forward).toBe(true)
+    // A destination no line leads to is said, the rake standing where it would without one
+    const isolated = await prepareSandbox(store, index, 's1', 'duplex', { fetch: serving(files), baseUrl: '/', destination: 's3' })
+    expect(isolated.destinationRefused).toMatch(/Gare Isolée/)
+    expect(store.trains[0].itinerary).toEqual({ stations: ['s1'], next: 1 })
+  })
+
+  it('on a double line, sets the rake down on the track the way to the destination keeps to', () => {
+    const store = new EditorStore()
+    const net = store.network
+    // Keeping left: the north track (y = 0) runs east, the south one west; three stations along both
+    const tracks = [0, 4.5].map((y) => addSegment(net, addNode(net, { x: 0, y }).id, addNode(net, { x: 4000, y }).id)!)
+    setRunning(net, tracks[0], 'forward')
+    setRunning(net, tracks[1], 'backward')
+    const stops = (t: number) => [tracks[1], tracks[0]].map((track) => ({ segId: track.id, t }))
+    const middle = addStation(net, { name: 'Milieu', pos: { x: 2000, y: 2 }, stops: stops(0.5) })
+    const east = addStation(net, { name: 'Est', pos: { x: 3800, y: 2 }, stops: stops(0.95) })
+    const west = addStation(net, { name: 'Ouest', pos: { x: 200, y: 2 }, stops: stops(0.05) })
+    store.notify()
+    expect(store.placeRakeAtStation(middle.id, 'duplex', east.id)!.segId).toBe(tracks[0].id)
+    expect(store.trains[0].vehicles[0].front.forward).toBe(true)
+    expect(store.placeRakeAtStation(middle.id, 'regiolis', west.id)!.segId).toBe(tracks[1].id)
+    expect(store.trains[1].vehicles[0].front.forward).toBe(false)
   })
 
   it('refuses a train where no platform is free, and a station the game does not know', async () => {

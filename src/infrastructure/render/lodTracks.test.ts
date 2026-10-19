@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { OTHER_SIDE_ALPHA } from '@infrastructure/render/levelAlpha'
 import { createCamera } from '@infrastructure/render/camera'
 import { createNetwork, addNode, addSegment, addCurveSegment } from '@domain/models/network'
 import type { Network } from '@domain/models/types'
 import { groupPiecesByLevel } from '@infrastructure/render/levelPieces'
 import { LOD_LINE_BELOW_PX, trackLod } from '@infrastructure/render/lod'
 import { networkDerived } from '@infrastructure/render/networkDerived'
-import { GAUGE, RAIL_WIDTH, TUNNEL_ALPHA, TUNNEL_DASH, getViewportBounds, renderNetwork } from '@infrastructure/render/renderer'
+import { GAUGE, RAIL_WIDTH, TUNNEL_DASH, getViewportBounds, renderNetwork } from '@infrastructure/render/renderer'
 import {
   CLOSED_BRANCH_ALPHA,
   LINE_HALO_EXTRA,
@@ -180,7 +181,7 @@ describe('line tier', () => {
     const { net } = yard(4, 6, -1)
     const { strokes } = drawLine(net, 1)
     expect(strokes).toHaveLength(1)
-    expect(strokes[0].globalAlpha).toBe(TUNNEL_ALPHA)
+    expect(strokes[0].globalAlpha).toBe(OTHER_SIDE_ALPHA)
     expect(strokes[0].dash).toEqual(TUNNEL_DASH)
   })
 
@@ -340,7 +341,7 @@ describe('schematic tier', () => {
   it('a section below ground is dimmed', () => {
     const { net } = yard(1, 4, -1)
     const { strokes } = drawSchematic(net, 0.1)
-    expect(strokes.map((s) => s.globalAlpha)).toEqual([TUNNEL_ALPHA])
+    expect(strokes.map((s) => s.globalAlpha)).toEqual([OTHER_SIDE_ALPHA])
   })
 
   it('straight runs only: no curve is traced, no dash is set', () => {

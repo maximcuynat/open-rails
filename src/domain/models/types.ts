@@ -55,7 +55,25 @@ export interface Segment {
   parentSegmentId?: SegmentId
   /** Cant of a curved rail in mm, set by hand; absent = computed from its radius and speed (see `curveCant`) */
   cant?: number
+  /**
+   * Normal direction of running on this rail, relative to its `from` → `to`: on a double line
+   * trains keep to one track each way (to the left in France). Absent: none (single track, yard,
+   * unknown). A cost for the path search (`runningToll`), never a ban.
+   */
+  running?: RunningDirection
+  /**
+   * What kind of railway the rail belongs to (OSM `railway=subway`, `tram`, `light_rail`): absent for
+   * the railway itself, the one trains run on. A metro or tram track is drawn and saved like any
+   * other, but no rolling stock of the table runs on it (`isUrbanRail`, `store.railsBlockedFor`).
+   */
+  railway?: RailwayKind
 }
+
+/** Normal direction of running on a rail: from its `from` node to its `to` node, or the other way */
+export type RunningDirection = 'forward' | 'backward'
+
+/** A railway other than the main one a rail may belong to (`Segment.railway`) */
+export type RailwayKind = 'subway' | 'tram' | 'light_rail'
 
 export type JunctionId = string
 
@@ -176,7 +194,7 @@ export interface StationStop {
 
 /**
  * A railway station: a name, a place, and the rails trains stop at (its platform tracks). Laid by
- * the OpenStreetMap import, read by the canvas and the panels; nothing edits one yet. It names
+ * the OpenStreetMap import or made in the editor; with platforms, its stops come from their markers. It names
  * rails, so the domain keeps its stops in place when a rail is cut or merged and drops them with
  * the rail (see `replaceRail`). Change it only through the helpers of `models/stations.ts`.
  */
@@ -190,6 +208,50 @@ export interface Station {
   /** Three-letter code of the SNCF registry (MSC for Marseille Saint-Charles) */
   code?: string
   stops: StationStop[]
+}
+
+export type PlatformId = string
+
+/**
+ * One edge of a platform: the track it runs along and on which side. `track` is walked from the
+ * start of the platform to its end, rail after rail; `side` is the side of that track as seen
+ * walking it that way, on screen (world y grows downwards: the left of a heading (hx, hy) is
+ * (hy, −hx)). The two ends of `track` are the ends of the platform (its « bornes »).
+ */
+export interface PlatformEdge {
+  track: TrackSpan[]
+  side: 'left' | 'right'
+  /** Track number shown at the platform (« 1 », « A »): `local_ref` of the data, or typed in */
+  ref?: string
+}
+
+/**
+ * Where the head of a train stops at a platform edge. `at` is a distance along the edge from its
+ * start, in metres along the track — not a parameter, so that it does not stretch with a rail.
+ */
+export interface StopMarker {
+  /** Index of the edge in `Platform.edges` */
+  edge: 0 | 1
+  at: number
+  /** The direction of travel it speaks to: `forward` from the start of the edge towards its end */
+  heading: 'forward' | 'backward'
+  /** Longest train it stops, metres; absent: every train */
+  maxLength?: number
+}
+
+/**
+ * A platform of a station, beside one track (one edge) or between two (an island, two edges that
+ * face each other). It names rails, like a speed zone: the domain keeps it in place when a rail is
+ * cut or merged and shortens it when one goes. Change it only through the helpers of
+ * `models/platforms.ts`.
+ */
+export interface Platform {
+  id: PlatformId
+  stationId: StationId
+  edges: [PlatformEdge] | [PlatformEdge, PlatformEdge]
+  /** Width of a platform beside one track, metres at 1:1 (an island runs from one edge to the other) */
+  width: number
+  markers: StopMarker[]
 }
 
 export interface Network {
@@ -209,6 +271,8 @@ export interface Network {
   signals: Map<SignalId, Signal>
   /** Stations and their platform tracks (see `models/stations.ts`) */
   stations: Map<StationId, Station>
+  /** Platforms of the stations (see `models/platforms.ts`) */
+  platforms: Map<PlatformId, Platform>
 }
 
 export interface Selection {

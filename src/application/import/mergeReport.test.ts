@@ -8,6 +8,7 @@ const outcome = (over: Partial<MergeOutcome> = {}): MergeOutcome => ({
   railsDropped: 1,
   stationsAdded: 2,
   stationsMerged: 1,
+  platformsAdded: 0,
   junctionsDropped: 0,
   junctionsRebuilt: 0,
   signalsAdded: 0,
@@ -29,6 +30,12 @@ describe('what a merge says once done', () => {
       { label: 'gares ajoutées', value: '2' },
     ])
     expect(mergeReportFigures(outcome({ stationsAdded: 0, stationsMerged: 0, repairs: 4 })).map((f) => f.label)).toEqual(['rails ajoutés', 'nœuds communs', 'doublon écarté', 'raccords soudés'])
+  })
+
+  it('counts the platforms it brought, after the stations, and says nothing of them when there are none', () => {
+    expect(mergeReportFigures(outcome({ platformsAdded: 3 }))).toContainEqual({ label: 'quais ajoutés', value: '3' })
+    expect(mergeReportFigures(outcome({ platformsAdded: 1 })).map((f) => f.label)).toEqual(['rails ajoutés', 'nœuds communs', 'doublon écarté', 'gares ajoutées', 'quai ajouté'])
+    expect(mergeReportFigures(outcome({ platformsAdded: 0 })).map((f) => f.label)).not.toContain('quai ajouté')
   })
 
   it('says what the user should know: no common frame, gauges, stations, tables, and how to go back', () => {

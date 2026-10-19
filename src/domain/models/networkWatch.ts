@@ -97,6 +97,7 @@ export function createCountedNetwork(): Network {
     speedZones: new CountingMap(counter, 'speedZones'),
     signals: new CountingMap(counter, 'signals'),
     stations: new CountingMap(counter, 'stations'),
+    platforms: new CountingMap(counter, 'platforms'),
   }
   counters.set(net, counter)
   return net
@@ -176,6 +177,8 @@ class ContentRecord {
       put(seg.via?.y)
       put(seg.parentSegmentId)
       put(seg.cant)
+      put(seg.running)
+      put(seg.railway)
       // Replaced, never changed in place: the list itself tells
       put(seg.path)
     }
@@ -239,6 +242,30 @@ class ContentRecord {
         put(stop.segId)
         put(stop.t)
         put(stop.ref)
+      }
+    }
+    for (const platform of net.platforms.values()) {
+      label = `platform ${platform.id}`
+      put(platform.id)
+      put(platform.stationId)
+      put(platform.width)
+      put(platform.edges.length)
+      for (const edge of platform.edges) {
+        put(edge.side)
+        put(edge.ref)
+        put(edge.track.length)
+        for (const span of edge.track) {
+          put(span.segId)
+          put(span.t0)
+          put(span.t1)
+        }
+      }
+      put(platform.markers.length)
+      for (const marker of platform.markers) {
+        put(marker.edge)
+        put(marker.at)
+        put(marker.heading)
+        put(marker.maxLength)
       }
     }
     if (values.length !== at) {

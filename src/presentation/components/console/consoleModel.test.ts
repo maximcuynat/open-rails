@@ -192,7 +192,12 @@ describe('console view', () => {
       derailment: null,
       // No signal on the network (state without `signals`): nothing of the signalling is shown
       signals: null,
+      wrongTrack: null,
     })
+  })
+
+  it('says « Contre-sens » under the speed while the train runs its track the other way', () => {
+    expect(consoleView({ ...baseState, wrongTrack: true }, fleet).wrongTrack?.label).toBe('Contre-sens')
   })
 
   it('names the electric brake on the negative notches', () => {

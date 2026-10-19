@@ -34,7 +34,7 @@ describe('stations in a saved project', () => {
 
     const saved = throughJson(save(net))
     expect(saved.version).toBe(4)
-    expect(PROJECT_VERSION).toBe(4)
+    expect(PROJECT_VERSION).toBe(5)
     expect(saved.stations).toEqual([
       { id: full.id, name: 'Clelles-Mens', x: 450, y: 0, uic: '8774762', code: 'CLM', stops: [{ segId: rails[1].id, t: 0.5, ref: 'A' }, { segId: rails[0].id, t: 0.9 }] },
       { id: bare.id, name: 'Halte', x: 800, y: 30, stops: [] },
@@ -42,7 +42,7 @@ describe('stations in a saved project', () => {
     const loaded = deserializeNetwork(saved).network
     expect([...loaded.stations.values()]).toEqual([...net.stations.values()])
     expect(JSON.stringify(save(loaded))).toBe(JSON.stringify(save(net)))
-    expect(() => deserializeNetwork({ ...saved, version: 5 as 4 })).toThrow()
+    expect(() => deserializeNetwork({ ...saved, version: 6 as 5 })).toThrow()
   })
 
   it('reads a damaged file without failing: what does not hold together is skipped', () => {

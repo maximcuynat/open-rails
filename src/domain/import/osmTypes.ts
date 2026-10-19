@@ -61,6 +61,8 @@ export interface OsmImportOptions {
   signals?: OsmSignalMode
   /** Read the stations and the stop positions into stations with their platform tracks. On when absent. */
   stations?: boolean
+  /** Lay the platforms the data draws (`railway=platform`) along their tracks, with the stations. On when absent. */
+  platforms?: boolean
   /** Remember the OpenStreetMap way each rail was laid from (`OsmImportResult.wayOfRail`). Off when absent. */
   traceWays?: boolean
   /**
@@ -68,6 +70,14 @@ export interface OsmImportOptions {
    * `lambert93`: the national frame, the same for every import, so that two imports line up.
    */
   frame?: OsmFrame
+  /**
+   * Work out the normal direction of running of the track OSM gives none for, by the French rule
+   * « keep to the left on a double line » (`inferKeepLeft`). On when absent; `railway:preferred_direction`
+   * is read whatever this says.
+   */
+  keepLeft?: boolean
+  /** Hold the rule of keeping left against the tags, in the report (`OsmRunningReport.check`). Off when absent. */
+  checkKeepLeft?: boolean
 }
 
 export const DEFAULT_OSM_IMPORT_OPTIONS: OsmImportOptions = {
@@ -118,6 +128,7 @@ export interface OsmImportIssue {
     | 'cut-by-area' // a track end that is the edge of the imported area, not a buffer stop
     | 'signal-not-placed' // a real signal the import reads but could not lay
     | 'station-not-placed' // a station with no track near enough to stand at
+    | 'platform-not-placed' // a platform along the track with no station near enough to belong to
   /** World position, metres. */
   x: number
   y: number
@@ -172,7 +183,7 @@ export interface OsmSignalReport {
 /** Why a stop or a station the import reads was not laid */
 export type OsmStationSkip =
   | 'unnamed' // a stop position with neither name nor UIC code: nothing to make a station of
-  | 'track-not-imported' // on a way the options leave out (a metro station under a railway one)
+  | 'track-not-imported' // on a way the options leave out (a metro station under a railway one), or on a metro track
   | 'off-track' // too far from the track once laid
   | 'no-track-nearby' // a station node with no track within reach
 
@@ -183,6 +194,22 @@ export interface OsmStationReport {
   placed: number
   stops: number
   skipped: Partial<Record<OsmStationSkip, number>>
+}
+
+/** Why a platform the data draws was not laid */
+export type OsmPlatformSkip =
+  | 'no-track' // no track of the heavy rail kept runs along it
+  | 'no-station' // no station within reach to belong to
+  | 'duplicate' // the same platform drawn twice (an area and a line)
+  | 'uncovered-stops' // its station has stops no platform of the data covers: it keeps them, without platforms
+
+export interface OsmPlatformReport {
+  /** Platforms of the heavy rail the data draws */
+  found: number
+  /** Platforms laid, and how many of them are islands (between two tracks) */
+  placed: number
+  islands: number
+  skipped: Partial<Record<OsmPlatformSkip, number>>
 }
 
 export interface OsmImportReport {
@@ -212,7 +239,24 @@ export interface OsmImportReport {
   signals?: OsmSignalReport
   /** What the import did about the stations; absent when they were not asked for */
   stations?: OsmStationReport
+  /** What the import did about the platforms; absent when they were not asked for */
+  platforms?: OsmPlatformReport
+  /** Length of track given a normal direction of running by its OSM tag, by the rule of keeping left, and without one, km */
+  running?: OsmRunningReport
   issues: OsmImportIssue[]
+}
+
+export interface OsmRunningReport {
+  taggedKm: number
+  inferredKm: number
+  noneKm: number
+  /** Of `inferredKm`, the track given its direction by keeping right (the metros, the classic lines of Alsace-Moselle) */
+  rightHandKm?: number
+  /**
+   * The rule of keeping left held against the tags, with `checkKeepLeft`: of the tagged track it
+   * can tell, the km where it says what the tag says, and where it says the other way
+   */
+  check?: { agreeKm: number; disagreeKm: number }
 }
 
 /** Where imported data comes from. Stored in the project: the ODbL asks for it. */

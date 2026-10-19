@@ -3,7 +3,8 @@ import { EditorStore } from '@application/state/editorStore'
 import { addNode, addSegment, resetIdCounter } from '@domain/models/network'
 import { addJunction, syncJunctions } from '@domain/models/junction'
 import { createLocomotive } from '@domain/models/locomotive'
-import { MAX_NOTCH, MIN_NOTCH } from '@domain/models/train'
+import { MAX_NOTCH, MIN_NOTCH, trainRouteStart } from '@domain/models/train'
+import { setRunning } from '@domain/models/running'
 import { resetMemoryStorage } from '@infrastructure/persistence/persistence'
 import { setSignalOptions } from '@domain/models/signals'
 import { ON_SIGHT_SPEED } from '@domain/models/signalling'
@@ -57,6 +58,20 @@ describe('console state', () => {
     expect(read.ok && read.message.t === 'state' ? read.message.state?.paused : null).toBe(true)
     store.setPaused(false)
     expect(buildConsoleState(store)!.paused).toBeUndefined()
+  })
+
+  it('says « contre-sens » on a track run the other way, and the phone reads it too', () => {
+    const store = makeDrivingStore()
+    expect(buildConsoleState(store)!.wrongTrack).toBeUndefined()
+    const start = trainRouteStart(store.selectedTrain!)!
+    const rail = store.network.segments.get(start.segId)!
+    setRunning(store.network, rail, start.forward ? 'backward' : 'forward')
+    const state = buildConsoleState(store)!
+    expect(state.wrongTrack).toBe(true)
+    const read = decodeMessage(encodeMessage({ t: 'state', state, ack: 0 }))
+    expect(read.ok && read.message.t === 'state' ? read.message.state?.wrongTrack : null).toBe(true)
+    setRunning(store.network, rail, start.forward ? 'forward' : 'backward')
+    expect(buildConsoleState(store)!.wrongTrack).toBeUndefined()
   })
 
   it('shows a train that starts at rest with its brake applied', () => {

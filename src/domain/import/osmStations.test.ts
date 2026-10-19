@@ -64,8 +64,8 @@ describe('stations read from the stop positions', () => {
     expect(result.network.stations.size).toBe(0)
     expect(result.report.stations).toEqual({ found: 0, placed: 0, stops: 0, skipped: { unnamed: 1, 'track-not-imported': 1 } })
     expect(result.report.issues.filter((issue) => issue.kind === 'station-not-placed')).toEqual([])
-    // Imported with its tracks, the metro stop is a station like any other
-    expect(convertOsm(data, options({ extraKinds: ['subway'] })).network.stations.size).toBe(1)
+    // Imported with its tracks, the metro stop makes no station either: no train of the table runs there
+    expect(convertOsm(data, options({ extraKinds: ['subway'] })).network.stations.size).toBe(0)
   })
 
   it('a station node beside the track (a building) takes the heavy-rail tracks within 80 m as its platforms, with its code', () => {

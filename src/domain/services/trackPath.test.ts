@@ -209,3 +209,26 @@ describe('findTrackPathToAny', () => {
     expect(findTrackPathToAny(net, { segId: first.id, t: 0.5 }, goal, { blocked: (id) => id === first.id })!.length).toBeCloseTo(500, 9)
   })
 })
+
+describe('goals reached one way only', () => {
+  it('passes a goal that wants the other way and goes on to one that wants this way', () => {
+    // Three rails eastwards; the middle one laid backwards (from x = 2000 to x = 1000)
+    const net = createNetwork()
+    const n = [0, 1000, 2000, 3000].map((x) => addNode(net, { x, y: 0 }))
+    const first = addSegment(net, n[0].id, n[1].id)!
+    const middle = addSegment(net, n[2].id, n[1].id)!
+    const last = addSegment(net, n[2].id, n[3].id)!
+    const from = { segId: first.id, t: 0.5 }
+    // Eastwards the middle rail is run towards its start: a goal on it that wants it run forward is not reached
+    const goals = [{ segId: middle.id, t: 0.5, forward: true }, { segId: last.id, t: 0.5, forward: true }]
+    const way = findTrackPathToAny(net, from, goals, { leaving: 1 })!
+    expect(way.goal).toBe(1)
+    expect(way.length).toBeCloseTo(2000, 6)
+    // The same goal wanting the way the train runs is reached
+    expect(findTrackPathToAny(net, from, [{ segId: middle.id, t: 0.5, forward: false }], { leaving: 1 })!.length).toBeCloseTo(1000, 6)
+    // On the rail it starts on: only ahead of it the way it leaves
+    expect(findTrackPathToAny(net, from, [{ segId: first.id, t: 0.8, forward: false }], { leaving: 1 })).toBeNull()
+    expect(findTrackPathToAny(net, from, [{ segId: first.id, t: 0.8, forward: true }])!.length).toBeCloseTo(300, 6)
+    expect(findTrackPathToAny(net, from, [{ segId: first.id, t: 0.2, forward: false }])!.length).toBeCloseTo(300, 6)
+  })
+})

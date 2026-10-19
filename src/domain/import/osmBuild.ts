@@ -200,11 +200,17 @@ const MAX_SPEED_HOPS = 50
  * assumed). It is the speed of the track it continues: the nearest `maxspeed` along its chain and
  * the chains that run on from it (`NodeTangents.through`), the lower of the two when both sides
  * carry one. A track that continues none takes `defaultSpeed`, unless it is a high-speed track:
- * that one is left to the line speed. Nothing is assumed when `defaultSpeed` is 0.
+ * that one is left to the line speed; a metro track takes no more than `SUBWAY_ASSUMED_SPEED`.
+ * Nothing is assumed when `defaultSpeed` is 0.
  *
  * An assumed speed is a ceiling only: the track is not laid for it (`designSpeed` reads what OSM
  * says and nothing else), and its curves keep the limit of their radius.
  */
+/** The most a metro track without `maxspeed` is taken to allow, km/h (the fastest French metros run at 80) */
+export const SUBWAY_ASSUMED_SPEED = 80
+/** The speed a tram track without `maxspeed` is assumed to allow, in km/h (street running) */
+export const TRAM_ASSUMED_SPEED = 50
+
 export function assumedSpeeds(chains: Chain[], tangents: NodeTangents, defaultSpeed: number): (number | null)[][] {
   if (!(defaultSpeed > 0)) return chains.map((chain) => chain.edges.map(() => null))
   const fallback = zoneSpeedUnder(defaultSpeed)
@@ -241,7 +247,7 @@ export function assumedSpeeds(chains: Chain[], tangents: NodeTangents, defaultSp
       const a = before[i]
       const b = after[i]
       if (a !== null && b !== null) return Math.min(a, b)
-      return a ?? b ?? (edge.track.highSpeed ? null : fallback)
+      return a ?? b ?? (edge.track.highSpeed ? null : edge.track.kind === 'tram' ? Math.min(fallback, TRAM_ASSUMED_SPEED) : edge.track.kind === 'subway' || edge.track.kind === 'light_rail' ? Math.min(fallback, SUBWAY_ASSUMED_SPEED) : fallback)
     })
   })
 }

@@ -34,21 +34,30 @@ describe('Units and Scale System', () => {
   })
 
   it('formats distances correctly in meters, centimeters and millimeters', () => {
-    expect(formatDistance(12.3456, 'm')).toBe('12.35 m')
+    expect(formatDistance(12.3456, 'm')).toBe('12,35 m')
     expect(formatDistance(0.248, 'mm', 0)).toBe('248 mm')
-    expect(formatDistance(0.248, 'cm', 1)).toBe('24.8 cm')
+    expect(formatDistance(0.248, 'cm', 1)).toBe('24,8 cm')
     expect(formatDistance(Infinity, 'm')).toBe('—')
   })
 
+  it('writes the decimal comma the French way, and reads back what it wrote', () => {
+    expect(formatDistance(160, 'm')).toBe('160,00 m')
+    expect(formatDistance(-1.5, 'm')).toBe('-1,50 m')
+    expect(formatDistance(0.0125, 'mm')).toBe('12,5 mm')
+    for (const unit of ['m', 'cm', 'mm'] as const) {
+      expect(parseDistance(formatDistance(12.34, unit), unit)).toBeCloseTo(12.34, 1)
+    }
+  })
+
   it('formats radii correctly', () => {
-    expect(formatRadius(500, 'm')).toBe('R 500.00 m')
+    expect(formatRadius(500, 'm')).toBe('R 500,00 m')
     expect(formatRadius(0.4375, 'mm')).toBe('R 438 mm')
     expect(formatRadius(Infinity, 'm')).toBe('R ∞')
   })
 
   it('formats angles correctly', () => {
-    expect(formatAngle(45)).toBe('45.0°')
-    expect(formatAngle(22.567, 2)).toBe('22.57°')
+    expect(formatAngle(45)).toBe('45,0°')
+    expect(formatAngle(22.567, 2)).toBe('22,57°')
   })
 
   it('parses distance correctly into world meters', () => {

@@ -1,9 +1,11 @@
 import { segmentPartialLength, type TrackPosition } from '../models/locomotive'
 import { findJunctionAtNode, isPassageOpen } from '../models/routing'
-import type { Network, NodeId, SegmentId, Station, StationStop, TrackSpan } from '../models/types'
+import type { Network, NodeId, SegmentId, Station, TrackSpan } from '../models/types'
 import type { LineSettings } from '../models/speedLimits'
 import { speedLimitOverSpans } from '../models/trackSpeed'
+import { stationStopGoals, type StopGoal } from './stopMarkers'
 import { findTrackPathToAny, type TrackPath, type TrackPathOptions, type TrackPoint } from './trackPath'
+import { runningToll, sumTolls } from './runningDirection'
 
 // ─────────────────── The way to the next station, rail by rail ───────────────────
 //
@@ -11,6 +13,11 @@ import { findTrackPathToAny, type TrackPath, type TrackPathOptions, type TrackPo
 // where its lead bogie is to a platform of the station it heads for — or, while that station is
 // on a line not loaded yet, to the node where the loaded track meets the way there (a gate).
 // Found once and then only measured: where the train is along it says how far is left.
+//
+// The way ends where the NOSE of the train is to stop (`stopMarkers.ts`): at a station with
+// platforms, the marker of the platform edge that speaks to the train's length and to the way it
+// comes to the edge; at one without, a stop of the station. What is left along it is measured from
+// the lead bogie: the nose is `noseOffset` metres nearer.
 
 export interface RouteGuide {
   path: TrackPath
@@ -18,13 +25,13 @@ export interface RouteGuide {
   left: number[]
   /** A platform of the station, or the gate towards it on the edge of what is loaded */
   target: 'platform' | 'gate'
-  /** The stop reached, for a platform */
-  stop?: StationStop
+  /** The stop reached, for a platform: where the nose stops (with the way it is reached, for a marker) */
+  stop?: StopGoal
   /** The way starts behind the train: it has to be driven from its other cab */
   behind: boolean
 }
 
-function guideOf(net: Network, path: TrackPath, target: RouteGuide['target'], behind: boolean, stop?: StationStop): RouteGuide {
+function guideOf(net: Network, path: TrackPath, target: RouteGuide['target'], behind: boolean, stop?: StopGoal): RouteGuide {
   const left: number[] = new Array<number>(path.spans.length)
   let after = 0
   for (let i = path.spans.length - 1; i >= 0; i--) {
@@ -61,18 +68,19 @@ const TERMINUS_PLATFORMS = 4
  * way onward runs through; or, at a terminus (no way runs through), the nearest ones from which
  * there is a way out towards it — the train changes ends there.
  */
-function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: readonly StationStop[], beyond: Beyond, blocked: TrackPathOptions['blocked'], toll: TrackPathOptions['toll']): StationStop[] {
+function onwardStops(net: Network, from: TrackPoint, leaving: 0 | 1, stops: readonly StopGoal[], beyond: Beyond, blocked: TrackPathOptions['blocked'], toll: TrackPathOptions['toll']): StopGoal[] {
   const onward = (beyond.station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
   const goals: TrackPoint[] = onward.length > 0 ? onward : (beyond.gates ?? []).flatMap((nodeId) => railEndsAt(net, nodeId))
   if (goals.length === 0) return []
   const way = findTrackPathToAny(net, from, goals, { leaving, blocked, toll })
-  const through = way ? stops.filter((stop) => way.spans.some((span) => span.segId === stop.segId && within(span.t0, span.t1, stop.t))) : []
+  const through = way ? stops.filter((stop) => way.spans.some((span) => span.segId === stop.segId && within(span.t0, span.t1, stop.t) && runsTheWay(span, stop))) : []
   if (through.length > 0) return through
   // A way runs the same both ways: the platforms reached from beyond are those it is reached from
-  const reached: StationStop[] = []
+  const reached: StopGoal[] = []
   const pool = [...stops]
   while (pool.length > 0 && reached.length < TERMINUS_PLATFORMS) {
-    const back = findTrackPathToAny(net, goals[0], pool, { blocked })
+    // Walked from beyond back to the platform: the train runs it the other way
+    const back = findTrackPathToAny(net, goals[0], pool, { blocked, toll: runningToll(net, true) })
     if (!back) break
     reached.push(pool[back.goal])
     pool.splice(back.goal, 1)
@@ -96,16 +104,20 @@ export function findRouteGuide(
   beyond?: Beyond,
   /** Rails the train must keep off (see `TrackPathOptions.blocked`) */
   blocked?: TrackPathOptions['blocked'],
-  /** What makes one way better than another as short (see `TrackPathOptions.toll`): a side to keep, a track another train is on */
+  /** What makes one way better than another as short (see `TrackPathOptions.toll`): a track another train is on. The track run against its normal direction is paid for in any case (`runningToll`) */
   toll?: TrackPathOptions['toll'],
+  /** Length of the train, m: which stop marker of a platform it stops at (unknown: the one for every train) */
+  trainLength = Infinity,
 ): RouteGuide | null {
-  let stops = (station?.stops ?? []).filter((stop) => net.segments.has(stop.segId))
+  // Running on the normal track of a double line is paid for on top of what the caller pays
+  toll = sumTolls(runningToll(net), toll)
+  let stops = station ? stationStopGoals(net, station, trainLength) : []
   const target: RouteGuide['target'] = stops.length > 0 ? 'platform' : 'gate'
   const from = { segId: lead.segId, t: lead.t }
   if (beyond && stops.length > 1) {
     const onward = onwardStops(net, from, lead.forward ? 1 : 0, stops, beyond, blocked, toll)
     // Unless the train cannot get to any of them: the nearest platform then, as without a beyond
-    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0, blocked }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1, blocked }))) stops = onward
+    if (onward.length > 0 && (findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 1 : 0, blocked, toll }) ?? findTrackPathToAny(net, from, onward, { leaving: lead.forward ? 0 : 1, blocked, toll }))) stops = onward
   }
   const goals: TrackPoint[] = target === 'platform' ? stops : gates.flatMap((nodeId) => railEndsAt(net, nodeId))
   if (goals.length === 0) return null
@@ -113,6 +125,32 @@ export function findRouteGuide(
   const found = ahead ?? findTrackPathToAny(net, from, goals, { leaving: lead.forward ? 0 : 1, blocked, toll })
   if (!found) return null
   return guideOf(net, { spans: found.spans, length: found.length }, target, !ahead, target === 'platform' ? stops[found.goal] : undefined)
+}
+
+/**
+ * The way AHEAD of a lead bogie to a platform of `station` where a train of `trainLength` metres
+ * stops — or, when the station has no platform on the track loaded, to the nearest of `gates` —,
+ * the track run against its normal direction paid for (`runningToll`). Null when there is none
+ * ahead: what a rake set down at a station is weighed by, before it has an itinerary.
+ */
+export function findWayAhead(
+  net: Network,
+  lead: TrackPosition,
+  station: Station | undefined,
+  gates: readonly NodeId[] = [],
+  blocked?: TrackPathOptions['blocked'],
+  trainLength = Infinity,
+): TrackPath | null {
+  const stops = station ? stationStopGoals(net, station, trainLength) : []
+  const goals: TrackPoint[] = stops.length > 0 ? stops : gates.flatMap((nodeId) => railEndsAt(net, nodeId))
+  if (goals.length === 0) return null
+  const found = findTrackPathToAny(net, { segId: lead.segId, t: lead.t }, goals, { leaving: lead.forward ? 1 : 0, blocked, toll: runningToll(net) })
+  return found ? { spans: found.spans, length: found.length } : null
+}
+
+/** A stretch runs its rail the way a stop wants to be reached (a stretch without length, either way) */
+function runsTheWay(span: TrackSpan, stop: StopGoal): boolean {
+  return stop.forward === undefined || span.t0 === span.t1 || (span.t1 > span.t0) === stop.forward
 }
 
 /** How far along a stretch walked from `t0` to `t1` the parameter `t` is; null when it is not on it */

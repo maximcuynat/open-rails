@@ -5,6 +5,7 @@ import { releaseEmergencyBrake, setNotch, setReverser, type TrainSet } from '@do
 import { setBrakeCommand } from '@domain/models/trainDynamics'
 import { nextStop } from '@domain/services/itinerary'
 import { guideLeft } from '@domain/services/routeGuide'
+import { noseOffset } from '@domain/services/stopMarkers'
 import { ARRIVAL_DISTANCE, refreshRouteGuide } from './itinerary'
 
 // The automatic pilot at the controls of a train of the game: several times a second it reads
@@ -31,7 +32,7 @@ export interface PilotMemory {
 
 export const newPilotMemory = (): PilotMemory => ({ elapsed: PILOT_PERIOD_S, dwell: 0, calledAt: null })
 
-/** Where the train has to stand still, as its itinerary and the way found for it say */
+/** Where the nose of the train has to stand still, as its itinerary and the way found for it say */
 function stopTarget(store: EditorStore, train: TrainSet): PilotTarget & { behind: boolean } {
   const itinerary = train.itinerary
   if (!itinerary) return { stopIn: null, behind: false }
@@ -43,7 +44,9 @@ function stopTarget(store: EditorStore, train: TrainSet): PilotTarget & { behind
   if (!guide || !lead || guide.target !== 'platform') return { stopIn: null, behind: !!guide?.behind }
   // A few metres past the stop is at the stop: the call is there, no change of ends for that
   if (guide.behind) return guide.path.length <= ARRIVAL_DISTANCE ? { stopIn: 0, behind: false } : { stopIn: null, behind: true }
-  return { stopIn: guideLeft(store.network, guide, lead), behind: false }
+  // The way ends where the nose stops; what is left along it is measured from the front bogie
+  const left = guideLeft(store.network, guide, lead)
+  return { stopIn: left === null ? null : left - noseOffset(train.vehicles), behind: false }
 }
 
 /** One look of the pilot at one train: the handles set for the time until the next */

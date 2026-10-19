@@ -14,6 +14,7 @@ export const LINE_CATEGORY_COLORS: Record<LineCategory, string> = {
   main: '#ea580c',
   regional: '#16a34a',
   service: '#64748b',
+  subway: '#9333ea',
 }
 
 /**
@@ -32,6 +33,9 @@ export function railTintOf(index: DatasetIndex, files: ReadonlyMap<LineId, { seg
   return (segId) => colorOf.get(segId)
 }
 
+/** The stations of the lines not loaded are drawn from this scale on (px per metre: a view some 200 km wide) */
+export const OVERVIEW_STATIONS_MIN_SCALE = 0.008
+
 const STROKE_WIDTH = 2
 /** Points of a stroke closer than this on screen (px) to the last one drawn are passed over */
 const MIN_STEP = 2
@@ -39,7 +43,7 @@ const MARGIN = 20
 
 /**
  * Draw the outlines of the lines of `index` that are not in `loaded`, and the stations none of
- * whose lines is. Returns how many strokes were drawn (for the tests and the measures).
+ * whose lines is (from `OVERVIEW_STATIONS_MIN_SCALE` on). Returns how many strokes were drawn (for the tests and the measures).
  */
 export function renderDatasetOverview(
   ctx: CanvasRenderingContext2D,
@@ -93,6 +97,8 @@ export function renderDatasetOverview(
   }
   ctx.restore()
 
+  // Further out, the marks of the stations would cover the lines
+  if (cam.scale < OVERVIEW_STATIONS_MIN_SCALE) return drawn
   const stations: Station[] = []
   for (const station of index.stations) {
     if (station.lines.some((id) => loaded.has(id))) continue

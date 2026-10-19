@@ -95,6 +95,8 @@ export function ShortcutsModal({ store, isOpen, onClose }: ShortcutsModalProps) 
         <div>Activer / désactiver l’aimantation</div>
         <div>{keys('view.toggleInspector')}</div>
         <div>Afficher / masquer l’inspecteur</div>
+        <div>{keys('view.toggleDepth')}</div>
+        <div>Vue en surface / en souterrain (tunnels)</div>
         <div><span className="shortcut-kbd">Ctrl</span> + <span className="shortcut-kbd">,</span> ou <span className="shortcut-kbd">,</span></div>
         <div>Paramètres du réseau (échelles, unités)</div>
         <div className="shortcuts-section">Conduite</div>

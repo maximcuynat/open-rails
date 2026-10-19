@@ -12,7 +12,15 @@ export interface DatasetRecipe {
   lines: LineId[]
   /** The stations the journey was asked between (ids of the index); [] when unknown */
   stations: string[]
+  /**
+   * The whole network of the dataset (« Réseau France »): opened with no line, its lines are
+   * fetched as the view or a train comes near them. Absent for a journey or a station
+   */
+  whole?: true
 }
+
+/** The name of the project that opens the whole network of the dataset */
+export const WHOLE_NETWORK_NAME = 'Réseau France'
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
 
@@ -20,12 +28,17 @@ const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s)
 export function readDatasetRecipe(raw: unknown): DatasetRecipe | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const r = raw as Record<string, unknown>
-  if (r.version !== 1 || typeof r.dataDate !== 'string' || !isStrings(r.lines) || r.lines.length === 0) return undefined
-  return { version: 1, dataDate: r.dataDate, lines: [...r.lines], stations: isStrings(r.stations) ? [...r.stations] : [] }
+  if (r.version !== 1 || typeof r.dataDate !== 'string' || !isStrings(r.lines)) return undefined
+  const recipe: DatasetRecipe = { version: 1, dataDate: r.dataDate, lines: [...r.lines], stations: isStrings(r.stations) ? [...r.stations] : [] }
+  if (r.whole === true) recipe.whole = true
+  // A journey always has a line; only the whole network opens with none (every line dropped since is fine)
+  else if (recipe.lines.length === 0 && recipe.stations.length === 0) return undefined
+  return recipe
 }
 
 /** The name of the project a recipe makes: its first and last station, else its lines */
 export function recipeName(index: DatasetIndex, recipe: DatasetRecipe): string {
+  if (recipe.whole) return WHOLE_NETWORK_NAME
   const names = recipe.stations.map((id) => index.stations.find((s) => s.id === id)?.name).filter((n): n is string => n !== undefined)
   if (names.length >= 2) return `${names[0]} → ${names[names.length - 1]}`
   if (names.length === 1) return names[0]

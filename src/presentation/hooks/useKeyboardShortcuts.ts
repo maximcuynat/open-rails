@@ -94,6 +94,7 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
     case 'tool.measure': store.setTool('measure'); return
     case 'tool.pan': store.setTool('pan'); return
     case 'tool.locomotive': store.setTool('locomotive'); return
+    case 'tool.platform': store.setTool('platform'); return
     case 'tool.speedZone': store.setSignalToolSubMode('speedZone'); return
     case 'tool.signalBlock': store.setSignalToolSubMode('blockSignal'); return
     case 'tool.signalPath': store.setSignalToolSubMode('pathSignal'); return
@@ -121,6 +122,7 @@ function runAction(store: EditorStore, action: ActionId, e: KeyboardEvent): void
       window.dispatchEvent(new CustomEvent('rail:fit-view'))
       return
     case 'view.toggleInspector': store.toggleSidePanel(); return
+    case 'view.toggleDepth': store.toggleViewDepth(); return
     case 'sim.togglePlay':
       e.preventDefault()
       if (store.locomotive || store.trains.length > 0) store.togglePlayMode()

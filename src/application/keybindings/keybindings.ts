@@ -63,6 +63,7 @@ export const ACTIONS = [
   { id: 'tool.locomotive', label: 'Outil Train', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'l' }, null] },
   { id: 'tool.speedZone', label: 'Outil Limite de vitesse', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 's' }, null] },
   { id: 'tool.signalBlock', label: 'Outil Signal de block / Sémaphore', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'b' }, null] },
+  { id: 'tool.platform', label: 'Outil Quai', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'q' }, null] },
   { id: 'tool.signalPath', label: 'Outil Signal de trajectoire / Carré', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'j' }, null] },
   { id: 'edit.toggleJunction', label: 'Basculer l’aiguillage', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 't' }, null] },
   { id: 'edit.parallelTrack', label: 'Créer une voie parallèle', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'd' }, null] },
@@ -71,6 +72,7 @@ export const ACTIONS = [
   { id: 'view.toggleSnap', label: 'Aimantation', group: 'tools', contexts: EDIT, by: 'key', defaults: [{ key: 'g' }, null] },
   { id: 'view.fit', label: 'Cadrer la vue', group: 'tools', contexts: BOTH, by: 'key', defaults: [{ key: 'f' }, null] },
   { id: 'view.toggleInspector', label: 'Afficher / masquer l’inspecteur', group: 'tools', contexts: BOTH, by: 'key', defaults: [{ key: 'i' }, null] },
+  { id: 'view.toggleDepth', label: 'Vue en surface / en souterrain', group: 'tools', contexts: BOTH, by: 'key', defaults: [{ key: 'u' }, null] },
   { id: 'sim.togglePlay', label: 'Prendre / rendre les commandes', group: 'tools', contexts: BOTH, by: 'code', defaults: [{ code: 'F5' }, null] },
   { id: 'train.debug', label: 'Squelette debug des trains', group: 'tools', contexts: BOTH, by: 'code', defaults: [{ code: 'F3' }, null] },
 ] as const satisfies readonly ActionDef[]

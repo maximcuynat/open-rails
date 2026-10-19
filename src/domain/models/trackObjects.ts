@@ -1,4 +1,4 @@
-import type { Network, Segment, SegmentId, TrackSpan } from './types'
+import type { Network, RailwayKind, RunningDirection, Segment, SegmentId, TrackSpan } from './types'
 import type { TrackPosition } from './locomotive'
 
 // ─────────────────── Objects attached to the track ───────────────────
@@ -33,6 +33,15 @@ export interface RailPiece {
 export interface RailReplacement {
   oldId: SegmentId
   pieces: RailPiece[]
+  /** Normal direction of running of the old rail (`Segment.running`), handed to the pieces that have none */
+  running?: RunningDirection
+  /** Kind of railway of the old rail (`Segment.railway`), handed to the pieces that have none */
+  railway?: RailwayKind
+}
+
+/** The direction of running and the kind of railway of `seg`, as fields to spread into a replacement */
+export function runningOf(seg: Segment): { running?: RunningDirection; railway?: RailwayKind } {
+  return { ...(seg.running ? { running: seg.running } : {}), ...(seg.railway ? { railway: seg.railway } : {}) }
 }
 
 /**
@@ -49,6 +58,7 @@ export function railPiece(seg: Segment, from: number, to: number, sameWay: boole
 export function splitReplacement(old: Segment, t: number, first: Segment, second: Segment): RailReplacement {
   return {
     oldId: old.id,
+    ...runningOf(old),
     // A half may be a rail that already lay there, in either orientation
     pieces: [railPiece(first, 0, t, first.from === old.from), railPiece(second, t, 1, second.to === old.to)],
   }
@@ -74,14 +84,14 @@ export function mergeReplacements(
   const firstPiece = first.to === sharedNodeId ? railPiece(merged, 0, 1, sameWay, 0, share) : railPiece(merged, 0, 1, sameWay, share, 0)
   const secondPiece = second.from === sharedNodeId ? railPiece(merged, 0, 1, sameWay, share, 1) : railPiece(merged, 0, 1, sameWay, 1, share)
   return [
-    { oldId: first.id, pieces: [firstPiece] },
-    { oldId: second.id, pieces: [secondPiece] },
+    { oldId: first.id, pieces: [firstPiece], ...runningOf(first) },
+    { oldId: second.id, pieces: [secondPiece], ...runningOf(second) },
   ]
 }
 
 /** A rail dropped in favour of `survivor`, which joins the same two nodes with the same shape. */
 export function duplicateReplacement(dropped: Segment, survivor: Segment): RailReplacement {
-  return { oldId: dropped.id, pieces: [railPiece(survivor, 0, 1, survivor.from === dropped.from)] }
+  return { oldId: dropped.id, pieces: [railPiece(survivor, 0, 1, survivor.from === dropped.from)], ...runningOf(dropped) }
 }
 
 /** A rail removed without anything taking its place. */

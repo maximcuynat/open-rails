@@ -23,6 +23,16 @@ import { canLowerZoneSpeed, canRaiseZoneSpeed, changeZoneSpeed, zoneSpeedChoices
 import { levelRange, levelRangeLabel, nodeLevelRange } from '../common/trackLevel'
 import { getGizmoAnchor } from '../canvas/gizmo'
 import {
+  islandRefusalText,
+  platformKindLabel,
+  platformRefusalText,
+  platformSnapLabel,
+  rakeFitText,
+  resolvePlatformTool,
+} from '@application/tools/platformTool'
+import { PLATFORM_TEMPLATE_LABEL, platformTemplateRefusalText, resolvePlatformTemplate } from '@application/tools/platformTemplateTool'
+import type { PlatformTemplate } from '@application/state/editorStore'
+import {
   describeCurve,
   placementCursor,
   resolveCurveTool,
@@ -521,6 +531,82 @@ function signalBar(store: EditorStore): ContextBarItem[] {
   ]
 }
 
+const PLATFORM_TEMPLATE_TITLE: Record<PlatformTemplate, string> = {
+  islandLoop: 'Gabarit : la voie droite s’écarte en deux voies avec un quai central entre elles, posé en un clic',
+  sidePlatforms: 'Gabarit : sur une double voie ou un évitement, un quai de chaque côté extérieur, posé en un clic',
+}
+
+/** The two station templates, as toggles: clicking the one in hand puts it down */
+function templateToggles(store: EditorStore): ContextBarItem[] {
+  return (Object.keys(PLATFORM_TEMPLATE_LABEL) as PlatformTemplate[]).map((template) => ({
+    kind: 'action',
+    id: `platform-template-${template}`,
+    label: PLATFORM_TEMPLATE_LABEL[template],
+    title: PLATFORM_TEMPLATE_TITLE[template],
+    active: store.platformTemplate === template,
+    run: () => store.setPlatformTemplate(store.platformTemplate === template ? null : template),
+  }))
+}
+
+/** The platform tool with a station template in hand: what the click would lay, or why not */
+function platformTemplateBar(store: EditorStore): ContextBarItem[] {
+  const items: ContextBarItem[] = [{ kind: 'label', text: 'Gabarit de gare' }]
+  const resolved = resolvePlatformTemplate(store)
+  if (!resolved) {
+    items.push({ kind: 'value', id: 'platform-template', text: 'Survolez une voie' })
+  } else if (!resolved.preview.valid) {
+    items.push({ kind: 'value', id: 'platform-template', text: platformTemplateRefusalText(resolved.preview, store), tone: 'danger' })
+  } else {
+    const { preview } = resolved
+    items.push(
+      { kind: 'value', id: 'platform-template', caption: 'Quai', text: formatDistance(preview.platformLength, store.unit), tone: 'accent' },
+      { kind: 'value', id: 'platform-template-spacing', caption: 'Entraxe', text: formatDistance(preview.spacing, store.unit) },
+      { kind: 'value', id: 'platform-rakes', caption: 'Rames', text: rakeFitText(preview.platformLength, store.gauge) },
+    )
+  }
+  items.push(...templateToggles(store))
+  return items
+}
+
+/** The platform tool: its step, what the click would lay, the construction aids */
+function platformBar(store: EditorStore): ContextBarItem[] {
+  if (store.platformTemplate) return platformTemplateBar(store)
+  const both: ContextBarItem = {
+    kind: 'action',
+    id: 'platform-both',
+    label: 'Des deux côtés',
+    title: 'Poser deux quais qui encadrent la voie, un de chaque côté (ou Maj enfoncée pendant la pose)',
+    active: store.platformBothSidesActive,
+    run: () => store.setPlatformBothSides(!store.platformBothSides),
+  }
+  const preview = resolvePlatformTool(store)
+  if (!preview || preview.phase === 'start') {
+    const items: ContextBarItem[] = [{ kind: 'label', text: 'Quai 1/2 — début' }]
+    const snap = preview?.phase === 'start' ? platformSnapLabel(preview.aim) : null
+    if (snap) items.push({ kind: 'value', id: 'platform-snap', caption: 'Aimanté', text: snap, tone: 'accent' })
+    items.push(both, ...templateToggles(store))
+    return items
+  }
+  const plan = preview.plan
+  const items: ContextBarItem[] = [{ kind: 'label', text: 'Quai 2/2 — fin' }]
+  if (plan) {
+    const refusal = platformRefusalText(plan, store)
+    items.push(
+      refusal
+        ? { kind: 'value', id: 'platform', text: refusal, tone: 'danger' }
+        : { kind: 'value', id: 'platform', caption: platformKindLabel(plan), text: formatDistance(plan.length, store.unit), tone: 'accent' },
+    )
+    if (plan.island && !plan.island.ok) {
+      items.push({ kind: 'value', id: 'platform-island', text: `${islandRefusalText(plan.island, store.unit)} : quai latéral`, tone: 'danger' })
+    }
+    const snap = platformSnapLabel(plan.end)
+    if (snap) items.push({ kind: 'value', id: 'platform-snap', caption: 'Aimanté', text: snap })
+    if (!refusal) items.push({ kind: 'value', id: 'platform-rakes', caption: 'Rames', text: rakeFitText(plan.length, store.gauge) })
+  }
+  items.push(both, finish(store, 'Annuler', 'Annuler le quai (Échap ou clic droit)'))
+  return items
+}
+
 /** Items of the contextual bar, or null when there is no bar (nothing to act on, or driving). */
 export function buildContextBar(store: EditorStore): ContextBarItem[] | null {
   if (store.isPlayMode) return null
@@ -596,5 +682,8 @@ export function buildContextBar(store: EditorStore): ContextBarItem[] | null {
 
     case 'signal':
       return signalBar(store)
+
+    case 'platform':
+      return platformBar(store)
   }
 }

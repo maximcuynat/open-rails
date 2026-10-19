@@ -8,6 +8,14 @@ describe('the dataset recipe', () => {
     expect(readDatasetRecipe({ version: 1, dataDate: 'd', lines: ['a'] })).toEqual({ version: 1, dataDate: 'd', lines: ['a'], stations: [] })
     expect(readDatasetRecipe({ version: 2, dataDate: 'd', lines: ['a'] })).toBeUndefined()
     expect(readDatasetRecipe({ version: 1, dataDate: 'd', lines: [] })).toBeUndefined()
+    expect(readDatasetRecipe({ version: 1, dataDate: 'd', lines: ['a'], whole: 'yes' })).toEqual({ version: 1, dataDate: 'd', lines: ['a'], stations: [] })
+  })
+
+  it('reads a recipe without a line: the whole network opened, or a journey whose lines were all dropped', () => {
+    expect(readDatasetRecipe({ version: 1, dataDate: 'd', lines: [], stations: [], whole: true })).toEqual({ version: 1, dataDate: 'd', lines: [], stations: [], whole: true })
+    expect(readDatasetRecipe({ version: 1, dataDate: 'd', lines: ['a'], stations: [], whole: true })?.lines).toEqual(['a'])
+    expect(readDatasetRecipe({ version: 1, dataDate: 'd', lines: [], stations: ['s1'] })).toEqual({ version: 1, dataDate: 'd', lines: [], stations: ['s1'] })
+    expect(recipeName(fakeIndex(), { version: 1, dataDate: 'd', lines: ['a'], stations: ['s1'], whole: true })).toBe('Réseau France')
     expect(readDatasetRecipe({ version: 1, lines: ['a'] })).toBeUndefined()
     expect(readDatasetRecipe(undefined)).toBeUndefined()
     expect(readDatasetRecipe('x')).toBeUndefined()

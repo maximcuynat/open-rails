@@ -504,6 +504,10 @@ function readState(value: unknown): ConsoleState | null {
     if (typeof v.paused !== 'boolean') return null
     state.paused = v.paused
   }
+  if (v.wrongTrack !== undefined) {
+    if (typeof v.wrongTrack !== 'boolean') return null
+    state.wrongTrack = v.wrongTrack
+  }
   return state
 }
 
