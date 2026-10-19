@@ -137,3 +137,88 @@ export function renderPlatformPreview(ctx: CanvasRenderingContext2D, cam: Camera
   }
   ctx.restore()
 }
+
+// ─────────────────── Platform tool: a station template ───────────────────
+
+export interface PlatformTemplateDrawing {
+  /** The place of the track the template is laid around */
+  at: Point
+  /** The rails the click would lay (a quadratic curve when `via` is given) */
+  rails: readonly { from: Point; to: Point; via?: Point }[]
+  /** The platforms the click would lay, as closed outlines */
+  outlines: readonly (readonly Point[])[]
+  /** The click would lay nothing */
+  refused: boolean
+  label: string
+  labelAt: Point
+}
+
+export function renderPlatformTemplatePreview(ctx: CanvasRenderingContext2D, cam: Camera, vw: number, vh: number, drawing: PlatformTemplateDrawing): void {
+  const toScreen = (p: Point): Point => ({ x: (p.x - cam.x) * cam.scale + vw / 2, y: (p.y - cam.y) * cam.scale + vh / 2 })
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  // The new track
+  ctx.strokeStyle = PLATFORM_PREVIEW_COLOR
+  ctx.globalAlpha = 0.75
+  ctx.lineWidth = 3
+  ctx.setLineDash([8, 6])
+  for (const rail of drawing.rails) {
+    const a = toScreen(rail.from)
+    const b = toScreen(rail.to)
+    ctx.beginPath()
+    ctx.moveTo(a.x, a.y)
+    if (rail.via) {
+      const c = toScreen(rail.via)
+      ctx.quadraticCurveTo(c.x, c.y, b.x, b.y)
+    } else {
+      ctx.lineTo(b.x, b.y)
+    }
+    ctx.stroke()
+  }
+  ctx.setLineDash([])
+
+  // The platforms
+  for (const outline of drawing.outlines) {
+    if (outline.length < 3) continue
+    ctx.beginPath()
+    outline.forEach((p, i) => {
+      const s = toScreen(p)
+      if (i === 0) ctx.moveTo(s.x, s.y)
+      else ctx.lineTo(s.x, s.y)
+    })
+    ctx.closePath()
+    ctx.globalAlpha = 0.28
+    ctx.fillStyle = PLATFORM_PREVIEW_COLOR
+    ctx.fill()
+    ctx.globalAlpha = 0.9
+    ctx.strokeStyle = PLATFORM_PREVIEW_COLOR
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+
+  // Where it stands on the track
+  const at = toScreen(drawing.at)
+  ctx.fillStyle = drawing.refused ? REFUSED_COLOR : PLATFORM_PREVIEW_COLOR
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(at.x, at.y, 5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  const labelAt = toScreen(drawing.labelAt)
+  ctx.font = '600 11px Archivo, system-ui, sans-serif'
+  const lw = ctx.measureText(drawing.label).width
+  ctx.fillStyle = drawing.refused ? 'rgba(220, 38, 38, 0.92)' : 'rgba(15, 23, 42, 0.92)'
+  ctx.beginPath()
+  ctx.roundRect(labelAt.x - lw / 2 - 6, labelAt.y - 34, lw + 12, 18, 4)
+  ctx.fill()
+  ctx.fillStyle = '#ffffff'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(drawing.label, labelAt.x, labelAt.y - 24)
+  ctx.restore()
+}

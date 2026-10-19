@@ -205,7 +205,7 @@ function headingAt(net: Network, segId: SegmentId, t: number, forward: boolean):
 }
 
 /** The side of `p` from a place of the track walked with `heading` */
-function sideOf(p: Point, at: Point, heading: Point): 'left' | 'right' {
+export function sideOf(p: Point, at: Point, heading: Point): 'left' | 'right' {
   return dot(sub(p, at), sideNormal(heading, 'left')) >= 0 ? 'left' : 'right'
 }
 
@@ -214,7 +214,7 @@ function sideOf(p: Point, at: Point, heading: Point): 'left' | 'right' {
  * metres, running alongside: the rail and the place on it facing `at`. The rails of `own` (the
  * track of the platform) are passed over.
  */
-function trackAcross(net: Network, own: ReadonlySet<SegmentId>, at: Point, heading: Point, normal: Point, reach: number): (PlacedPoint & { spacing: number }) | null {
+export function trackAcross(net: Network, own: ReadonlySet<SegmentId>, at: Point, heading: Point, normal: Point, reach: number): (PlacedPoint & { spacing: number }) | null {
   let best: (PlacedPoint & { spacing: number }) | null = null
   for (const seg of railsWithin(net, at, reach)) {
     if (own.has(seg.id)) continue
@@ -239,7 +239,7 @@ const railsOf = (edge: PlatformEdge): Set<SegmentId> => new Set(edge.track.map((
  * that track, walked the same way, its side towards `edge`. Null when that track does not run the
  * whole way along.
  */
-function facingEdge(net: Network, edge: PlatformEdge, across: TrackPoint, reach: number, maxGap: number): PlatformEdge | null {
+export function facingEdge(net: Network, edge: PlatformEdge, across: TrackPoint, reach: number, maxGap: number): PlatformEdge | null {
   const own = railsOf(edge)
   const startAt = pointOnEdge(net, edge, 0)
   const endAt = pointOnEdge(net, edge, edgeLength(net, edge))
@@ -367,7 +367,14 @@ function planMiddle(net: Network, platforms: readonly PlatformEdges[], dims: Pla
   const edge = platforms[0]?.[0]
   const mid = edge && pointOnEdge(net, edge, edgeLength(net, edge) / 2)
   if (!mid) return null
-  if (platforms.length > 1) return mid.point
+  if (platforms.length > 1) {
+    // Several platforms: between their tracks (one point for two platforms around one track)
+    const mids = platforms.flatMap((edges) => {
+      const p = pointOnEdge(net, edges[0], edgeLength(net, edges[0]) / 2)
+      return p ? [p.point] : []
+    })
+    return { x: mids.reduce((sum, p) => sum + p.x, 0) / mids.length, y: mids.reduce((sum, p) => sum + p.y, 0) / mids.length }
+  }
   const other = platforms[0][1]
   if (other) {
     const facing = pointOnEdge(net, other, edgeLength(net, other) / 2)
@@ -390,17 +397,25 @@ export interface LaidPlatforms {
  * new one named « Gare n » at their middle. Null when the plan lays nothing.
  */
 export function layPlatforms(net: Network, plan: PlatformPlan, gauge?: number): LaidPlatforms | null {
-  if (plan.platforms.length === 0) return null
+  return layPlatformGroup(net, plan.platforms, gauge)
+}
+
+/**
+ * Lay platforms that belong together (each given as its edges), with their stop markers, in the
+ * station beside them or a new one named « Gare n » at their middle. Null when there is none.
+ */
+export function layPlatformGroup(net: Network, group: readonly PlatformEdges[], gauge?: number): LaidPlatforms | null {
+  if (group.length === 0) return null
   const dims = platformDimensions(gauge)
-  const joined = stationForPlatform(net, plan.platforms.flat(), gauge)
+  const joined = stationForPlatform(net, group.flat(), gauge)
   let station = joined ? net.stations.get(joined) ?? null : null
   const newStation = !station
   if (!station) {
-    const pos = planMiddle(net, plan.platforms, dims)
+    const pos = planMiddle(net, group, dims)
     if (!pos) return null
     station = addStation(net, { name: nextStationName(net), pos, stops: [] })
   }
-  const platforms = plan.platforms.map((edges) =>
+  const platforms = group.map((edges) =>
     addPlatform(net, { stationId: station.id, edges, width: PLATFORM_WIDTH, markers: defaultMarkers(net, edges, dims.markerMargin) }),
   )
   return { platforms, station, newStation }

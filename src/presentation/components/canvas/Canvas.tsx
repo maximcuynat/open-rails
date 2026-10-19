@@ -91,7 +91,8 @@ import { renderSignalToolPreview } from './signalToolPreview'
 import { commitSignalGesture } from '../common/signalActions'
 import { hitShownNode } from './nodePicking'
 import { clickPlatformTool, PLATFORM_OFF_TRACK, platformPreviewDrawing } from '@application/tools/platformTool'
-import { renderPlatformPreview } from '@infrastructure/render/platformPreviewRender'
+import { clickPlatformTemplate, PLATFORM_TEMPLATE_OFF_TRACK, platformTemplateDrawing } from '@application/tools/platformTemplateTool'
+import { renderPlatformPreview, renderPlatformTemplatePreview } from '@infrastructure/render/platformPreviewRender'
 
 
 /** Render a snap indicator at a world point — a crosshair or magnetic lock ring. */
@@ -953,8 +954,11 @@ export function Canvas({ store, onViewport }: CanvasProps) {
     }
 
     // 7b. Platform tool preview: the start, the platform along the track to the cursor, its length
-    const platformDrawing = store.tool === 'platform' ? platformPreviewDrawing(store) : null
+    //     or, with a station template in hand, the track and platforms it would lay
+    const platformDrawing = store.tool === 'platform' && !store.platformTemplate ? platformPreviewDrawing(store) : null
     if (platformDrawing) renderPlatformPreview(ctx, cam, rect.width, rect.height, store.network, platformDrawing)
+    const templateDrawing = store.tool === 'platform' && store.platformTemplate ? platformTemplateDrawing(store) : null
+    if (templateDrawing) renderPlatformTemplatePreview(ctx, cam, rect.width, rect.height, templateDrawing)
 
     // 8. Signal tool preview: the signal under the cursor with its arrow and its two blocks, or the row being drawn
     renderSignalToolPreview(ctx, cam, rect.width, rect.height, store)
@@ -1815,6 +1819,12 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       if (e.button === 0 && store.tool === 'platform') {
         const world = getWorldPos(e.clientX, e.clientY)
         store.cursorWorld = world
+        if (store.platformTemplate) {
+          // A station template: laid in one click where its preview stands
+          if (clickPlatformTemplate(store, world).result === 'off-track') showToast(PLATFORM_TEMPLATE_OFF_TRACK, 'warning')
+          redraw()
+          return
+        }
         store.setPlatformShiftHeld(e.shiftKey)
         if (clickPlatformTool(store, world).result === 'off-track') showToast(PLATFORM_OFF_TRACK, 'warning')
         redraw()

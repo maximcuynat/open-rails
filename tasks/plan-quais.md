@@ -147,7 +147,7 @@ Chaque lot est testé (oracle compris) et se mesure avant / après (`npm run ben
       des morceaux, gares sans quai trouvé) ; `stationFit` dit enfin « trop court » dans une halte
 
 ### Q6 — Gabarit (après les autres)
-- [ ] « Évitement à quai central » et « gare à deux quais latéraux » dans `constructionTemplates.ts`
+- [x] « Évitement à quai central » et « gare à deux quais latéraux » dans `constructionTemplates.ts`
 
 ## Décisions prises au lancement (2026-10-18, « go pour les lots »)
 
@@ -191,3 +191,38 @@ bornes et repères. Aucune erreur dans la page.
 - Un îlot qui perd une de ses voies est retiré, pas changé en quai latéral.
 - `MergeReport.platformsAdded` n'est pas encore dit dans le compte rendu de fusion.
 - Un quai à cheval sur deux morceaux du jeu de données reste raccourci quand le second arrive (Q5).
+
+### Q6 — 2026-10-19
+Deux gabarits de gare dans `constructionTemplates.ts`, paires `compute…Preview` / `apply…` :
+- `computeIslandLoopPreview` / `applyIslandLoop` : sur la voie droite sous le curseur (une suite de
+  rails droits alignés, à travers les joints simples : `straightRunThrough`), la voie s'écarte du
+  côté du curseur de `2 × edgeOffset + width` (9,40 m à 1:1, au-dessus des 6,40 m de l'îlot
+  minimal), par deux contre-courbes de 190 m de rayon, sur 220 m de quai ; le gabarit glisse le
+  long de la droite pour y tenir, et dit la longueur qu'il lui faut quand elle est trop courte.
+  Les coupures tombant à moins de 0,25 m d'un nœud se font sur le nœud. L'îlot est posé ensuite
+  sur la voie telle qu'elle est après `reconcileNetworkIntersections`.
+- `computeSidePlatformsPreview` / `applySidePlatforms` : la voie sous le curseur et celle d'à côté
+  (du côté du curseur d'abord), un quai sur le côté extérieur de chacune, raccourci par pas de
+  1/10 jusqu'à ce que les deux voies restent côte à côte (entraxe à 15 % près) : sur un évitement,
+  le quai s'arrête avant les contre-courbes.
+- Les deux passent par `layPlatformGroup` (sorti de `layPlatforms`) : gare voisine ou « Gare n »,
+  repères par défaut ; la marque d'une gare de plusieurs quais se pose entre leurs voies.
+- Interface : deux bascules dans la barre de l'outil Quai (`store.platformTemplate`,
+  `application/tools/platformTemplateTool.ts`) ; aperçu au survol (voie nouvelle en tirets, quais,
+  longueur et entraxe), clic = une étape d'annulation (`markDirty`) ; Échap repose le gabarit,
+  puis quitte l'outil ; changer d'outil le repose.
+
+Tests : géométrie (écartement, côté de l'îlot à gauche et à droite, droite en 16 rails, HO, voie
+trop courte, courbe refusée, gare existante rejointe ; quais latéraux sur double voie, curseur à
+l'extérieur, évitement, voie unique refusée) et store (barre, pose, annuler / rétablir, Échap).
+Typage propre, 3 055 tests au vert. Au navigateur (une voie de 1 km et une double voie à 4 m) :
+aperçu puis pose de chaque gabarit, îlot entre les deux voies avec ses repères, deux annulations
+qui rendent les 3 rails d'origine ; aucune erreur de page (seulement les 403 des polices).
+
+À reprendre :
+- La longueur du quai (220 m) et le rayon (190 m) sont fixes : pas encore de réglage dans la barre.
+- L'évitement à quai central ne se pose que sur une droite ; pas sur une courbe ni un rail long importé (`path`).
+- Les quais latéraux rejoignent une gare à moins de 300 m (`STATION_REACH`), même de l'autre côté
+  d'un faisceau : vu à l'essai, une seconde gare voulue à 150 m de la première y est rattachée.
+- `applyPassingSiding` coupe deux fois le même id de rail (la seconde coupure ne trouve plus le
+  rail, c'est la réconciliation qui recoud) : le nouveau gabarit ne s'en sert pas, à reprendre à part.
