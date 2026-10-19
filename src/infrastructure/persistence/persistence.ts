@@ -498,7 +498,7 @@ export function serializeNetwork(
  * `cleanSpeedZones` then drops a stretch on a rail that is not there, or out of 0…1, and cuts the
  * zone at that place.
  */
-function restoreZone(net: Network, z: SerializedSpeedZone): void {
+export function restoreZone(net: Network, z: SerializedSpeedZone): void {
   if (!z || typeof z.id !== 'string' || !Array.isArray(z.spans)) return
   restoreSpeedZone(
     net,
@@ -515,7 +515,7 @@ function restoreZone(net: Network, z: SerializedSpeedZone): void {
 const JUNCTION_KINDS: JunctionKind[] = ['turnout', 'three_way', 'crossing', 'double_slip', 'custom']
 
 /** Put a saved route table back on its node. A record that does not hold together is skipped. */
-function restoreJunction(net: Network, j: SerializedJunction): void {
+export function restoreJunction(net: Network, j: SerializedJunction): void {
   if (!j || typeof j.id !== 'string' || typeof j.nodeId !== 'string' || !net.nodes.has(j.nodeId)) return
   if (findJunctionAtNode(net, j.nodeId)) return
 
@@ -736,6 +736,40 @@ function storedOsmSource(value: unknown): OsmSource | undefined {
   return source
 }
 
+/** A node as a file saves it, read: a coordinate that is not a number is 0 */
+export function readSavedNode(n: SerializedNode): RailNode {
+  const x = typeof n.x === 'number' && !Number.isNaN(n.x) ? n.x : 0
+  const y = typeof n.y === 'number' && !Number.isNaN(n.y) ? n.y : 0
+  const node: RailNode = { id: n.id, pos: { x, y } }
+  if (isStoredLevel(n.level)) node.level = n.level
+  return node
+}
+
+/** A rail as a file saves it, read (its ends are not looked at, nor a legacy level) */
+export function readSavedSegment(s: SerializedSegment): Segment {
+  const path = s.kind === 'path' ? readPath(s.path) : null
+  const kind: SegmentKind = path ? 'path' : s.kind === 'curve' ? 'curve' : 'straight'
+  const seg: Segment = {
+    id: s.id,
+    from: s.from,
+    to: s.to,
+    kind,
+    ...(path ? { path } : {}),
+    via:
+      kind === 'curve' &&
+      s.via &&
+      typeof s.via.x === 'number' &&
+      typeof s.via.y === 'number' &&
+      !Number.isNaN(s.via.x) &&
+      !Number.isNaN(s.via.y)
+        ? { x: s.via.x, y: s.via.y }
+        : undefined,
+  }
+  // Before the reconcile pass, which hands the cant down to the pieces of a rail it cuts
+  if (isStoredCant({ kind, cant: s.cant }) && seg.via) seg.cant = s.cant
+  return seg
+}
+
 /**
  * Reconstruct a full in-memory Network structure from serialized data,
  * rebuilding adjacency, resolving junctions, and synchronizing ID counters.
@@ -825,10 +859,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
       if (!railsAsTheyAre) net.adjacency.set(n.id, [])
       continue
     }
-    const x = typeof n.x === 'number' && !Number.isNaN(n.x) ? n.x : 0
-    const y = typeof n.y === 'number' && !Number.isNaN(n.y) ? n.y : 0
-    const node: RailNode = { id: n.id, pos: { x, y } }
-    if (isStoredLevel(n.level)) node.level = n.level
+    const node = readSavedNode(n)
     net.nodes.set(node.id, node)
     if (!railsAsTheyAre) net.adjacency.set(node.id, [])
   }
@@ -852,26 +883,7 @@ export function deserializeNetwork(data: SerializedProject, reconciledAt?: numbe
         continue
       }
 
-      const path = s.kind === 'path' ? readPath(s.path) : null
-      const kind: SegmentKind = path ? 'path' : s.kind === 'curve' ? 'curve' : 'straight'
-      const seg: Segment = {
-        id: s.id,
-        from: s.from,
-        to: s.to,
-        kind,
-        ...(path ? { path } : {}),
-        via:
-          kind === 'curve' &&
-          s.via &&
-          typeof s.via.x === 'number' &&
-          typeof s.via.y === 'number' &&
-          !Number.isNaN(s.via.x) &&
-          !Number.isNaN(s.via.y)
-            ? { x: s.via.x, y: s.via.y }
-            : undefined,
-      }
-      // Before the reconcile pass, which hands the cant down to the pieces of a rail it cuts
-      if (isStoredCant({ kind, cant: s.cant }) && seg.via) seg.cant = s.cant
+      const seg = readSavedSegment(s)
       if (isStoredLevel(s.level)) {
         for (const nodeId of [seg.from, seg.to]) {
           const known = legacyLevels.get(nodeId) ?? 0
