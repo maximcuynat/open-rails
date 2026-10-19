@@ -7,6 +7,7 @@ import type { StationStop } from '@domain/models/types'
 import type { EditorStore } from '@application/state/editorStore'
 import { datasetErrorMessage, fetchLineFiles } from '@application/dataset/datasetClient'
 import { loadStation, type JourneyLoadOptions } from '@application/dataset/journeyLoader'
+import { addItineraryStop } from './itinerary'
 
 // The sandbox, first game mode: a station to start from and a train, nothing else asked. The
 // lines of the station are loaded as a locked project, a complete rake is set down at one of its
@@ -41,21 +42,42 @@ export interface SandboxStart {
   stationName: string
   /** The stop the rake stands at (its platform number when the data has one) */
   stop: StationStop
+  /** Why the destination asked for was not put in the itinerary, in French; absent when it was, or when none was asked for */
+  destinationRefused?: string
+}
+
+export interface SandboxOptions extends JourneyLoadOptions {
+  /**
+   * The station the train is to go to: the rake is set down at the platform track and facing the
+   * way from which the way there keeps to the normal direction of running (`placeRakeAtStation`),
+   * and the station is put in its itinerary.
+   */
+  destination?: string
+}
+
+/** Set the rake down at the station, towards the destination when there is one, and give it its itinerary */
+function setRakeDown(store: EditorStore, stationId: string, rake: RollingStockModel | RakeChoice, destination: string | undefined): Omit<SandboxStart, 'stationName'> | null {
+  const toward = destination !== undefined && destination !== stationId ? destination : undefined
+  const stop = store.placeRakeAtStation(stationId, rake, toward)
+  if (!stop) return null
+  const train = store.trains[store.trains.length - 1]
+  const refused = toward !== undefined && train ? addItineraryStop(store, train, toward) : null
+  return refused ? { stop, destinationRefused: refused } : { stop }
 }
 
 /**
  * Load the lines of a station and set a rake of `model` down at one of its platforms, selected
- * and in view. The driving itself starts with `store.togglePlayMode()`, once the player has
+ * and in view — towards `options.destination` when there is one, which goes in its itinerary. The driving itself starts with `store.togglePlayMode()`, once the player has
  * chosen a console. Rejects with a `DatasetError` (the store is then as it was) or, when the
  * station is loaded but holds no rake, a `SandboxError`.
  */
-export async function prepareSandbox(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: JourneyLoadOptions = {}): Promise<SandboxStart> {
+export async function prepareSandbox(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: SandboxOptions = {}): Promise<SandboxStart> {
   if (store.isPlayMode) store.togglePlayMode()
   await loadStation(store, index, stationId, options)
   const stationName = index.stations.find((s) => s.id === stationId)?.name ?? stationId
-  const stop = store.placeRakeAtStation(stationId, rake)
-  if (!stop) throw new SandboxError(`Aucun quai de ${stationName} n’est assez long pour la rame. La gare est chargée : posez un train à la main.`)
-  return { stationName, stop }
+  const placed = setRakeDown(store, stationId, rake, options.destination)
+  if (!placed) throw new SandboxError(`Aucun quai de ${stationName} n’est assez long pour la rame. La gare est chargée : posez un train à la main.`)
+  return { stationName, ...placed }
 }
 
 /** True when a sandbox game is under way: a dataset project with a train on it, to which another train can be added */
@@ -69,15 +91,15 @@ export function canAddSandboxTrain(store: EditorStore): boolean {
  * its platforms and this screen moves to it. The trains left behind keep running under their
  * automatic pilot if they have one. Rejects like `prepareSandbox`.
  */
-export async function addSandboxTrain(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: JourneyLoadOptions = {}): Promise<SandboxStart> {
+export async function addSandboxTrain(store: EditorStore, index: DatasetIndex, stationId: string, rake: RollingStockModel | RakeChoice, options: SandboxOptions = {}): Promise<SandboxStart> {
   const station = index.stations.find((s) => s.id === stationId)
   const stationName = station?.name ?? stationId
   if (!station || !store.dataset) throw new SandboxError(`La gare ${stationName} n’est pas dans le jeu de données de cette partie.`)
   const missing = station.lines.filter((id) => !store.datasetFiles.has(id))
   if (missing.length > 0) store.addDatasetLines(await fetchLineFiles(index, missing, options.onProgress, options))
-  const stop = store.placeRakeAtStation(stationId, rake)
-  if (!stop) throw new SandboxError(`Aucun quai libre de ${stationName} n’est assez long pour la rame.`)
-  return { stationName, stop }
+  const placed = setRakeDown(store, stationId, rake, options.destination)
+  if (!placed) throw new SandboxError(`Aucun quai libre de ${stationName} n’est assez long pour la rame.`)
+  return { stationName, ...placed }
 }
 
 /**

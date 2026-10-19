@@ -250,4 +250,50 @@ describe('a rake set down on a double line', () => {
     expect(lead.segId).toBe(kept.tracks[1].id)
     expect(lead.forward).toBe(false)
   })
+
+  /** The double line of `doubleLineStation`, with a station near each end: a stop on each track */
+  function doubleLineWithEnds(running: boolean) {
+    const line = doubleLineStation(running)
+    const stopsAt = (t: number) => line.tracks.map((track) => ({ segId: track.id, t }))
+    const east = addStation(line.net, { name: 'Est', pos: { x: 3800, y: 2 }, stops: stopsAt(0.95) })
+    const west = addStation(line.net, { name: 'Ouest', pos: { x: 200, y: 2 }, stops: stopsAt(0.05) })
+    return { ...line, east, west }
+  }
+
+  it('heading for a station, takes the platform track and the way from which the way there keeps to its track', () => {
+    const line = doubleLineWithEnds(true)
+    // Eastwards: the north track, run east — not the south one the rake would take without a destination
+    const east = createRakeAtStation(line.net, line.station, 'duplex', [], { station: line.east })!.train.vehicles[0].front
+    expect(east.segId).toBe(line.tracks[0].id)
+    expect(east.forward).toBe(true)
+    // Westwards: the south track, run west, as without a destination
+    const west = createRakeAtStation(line.net, line.station, 'duplex', [], { station: line.west })!.train.vehicles[0].front
+    expect(west.segId).toBe(line.tracks[1].id)
+    expect(west.forward).toBe(false)
+  })
+
+  it('heading for the gates towards a line not loaded, faces them the same way', () => {
+    const line = doubleLineWithEnds(true)
+    const eastEnd = line.tracks[0].to
+    const lead = createRakeAtStation(line.net, line.station, 'duplex', [], { gates: [eastEnd] })!.train.vehicles[0].front
+    expect(lead.segId).toBe(line.tracks[0].id)
+    expect(lead.forward).toBe(true)
+  })
+
+  it('on track without a direction of running, faces the way to the station', () => {
+    const line = doubleLineWithEnds(false)
+    // Without a destination: the first stop, facing east
+    expect(createRakeAtStation(line.net, line.station, 'duplex')!.train.vehicles[0].front.forward).toBe(true)
+    const lead = createRakeAtStation(line.net, line.station, 'duplex', [], { station: line.west })!.train.vehicles[0].front
+    expect(lead.segId).toBe(line.tracks[1].id)
+    expect(lead.forward).toBe(false)
+  })
+
+  it('keeps the place it would take without a destination when no way leads there', () => {
+    const line = doubleLineWithEnds(true)
+    const island = addStation(line.net, { name: 'Ailleurs', pos: { x: 0, y: 900 }, stops: [] })
+    const plain = createRakeAtStation(line.net, line.station, 'duplex')!.train.vehicles[0].front
+    const lead = createRakeAtStation(line.net, line.station, 'duplex', [], { station: island })!.train.vehicles[0].front
+    expect(lead).toEqual(plain)
+  })
 })

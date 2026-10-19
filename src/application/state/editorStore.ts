@@ -136,7 +136,7 @@ import { trackLod } from '@infrastructure/render/lod'
 import { trackPositionBand } from '@infrastructure/render/levelPieces'
 import { isUnderground, type ViewDepth } from '@infrastructure/render/levelAlpha'
 import { createRakeAtStation, createRakeAtTrack } from '@domain/models/rakePlacement'
-import { refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
+import { rakeHeadingToward, refreshRouteGuide, startItineraryAt, type RouteGuideState } from '@application/game/itinerary'
 import { applyGame, captureGame } from '@domain/models/runningState'
 import { isDrivingAid, type DrivingAid } from '@application/game/drivingAid'
 import { newPilotMemory, runAutopilots, type PilotMemory } from '@application/game/autopilot'
@@ -3908,12 +3908,20 @@ export class EditorStore {
    * trains holds the whole rake. While trains are being driven it joins them: it stands at rest,
    * brakes applied, and this screen moves to it — the train it was on keeps its pilot if it has
    * one, else it is left with its brake where it is, like any train let go of.
+   *
+   * `toward`: the station the train is to go to next. The platform track and the way the rake
+   * faces are then those from which the way there keeps to the normal direction of running
+   * (`RakeHeading`): set down without it, it may face the right way on its track and still have
+   * the journey behind it. It is not added to the itinerary here.
    */
-  placeRakeAtStation = (stationId: StationId, rake: RollingStockModel | RakeChoice): StationStop | null => {
+  placeRakeAtStation = (stationId: StationId, rake: RollingStockModel | RakeChoice, toward?: StationId): StationStop | null => {
     const station = this.network.stations.get(stationId)
     if (!station) return null
-    const placed = createRakeAtStation(this.network, station, rake, this.trains)
+    let placed = createRakeAtStation(this.network, station, rake, this.trains)
     if (!placed) return null
+    // What the train can run on and the lines it stands on are those of the rake set down without a heading
+    const heading = toward !== undefined && toward !== stationId ? rakeHeadingToward(this, placed.train, toward) : null
+    if (heading) placed = createRakeAtStation(this.network, station, rake, this.trains, heading) ?? placed
     startItineraryAt(placed.train, stationId)
     this.adoptRake(placed.train)
     return placed.stop
