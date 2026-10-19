@@ -1,9 +1,27 @@
-import type { Junction, Network, Point, RailNode } from '@domain/models/types'
+import type { Junction, Network, NodeId, PlatformEdge, Point, RailNode, SegmentId, TrackSpan } from '@domain/models/types'
 import { addNode, addSegment, addCurveSegment, addArcCurve, hitSegment, nodeLevel, segmentHeightNear, spreadGradient } from '@domain/models/network'
 import { splitSegment, declareBranchOff } from '@domain/models/junction'
 import { getTangentForPlacement } from '@domain/geometry/tangent'
 import { reconcileNetworkIntersections } from '@domain/geometry/reconcile'
 import { touchNetwork } from '../models/networkWatch'
+import { railsWithin } from './networkFollower'
+import { scaleFactor } from './scale'
+import { projectOnSegment, tangentOnSegment } from '../models/locomotive'
+import { findJunctionAtNode } from '../models/routing'
+import { tidyTrackSpans } from '../models/speedZones'
+import { edgeLength, PLATFORM_WIDTH, platformDimensions, platformOutline, pointOnEdge, sideNormal } from '../models/platforms'
+import { findTrackPathToAny } from '../services/trackPath'
+import {
+  facingEdge,
+  islandReach,
+  layPlatformGroup,
+  projectOnRails,
+  railsAlong,
+  sideOf,
+  trackAcross,
+  type LaidPlatforms,
+  type PlacedPoint,
+} from '../services/platformLayout'
 
 /**
  * Result of computing an auto-connect preview or application.
@@ -865,4 +883,448 @@ export function performTrackCut(net: Network, worldPos: Point, hitTol = 1.0, det
   const hitSegId = hitSegment(net, worldPos, hitTol)
   if (!hitSegId) return false
   return splitSegment(net, hitSegId, worldPos) !== null
+}
+
+// ─────────────────── Station templates ───────────────────
+//
+// Two templates lay a small station in one click, previewed while hovering:
+// - the island loop (« évitement à quai central »): a straight track parts into two tracks far
+//   enough apart for an island platform between them, which is laid with them;
+// - the station with two side platforms (« gare à deux quais latéraux »): on a double track (or a
+//   passing loop), one platform on the outer side of each track.
+// Both put their platforms in the station beside them, or in a new one (`layPlatformGroup`), with
+// their stop markers laid by default. Sides are seen on screen (see `models/platforms.ts`).
+
+/** Length of the platforms the station templates lay, metres at 1:1 */
+export const TEMPLATE_PLATFORM_LENGTH = 220
+/** Radius of the curves by which the island loop parts from the line, metres at 1:1 */
+export const ISLAND_LOOP_RADIUS = 190
+/** Shortest stretch the side platforms are cut down to where the tracks part, metres at 1:1 */
+export const TEMPLATE_MIN_PLATFORM_LENGTH = 20
+/** Track left before and after the loop on the straight it is laid on, metres at 1:1 */
+const LOOP_END_MARGIN = 1
+/** A cut this close to a node of the straight is made at the node, metres at 1:1 */
+const CUT_SNAP = 0.25
+
+/** Why a template lays nothing where the cursor is */
+export type StationTemplateRefusal = 'not-straight' | 'too-short' | 'no-track-across' | 'not-alongside'
+
+/** A rail the template would lay, as drawn by the preview */
+export interface TemplateRail {
+  from: Point
+  to: Point
+  via?: Point
+}
+
+/** Common to the two templates: where it stands, and what is drawn */
+interface StationTemplateBase {
+  /** The place of the track the template is laid around */
+  at: Point
+  /** The rails it would lay (none for the side platforms) */
+  rails: TemplateRail[]
+  /** The outline of each platform it would lay */
+  outlines: Point[][]
+}
+
+export type StationTemplateRefused = StationTemplateBase & {
+  valid: false
+  refusal: StationTemplateRefusal
+  /** Length of straight track the island loop needs (`too-short`), m */
+  needed?: number
+}
+
+const sideAway = (side: 'left' | 'right'): 'left' | 'right' => (side === 'left' ? 'right' : 'left')
+const distanceTo = (a: Point, b: Point): number => Math.hypot(a.x - b.x, a.y - b.y)
+const along = (o: Point, u: Point, s: number, n: Point = { x: 0, y: 0 }, d = 0): Point => ({
+  x: o.x + u.x * s + n.x * d,
+  y: o.y + u.y * s + n.y * d,
+})
+
+/** The point of the network nearest to `p` within `reach`, on any rail */
+function nearestTrackPoint(net: Network, p: Point, reach: number): PlacedPoint | null {
+  let best: PlacedPoint | null = null
+  let bestDist = reach
+  for (const seg of railsWithin(net, p, reach)) {
+    const proj = projectOnSegment(net, seg, p)
+    if (!proj) continue
+    const d = distanceTo(proj.point, p)
+    if (d <= bestDist) {
+      bestDist = d
+      best = { segId: seg.id, t: proj.t, at: proj.point }
+    }
+  }
+  return best
+}
+
+/** A straight rail of a straight run: where its two ends are along the run (`s0` < `s1`) */
+interface RunRail {
+  segId: SegmentId
+  s0: number
+  s1: number
+  node0: NodeId
+  node1: NodeId
+}
+
+/** A line of straight rails end to end, through plain joints (no points): origin, heading, rails */
+export interface StraightRun {
+  origin: Point
+  u: Point
+  length: number
+  rails: RunRail[]
+}
+
+/**
+ * The straight track a straight rail belongs to: the rails that continue it in line through
+ * plain joints, up to the first set of points, end of track or bend. Null for a rail that is not straight.
+ */
+export function straightRunThrough(net: Network, segId: SegmentId): StraightRun | null {
+  const seg = net.segments.get(segId)
+  if (!seg || seg.kind !== 'straight') return null
+  const a = net.nodes.get(seg.from)
+  const b = net.nodes.get(seg.to)
+  if (!a || !b) return null
+  const length = distanceTo(a.pos, b.pos)
+  if (length < 1e-6) return null
+  const u = { x: (b.pos.x - a.pos.x) / length, y: (b.pos.y - a.pos.y) / length }
+  const offLine = (p: Point): number => Math.abs((p.x - a.pos.x) * u.y - (p.y - a.pos.y) * u.x)
+  const sOf = (p: Point): number => (p.x - a.pos.x) * u.x + (p.y - a.pos.y) * u.y
+
+  const rails: RunRail[] = [{ segId, s0: 0, s1: length, node0: a.id, node1: b.id }]
+  const seen = new Set<SegmentId>([segId])
+  // Walk on from each end while the next rail is straight and in line
+  for (const forward of [true, false]) {
+    let node = forward ? b.id : a.id
+    let rail: SegmentId = segId
+    for (;;) {
+      const adjacent = net.adjacency.get(node) ?? []
+      if (adjacent.length !== 2 || findJunctionAtNode(net, node)) break
+      const nextId = adjacent[0] === rail ? adjacent[1] : adjacent[0]
+      const next = net.segments.get(nextId)
+      if (!next || next.kind !== 'straight' || seen.has(nextId)) break
+      const farId = next.from === node ? next.to : next.from
+      const far = net.nodes.get(farId)
+      const here = net.nodes.get(node)
+      if (!far || !here) break
+      const s = sOf(far.pos)
+      const sHere = sOf(here.pos)
+      if (offLine(far.pos) > 1e-3 || (forward ? s <= sHere + 1e-6 : s >= sHere - 1e-6)) break
+      seen.add(nextId)
+      rails.push(forward ? { segId: nextId, s0: sHere, s1: s, node0: node, node1: farId } : { segId: nextId, s0: s, s1: sHere, node0: farId, node1: node })
+      node = farId
+      rail = nextId
+    }
+  }
+  rails.sort((p, q) => p.s0 - q.s0)
+  const start = rails[0].s0
+  for (const rail of rails) {
+    rail.s0 -= start
+    rail.s1 -= start
+  }
+  return { origin: along(a.pos, u, start), u, length: rails[rails.length - 1].s1, rails }
+}
+
+/** Where the loop leaves or rejoins the line: a node of it, or a place of a rail to cut */
+export interface TemplateCut {
+  pos: Point
+  segId: SegmentId
+  /** An existing node of the line, when the cut falls on one */
+  nodeId: NodeId | null
+}
+
+function cutOnRun(run: StraightRun, s: number, snap: number): TemplateCut {
+  const rail = run.rails.find((r) => s <= r.s1 + 1e-9) ?? run.rails[run.rails.length - 1]
+  if (Math.abs(s - rail.s0) <= snap) return { pos: along(run.origin, run.u, rail.s0), segId: rail.segId, nodeId: rail.node0 }
+  if (Math.abs(s - rail.s1) <= snap) return { pos: along(run.origin, run.u, rail.s1), segId: rail.segId, nodeId: rail.node1 }
+  return { pos: along(run.origin, run.u, s), segId: rail.segId, nodeId: null }
+}
+
+export type IslandLoopPreview =
+  | StationTemplateRefused
+  | (StationTemplateBase & {
+      valid: true
+      /** Side of the line the loop goes to, walking the line along `heading` */
+      side: 'left' | 'right'
+      heading: Point
+      /** Axis to axis of the two tracks along the platform, m */
+      spacing: number
+      platformLength: number
+      radius: number
+      entry: TemplateCut
+      exit: TemplateCut
+      entryMid: Point
+      entryVia1: Point
+      entryVia2: Point
+      loopStart: Point
+      loopEnd: Point
+      exitMid: Point
+      exitVia1: Point
+      exitVia2: Point
+      /** The platform along the line, from start to end (the edge of the island on the line) */
+      lineEdge: [Point, Point]
+    })
+
+export interface StationTemplateOptions {
+  /** How far from the cursor the track is looked for, m */
+  reach: number
+  /** Rail gauge of the layout (1:1 when left out): every size follows it */
+  gauge?: number
+  /** Length of the platforms, m (`TEMPLATE_PLATFORM_LENGTH` at the scale when left out) */
+  platformLength?: number
+}
+
+/**
+ * The island loop the cursor points at: on the straight track nearest to it, centred on the
+ * cursor (slid along the straight to fit it), on the side of the track the cursor is on. The two
+ * tracks are set apart by two platform edges and an island (`2 × edgeOffset + width`); the
+ * platform runs the length of the stretch where they are parallel. Null away from the track.
+ */
+export function computeIslandLoopPreview(net: Network, cursor: Point, options: StationTemplateOptions): IslandLoopPreview | null {
+  const k = scaleFactor(options.gauge)
+  const dims = platformDimensions(options.gauge)
+  const hit = nearestTrackPoint(net, cursor, options.reach)
+  if (!hit) return null
+  const refused = (refusal: StationTemplateRefusal, needed?: number): StationTemplateRefused => ({
+    valid: false, refusal, at: hit.at, rails: [], outlines: [], ...(needed !== undefined ? { needed } : {}),
+  })
+  const run = straightRunThrough(net, hit.segId)
+  if (!run) return refused('not-straight')
+  const { origin, u } = run
+  const side = sideOf(cursor, hit.at, u)
+  const n = sideNormal(u, side)
+
+  const spacing = 2 * dims.edgeOffset + dims.width
+  const platformLength = options.platformLength ?? TEMPLATE_PLATFORM_LENGTH * k
+  const radius = Math.max(ISLAND_LOOP_RADIUS * k, spacing * 10)
+  // Two arcs of the same radius turned opposite ways set the track `spacing` aside over `taper`
+  const theta = Math.acos(1 - spacing / (2 * radius))
+  const taper = spacing / Math.tan(theta / 2)
+  const dVia = radius * Math.tan(theta / 2)
+  const total = platformLength + 2 * taper
+  const margin = LOOP_END_MARGIN * k
+  if (run.length < total + 2 * margin) return refused('too-short', total + 2 * margin)
+
+  const sCursor = (hit.at.x - origin.x) * u.x + (hit.at.y - origin.y) * u.y
+  const sCentre = Math.max(total / 2 + margin, Math.min(run.length - total / 2 - margin, sCursor))
+  const entry = cutOnRun(run, sCentre - total / 2, CUT_SNAP * k)
+  const exit = cutOnRun(run, sCentre + total / 2, CUT_SNAP * k)
+  const s0 = sCentre - platformLength / 2
+  const s1 = sCentre + platformLength / 2
+
+  const loopStart = along(origin, u, s0, n, spacing)
+  const loopEnd = along(origin, u, s1, n, spacing)
+  const entryMid = along(origin, u, s0 - taper / 2, n, spacing / 2)
+  const exitMid = along(origin, u, s1 + taper / 2, n, spacing / 2)
+  const entryVia1 = along(entry.pos, u, dVia)
+  const entryVia2 = along(loopStart, u, -dVia)
+  const exitVia1 = along(loopEnd, u, dVia)
+  const exitVia2 = along(exit.pos, u, -dVia)
+  const outline = [
+    along(origin, u, s0, n, dims.edgeOffset),
+    along(origin, u, s1, n, dims.edgeOffset),
+    along(origin, u, s1, n, spacing - dims.edgeOffset),
+    along(origin, u, s0, n, spacing - dims.edgeOffset),
+  ]
+  return {
+    valid: true,
+    at: hit.at,
+    side,
+    heading: u,
+    spacing,
+    platformLength,
+    radius,
+    entry,
+    exit,
+    entryMid,
+    entryVia1,
+    entryVia2,
+    loopStart,
+    loopEnd,
+    exitMid,
+    exitVia1,
+    exitVia2,
+    lineEdge: [along(origin, u, s0), along(origin, u, s1)],
+    rails: [
+      { from: entry.pos, to: entryMid, via: entryVia1 },
+      { from: entryMid, to: loopStart, via: entryVia2 },
+      { from: loopStart, to: loopEnd },
+      { from: loopEnd, to: exitMid, via: exitVia1 },
+      { from: exitMid, to: exit.pos, via: exitVia2 },
+    ],
+    outlines: [outline],
+  }
+}
+
+/** The node of the line at a cut: the node it falls on, or a new one cutting its rail (or one of `pieces`) */
+function nodeAtCut(net: Network, cut: TemplateCut, pieces: readonly SegmentId[]): { node: RailNode; pieces: SegmentId[] } | null {
+  const existing = cut.nodeId ? net.nodes.get(cut.nodeId) : undefined
+  if (existing) return { node: existing, pieces: [] }
+  const candidates = net.segments.has(cut.segId) ? [cut.segId] : pieces
+  let best: { segId: SegmentId; d: number } | null = null
+  for (const sid of candidates) {
+    const seg = net.segments.get(sid)
+    const proj = seg && projectOnSegment(net, seg, cut.pos)
+    if (!proj) continue
+    const d = distanceTo(proj.point, cut.pos)
+    if (!best || d < best.d) best = { segId: sid, d }
+  }
+  if (!best) return null
+  const split = splitSegment(net, best.segId, cut.pos)
+  return split ? { node: split.midNode, pieces: [split.seg1.id, split.seg2.id] } : null
+}
+
+/**
+ * The edge of a platform along the track from `a` to `b` (two places on the track), on the side
+ * of `toward`. Null when the track does not join them.
+ */
+function edgeBetween(net: Network, a: Point, b: Point, toward: Point, reach: number): PlatformEdge | null {
+  const from = nearestTrackPoint(net, a, reach)
+  const to = nearestTrackPoint(net, b, reach)
+  if (!from || !to) return null
+  const path = findTrackPathToAny(net, from, [to])
+  const track = path ? tidyTrackSpans(path.spans) : []
+  if (track.length === 0) return null
+  const edge: PlatformEdge = { track, side: 'left' }
+  const start = pointOnEdge(net, edge, 0)
+  if (!start) return null
+  edge.side = sideOf(toward, start.point, start.heading)
+  return edge
+}
+
+/** What a station template laid: the platforms and their station, and the rails of the loop */
+export interface LaidStationTemplate extends LaidPlatforms {
+  rails: SegmentId[]
+}
+
+/**
+ * Lay the island loop of a preview: the two cuts of the line, the loop (two curves, the straight
+ * along the platform, two curves), then the island between the line and the loop, in the station
+ * beside it or a new one. Null when the preview lays nothing.
+ */
+export function applyIslandLoop(net: Network, preview: IslandLoopPreview, options: { gauge?: number; tolerance?: number } = {}): LaidStationTemplate | null {
+  if (!preview.valid) return null
+  // Heights of the line where the loop leaves and rejoins it, read before it is cut
+  const levelAt = (cut: TemplateCut): number => {
+    const node = cut.nodeId ? net.nodes.get(cut.nodeId) : undefined
+    if (node) return nodeLevel(node)
+    const seg = net.segments.get(cut.segId)
+    return seg ? segmentHeightNear(net, seg, cut.pos) : 0
+  }
+  const entryLevel = levelAt(preview.entry)
+  const exitLevel = levelAt(preview.exit)
+  const entry = nodeAtCut(net, preview.entry, [])
+  const exit = entry && nodeAtCut(net, preview.exit, entry.pieces)
+  if (!entry || !exit) return null
+
+  const nEntryMid = addNode(net, preview.entryMid, entryLevel)
+  const nStart = addNode(net, preview.loopStart, entryLevel)
+  const nEnd = addNode(net, preview.loopEnd, exitLevel)
+  const nExitMid = addNode(net, preview.exitMid, exitLevel)
+  const loop = [
+    addCurveSegment(net, entry.node.id, nEntryMid.id, preview.entryVia1),
+    addCurveSegment(net, nEntryMid.id, nStart.id, preview.entryVia2),
+    addSegment(net, nStart.id, nEnd.id),
+    addCurveSegment(net, nEnd.id, nExitMid.id, preview.exitVia1),
+    addCurveSegment(net, nExitMid.id, exit.node.id, preview.exitVia2),
+  ].flatMap((seg) => (seg ? [seg.id] : []))
+  // On a ramp the loop climbs from one set of points to the other, like the line
+  spreadGradient(net, loop)
+  reconcileNetworkIntersections(net, options.tolerance)
+
+  // The island, from its two edges found again on the track as it now is
+  const reach = 0.05 * scaleFactor(options.gauge)
+  const [lineA, lineB] = preview.lineEdge
+  const lineEdge = edgeBetween(net, lineA, lineB, preview.loopStart, reach)
+  const loopEdge = edgeBetween(net, preview.loopStart, preview.loopEnd, lineA, reach)
+  if (!lineEdge || !loopEdge) return null
+  const laid = layPlatformGroup(net, [[lineEdge, loopEdge]], options.gauge)
+  return laid ? { ...laid, rails: loop } : null
+}
+
+export type SidePlatformsPreview =
+  | StationTemplateRefused
+  | (StationTemplateBase & {
+      valid: true
+      /** Axis to axis of the two tracks where the cursor is, m */
+      spacing: number
+      platformLength: number
+      /** One edge each: the platform of the track under the cursor, then the one across */
+      edges: [PlatformEdge, PlatformEdge]
+    })
+
+/** The track from `centre` `half` metres either way along `heading`: the stretch of a platform */
+function stretchAround(net: Network, centre: PlacedPoint, heading: Point, half: number): TrackSpan[] | null {
+  const rails = railsAlong(net, centre, half * 2)
+  const a = projectOnRails(net, rails, along(centre.at, heading, -half))
+  const b = projectOnRails(net, rails, along(centre.at, heading, half))
+  if (!a || !b) return null
+  const path = findTrackPathToAny(net, a, [b], { blocked: (sid) => !rails.has(sid) })
+  return path ? tidyTrackSpans(path.spans) : null
+}
+
+/** The track across the side of `edge` keeps within 15 % of `spacing` of it all along (OSM data wanders a little) */
+function runsAlongside(net: Network, edge: PlatformEdge, spacing: number, reach: number): boolean {
+  const own = new Set(edge.track.map((span) => span.segId))
+  const length = edgeLength(net, edge)
+  for (let i = 0; i <= 10; i++) {
+    const p = pointOnEdge(net, edge, (length * i) / 10)
+    if (!p) return false
+    const across = trackAcross(net, own, p.point, p.heading, sideNormal(p.heading, edge.side), reach)
+    if (!across || Math.abs(across.spacing - spacing) > spacing * 0.15) return false
+  }
+  return true
+}
+
+/**
+ * The two side platforms the cursor points at: on the track nearest to it and the track
+ * alongside (on the side of the cursor first, else the other), one platform on the outer side of
+ * each, centred on the cursor and cut down to where the two tracks run side by side. Null away from the track.
+ */
+export function computeSidePlatformsPreview(net: Network, cursor: Point, options: StationTemplateOptions): SidePlatformsPreview | null {
+  const k = scaleFactor(options.gauge)
+  const dims = platformDimensions(options.gauge)
+  const hit = nearestTrackPoint(net, cursor, options.reach)
+  if (!hit) return null
+  const refused = (refusal: StationTemplateRefusal): StationTemplateRefused => ({ valid: false, refusal, at: hit.at, rails: [], outlines: [] })
+  const heading = tangentOnSegment(net, hit.segId, hit.t)
+  if (!heading) return null
+  const cursorSide = sideOf(cursor, hit.at, heading)
+  const reach = islandReach(dims)
+  const own = new Set([hit.segId])
+  const towardCursor = trackAcross(net, own, hit.at, heading, sideNormal(heading, cursorSide), reach)
+  const acrossSide = towardCursor ? cursorSide : sideAway(cursorSide)
+  const across = towardCursor ?? trackAcross(net, own, hit.at, heading, sideNormal(heading, acrossSide), reach)
+  if (!across) return refused('no-track-across')
+
+  const wanted = options.platformLength ?? TEMPLATE_PLATFORM_LENGTH * k
+  const shortest = TEMPLATE_MIN_PLATFORM_LENGTH * k
+  // The longest platform, down from the length asked, along which the two tracks run side by side
+  for (let length = wanted; length >= shortest - 1e-9; length -= wanted / 10) {
+    const track = stretchAround(net, hit, heading, length / 2)
+    if (!track || track.length === 0) continue
+    const inner: PlatformEdge = { track, side: 'left' }
+    const middle = pointOnEdge(net, inner, edgeLength(net, inner) / 2)
+    if (!middle) continue
+    inner.side = sideOf(across.at, middle.point, middle.heading)
+    if (!runsAlongside(net, inner, across.spacing, reach)) continue
+    const facing = facingEdge(net, inner, across, length * 2, across.spacing * 1.5)
+    if (!facing) continue
+    const edges: [PlatformEdge, PlatformEdge] = [
+      { track: inner.track, side: sideAway(inner.side) },
+      { track: facing.track, side: sideAway(facing.side) },
+    ]
+    const outlines = edges.flatMap((edge) => {
+      const outline = platformOutline(net, { id: 'preview', stationId: '', edges: [edge], width: PLATFORM_WIDTH, markers: [] }, dims)
+      return outline ? [outline] : []
+    })
+    return { valid: true, at: hit.at, spacing: across.spacing, platformLength: edgeLength(net, inner), edges, rails: [], outlines }
+  }
+  return refused('not-alongside')
+}
+
+/** Lay the two side platforms of a preview, in the station beside them or a new one */
+export function applySidePlatforms(net: Network, preview: SidePlatformsPreview, gauge?: number): LaidStationTemplate | null {
+  if (!preview.valid) return null
+  if (preview.edges.some((edge) => edge.track.some((span) => !net.segments.has(span.segId)))) return null
+  const laid = layPlatformGroup(net, preview.edges.map((edge): [PlatformEdge] => [edge]), gauge)
+  return laid ? { ...laid, rails: [] } : null
 }

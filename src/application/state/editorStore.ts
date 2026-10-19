@@ -190,6 +190,12 @@ export type Tool =
   | 'platform'
 
 /**
+ * A station template of the platform tool, laid in one click (`application/tools/platformTemplateTool.ts`):
+ * an island loop on a straight track, or two side platforms on a double track.
+ */
+export type PlatformTemplate = 'islandLoop' | 'sidePlatforms'
+
+/**
  * Sub-modes of the signalling mode (tool `signal`), in the order of the toolbar; `select` and
  * `delete` act on whatever the mode lays on the track. `blockSignal` lays a block signal (a
  * sémaphore at the pro level), `pathSignal` a path signal (a carré), `cabMarker` a marker board of a
@@ -818,6 +824,8 @@ export class EditorStore {
   platformBothSides = false
   /** Platform tool: Shift is held, which turns « both sides » the other way while it is */
   platformShiftHeld = false
+  /** Platform tool: the station template in hand, laid in one click instead of a platform in two */
+  platformTemplate: PlatformTemplate | null = null
   /** Speed (km/h) of the next zone the speed limit tool lays */
   speedZoneToolSpeed = DEFAULT_ZONE_TOOL_SPEED
   /** Speed zone picked in the signalling mode */
@@ -1988,6 +1996,9 @@ export class EditorStore {
       this.selectedPlatformId = null
     }
 
+    // A station template is picked anew each time the platform tool is taken
+    if (t !== this.tool) this.platformTemplate = null
+
     // A station or a platform is only picked with the selection tool
     if (t !== 'select') {
       this.selectedStationId = null
@@ -2575,6 +2586,10 @@ export class EditorStore {
       else this.notify()
     } else if (this.tool === 'signal' && this.stepBackSignalMode()) {
       // Signalling climbs one level at a time, like the train mode: see `stepBackSignalMode`
+    } else if (this.tool === 'platform' && this.platformTemplate) {
+      // A station template goes first, back to laying a platform
+      this.platformTemplate = null
+      this.notify()
     } else if (this.tool !== 'select') {
       this.setTool('select')
     } else {
@@ -4463,6 +4478,15 @@ export class EditorStore {
 
   setPlatformBothSides = (on: boolean): void => {
     this.platformBothSides = on
+    this.notify()
+  }
+
+  /** Take a station template (null: back to laying one platform in two clicks); the platform being laid goes */
+  setPlatformTemplate = (template: PlatformTemplate | null): void => {
+    if (template !== null && this.tool !== 'platform') this.setTool('platform')
+    if (this.tool !== 'platform') return
+    this.platformTemplate = template
+    this.platformStart = null
     this.notify()
   }
 
