@@ -24,14 +24,17 @@ export function buildLineGraph(index: DatasetIndex): LineGraph {
 }
 
 /** Speed a train makes on a line of each kind, km/h: what a kilometre of it costs in time */
-export const LINE_TRAVEL_SPEED: Record<LineCategory, number> = { highSpeed: 300, main: 140, regional: 90, service: 40 }
+export const LINE_TRAVEL_SPEED: Record<LineCategory, number> = { highSpeed: 300, main: 140, regional: 90, service: 40, subway: 35 }
 
 /**
  * What entering a line costs on a journey: the time to run it, so that a journey takes the
- * high-speed line rather than the classic line beside it, shorter but twice as slow.
+ * high-speed line rather than the classic line beside it, shorter but twice as slow. A metro line
+ * cannot be entered: no train of the table is a metro.
  */
 export function travelWeight(line: IndexLine): number {
-  return line.lengthKm / LINE_TRAVEL_SPEED[lineCategory(line)]
+  const category = lineCategory(line)
+  if (category === 'subway') return Infinity
+  return line.lengthKm / LINE_TRAVEL_SPEED[category]
 }
 
 /** What a train can do on the lines: its top speed, and whether it has the cab signalling of the high-speed lines */
@@ -43,12 +46,14 @@ export interface TrainAbility {
 /**
  * The cost of entering a line for a given train: the time it takes it, at its own top speed when
  * that is lower than the line's; a high-speed line cannot be entered at all without its cab
- * signalling (an infinite cost: the route goes round, or there is none).
+ * signalling (an infinite cost: the route goes round, or there is none), nor a metro line.
  */
 export function travelWeightFor(train: TrainAbility): (line: IndexLine) => number {
   return (line) => {
     const category = lineCategory(line)
     if (category === 'highSpeed' && !train.cabSignalling) return Infinity
+    // No train of the table is a metro
+    if (category === 'subway') return Infinity
     return line.lengthKm / Math.min(LINE_TRAVEL_SPEED[category], Math.max(1, train.maxKmh))
   }
 }

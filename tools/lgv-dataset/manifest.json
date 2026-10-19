@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "What the « LGV France » dataset is made of. bbox: south, west, north, east (degrees), the whole of metropolitan France. Tiles of tileDeg degrees are asked one by one for the high-speed tracks. The approaches are the classic lines that take the trains from the end of a high-speed line into a city-centre terminal: a corridor of waypoints (lat, lon), the rails within radiusM of it, and every rail within stationRadiusM of the terminal. Waypoints are the stations of the SNCF list along the way, plus a few places where the line bends between two stations. lines: the lines published, each made of the ways of the OSM relations listed (type=route, route=railway|tracks: the whole line, its « voie 1 / voie 2 » and section relations), in order of precedence; refs and names of those relations are too unsteady to go by (« 752 000 » with a space, « LN2 », none at all, three LGV under one RFN code). A high-speed way in none of them takes the line of a neighbouring section, else « autres ».",
+  "comment": "What the « LGV France » dataset is made of. bbox: south, west, north, east (degrees), the whole of metropolitan France. Tiles of tileDeg degrees are asked one by one for the high-speed tracks. The approaches are the classic lines that take the trains from the end of a high-speed line into a city-centre terminal: a corridor of waypoints (lat, lon), the rails within radiusM of it, and every rail within stationRadiusM of the terminal. Waypoints are the stations of the SNCF list along the way, plus a few places where the line bends between two stations. lines: the lines published, each made of the ways of the OSM relations listed (type=route, route=railway|tracks: the whole line, its « voie 1 / voie 2 » and section relations), in order of precedence; refs and names of those relations are too unsteady to go by (« 752 000 » with a space, « LN2 », none at all, three LGV under one RFN code). A high-speed way in none of them takes the line of a neighbouring section, else « autres ». subways: the metro of a city the dataset reaches, every railway=subway track in its box (south, west, north, east) but its depots, each line named by its routes (route=subway, by ref).",
   "bbox": [41.3, -5.2, 51.1, 9.6],
   "tileDeg": 2,
   "keepDetachedOverKm": 2,
@@ -121,6 +121,32 @@
       "name": "Provence-Alpes-Côte d'Azur",
       "iso": "FR-PAC",
       "comment": "The first region taken whole, around Marseille: the classic lines a TER or an Intercités runs on. Each line is its OSM relation (route=railway), main or branch by the usage of its tracks."
+    }
+  ],
+  "subways": [
+    {
+      "id": "paris",
+      "name": "Métro de Paris",
+      "bbox": [48.72, 2.2, 48.96, 2.5],
+      "comment": "Reached by the raccordement of Paris Gare de Lyon. The box holds the sixteen lines, line 14 down to Orly airport included; Orlyval and CDGVAL are not railway=subway."
+    },
+    {
+      "id": "lyon",
+      "name": "Métro de Lyon",
+      "bbox": [45.68, 4.77, 45.81, 4.96],
+      "comment": "Reached by the two raccordements of Lyon Part-Dieu. Lines A to D; the funiculars are railway=funicular."
+    },
+    {
+      "id": "marseille",
+      "name": "Métro de Marseille",
+      "bbox": [43.25, 5.34, 43.37, 5.46],
+      "comment": "Inside the region Provence-Alpes-Côte d'Azur, reached by the raccordement of Marseille Saint-Charles."
+    },
+    {
+      "id": "lille",
+      "name": "Métro de Lille",
+      "bbox": [50.58, 2.95, 50.75, 3.24],
+      "comment": "On the LGV Nord (Lille Europe, Lille Flandres): the two VAL lines, Saint-Philibert to 4 Cantons and Lille to Tourcoing."
     }
   ]
 }

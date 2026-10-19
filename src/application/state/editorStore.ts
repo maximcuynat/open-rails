@@ -131,6 +131,7 @@ import {
 } from '@domain/models/locomotive'
 import type { TrainSet, Vehicle, CouplerSnapTarget, Reverser } from '@domain/models/train'
 import { DEFAULT_ROLLING_STOCK, stockSpec, type RakeChoice, type RollingStockModel } from '@domain/models/rollingStock'
+import { isSubwayRail } from '@domain/models/railway'
 import { LINE_CATEGORY_COLORS } from '@infrastructure/render/datasetOverview'
 import { trackLod } from '@infrastructure/render/lod'
 import { trackPositionBand } from '@infrastructure/render/levelPieces'
@@ -478,15 +479,29 @@ export class EditorStore {
   datasetRefreshedAt = -Infinity
 
   /**
-   * The rails of a dataset project a train must keep off: those of the high-speed lines, for a
-   * train without their cab signalling. Undefined when it may go anywhere.
+   * The rails a train must keep off: those of a metro (`Segment.railway`, no train of the table is
+   * one), and in a dataset project those of the high-speed lines, for a train without their cab
+   * signalling. Undefined when it may go anywhere.
    */
   railsBlockedFor = (train: TrainSet): ((segId: SegmentId) => boolean) | undefined => {
+    const net = this.network
+    let subway = false
+    for (const seg of net.segments.values()) {
+      if (isSubwayRail(seg)) {
+        subway = true
+        break
+      }
+    }
     const index = this.datasetIndex
-    if (!this.dataset || !index || train.vehicles.every((veh) => stockSpec(veh).cabSignalling)) return undefined
-    const highSpeed = new Set(index.lines.filter((line) => lineCategory(line) === 'highSpeed').map((line) => line.id))
+    const highSpeed =
+      this.dataset && index && !train.vehicles.every((veh) => stockSpec(veh).cabSignalling)
+        ? new Set(index.lines.filter((line) => lineCategory(line) === 'highSpeed').map((line) => line.id))
+        : null
+    if (!subway && !highSpeed) return undefined
     const railLine = this.railLine
     return (segId) => {
+      if (subway && isSubwayRail(net.segments.get(segId))) return true
+      if (!highSpeed) return false
       const line = railLine.get(segId)
       return line !== undefined && highSpeed.has(line)
     }
