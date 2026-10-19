@@ -46,8 +46,8 @@ describe('the station templates of the platform tool', () => {
     store.setPlatformTemplate('islandLoop')
     store.cursorWorld = { x: 400, y: -5 }
     expect(resolvePlatformTemplate(store)?.preview.valid).toBe(true)
-    expect(texts(store)).toContain('220.00 m')
-    expect(texts(store)).toContain('9.40 m')
+    expect(texts(store)).toContain('220,00 m')
+    expect(texts(store)).toContain('9,40 m')
     const drawing = platformTemplateDrawing(store)!
     expect(drawing.rails).toHaveLength(5)
     expect(drawing.outlines).toHaveLength(1)
