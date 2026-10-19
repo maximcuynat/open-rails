@@ -185,9 +185,31 @@ deux repères ; îlot entre les deux voies (« Quai central · 160.00 m », rame
 barre) ; sélection d'un quai ; borne tirée de 20 m (200 → 220 m) ; de près, ligne de sécurité,
 bornes et repères. Aucune erreur dans la page.
 
-À reprendre :
-- La marque de la gare se pose au milieu du quai : un clic à cet endroit choisit la gare, pas le quai.
-- Les longueurs s'écrivent « 160.00 m » (`formatDistance`), pas « 160,00 m ».
-- Un îlot qui perd une de ses voies est retiré, pas changé en quai latéral.
-- `MergeReport.platformsAdded` n'est pas encore dit dans le compte rendu de fusion.
-- Un quai à cheval sur deux morceaux du jeu de données reste raccourci quand le second arrive (Q5).
+À reprendre (repris le 2026-10-19, branche `quais-finitions`) :
+- [x] La marque de la gare se pose au milieu du quai : un clic à cet endroit choisit la gare, pas le
+      quai. → Le quai garde le clic : `store.stationPickAt` donne la gare à un clic sur sa marque même
+      ou sur son étiquette (`stationMarkAt`, `stationRender.ts`, boîtes du dessin en mètres, nom mesuré
+      au jugé), et dans l'approche de 14 px autour de la marque seulement quand aucun quai n'est sous
+      le curseur ; le survol suit la même règle. La gare ne bouge pas (l'étiquette au milieu du quai
+      reste lisible et déplaçable). Vu au navigateur : clic à 9 px de la marque → le quai, sur la
+      marque ou le nom → la gare.
+- [x] Les longueurs s'écrivent « 160.00 m » (`formatDistance`), pas « 160,00 m ». → `formatDecimal`
+      (`units.ts`) : virgule dans `formatDistance`, `formatRadius`, `formatAngle`, la barre d'échelle,
+      les badges de section, les longueurs, rayons et angles écrits à la main du panneau, du gizmo et
+      de la mesure. `parseDistance` et les champs lisaient déjà la virgule ; les champs se remplissent
+      par `String(n)`, jamais par un texte formaté. Les coordonnées « (x m, y m) » gardent le point
+      (la virgule y sépare les deux nombres). L'export SVG n'écrit pas de longueur.
+- [x] Un îlot qui perd une de ses voies est retiré, pas changé en quai latéral. → Règle 5 de
+      `platforms.ts` : il devient un quai latéral sur la voie qui reste, du côté où il était, avec ses
+      repères et sa largeur (dans `remapPlatforms` comme dans `settlePlatforms`).
+- [x] `MergeReport.platformsAdded` n'est pas encore dit dans le compte rendu de fusion. → Chiffre
+      « quai(s) ajouté(s) » après les gares, absent à zéro.
+- [x] Un quai à cheval sur deux morceaux du jeu de données reste raccourci quand le second arrive (Q5).
+      → Déjà réglé par l'ajout en place (`sliceInPlace.ts`, lot V de la vue, fusionné après cette
+      revue : le quai est remis entier depuis le fichier qui arrive, raccourci depuis ceux qui restent ;
+      test `editorStore.datasetPlatforms.test.ts`). Restaient deux défauts, vus sur le jeu de données
+      réel (l'îlot `pl_140849`, entre `ligne-927000` et `ligne-r4117951-01`) : l'îlot était perdu tant
+      qu'un seul morceau était là (réglé par le point précédent), et l'oracle de `sliceInPlace`
+      refusait une gare de frontière à plusieurs quais : ses arrêts suivaient l'ordre de
+      `net.platforms`, que remettre un morceau change. `settlePlatforms` range désormais les quais
+      d'une gare par id. Rien à changer au générateur ni au jeu de données.
