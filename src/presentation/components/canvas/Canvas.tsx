@@ -53,7 +53,7 @@ import {
   applyFreeformParallelTurnout,
   performTrackCut,
 } from '@domain/geometry/constructionTemplates'
-import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
+import { formatDecimal, formatDistance, formatRadius, parseDistance } from '@domain/models/units'
 import { trainRouteStart } from '@domain/models/train'
 import {
   renderStraightDimension,
@@ -884,7 +884,7 @@ export function Canvas({ store, onViewport }: CanvasProps) {
       ctx.arc(eX, eY, 4, 0, Math.PI * 2)
       ctx.fill()
 
-      const labelText = `${formatDistance(dist, store.unit)} · ${angleDeg.toFixed(1)}° (ΔX : ${formatDistance(Math.abs(dx), store.unit)}, ΔY : ${formatDistance(Math.abs(dy), store.unit)})`
+      const labelText = `${formatDistance(dist, store.unit)} · ${formatDecimal(angleDeg, 1)}° (ΔX : ${formatDistance(Math.abs(dx), store.unit)}, ΔY : ${formatDistance(Math.abs(dy), store.unit)})`
       ctx.font = '600 11px Archivo, system-ui, sans-serif'
       const lw = ctx.measureText(labelText).width
       const mx = (sX + eX) / 2

@@ -6,6 +6,7 @@ import {
   BOARD_PRESETS,
   type ScalePresetId,
   type Unit,
+  formatDecimal,
   formatDistance,
   toUnitValue,
   parseDistance,
@@ -211,7 +212,7 @@ export function SettingsModal({ store, isOpen, onClose }: SettingsModalProps) {
                     <span className="scale-card-badge">{id === '1:1' ? '1:1' : `1:${preset.ratio}`}</span>
                   </div>
                   <div className="scale-card-info">
-                    Écartement : {(preset.defaultGauge * 1000).toFixed(1)} mm
+                    Écartement : {formatDecimal(preset.defaultGauge * 1000, 1)} mm
                   </div>
                 </button>
               )

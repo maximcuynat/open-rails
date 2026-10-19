@@ -26,16 +26,16 @@ describe('rampSummary', () => {
     expect(rampSummary(up.net, up.seg, REAL)).toEqual({
       from: 'Sol',
       to: 'Pont +1',
-      rise: '6.00 m',
+      rise: '6,00 m',
       gradient: '30 ‰ en montée',
       tooSteep: false,
     })
     // The same rail laid the other way round goes down
     const down = rail(1, 0)
-    expect(rampSummary(down.net, down.seg, REAL)).toMatchObject({ from: 'Pont +1', to: 'Sol', rise: '6.00 m', gradient: '30 ‰ en descente' })
+    expect(rampSummary(down.net, down.seg, REAL)).toMatchObject({ from: 'Pont +1', to: 'Sol', rise: '6,00 m', gradient: '30 ‰ en descente' })
     // Half a level into a tunnel: 3 m over 200 m
     const tunnel = rail(-0.5, -1)
-    expect(rampSummary(tunnel.net, tunnel.seg, REAL)).toMatchObject({ from: 'Tunnel −0,5', to: 'Tunnel −1', rise: '3.00 m', gradient: '15 ‰ en descente' })
+    expect(rampSummary(tunnel.net, tunnel.seg, REAL)).toMatchObject({ from: 'Tunnel −0,5', to: 'Tunnel −1', rise: '3,00 m', gradient: '15 ‰ en descente' })
   })
 
   it('too steep above the maximum slope of the project, not at it', () => {
@@ -54,7 +54,7 @@ describe('rampSummary', () => {
 
   it('the height climbed follows the height of a level and the display unit', () => {
     const { net, seg } = rail(0, 1)
-    expect(rampSummary(net, seg, { levelHeight: 0.069, maxGradient: 35, unit: 'cm' })!.rise).toBe('6.90 cm')
+    expect(rampSummary(net, seg, { levelHeight: 0.069, maxGradient: 35, unit: 'cm' })!.rise).toBe('6,90 cm')
   })
 })
 

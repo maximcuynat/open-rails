@@ -43,7 +43,7 @@ import {
 } from './lodOverlays'
 import { LabelSpace, crowdedPoints, type ScreenBox } from './labelSpace'
 import { textWidth } from './textWidth'
-import { formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
+import { formatDecimal, formatDistance as formatUnitsDistance, type Unit, type ScalePresetId } from '@domain/models/units'
 import {
   deckAbutments,
   groupPiecesByLevel,
@@ -1234,7 +1234,7 @@ export function renderNetwork(
       let text: string
       if (fullBadges || isSecSelected) {
         const typePrefix = sec.type === 'station_stop' ? 'Quai · ' : sec.type === 'siding' ? 'Évit. · ' : ''
-        text = `${typePrefix}${sec.name}${dirSymbol} (${sec.totalLength.toFixed(1)} m)`
+        text = `${typePrefix}${sec.name}${dirSymbol} (${formatDecimal(sec.totalLength, 1)} m)`
       } else {
         // Compact LOD
         text = `${sec.name}${dirSymbol}`
@@ -2151,8 +2151,8 @@ export function renderScaleBar(
 }
 
 function formatDistance(world: number): string {
-  if (world >= 1000) return `${(world / 1000).toFixed(2)} km`
-  return `${world.toFixed(2)} m`
+  if (world >= 1000) return `${formatDecimal(world / 1000, 2)} km`
+  return `${formatDecimal(world, 2)} m`
 }
 
 function roundRect(

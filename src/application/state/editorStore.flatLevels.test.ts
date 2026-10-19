@@ -83,7 +83,7 @@ describe('levels without relief', () => {
 
     expect(steep(store)).toHaveLength(1)
     expect(derived().ramps(store.gradientLimits.levelHeight).ramps).toHaveLength(1)
-    expect(summary()).toMatchObject({ rise: '6.00 m', gradient: '60 ‰ en montée', tooSteep: true })
+    expect(summary()).toMatchObject({ rise: '6,00 m', gradient: '60 ‰ en montée', tooSteep: true })
 
     store.setFlatLevels(true)
     expect(steep(store)).toHaveLength(0)

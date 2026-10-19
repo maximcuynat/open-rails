@@ -18,7 +18,7 @@ import { showToast } from '../common/Toast'
 import { curveCant, overlapsOfZone, type CurveCant } from '@domain/models/speedLimits'
 import { SPEED_ZONE_STEP } from '@domain/models/speedZones'
 import { speedZoneLength } from '@domain/services/speedZoneLayout'
-import { formatDistance, formatRadius, parseDistance } from '@domain/models/units'
+import { formatDecimal, formatDistance, formatRadius, parseDistance } from '@domain/models/units'
 import type { Signal, SpeedZone, Station } from '@domain/models/types'
 import type { Platform, StopMarker } from '@domain/models/types'
 import { edgeLength, platformsOf } from '@domain/models/platforms'
@@ -690,7 +690,7 @@ function NetworkPanel({ store }: { store: EditorStore }) {
 
   const formattedTotal =
     totalLen >= 1000
-      ? `${(totalLen / 1000).toFixed(2)} m`
+      ? `${formatDecimal(totalLen / 1000, 2)} m`
       : `${totalLen.toFixed(0)} mm`
 
   const deadEnds = derived.deadEnds().length
@@ -1099,7 +1099,7 @@ function NodePanel({ store, nodeId }: { store: EditorStore; nodeId: string }) {
         <>
           <div className="sp-subheader">Croisement à niveau (Diamond Crossing)</div>
           <div className="sp-section">
-            <Field label="Angle" value={`${crossing.angleDeg.toFixed(1)}° (${crossing.angleRad.toFixed(3)} rad)`} />
+            <Field label="Angle" value={`${formatDecimal(crossing.angleDeg, 1)}° (${formatDecimal(crossing.angleRad, 3)} rad)`} />
             <Field label="Type" value={crossing.angleDeg === 15 ? 'Traversée Kato #4' : crossing.angleDeg === 90 ? 'Croisement orthogonal' : 'Croisement oblique'} />
             <Field label="Ornières" value="1.6 mm (NEM 110)" />
           </div>
@@ -1270,12 +1270,12 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
               }}
               title="Sélectionner tous les rails de cette section"
             >
-              Tout le canton ({currentSection.totalLength.toFixed(1)} m)
+              Tout le canton ({formatDecimal(currentSection.totalLength, 1)} m)
             </button>
           </div>
         )}
         <Field label="Type" value={seg.kind === 'curve' ? 'Courbe' : 'Ligne droite'} />
-        <Field label="Longueur" value={`${len.toFixed(2)} m`} />
+        <Field label="Longueur" value={`${formatDecimal(len, 2)} m`} />
         <Field label="Sens de pose" value={`${seg.from} → ${seg.to}`} />
         <LevelField store={store} range={levelRange(store.network, [seg.id]) ?? { min: 0, max: 0 }} />
         {ramp && (
@@ -1299,8 +1299,8 @@ function SegmentPanel({ store, segId }: { store: EditorStore; segId: string }) {
         {seg.kind === 'curve' && seg.via && (
           <>
             {curveSideLabel && <Field label="Orientation" value={`Déviation ${curveSideLabel}`} />}
-            <Field label="Rayon" value={radius === null || radius === Infinity ? '∞' : `R${radius.toFixed(2)} m`} />
-            <Field label="Angle" value={deflection === null ? '—' : `${deflection.toFixed(2)}°`} />
+            <Field label="Rayon" value={radius === null || radius === Infinity ? '∞' : `R${formatDecimal(radius, 2)} m`} />
+            <Field label="Angle" value={deflection === null ? '—' : `${formatDecimal(deflection, 2)}°`} />
             <Field label="Point via" value={`(${seg.via.x.toFixed(2)} m, ${seg.via.y.toFixed(2)} m)`} />
           </>
         )}
@@ -1648,7 +1648,7 @@ function SectionPanel({ store, section }: { store: EditorStore; section: TrackSe
           </div>
         </div>
 
-        <Field label="Longueur totale" value={`${section.totalLength.toFixed(2)} m`} />
+        <Field label="Longueur totale" value={`${formatDecimal(section.totalLength, 2)} m`} />
         <Field label="Coupons de rail" value={section.segmentIds.length} />
         <Field label="Nœuds" value={section.nodeIds.length} />
         <div style={{ marginTop: '6px' }}>
@@ -1747,7 +1747,7 @@ function TwoNodesSelectionPanel({ store, nodeAId, nodeBId }: { store: EditorStor
 
         <Field label="Nœud A" value={`(${nodeA.pos.x.toFixed(1)} m, ${nodeA.pos.y.toFixed(1)} m)`} />
         <Field label="Nœud B" value={`(${nodeB.pos.x.toFixed(1)} m, ${nodeB.pos.y.toFixed(1)} m)`} />
-        <Field label="Distance" value={`${dist.toFixed(2)} m`} />
+        <Field label="Distance" value={`${formatDecimal(dist, 2)} m`} />
         <Field label="Reliés par voie" value={connectingSeg ? 'Oui (voie existante)' : 'Non (non connectés)'} />
       </div>
 
