@@ -57,6 +57,7 @@ import {
 import type { Signal, SignalRole, Station } from '@domain/models/types'
 import { addSignalRow, moveSignalsOffSwitches, signalForwardFor, signalRowPlaces, slideSignal } from '@domain/services/signalLayout'
 import { signalHeadWorld } from '@infrastructure/render/signalRender'
+import { stationMarkAt } from '@infrastructure/render/stationRender'
 import {
   createSignallingState,
   estimatedStoppingDistance,
@@ -4895,9 +4896,24 @@ export class EditorStore {
     return stationAt(this.network, worldPos, tolerance)
   }
 
+  /**
+   * The station a click of the selection tool picks at a world position. Its mark or its name, under
+   * the cursor, pick it; near its mark (`tolerance` metres) it is picked only when no platform is
+   * under the cursor: a station laid with its platforms stands in their middle, and a click on the
+   * platform is for the platform — the station is still reached by its mark and its name.
+   */
+  stationPickAt = (worldPos: Point, tolerance: number = 14 / this.camera.scale): Station | null => {
+    if (this.network.stations.size === 0) return null
+    const exact = stationMarkAt(this.network.stations.values(), worldPos, this.camera.scale)
+    if (exact) return exact
+    const near = this.stationAt(worldPos, tolerance)
+    if (!near || (this.network.platforms.size > 0 && this.platformHitAt(worldPos))) return null
+    return near
+  }
+
   /** Remember the station under the cursor (selection tool). True when it changed. */
   updateStationHover = (worldPos: Point): boolean => {
-    const hovered = this.tool === 'select' && !this.isPlayMode ? this.stationAt(worldPos)?.id ?? null : null
+    const hovered = this.tool === 'select' && !this.isPlayMode ? this.stationPickAt(worldPos)?.id ?? null : null
     if (hovered === this.hoveredStationId) return false
     this.hoveredStationId = hovered
     return true

@@ -1913,8 +1913,9 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         const isMulti = e.shiftKey || e.ctrlKey || e.metaKey
         const world = getWorldPos(e.clientX, e.clientY)
         const hitTol = 14 / store.camera.scale
-        // A station first: its mark is small and stands over the track
-        const station = store.stationAt(world, hitTol)
+        // A station first: its mark is small and stands over the track (over its platforms too:
+        // there the platform keeps the click, but for the mark itself and the name)
+        const station = store.stationPickAt(world, hitTol)
         if (station) {
           store.selectStation(station.id)
           // Holding the button and moving carries its mark (label) elsewhere

@@ -95,6 +95,39 @@ export function renderStationMarks(ctx: CanvasRenderingContext2D, cam: Camera, v
   ctx.restore()
 }
 
+// ─────────────────── Hit test ───────────────────
+
+/** Average width of a character of a station name in the font of its pill, px: a hit test has no canvas to measure with */
+const NAME_CHAR_WIDTH = 6.4
+/** Pixels around the mark that still count as the mark */
+const MARK_SLACK = 2
+
+/**
+ * The station whose mark or name pill, as `renderStationMarks` draws them, covers a world position
+ * at `scale` pixels per metre (the name measured roughly). Where several do, the nearest mark.
+ */
+export function stationMarkAt(stations: Iterable<Station>, p: Point, scale: number): Station | null {
+  const markHalf = (MARK / 2 + MARK_SLACK) / scale
+  const pillBottom = (MARK / 2 + GAP) / scale
+  const pillTop = pillBottom + PILL_HEIGHT / scale
+  let best: Station | null = null
+  let bestDistance = Infinity
+  for (const station of stations) {
+    const dx = p.x - station.pos.x
+    const dy = p.y - station.pos.y
+    const onMark = Math.abs(dx) <= markHalf && Math.abs(dy) <= markHalf
+    const halfPill = (station.name.length * NAME_CHAR_WIDTH) / 2 / scale + PILL_PADDING / scale
+    const onPill = Math.abs(dx) <= halfPill && -dy >= pillBottom && -dy <= pillTop
+    if (!onMark && !onPill) continue
+    const d = Math.hypot(dx, dy)
+    if (d < bestDistance) {
+      best = station
+      bestDistance = d
+    }
+  }
+  return best
+}
+
 function toScreen(p: Point, cam: Camera, vw: number, vh: number): Point | null {
   const x = (p.x - cam.x) * cam.scale + vw / 2
   const y = (p.y - cam.y) * cam.scale + vh / 2
