@@ -49,6 +49,10 @@ Demandé le 2026-10-19. Décisions de l'utilisateur :
       coût par passe de niveau, pas par rail
 - [x] Véhicules et signaux suivent la même règle ; export SVG inchangé
 
+### V5 — Reculer jusqu'à la France entière (`plan-pose-destination.md`)
+- [x] Borne de la caméra par projet : un projet de jeu de données recule jusqu'à 0,0002 px/m ;
+      « Réseau France » cadre tout l'index ; mini-carte cliquable sur l'index
+
 ### V4 — Métro dans le jeu de données (après `plan-sens-circulation.md`)
 - [ ] `railway=subway` demandé par le générateur, catégorie « Métro » (couleur, légende), type de
       rail gardé sur le réseau (`Segment.kind` ferroviaire : train / métro), sauvegardé
@@ -110,8 +114,8 @@ France » ; vue d'ensemble, rien chargé ; au palier « ligne » rien n'est dema
 arrive ; approche de Paris, bouton puis touche U ; rechargement : « Réseau France » rouvert avec ses
 deux morceaux.
 
-**Reste / risques.** Le cadrage du pays bute sur l'échelle minimale de la caméra (la France entière
-ne tient pas dans la fenêtre). La position des aiguilles d'une table de frontière est gardée quand
+**Reste / risques.** ~~Le cadrage du pays bute sur l'échelle minimale de la caméra (la France entière
+ne tient pas dans la fenêtre).~~ Fait (V5). La position des aiguilles d'une table de frontière est gardée quand
 la voie qu'elle ouvre existe encore, sinon reprise du fichier. Fusion avec le sens de circulation :
 `deserializeNetwork` a été découpé (`readSavedSegment`) — un champ ajouté au rail (`running`) doit
 y être lu pour que `addSliceInPlace` le pose aussi ; l'oracle des tests compare chaque champ des

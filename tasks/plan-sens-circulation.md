@@ -53,6 +53,10 @@ Demandé le 2026-10-19 : un TGV d'Aix-en-Provence TGV vers Avignon TGV montait s
 ### S6 — Option
 - [x] Contre-sens dit au pupitre (IPCS)
 
+### S7 — Pose vers la destination (`plan-pose-destination.md`)
+- [x] La pose en gare reçoit la prochaine gare (ou les portes vers sa ligne) et prend la voie à quai et
+      le sens d'où le chemin part dans le sens normal ; bac à sable : destination facultative
+
 ## Revue
 
 Fait le 2026-10-19 (branche `sens-circulation`, depuis `feature/quais` 55654e2).
@@ -89,4 +93,4 @@ Fait le 2026-10-19 (branche `sens-circulation`, depuis `feature/quais` 55654e2).
   gauche, 0 sur celle de droite, 0 m à contre-sens, arrivé en 1 304 s.
 - **S6** : `ConsoleState.wrongTrack` (validé dans `protocol.ts`), « Contre-sens » sous la vitesse sur les
   trois pupitres et le téléphone (`SpeedCaption`).
-- Reste : circulation à droite (Alsace-Moselle) ; donner la destination à la pose en gare.
+- Reste : circulation à droite (Alsace-Moselle) ; ~~donner la destination à la pose en gare~~ (fait : S7).
