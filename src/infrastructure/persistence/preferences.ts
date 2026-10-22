@@ -1,4 +1,5 @@
 import { getStorage } from './persistence'
+import { activeGameKey, LEGACY_GAME_KEY } from './storageKeys'
 
 /** User keyboard preferences: kept apart from the project so they follow the user across layouts */
 export const KEY_PREFERENCES_KEY = 'open-rail:keybindings'
@@ -115,13 +116,13 @@ export function saveDrivingAid(aid: string): void {
   }
 }
 
-/** What the trains were doing when the project was last written (see `domain/models/runningState.ts`); kept apart from the project */
-export const GAME_STATE_KEY = 'open-rail:game'
+/** What the trains were doing when the first project was last written (see `domain/models/runningState.ts`); kept apart from the project, one key per project (`storageKeys.ts`) */
+export const GAME_STATE_KEY = LEGACY_GAME_KEY
 
 /** The saved game as it was written: the caller validates it. Null when there is none, or when it does not read */
 export function loadGameState(): unknown {
   try {
-    const raw = getStorage()?.getItem(GAME_STATE_KEY)
+    const raw = getStorage()?.getItem(activeGameKey())
     return raw ? JSON.parse(raw) : null
   } catch {
     return null
@@ -131,8 +132,8 @@ export function loadGameState(): unknown {
 /** Write the game, or forget it (null) */
 export function saveGameState(game: unknown): void {
   try {
-    if (game === null) getStorage()?.removeItem(GAME_STATE_KEY)
-    else getStorage()?.setItem(GAME_STATE_KEY, JSON.stringify(game))
+    if (game === null) getStorage()?.removeItem(activeGameKey())
+    else getStorage()?.setItem(activeGameKey(), JSON.stringify(game))
   } catch {
     // Storage full or denied: the trains come back at rest
   }

@@ -5,6 +5,7 @@ import { addStation } from '@domain/models/stations'
 import { fakeIndex } from '@domain/dataset/datasetIndex.testkit'
 import type { DatasetRecipe } from '@domain/dataset/datasetRecipe'
 import { getStorage, loadNetworkFromStorage, resetMemoryStorage, type SerializedProject } from '@infrastructure/persistence/persistence'
+import { networkKeyOf } from '@infrastructure/persistence/storageKeys'
 import { fakeDataset } from '@application/dataset/dataset.testkit'
 
 /**
@@ -133,7 +134,8 @@ describe('a dataset project saved as a recipe', () => {
     const { store } = lockedStore()
     expect(store.placeTrainItem({ x: 300, y: 0 })).toBe(true)
     store.flushPersistedState()
-    const text = getStorage()!.getItem('open-rail:network')!
+    // The dataset project is a project of its own in the library, under its own key
+    const text = getStorage()!.getItem(networkKeyOf(store.projectId!))!
     expect(text.length).toBeLessThan(5000)
     const stored = JSON.parse(text) as SerializedProject
     expect(stored.nodes).toEqual([])

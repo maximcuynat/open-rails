@@ -29,3 +29,11 @@
 - **Correction reçue** : gare choisie sans toucher à la composition, le message « la rame tient sur N voies » apparaissait et disparaissait sans fin.
 - **Cause** : l'effet qui lance la vérification dépendait de la composition, et la composition par défaut (`defaultRakeOption`) était un objet neuf à chaque rendu : l'effet repartait, effaçait le message, le réécrivait, et ainsi de suite (233 changements de la fenêtre en 3 s). Mon contrôle au navigateur lisait le message une fois affiché, jamais sa tenue dans le temps, et toujours après avoir cliqué une composition — le seul cas où l'objet était stable.
 - **Règle** : une valeur calculée qui sert de dépendance à un effet passe par `useMemo` (ou l'effet dépend de son identifiant). Au contrôle d'une fenêtre : essayer le chemin par défaut, sans rien choisir, et compter les changements du DOM pendant quelques secondes sans y toucher (zéro attendu).
+
+## 2026-10-22 — Un comportement surprenant n'est pas forcément un défaut
+- Motif : en revue CEO, j'ai qualifié de défaut « ouvrir un fichier garde l'historique d'annulation » sans lire le commentaire de `loadOsmImport` (`osmProject.ts`), qui le décrivait comme voulu, ni les tests qui le vérifiaient.
+- Règle : avant d'écrire « défaut » dans une revue, chercher le commentaire de doc de la fonction et un test qui fige le comportement (`grep` du nom de fonction dans `*.test.ts`). S'il en existe, présenter un changement de contrat, pas un bug.
+
+## 2026-10-22 — `rm` est interactif dans ce shell
+- Motif : un `rm fichier` dans une commande composée a attendu une confirmation et bloqué la commande jusqu'au délai.
+- Règle : toujours `rm -f` dans les scripts et commandes (voir la mémoire « Shell zsh pitfalls »).

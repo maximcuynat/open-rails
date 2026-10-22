@@ -124,12 +124,15 @@ export async function openWholeNetwork(store: EditorStore, options: DatasetFetch
 export async function reloadDataset(store: EditorStore, options: JourneyLoadOptions = {}): Promise<void> {
   const saved = store.dataset
   if (!saved) return
+  // Another project opened while the lines are fetched: they belong to the one left, and are dropped
+  const generation = store.projectGeneration
   const index = await loadDatasetIndex(options)
   const recipe: DatasetRecipe = { ...saved, lines: recipeLines(index, saved.lines) }
   const files = await fetchLineFiles(index, recipe.lines, options.onProgress, options)
   const project = recipeProject(index, recipe, files, store.projectName)
   const stored = store.datasetStoredProject
-  const restore: { name?: string; trains?: SerializedProject['trains']; camera?: SerializedProject['camera'] } = { name: store.projectName }
+  if (store.projectGeneration !== generation) return
+  const restore: { name?: string; trains?: SerializedProject['trains']; camera?: SerializedProject['camera']; sameProject?: boolean } = { name: store.projectName, sameProject: true }
   if (stored?.trains) restore.trains = stored.trains
   if (stored?.camera) restore.camera = stored.camera
   store.loadDataset(recipe, project, files, index, recipe.lines.length > 0 && !recipe.whole ? routeBbox(index, recipe.lines) : indexBbox(index), restore)

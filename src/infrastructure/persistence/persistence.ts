@@ -29,8 +29,10 @@ import { DEFAULT_LINE_SETTINGS, LINE_SPEED_RANGE, type LineSettings, type LineTy
 import { CANT_RANGE } from '../../domain/models/cant'
 import type { OsmSource } from '../../domain/import/osmTypes'
 import { readDatasetRecipe, type DatasetRecipe } from '../../domain/dataset/datasetRecipe'
+import { activeNetworkKey, FIRST_PROJECT_ID, LEGACY_NETWORK_KEY, setActiveProjectId } from './storageKeys'
 
-export const STORAGE_KEY = 'open-rail:network'
+/** The save of v0.5, kept by the first project of the library (`storageKeys.ts`) */
+export const STORAGE_KEY = LEGACY_NETWORK_KEY
 
 /** A height worth storing: a finite number off the ground, within MIN_LEVEL…MAX_LEVEL */
 function isStoredLevel(level: unknown): level is number {
@@ -1046,6 +1048,8 @@ export function getStorage(): {
   setItem: (key: string, value: string) => void
   removeItem: (key: string) => void
   clear?: () => void
+  /** Every key held, for the memory fallback (a real `Storage` is read through `key(i)`) */
+  keys?: () => string[]
 } | null {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -1068,12 +1072,34 @@ export function getStorage(): {
     clear: () => {
       memoryStorage = {}
     },
+    keys: () => Object.keys(memoryStorage),
   }
 }
 
-/** Reset in-memory storage fallback (useful in tests). */
+/** Every key the storage holds */
+export function storageKeyList(): string[] {
+  const storage = getStorage()
+  if (!storage) return []
+  if (storage.keys) return storage.keys()
+  const real = storage as Storage
+  const list: string[] = []
+  for (let i = 0; i < real.length; i++) {
+    const key = real.key(i)
+    if (key !== null) list.push(key)
+  }
+  return list
+}
+
+/** Reset in-memory storage fallback (useful in tests), and read and write the first project again */
 export function resetMemoryStorage(): void {
   memoryStorage = {}
+  setActiveProjectId(FIRST_PROJECT_ID)
+}
+
+/** Length of the last network written to the storage, characters (the size the library shows) */
+let writtenSize = 0
+export function lastWrittenSize(): number {
+  return writtenSize
 }
 
 /**
@@ -1128,7 +1154,9 @@ export function saveNetworkToStorage(
       signalDisplay,
       origin,
     )
-    storage.setItem(STORAGE_KEY, JSON.stringify(serialized))
+    const text = JSON.stringify(serialized)
+    storage.setItem(activeNetworkKey(), text)
+    writtenSize = text.length
     return true
   } catch (err) {
     console.warn('Failed to save network to storage', err)
@@ -1143,7 +1171,7 @@ export function loadNetworkFromStorage(): (ReturnType<typeof deserializeNetwork>
   try {
     const storage = getStorage()
     if (!storage) return null
-    const raw = storage.getItem(STORAGE_KEY)
+    const raw = storage.getItem(activeNetworkKey())
     if (!raw) return null
     const parsed = JSON.parse(raw) as SerializedProject
     if (!parsed || typeof parsed !== 'object') return null
@@ -1156,13 +1184,13 @@ export function loadNetworkFromStorage(): (ReturnType<typeof deserializeNetwork>
 }
 
 /**
- * Clear the persisted network state in localStorage (used for "New project").
+ * Clear the persisted network of the active project.
  */
 export function clearNetworkStorage(): void {
   try {
     const storage = getStorage()
     if (storage) {
-      storage.removeItem(STORAGE_KEY)
+      storage.removeItem(activeNetworkKey())
     }
   } catch (err) {
     console.warn('Failed to clear network from storage', err)

@@ -184,7 +184,7 @@ describe('provenance of imported data', () => {
     expect(fresh.osmSource).toEqual(SOURCE)
   })
 
-  it('follows undo and redo: gone before the import, kept by every later step', () => {
+  it('follows undo and redo, down to the import that opened the project', () => {
     const store = new EditorStore()
     store.loadFromData(imported())
     // Later edits keep it
@@ -200,11 +200,9 @@ describe('provenance of imported data', () => {
     expect(store.flatLevels).toBe(true)
     store.undo()
     expect(store.osmSource).toEqual(SOURCE)
-    // Back before the import: a project drawn by hand again
-    store.undo()
-    expect(store.osmSource).toBeNull()
-    expect(store.flatLevels).toBe(false)
-    expect(new EditorStore().osmSource).toBeNull() // and so is the autosave
+    // The import opened a project of its own: undoing stops there, it never goes back to another project
+    expect(store.canUndo).toBe(false)
+    expect(new EditorStore().osmSource).toEqual(SOURCE) // and so does the autosave
 
     store.redo()
     expect(store.osmSource).toEqual(SOURCE)

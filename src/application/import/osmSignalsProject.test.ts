@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { listProjects } from '@infrastructure/persistence/projectLibrary'
 import { EditorStore } from '@application/state/editorStore'
 import { convertOsm } from '@domain/import/osmImport'
 import { along, answer, options, osmNode, osmWay } from '@domain/import/osmImport.testkit'
@@ -67,18 +68,21 @@ describe('the signals of an import in the project', () => {
     expect(project.signals!.map((signal) => signal.role).sort()).toEqual(['protection', 'spacing'])
   })
 
-  it('undoing brings the previous level back with the previous project', () => {
+  it('leaves the previous project, and its level, in the library', () => {
     const store = new EditorStore()
     const net = createNetwork()
     addSegment(net, addNode(net, { x: 0, y: 0 }).id, addNode(net, { x: 50, y: 0 }).id)
     store.network = net
     store.pushHistorySnapshot()
     loadOsmImport(store, converted('real'), { levels: true, now: NOW, signallingLevel: 'pro' }, () => {})
+    const imported = store.projectId!
     expect(store.signallingLevel).toBe('pro')
-    store.undo()
+    expect(store.network.signals.size).toBe(2)
+    const previous = listProjects().find((p) => p.id !== imported)!
+    store.openProject(previous.id)
     expect(store.signallingLevel).toBe('standard')
     expect(store.network.signals.size).toBe(0)
-    store.redo()
+    store.openProject(imported)
     expect(store.signallingLevel).toBe('pro')
     expect(store.network.signals.size).toBe(2)
   })

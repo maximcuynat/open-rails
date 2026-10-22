@@ -130,8 +130,8 @@ function requestFitView(): void {
 }
 
 /**
- * Replace the current project with an imported one and frame it. One step of the history, like
- * opening an example: undoing brings the previous network back.
+ * Open an imported network as a project of its own and frame it, like opening an example: the
+ * project being edited stays in the library (undoing does not cross from one project to another).
  */
 export function loadOsmImport(
   store: EditorStore,

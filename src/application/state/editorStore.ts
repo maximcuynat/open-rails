@@ -85,10 +85,12 @@ import { boxesMeet, connectionsToward, distanceToBox, linesToDrop, piecesOverCap
 import { isProjectFile, mergeProjects } from '@infrastructure/persistence/projectMerge'
 import type { MergeOutcome } from '@application/import/mergeReport'
 import { addSliceInPlace, removeSliceInPlace, sliceHoldsRail } from '@infrastructure/persistence/sliceInPlace'
+import { createProject, getProject, lastProjectId, noteProjectSaved, rememberActiveProject } from '@infrastructure/persistence/projectLibrary'
+import { FIRST_PROJECT_ID, setActiveProjectId } from '@infrastructure/persistence/storageKeys'
 import {
   saveNetworkToStorage,
   loadNetworkFromStorage,
-  clearNetworkStorage,
+  lastWrittenSize,
   deserializeNetwork,
   serializeNetwork,
   type ProjectOrigin,
@@ -1279,9 +1281,109 @@ export class EditorStore {
     const savedFactor = Number(loadTimeFactorPreference())
     if (isTimeFactor(savedFactor)) this.timeFactor = savedFactor
     this.remoteDeskHost = loadRemoteHostPreference()
+    // The project opened last opens again; with none, the page starts blank (the start screen)
+    this.projectId = lastProjectId()
+    setActiveProjectId(this.projectId ?? FIRST_PROJECT_ID)
+    if (this.projectId !== null) {
+      this.loadPersistedState()
+      if (!this.datasetReloadPending) this.restoreSavedGame()
+    }
+    this.pushHistorySnapshot()
+  }
+
+  /** The project of the library being edited; null before the first one is written */
+  projectId: string | null = null
+  /**
+   * Counts the projects opened in this page. What finishes later than it started (the lines of a
+   * real network fetched again) is dropped when another project was opened meanwhile.
+   */
+  projectGeneration = 0
+
+  /** Give the project being edited an entry of the library, the first time it is written */
+  private ensureProjectEntry(): string {
+    if (this.projectId !== null) return this.projectId
+    const entry = createProject(this.projectName)
+    this.useProject(entry.id)
+    return entry.id
+  }
+
+  /** Read and write under the keys of this project from now on, and open it at the next start */
+  private useProject(id: string): void {
+    this.projectId = id
+    setActiveProjectId(id)
+    rememberActiveProject(id)
+  }
+
+  /**
+   * Leave the project being edited for another: it is written first, under its own keys (a write
+   * still waiting goes with it). What belongs to a project does not cross over: the network, the
+   * trains and what they were doing, the undo history, the selection, the tool, the dataset;
+   * the time stops and the desks let go of their trains.
+   */
+  private leaveProject(): void {
+    // A project with track or trains is written, even one never written yet: it stays in the library
+    if (this.projectId !== null || this.network.segments.size > 0 || this.trains.length > 0) this.flushPersistedState()
+    else if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    this.projectGeneration++
+    this.network = createNetwork()
+    this.locomotive = null
+    this.restoreTrains([])
+    this.autopilots.clear()
+    this.trainDrivers.clear()
+    this.isPlayMode = false
+    this.isPaused = false
+    this.savedGamePending = false
+    this.datasetReloadPending = false
+    this.restoreSignallingSettings({})
+    this.restoreSignalDisplay({})
+    this.flatLevels = false
+    this.osmSource = null
+    this.forgetDataset()
+    this.sectionMeta = {}
+    this.selection = { nodes: new Set(), segments: new Set() }
+    this.selectedStationId = null
+    this.selectedPlatformId = null
+    this.tool = 'pan'
+    this.resetPendingToolState()
+    this.projectName = DEFAULT_PROJECT_NAME
+    this.dirty = false
+    this.autosaveFailed = false
+    this.autosaveFailedSize = 0
+    this.history = []
+    this.historyIndex = -1
+    this.pendingEdit = 'none'
+  }
+
+  /**
+   * Open a project of the library. False when there is no such project (nothing changes).
+   * A recipe of the dataset comes back without its lines: the caller fetches them again
+   * (`datasetReloadPending`, `reloadDataset`).
+   */
+  openProject = (id: string): boolean => {
+    if (!getProject(id)) return false
+    this.leaveProject()
+    this.useProject(id)
     this.loadPersistedState()
     if (!this.datasetReloadPending) this.restoreSavedGame()
     this.pushHistorySnapshot()
+    this.notify()
+    return true
+  }
+
+  /**
+   * Start a new, empty project of the library (`origin` says where a game project comes from).
+   * The project being edited is written and kept.
+   */
+  startProject = (name: string = DEFAULT_PROJECT_NAME, origin?: string): string => {
+    this.leaveProject()
+    this.projectName = name
+    const entry = createProject(name, origin !== undefined ? { origin } : {})
+    this.useProject(entry.id)
+    resetIdCounter(0)
+    return entry.id
   }
 
   /**
@@ -1353,8 +1455,12 @@ export class EditorStore {
    * Load network from serialized data structure.
    */
   loadFromData = (data: any): void => {
+    // Read first: a file that does not read changes nothing, not even the project being edited
     const res = deserializeNetwork(data)
+    // A file, an example or an import becomes a project of its own: the one being edited is kept
+    this.startProject(res.projectName || DEFAULT_PROJECT_NAME)
     this.network = res.network
+    syncIdCounter(this.network)
     this.forgetDataset()
     // A full export of a dataset project carries its recipe: it stays read only
     if (res.dataset) this.dataset = res.dataset
@@ -1482,8 +1588,11 @@ export class EditorStore {
     files: ReadonlyMap<LineId, SerializedProject>,
     index: DatasetIndex,
     frame: BBox | null,
-    options: { name?: string; trains?: SerializedProject['trains']; camera?: SerializedProject['camera'] } = {},
+    options: { name?: string; trains?: SerializedProject['trains']; camera?: SerializedProject['camera']; sameProject?: boolean } = {},
   ): void => {
+    // A journey or a station opened from the dataset is a project of its own; the lines of a
+    // project saved as a recipe, fetched again, fill that same project
+    if (!options.sameProject) this.startProject(options.name)
     const data: SerializedProject = { ...project }
     if (options.trains !== undefined) data.trains = options.trains
     // The camera of a line file (if any) says nothing: the frame of the journey does, unless a saved one is given
@@ -1824,6 +1933,8 @@ export class EditorStore {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
+    // The first write gives the project its entry (and its keys) in the library
+    const projectId = this.ensureProjectEntry()
     // What the trains are doing goes with where they stand: a page loaded again finds the game as it was
     // (not while the lines of a real network are still being fetched again: the game written then is the one to find)
     if (!this.savedGamePending) saveGameState(captureGame(this.trains, new Set(this.autopilots.keys()), this.isFreeView || (!this.isPlayMode && this.leftInFreeView)))
@@ -1858,6 +1969,7 @@ export class EditorStore {
       this.projectOrigin,
     )
     if (!saved) this.autosaveFailedSize = size
+    else noteProjectSaved(projectId, lastWrittenSize(), this.projectName)
     if (saved === this.autosaveFailed) {
       // The top bar says whether the project is kept by the browser
       this.autosaveFailed = !saved
@@ -1867,39 +1979,14 @@ export class EditorStore {
   }
 
   /**
-   * Reset the project to a fresh empty layout and clear localStorage.
+   * A new, empty project of the library. The project being edited is written and kept: nothing
+   * is ever cleared from the storage here.
    */
   newProject = (): void => {
-    this.network = createNetwork()
-    this.locomotive = null
-    this.restoreTrains([])
-    this.autopilots.clear()
-    this.savedGamePending = false
-    this.restoreSignallingSettings({})
-    this.restoreSignalDisplay({})
-    this.flatLevels = false
-    this.osmSource = null
-    this.forgetDataset()
-    this.sectionMeta = {}
-    this.selection = { nodes: new Set(), segments: new Set() }
-    this.selectedStationId = null
-    this.selectedPlatformId = null
-    this.tool = 'pan'
-    this.resetPendingToolState()
-    this.projectName = DEFAULT_PROJECT_NAME
+    this.startProject()
     this.camera.x = 0
     this.camera.y = 0
     this.camera.scale = 3
-    this.dirty = false
-    if (this.saveTimer !== null) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = null
-    }
-    this.autosaveFailed = false
-    clearNetworkStorage()
-    resetIdCounter(0)
-    this.history = []
-    this.historyIndex = -1
     this.pushHistorySnapshot()
     this.notify()
   }

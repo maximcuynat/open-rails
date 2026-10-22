@@ -190,20 +190,18 @@ describe('loading an import in the editor', () => {
     expect(railsWhenFramed).toBe(3)
   })
 
-  it('is one step of the history: undoing brings the previous project back, redoing the import', () => {
+  it('is a project of its own: the previous one stays in the library, undoing does not cross over', () => {
     const store = storeWithProject()
+    const previous = store.projectId!
     loadOsmImport(store, importResult(), { levels: true, placeName: 'Gare de Lyon', now: NOW }, () => {})
-    expect(store.canUndo).toBe(true)
+    expect(store.projectId).not.toBe(previous)
+    expect(store.network.segments.size).toBe(3)
+    expect(store.canUndo).toBe(false)
 
-    store.undo()
+    expect(store.openProject(previous)).toBe(true)
     expect(store.network.segments.size).toBe(1)
     expect(store.osmSource).toBeNull()
     expect(store.flatLevels).toBe(false)
-
-    store.redo()
-    expect(store.network.segments.size).toBe(3)
-    expect(store.osmSource?.lat).toBe(48.8443)
-    expect(store.flatLevels).toBe(true)
   })
 
   it('goes out again in the exported project', () => {
