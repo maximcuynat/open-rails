@@ -90,7 +90,7 @@ import { signalFlashOn } from '@infrastructure/render/signalRender'
 import { renderSignalToolPreview } from './signalToolPreview'
 import { commitSignalGesture } from '../common/signalActions'
 import { hitShownNode } from './nodePicking'
-import { clickPlatformTool, PLATFORM_OFF_TRACK, platformPreviewDrawing } from '@application/tools/platformTool'
+import { clickPlatformTool, PLATFORM_OFF_TRACK, platformPreviewDrawing, stationLaidText } from '@application/tools/platformTool'
 import { clickPlatformTemplate, PLATFORM_TEMPLATE_OFF_TRACK, platformTemplateDrawing } from '@application/tools/platformTemplateTool'
 import { renderPlatformPreview, renderPlatformTemplatePreview } from '@infrastructure/render/platformPreviewRender'
 
@@ -1821,12 +1821,16 @@ export function Canvas({ store, onViewport }: CanvasProps) {
         store.cursorWorld = world
         if (store.platformTemplate) {
           // A station template: laid in one click where its preview stands
-          if (clickPlatformTemplate(store, world).result === 'off-track') showToast(PLATFORM_TEMPLATE_OFF_TRACK, 'warning')
+          const click = clickPlatformTemplate(store, world)
+          if (click.result === 'off-track') showToast(PLATFORM_TEMPLATE_OFF_TRACK, 'warning')
+          else if (click.laid) showToast(stationLaidText(click.laid), 'success')
           redraw()
           return
         }
         store.setPlatformShiftHeld(e.shiftKey)
-        if (clickPlatformTool(store, world).result === 'off-track') showToast(PLATFORM_OFF_TRACK, 'warning')
+        const click = clickPlatformTool(store, world)
+        if (click.result === 'off-track') showToast(PLATFORM_OFF_TRACK, 'warning')
+        else if (click.laid) showToast(stationLaidText(click.laid), 'success')
         redraw()
         return
       }

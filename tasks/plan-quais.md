@@ -244,7 +244,10 @@ qui rendent les 3 rails d'origine ; aucune erreur de page (seulement les 403 des
 À reprendre :
 - La longueur du quai (220 m) et le rayon (190 m) sont fixes : pas encore de réglage dans la barre.
 - L'évitement à quai central ne se pose que sur une droite ; pas sur une courbe ni un rail long importé (`path`).
-- Les quais latéraux rejoignent une gare à moins de 300 m (`STATION_REACH`), même de l'autre côté
-  d'un faisceau : vu à l'essai, une seconde gare voulue à 150 m de la première y est rattachée.
+- ~~Les quais latéraux rejoignent une gare à moins de 300 m (`STATION_REACH`), même de l'autre côté
+  d'un faisceau : vu à l'essai, une seconde gare voulue à 150 m de la première y est rattachée.~~
+  **Réglé le 2026-10-22** : un quai ne rejoint plus une gare que si un quai de celle-ci est à moins
+  de 40 m, ou si la gare s'arrête sur sa voie (gare OSM sans quai) ; sinon « Gare n » est créée, et
+  la pose le dit (« Gare 2 créée », « Quai rattaché à Gare 1 »).
 - `applyPassingSiding` coupe deux fois le même id de rail (la seconde coupure ne trouve plus le
   rail, c'est la réconciliation qui recoud) : le nouveau gabarit ne s'en sert pas, à reprendre à part.

@@ -194,15 +194,32 @@ describe('the station of a new platform', () => {
     expect(second.station.id).toBe(first.station.id)
   })
 
-  it('is a station whose place is near, else none', () => {
-    const { net, a1 } = tracks()
+  it('is a station that stops on its track beside it, never one only placed near', () => {
+    const { net, a1, a2 } = tracks()
     const edges: PlatformEdge[] = [{ track: [{ segId: a1, t0: 0, t1: 1 }], side: 'left' }]
     expect(stationForPlatform(net, edges)).toBeNull()
-    const far = addStation(net, { name: 'Loin', pos: { x: 5000, y: 0 }, stops: [] })
+    addStation(net, { name: 'Près', pos: { x: 30, y: -100 }, stops: [] })
     expect(stationForPlatform(net, edges)).toBeNull()
-    const near = addStation(net, { name: 'Près', pos: { x: 30, y: -100 }, stops: [] })
-    expect(stationForPlatform(net, edges)).toBe(near.id)
-    expect(far.id).not.toBe(near.id)
+    // A station read from OpenStreetMap: no platform yet, a stop on the track
+    const along = addStation(net, { name: 'Sur la voie', pos: { x: 25, y: 0 }, stops: [{ segId: a1, t: 0.5 }] })
+    expect(stationForPlatform(net, edges)).toBe(along.id)
+    // A stop just past the end of the platform, on the next rail
+    const next = addStation(net, { name: 'Juste après', pos: { x: 60, y: 0 }, stops: [{ segId: a2, t: 0.2 }] })
+    net.stations.delete(along.id)
+    expect(stationForPlatform(net, edges)).toBe(next.id)
+  })
+
+  it('makes a second station for a platform laid 100 m past the first one', () => {
+    const net = createNetwork()
+    const a = addNode(net, { x: 0, y: 0 })
+    const b = addNode(net, { x: 400, y: 0 })
+    const seg = addSegment(net, a.id, b.id)!.id
+    const first = layPlatforms(net, planPlatform(net, input({ segId: seg, t: 0.05 }, 120, -4))!)!
+    const second = layPlatforms(net, planPlatform(net, input({ segId: seg, t: 0.55 }, 320, -4))!)!
+    expect(first.newStation).toBe(true)
+    expect(second.newStation).toBe(true)
+    expect(second.station.id).not.toBe(first.station.id)
+    expect(second.station.name).toBe('Gare 2')
   })
 
   it('lays both platforms of « both sides » in one station', () => {

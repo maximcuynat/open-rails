@@ -139,10 +139,11 @@ describe('island loop template (évitement à quai central)', () => {
     expect(laid.platforms[0].edges).toHaveLength(2)
   })
 
-  it('joins a station already there', () => {
+  it('joins a station already there, which stops on the line', () => {
     const net = createNetwork()
     straightTrack(net, 800)
-    const station = addStation(net, { name: 'Ici', pos: { x: 400, y: 30 }, stops: [] })
+    const line = [...net.segments.keys()][0]
+    const station = addStation(net, { name: 'Ici', pos: { x: 400, y: 30 }, stops: [{ segId: line, t: 0.5 }] })
     const laid = applyIslandLoop(net, computeIslandLoopPreview(net, { x: 400, y: -5 }, { reach })!)!
     expect(laid.newStation).toBe(false)
     expect(laid.station.id).toBe(station.id)

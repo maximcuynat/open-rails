@@ -109,6 +109,12 @@ const SNAP_LABEL: Record<PlatformSnapKind, string> = {
   'rail-end': 'bout de voie',
 }
 
+/** « Gare 2 créée » or « Quai rattaché à Gare 1 »: which station the platforms went to */
+export function stationLaidText(laid: LaidPlatforms): string {
+  if (laid.newStation) return `${laid.station.name} créée`
+  return `${laid.platforms.length > 1 ? 'Quais rattachés' : 'Quai rattaché'} à ${laid.station.name}`
+}
+
 /** « aiguille », « aligné sur le quai d’en face »…: what an end was caught by */
 export function platformSnapLabel(aim: PlatformAim | null): string | null {
   return aim?.snap ? SNAP_LABEL[aim.snap.kind] : null

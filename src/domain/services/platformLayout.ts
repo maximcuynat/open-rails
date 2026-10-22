@@ -23,7 +23,7 @@ export type PlatformEdges = Platform['edges']
 export const PLATFORM_REACH = 1000
 /** Shortest platform the tool lays, metres at 1:1 */
 export const MIN_PLATFORM_LENGTH = 5
-/** A station within this distance of a new platform takes it, metres at 1:1 */
+/** An OpenStreetMap platform finds its station within this distance, metres at 1:1 */
 export const STATION_REACH = 300
 /** A platform this close to a platform already laid joins its station, metres at 1:1 */
 export const NEIGHBOUR_PLATFORM_REACH = 40
@@ -329,29 +329,35 @@ function samples(net: Network, edges: readonly PlatformEdge[]): Point[] {
 }
 
 /**
- * The station a new platform joins: the one of a platform laid right beside it, else the nearest
- * station within reach of its middle. Null: a new station is owed.
+ * The station a new platform joins: the one of a platform laid right beside it, else the one that
+ * stops on its track beside it (a station read from OpenStreetMap, without platforms yet). Being
+ * near the place of a station is not enough: two stations may stand 100 m apart. Null: a new
+ * station is owed.
  */
 export function stationForPlatform(net: Network, edges: readonly PlatformEdge[], gauge?: number): StationId | null {
-  const k = scaleFactor(gauge)
+  const reach = NEIGHBOUR_PLATFORM_REACH * scaleFactor(gauge)
   const mine = samples(net, edges)
   if (mine.length === 0) return null
+  const nearest = (p: Point): number => Math.min(...mine.map((q) => dist(p, q)))
   let best: { id: StationId; d: number } | null = null
   for (const platform of net.platforms.values()) {
     if (!net.stations.has(platform.stationId)) continue
     for (const p of samples(net, platform.edges)) {
-      for (const q of mine) {
-        const d = dist(p, q)
-        if (d <= NEIGHBOUR_PLATFORM_REACH * k && (!best || d < best.d)) best = { id: platform.stationId, d }
-      }
+      const d = nearest(p)
+      if (d <= reach && (!best || d < best.d)) best = { id: platform.stationId, d }
     }
   }
   if (best) return best.id
-  // The middle of the first edge
-  const middle = mine[Math.min(2, mine.length - 1)]
+  const spans = edges.flatMap((edge) => edge.track)
   for (const station of net.stations.values()) {
-    const d = dist(station.pos, middle)
-    if (d <= STATION_REACH * k && (!best || d < best.d)) best = { id: station.id, d }
+    for (const stop of station.stops) {
+      const along = spans.some((span) =>
+        span.segId === stop.segId && stop.t >= Math.min(span.t0, span.t1) && stop.t <= Math.max(span.t0, span.t1))
+      if (along) return station.id
+      const p = positionOnSegment(net, stop.segId, stop.t)
+      const d = p ? nearest(p) : Infinity
+      if (d <= reach && (!best || d < best.d)) best = { id: station.id, d }
+    }
   }
   return best?.id ?? null
 }
